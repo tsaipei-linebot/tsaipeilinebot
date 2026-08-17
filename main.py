@@ -145,11 +145,14 @@ def fetch_job_keywords(sheet) -> dict:
 
     default_keywords = {
         "general_queries": ["找工作", "有工作嗎", "有哪些工作", "工作推薦", "職缺列表", "看職缺", "全部職缺", "推薦職缺", "我想找工作", "有缺嗎"],
-        "triggers": ["工作", "職缺", "缺額", "上班", "應徵", "台北", "臺北", "新北", "桃園", "台中", "臺中", "台南", "臺南", "高雄", "週休", "周休", "日班", "夜班", "早班", "中班", "晚班", "大夜", "兼職", "全職", "時薪", "月薪", "週領", "周領", "日領", "月領"],
+        "triggers": ["工作", "職缺", "缺額", "上班", "應徵", "理貨", "揀貨", "倉管", "倉儲", "作業員", "包裝", "司機", "台北", "臺北", "新北", "桃園", "台中", "臺中", "台南", "臺南", "高雄", "週休", "周休", "日班", "夜班", "早班", "中班", "晚班", "大夜", "兼職", "全職", "時薪", "月薪", "週領", "周領", "日領", "月領"],
         "synonym_groups": [
+            ["理貨", "揀貨", "包裝", "倉管", "倉儲", "物流", "加工", "理貨員", "揀貨員"],
             ["晚班", "夜班", "大夜", "小夜", "夜間", "大夜班"],
             ["早班", "日班", "晨班", "日間"],
             ["中班", "午後班"],
+            ["作業員", "技術員", "品檢", "組裝", "測試", "產線"],
+            ["司機", "送貨", "外送", "物流司機", "駕駛"],
             ["週休", "周休", "排休", "見紅休", "月休八天"],
             ["週領", "周領", "日領", "預支", "借支"],
             ["兼職", "工讀", "打工", "pt", "PT", "短期", "部分工時"],
@@ -189,10 +192,8 @@ def fetch_job_keywords(sheet) -> dict:
         }
         _cached_keywords = result
         _last_keywords_fetch = now
-        print(f"[系統提示] 成功自 job_keywords 載入 {len(synonym_groups)} 組同義關鍵字庫！")
         return result
     except Exception as e:
-        print(f"[系統提示] 讀取 job_keywords 分頁失敗，使用預設同義詞庫 (錯誤: {e})")
         return default_keywords
 
 # ----------------- 雙按鈕 + 膠囊標籤 Flex 職缺卡片 -----------------
@@ -278,14 +279,14 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         base_clean = OFFICIAL_WEBSITE_BASE.strip() if OFFICIAL_WEBSITE_BASE else "https://tsaipei.netlify.app"
         if not (base_clean.startswith("http://") or base_clean.startswith("https://")):
             base_clean = "https://tsaipei.netlify.app"
-        website_job_url = f"{base_clean.rstrip('/')}/#jobs"[cite: 1]
+        website_job_url = f"{base_clean.rstrip('/')}/#jobs"
 
         raw_resume_url = str(job.get("線上履歷連結", job.get("線上履歷網址", ""))).strip()
         if raw_resume_url.startswith("http://") or raw_resume_url.startswith("https://"):
             separator = "&" if "?" in raw_resume_url else "?"
             apply_link = f"{raw_resume_url}{separator}job_id={job_id}&line_id={user_id}"
         else:
-            apply_link = f"{base_clean.rstrip('/')}/#jobs"[cite: 1]
+            apply_link = f"{base_clean.rstrip('/')}/#jobs"
 
         body_contents = [
             {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
@@ -366,8 +367,13 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
         return
 
-    user_msg = event.message.text.strip()
+    raw_user_msg = event.message.text.strip()
     user_id = getattr(event.source, 'user_id', 'USER')
+
+    # 文字淨化：去除標點符號與常見疑問贅字
+    clean_msg = re.sub(r'[？\?！!。，,\s]+', '', raw_user_msg).replace("台", "臺").lower()
+    for filler in ["有嗎", "有沒有", "我想找", "想找", "我要找", "請問", "可以推薦", "推薦"]:
+        clean_msg = clean_msg.replace(filler, "")
 
     try:
         sheet = get_sheets_client()
@@ -383,17 +389,17 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
     # ================= 1. 職缺查詢處理 =================
     try:
-        msg_norm = user_msg.replace("台", "臺").lower()
+        msg_norm = raw_user_msg.replace("台", "臺").lower()
 
-        # 情況 A：純泛稱查詢（例如：找工作、看職缺）
-        if user_msg in general_job_queries or (len(user_msg) <= 4 and user_msg in ["工作", "職缺", "缺額"]):
+        # 情況 A：純泛稱查詢
+        if raw_user_msg in general_job_queries or clean_msg in ["工作", "職缺", "缺額", "找工作", "看工作", ""]:
             if active_jobs:
                 flex_msg = create_job_flex_card(active_jobs, user_id)
                 target_line_bot_api.reply_message(reply_token, flex_msg)
                 return
 
-        # 情況 B：條件、地區或關鍵字篩選
-        is_job_intent = any(trig.lower() in msg_norm for trig in job_search_triggers)
+        # 情況 B：條件、地區、同義詞篩選
+        is_job_intent = any(trig.lower() in msg_norm or trig.lower() in clean_msg for trig in job_search_triggers)
         
         if is_job_intent and active_jobs:
             # 1. 優先檢查地區（縣市與行政區）
@@ -413,13 +419,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                             loc_tokens.append(short_val)
                 
                 for token in loc_tokens:
-                    if token.lower() in msg_norm:
+                    if token.lower() in msg_norm or token.lower() in clean_msg:
                         if token not in detected_locations:
                             detected_locations.append(token)
                         loc_matched_jobs.append(job)
                         break
 
-            # 若使用者有提到明確地區（例如「新莊工作」）
             if detected_locations:
                 unique_loc_jobs = []
                 seen_ids = set()
@@ -441,22 +446,26 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                     target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_no_loc))
                     return
 
-            # 2. 同義詞與特徵優先命中 (例如：晚班 自動關聯 夜班/大夜/中班)
+            # 2. 同義詞與特徵擴展比對（包含理貨、包裝、倉管、晚班等）
             matched_synonym_jobs = []
             expanded_search_tokens = set()
 
             for group in synonym_groups:
-                # 檢查使用者的輸入是否命中該同義詞群組中任一詞彙
-                if any(kw.lower() in msg_norm for kw in group if kw):
-                    # 將整組同義詞全部加入搜尋擴展詞庫
+                if any(kw.lower() in msg_norm or kw.lower() in clean_msg for kw in group if kw):
                     for kw in group:
                         if kw:
                             expanded_search_tokens.add(kw.lower())
+
+            # 若 clean_msg 本身不是空字串，也加入直接比對
+            if clean_msg:
+                expanded_search_tokens.add(clean_msg)
 
             if expanded_search_tokens:
                 for job in active_jobs:
                     full_info = (
                         str(job.get("職缺名稱", job.get("職缺名稱(對外)", ""))) + " " +
+                        str(job.get("縣市", "")) + " " +
+                        str(job.get("行政區", "")) + " " +
                         str(job.get("班別", "")) + " " +
                         str(job.get("休假方式", job.get("休假制度", ""))) + " " +
                         str(job.get("全/兼職", job.get("全職/兼職", ""))) + " " +
@@ -479,7 +488,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
                     flex_msg = create_job_flex_card(unique_syn_jobs, user_id)
                     target_line_bot_api.reply_message(reply_token, flex_msg)
-                    print(f"[同義關鍵字命中] 擴展詞庫: {expanded_search_tokens}，推播 {len(unique_syn_jobs)} 筆職缺")
+                    print(f"[同義關鍵字命中] 擴展詞: {expanded_search_tokens}，推播 {len(unique_syn_jobs)} 筆職缺")
                     return
 
             # 3. Gemini 智慧語意比對
@@ -490,15 +499,16 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                     l = f"{j.get('縣市', '')} {j.get('行政區', '')}".strip()
                     s = j.get("薪資待遇", j.get("薪資", ""))
                     b = f"班別:{j.get('班別', '')} | 休假:{j.get('休假方式', j.get('休假制度', ''))} | 類型:{j.get('全/兼職', j.get('全職/兼職', ''))} | 領薪:{j.get('領薪方式', '')}"
-                    job_context += f"【編號_{idx}】名稱：{t} | 地點：{l} | 待遇：{s} | 屬性：{b}\n"
+                    d = j.get("工作內容與條件", j.get("工作內容(對外)", ""))
+                    job_context += f"【編號_{idx}】名稱：{t} | 地點：{l} | 待遇：{s} | 屬性：{b} | 內容：{d}\n"
 
                 job_filter_prompt = f"""你是一位招募客服。以下是開放職缺：
 {job_context}
 
-求職者提問：「{user_msg}」
+求職者提問：「{raw_user_msg}」
 
 任務：
-1. 判斷是否有任何一筆職缺符合求職者的需求（特別是班別、休假、領薪或工作性質）。
+1. 判斷是否有任何一筆職缺符合求職者的需求（例如：理貨/倉管/包裝、班別、地區等）。
 2. 若有，請只輸出符合的【編號數字】（例如：0 或 0,1）。
 3. 若無符合，請只回覆：NO_MATCH"""
 
@@ -513,7 +523,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
             # 4. 確實無符合職缺
             reply_no_job = (
-                f"您好！目前開放的職缺中，暫時沒有完全符合「{user_msg}」條件的工作。\n\n"
+                f"您好！目前開放的職缺中，暫時沒有完全符合「{raw_user_msg}」條件的工作。\n\n"
                 "已為您記錄需求，若後續有最新符合的職缺開放，專員將第一時間主動聯繫您！"
             )
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_no_job))
@@ -526,18 +536,16 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     try:
         active_faqs = get_cached_faqs(sheet)
 
-        # 第一道：精確比對常見問法
         for faq in active_faqs:
             q_keywords = str(faq.get("問題與常見問法", faq.get("問題", ""))).replace("、", ",").replace("，", ",").replace("/", ",").split(",")
             answer = faq.get("標準回覆內容", faq.get("回答", ""))
             for kw in q_keywords:
                 kw_clean = kw.strip()
-                if kw_clean and (kw_clean in user_msg or user_msg in kw_clean):
+                if kw_clean and (kw_clean in raw_user_msg or raw_user_msg in kw_clean or kw_clean in clean_msg):
                     reply_text = f"{answer}\n\n💡 材霈小提醒：本回覆由系統自動提供。若有更細節的問題，歡迎上班時間由專員為您服務！"
                     target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                     return
 
-        # 第二道：Gemini 語意理解
         if active_faqs and ai_client:
             faq_context = ""
             for idx, faq in enumerate(active_faqs, 1):
@@ -551,7 +559,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 【官方規範清單】：
 {faq_context}
 
-【求職者提問】：「{user_msg}」
+【求職者提問】：「{raw_user_msg}」
 
 【判斷規則】：
 1. 只要求職者的提問「意圖或主題」與清單中任何項目相關，請直接輸出該項目的【標準答案】。
@@ -566,10 +574,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                 return
 
-        # 第三道：關鍵字兜底
         money_words = ["錢", "薪", "薪資", "待遇", "所得", "款"]
         action_words = ["領", "給", "發", "哪天", "何時", "幾號", "匯", "入帳", "拿", "算", "領到"]
-        if (any(mw in user_msg for mw in money_words) and any(aw in user_msg for aw in action_words)) or user_msg in ["給錢", "領錢", "發薪"]:
+        if (any(mw in raw_user_msg for mw in money_words) and any(aw in raw_user_msg for aw in action_words)) or raw_user_msg in ["給錢", "領錢", "發薪"]:
             for faq in active_faqs:
                 q_text = str(faq.get("問題與常見問法", faq.get("問題", ""))) + str(faq.get("類別", ""))
                 if any(s in q_text for s in ["領錢", "薪資", "發薪", "薪水"]):
