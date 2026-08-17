@@ -4,7 +4,7 @@ import time
 import datetime
 import pytz
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, Header, HTTPException
+from fastapi import FastAPI, Request, Header, HTTPException, BackgroundTasks
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
@@ -45,7 +45,13 @@ if GEMINI_API_KEY:
         print(f"[系統警告] Gemini 初始化失敗: {e}")
 
 # ----------------- Google Sheets 連線與安全金鑰讀取 -----------------
+_gspread_client = None
+
 def get_sheets_client():
+    global _gspread_client
+    if _gspread_client is not None:
+        return _gspread_client.open(SPREADSHEET_NAME)
+
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     possible_paths = [
         "/etc/secrets/service_account.json",
@@ -62,18 +68,79 @@ def get_sheets_client():
         raise FileNotFoundError("找不到 service_account.json 金鑰檔案！請檢查 Render Secret Files 設定。")
         
     creds = ServiceAccountCredentials.from_json_keyfile_name(key_path, scope)
-    client = gspread.authorize(creds)
-    return client.open(SPREADSHEET_NAME)
+    _gspread_client = gspread.authorize(creds)
+    return _gspread_client.open(SPREADSHEET_NAME)
 
-# ----------------- job_keywords 動態讀取與快取模組 -----------------
+# ----------------- 高速記憶體快取系統 (Cache TTL: 180 秒) -----------------
+CACHE_TTL = 180
+
+_cached_jobs = None
+_last_jobs_fetch = 0
+
+_cached_faqs = None
+_last_faqs_fetch = 0
+
 _cached_keywords = None
 _last_keywords_fetch = 0
-KEYWORDS_CACHE_TTL = 300
+
+def get_cached_jobs(sheet) -> list:
+    global _cached_jobs, _last_jobs_fetch
+    now = time.time()
+    if _cached_jobs is not None and (now - _last_jobs_fetch < CACHE_TTL):
+        return _cached_jobs
+
+    try:
+        try:
+            ws = sheet.worksheet("Jobs_職缺資料庫")
+        except Exception:
+            ws = sheet.worksheet("職缺清單")
+            
+        jobs_data = ws.get_all_records()
+        active_jobs = []
+        stop_keywords = ["停招", "暫停", "額滿", "關閉", "下架", "結束", "否", "滿", "pause", "close"]
+        
+        for j in jobs_data:
+            title = str(j.get("職缺名稱", j.get("職缺名稱(對外)", ""))).strip()
+            status = str(j.get("職缺狀態", j.get("狀態", ""))).strip()
+            if title and not any(stop_kw in status for stop_kw in stop_keywords):
+                active_jobs.append(j)
+
+        _cached_jobs = active_jobs
+        _last_jobs_fetch = now
+        print(f"[快取更新] 職缺清單已重新載入，有效職缺共 {len(active_jobs)} 筆")
+        return active_jobs
+    except Exception as e:
+        print(f"[快取讀取錯誤] 職缺載入失敗: {e}")
+        return _cached_jobs or []
+
+def get_cached_faqs(sheet) -> list:
+    global _cached_faqs, _last_faqs_fetch
+    now = time.time()
+    if _cached_faqs is not None and (now - _last_faqs_fetch < CACHE_TTL):
+        return _cached_faqs
+
+    try:
+        try:
+            ws = sheet.worksheet("FAQ_客服問答")
+        except Exception:
+            ws = sheet.worksheet("FAQ知識庫")
+            
+        faq_data = ws.get_all_records()
+        active_faqs = [
+            f for f in faq_data 
+            if str(f.get("狀態", f.get("status", ""))).strip() in ["是", "啟用", "active", "1", ""]
+        ]
+        _cached_faqs = active_faqs
+        _last_faqs_fetch = now
+        return active_faqs
+    except Exception as e:
+        print(f"[快取讀取錯誤] FAQ 載入失敗: {e}")
+        return _cached_faqs or []
 
 def fetch_job_keywords(sheet) -> dict:
     global _cached_keywords, _last_keywords_fetch
     now = time.time()
-    if _cached_keywords and (now - _last_keywords_fetch < KEYWORDS_CACHE_TTL):
+    if _cached_keywords is not None and (now - _last_keywords_fetch < CACHE_TTL):
         return _cached_keywords
 
     default_keywords = {
@@ -201,13 +268,11 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         if not clean_desc:
             clean_desc = "歡迎點擊下方按鈕瞭解詳細說明與應徵！"
             
-        # 1. 官網簡章連結 (精準錨點)
         base_clean = OFFICIAL_WEBSITE_BASE.strip() if OFFICIAL_WEBSITE_BASE else "https://tsaipei.netlify.app"
         if not (base_clean.startswith("http://") or base_clean.startswith("https://")):
             base_clean = "https://tsaipei.netlify.app"
         website_job_url = f"{base_clean.rstrip('/')}/#jobs"
 
-        # 2. 履歷連結
         raw_resume_url = str(job.get("線上履歷連結", job.get("線上履歷網址", ""))).strip()
         if raw_resume_url.startswith("http://") or raw_resume_url.startswith("https://"):
             separator = "&" if "?" in raw_resume_url else "?"
@@ -291,7 +356,6 @@ def query_gemini(prompt: str) -> str:
 # ----------------- 核心對話處理邏輯 -----------------
 def process_user_message(event, target_line_bot_api: LineBotApi):
     reply_token = event.reply_token
-    # 過濾 LINE 後台 Verify 產生的無效 Token
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
         return
 
@@ -304,6 +368,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         print(f"Google Sheet 連線失敗: {e}")
         return
 
+    # 讀取快取資料（極速回應）
+    active_jobs = get_cached_jobs(sheet)
     job_kw_dict = fetch_job_keywords(sheet)
     general_job_queries = job_kw_dict.get("general_queries", [])
     job_search_triggers = job_kw_dict.get("triggers", [])
@@ -311,34 +377,18 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
     # ================= 1. 職缺查詢處理 =================
     try:
-        try:
-            jobs_ws = sheet.worksheet("Jobs_職缺資料庫")
-        except Exception:
-            jobs_ws = sheet.worksheet("職缺清單")
-            
-        jobs_data = jobs_ws.get_all_records()
-        active_jobs = []
-        stop_keywords = ["停招", "暫停", "額滿", "關閉", "下架", "結束", "否", "滿", "pause", "close"]
-        
-        for j in jobs_data:
-            title = str(j.get("職缺名稱", j.get("職缺名稱(對外)", ""))).strip()
-            status = str(j.get("職缺狀態", j.get("狀態", ""))).strip()
-            if title and not any(stop_kw in status for stop_kw in stop_keywords):
-                active_jobs.append(j)
-
         msg_norm = user_msg.replace("台", "臺")
 
-        # 情況 A：純泛稱查詢（只輸入「找工作」、「看職缺」等，沒有帶特定地區）
+        # 情況 A：純泛稱查詢
         if user_msg in general_job_queries or (len(user_msg) <= 4 and user_msg in ["工作", "職缺", "缺額"]):
             if active_jobs:
                 flex_msg = create_job_flex_card(active_jobs, user_id)
                 target_line_bot_api.reply_message(reply_token, flex_msg)
-                print(f"[職缺泛稱查詢] 推薦 {len(active_jobs)} 筆招募中職缺")
                 return
 
         # 情況 B：條件與地區篩選
         if any(trig in user_msg for trig in job_search_triggers) and active_jobs:
-            # 1. 優先檢查是否包含特定「行政區」或「縣市」
+            # 1. 優先檢查地區
             loc_matched_jobs = []
             detected_locations = []
             
@@ -346,7 +396,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 county = str(job.get("縣市", "")).strip().replace("台", "臺")
                 district = str(job.get("行政區", "")).strip().replace("台", "臺")
                 
-                # 取得縣市與行政區詞彙（包含去「市/區/縣」簡稱，如：新莊、板橋、桃園）
                 loc_tokens = []
                 for val in [county, district]:
                     if val:
@@ -362,7 +411,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                         loc_matched_jobs.append(job)
                         break
 
-            # 若使用者明確指定了地區（例如「新莊工作」）
             if detected_locations:
                 unique_loc_jobs = []
                 seen_ids = set()
@@ -375,7 +423,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 if unique_loc_jobs:
                     flex_msg = create_job_flex_card(unique_loc_jobs, user_id)
                     target_line_bot_api.reply_message(reply_token, flex_msg)
-                    print(f"[精準地區命中] 命中地區 {detected_locations}，推播 {len(unique_loc_jobs)} 筆職缺")
                     return
                 else:
                     reply_no_loc = (
@@ -385,7 +432,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                     target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_no_loc))
                     return
 
-            # 2. 若無地區詞，比對特徵標籤（如：早班、週休、日領）
+            # 2. 特徵標籤命中（早班、週休等）
             extracted_features = [kw for kw in feature_keywords if kw in user_msg]
             if extracted_features:
                 matched_feature_jobs = []
@@ -405,10 +452,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 if matched_feature_jobs:
                     flex_msg = create_job_flex_card(matched_feature_jobs, user_id)
                     target_line_bot_api.reply_message(reply_token, flex_msg)
-                    print(f"[特徵條件命中] 命中特徵 {extracted_features}，推播 {len(matched_feature_jobs)} 筆職缺")
                     return
 
-            # 3. Gemini 智慧語意比對
+            # 3. Gemini 語意比對
             if ai_client:
                 job_context = ""
                 for idx, j in enumerate(active_jobs):
@@ -450,17 +496,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
     # ================= 2. FAQ 客服問答 =================
     try:
-        try:
-            faq_ws = sheet.worksheet("FAQ_客服問答")
-        except Exception:
-            faq_ws = sheet.worksheet("FAQ知識庫")
-            
-        faq_data = faq_ws.get_all_records()
-        active_faqs = [
-            f for f in faq_data 
-            if str(f.get("狀態", f.get("status", ""))).strip() in ["是", "啟用", "active", "1", ""]
-        ]
+        active_faqs = get_cached_faqs(sheet)
 
+        # 第一道：精確比對常見問法
         for faq in active_faqs:
             q_keywords = str(faq.get("問題與常見問法", faq.get("問題", ""))).replace("、", ",").replace("，", ",").replace("/", ",").split(",")
             answer = faq.get("標準回覆內容", faq.get("回答", ""))
@@ -471,6 +509,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                     target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                     return
 
+        # 第二道：Gemini 語意理解
         if active_faqs and ai_client:
             faq_context = ""
             for idx, faq in enumerate(active_faqs, 1):
@@ -499,6 +538,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                 return
 
+        # 第三道：關鍵字兜底
         money_words = ["錢", "薪", "薪資", "待遇", "所得", "款"]
         action_words = ["領", "給", "發", "哪天", "何時", "幾號", "匯", "入帳", "拿", "算", "領到"]
         if (any(mw in user_msg for mw in money_words) and any(aw in user_msg for aw in action_words)) or user_msg in ["給錢", "領錢", "發薪"]:
