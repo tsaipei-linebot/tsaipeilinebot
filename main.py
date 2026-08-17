@@ -21,7 +21,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei LineBot Universal", version="4.0.0")
+app = FastAPI(title="Tsaipei LineBot Universal", version="4.0.1")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -40,7 +40,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SPREADSHEET_NAME = os.getenv("SPREADSHEET_NAME", "材霈_招募客服自動化資料庫")
 OFFICIAL_WEBSITE_BASE = os.getenv("OFFICIAL_WEBSITE_BASE", "https://tsaipei.netlify.app")
 
-# 官網使用的 Google 試算表即時公開 CSV 來源 (最穩健、不崩潰)
+# 官網即時公開 CSV 來源
 JOBS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSxhKhwyvOi_q7htPSyc1KZxeCDJ0dcwbe6mHUHR8SWdGhWtdWfhAvpN-PdCLF36phH0DN5HFj2Jldx/pub?output=csv"
 
 ai_client = None
@@ -52,7 +52,7 @@ if GEMINI_API_KEY:
         print(f"[系統警告] Gemini AI 初始化失敗: {e}")
 
 # ==========================================
-# 2. 雙重資料庫讀取模組（CSV 直連 + GCP gspread）
+# 2. 雙重資料庫讀取模組
 # ==========================================
 CACHE_TTL = 60
 _cached_jobs, _last_jobs_fetch = None, 0
@@ -91,7 +91,7 @@ def fetch_jobs_data() -> list:
         return _cached_jobs
 
     active_jobs = []
-    # 策略 A：直接讀取發布到網路的 CSV（最穩固）
+    # 策略 A：直接讀取發布到網路的 CSV
     try:
         req = urllib.request.Request(JOBS_CSV_URL, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
@@ -212,13 +212,13 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         if not clean_desc:
             clean_desc = "歡迎點擊下方按鈕瞭解詳細說明與應徵！"
             
-        website_job_url = "https://tsaipei.netlify.app/#jobs"[cite: 1]
+        website_job_url = "https://tsaipei.netlify.app/#jobs"
         raw_resume_url = str(job.get("線上履歷網址") or job.get("線上履歷連結") or "").strip()
         if raw_resume_url.startswith("http://") or raw_resume_url.startswith("https://"):
             separator = "&" if "?" in raw_resume_url else "?"
             apply_link = f"{raw_resume_url}{separator}job_id={job_id}&line_id={user_id}"
         else:
-            apply_link = "https://tsaipei.netlify.app/#jobs"[cite: 1]
+            apply_link = "https://tsaipei.netlify.app/#jobs"
 
         body_contents = [
             {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
@@ -273,7 +273,7 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 4. 核心對話處理邏輯（智慧同義詞 + 全文搜尋）
+# 4. 核心對話處理邏輯
 # ==========================================
 SYNONYM_GROUPS = [
     ["理貨", "揀貨", "包裝", "倉管", "倉儲", "物流", "加工", "理貨員", "揀貨員", "物流士"],
@@ -297,7 +297,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     user_id = getattr(event.source, 'user_id', 'USER')
     print(f"\n[收到使用者訊息]: 「{raw_msg}」")
 
-    # 1. 淨化文字
     clean_msg = re.sub(r'[？\?！!。，,\s]+', '', raw_msg).replace("台", "臺").lower()
     for filler in ["有嗎", "有沒有", "我想找", "想找", "我要找", "請問", "可以推薦", "推薦", "的工作", "工作", "職缺", "的"]:
         clean_msg = clean_msg.replace(filler, "")
@@ -307,13 +306,13 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
     print(f"[目前載入職缺數]: {len(active_jobs)} 筆")
 
-    # 2. 泛稱查詢（找工作、看職缺）
+    # 1. 泛稱查詢
     if raw_msg in ["找工作", "有工作嗎", "有哪些工作", "工作推薦", "職缺列表", "看職缺", "全部職缺", "推薦職缺", "工作", "職缺"] or clean_msg == "":
         if active_jobs:
             target_line_bot_api.reply_message(reply_token, create_job_flex_card(active_jobs, user_id))
             return
 
-    # 3. FAQ 比對
+    # 2. FAQ 比對
     for faq in active_faqs:
         q_keywords = str(faq.get("問題與常見問法") or faq.get("問題") or "").replace("、", ",").replace("，", ",").replace("/", ",").split(",")
         answer = faq.get("標準回覆內容") or faq.get("回答") or ""
@@ -324,13 +323,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                 return
 
-    # 4. 全文檢索 + 同義詞擴展比對
+    # 3. 全文檢索 + 同義詞擴展比對
     msg_norm = raw_msg.replace("台", "臺").lower()
     search_tokens = set()
     if clean_msg:
         search_tokens.add(clean_msg)
 
-    # 擴展關聯同義詞群組
     for group in SYNONYM_GROUPS:
         if any(kw.lower() in msg_norm or (clean_msg and kw.lower() in clean_msg) for kw in group if kw):
             for kw in group:
@@ -342,10 +340,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         for job in active_jobs:
             row_text = " ".join([str(v) for v in job.values()]).replace("台", "臺").lower()
             
-            # A. 命中搜尋詞
             if any(token in row_text for token in search_tokens):
                 matched_jobs.append(job)
-            # B. 雙字滑動比對（例如：桃園、新莊、作業）
             elif len(clean_msg) >= 2:
                 for i in range(len(clean_msg) - 1):
                     sub = clean_msg[i:i+2]
@@ -366,7 +362,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         print(f"[職缺命中] 關鍵字: {search_tokens}，成功推播 {len(unique_jobs)} 筆職缺！")
         return
 
-    # 5. 兜底查無回覆
+    # 4. 兜底查無回覆
     reply_no_job = (
         f"您好！目前開放的職缺中，暫時沒有完全符合「{raw_msg}」條件的工作。\n\n"
         "已為您記錄需求，若後續有最新符合的職缺開放，專員將第一時間主動聯繫您！"
