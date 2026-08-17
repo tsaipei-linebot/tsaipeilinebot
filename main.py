@@ -1,10 +1,7 @@
 import os
 import re
-import csv
-import io
 import time
 import datetime
-import urllib.request
 import pytz
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Header, HTTPException
@@ -21,7 +18,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei LineBot Universal", version="4.0.1")
+app = FastAPI(title="Tsaipei LineBot Production", version="4.2.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -40,9 +37,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SPREADSHEET_NAME = os.getenv("SPREADSHEET_NAME", "材霈_招募客服自動化資料庫")
 OFFICIAL_WEBSITE_BASE = os.getenv("OFFICIAL_WEBSITE_BASE", "https://tsaipei.netlify.app")
 
-# 官網即時公開 CSV 來源
-JOBS_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSxhKhwyvOi_q7htPSyc1KZxeCDJ0dcwbe6mHUHR8SWdGhWtdWfhAvpN-PdCLF36phH0DN5HFj2Jldx/pub?output=csv"
-
 ai_client = None
 if GEMINI_API_KEY:
     try:
@@ -52,9 +46,9 @@ if GEMINI_API_KEY:
         print(f"[系統警告] Gemini AI 初始化失敗: {e}")
 
 # ==========================================
-# 2. 雙重資料庫讀取模組
+# 2. Google Sheets 資料庫直連模組 (自動相容欄位)
 # ==========================================
-CACHE_TTL = 60
+CACHE_TTL = 30  # 30 秒快取，確保資料表修改後快速生效
 _cached_jobs, _last_jobs_fetch = None, 0
 _cached_faqs, _last_faqs_fetch = None, 0
 _gspread_client = None
@@ -77,68 +71,78 @@ def get_sheets_client():
             break
             
     if not key_path:
-        return None
+        raise FileNotFoundError("找不到 service_account.json 金鑰檔案！請檢查 Render Secret Files 設定。")
         
     creds = ServiceAccountCredentials.from_json_keyfile_name(key_path, scope)
     _gspread_client = gspread.authorize(creds)
     return _gspread_client.open(SPREADSHEET_NAME)
 
 def fetch_jobs_data() -> list:
-    """優先透過 CSV 直連官網同源試算表，若失敗則回退 gspread"""
+    """直接連線 Google 試算表本體讀取職缺，容錯所有欄位名稱"""
     global _cached_jobs, _last_jobs_fetch
     now = time.time()
     if _cached_jobs is not None and (now - _last_jobs_fetch < CACHE_TTL):
         return _cached_jobs
 
     active_jobs = []
-    # 策略 A：直接讀取發布到網路的 CSV
     try:
-        req = urllib.request.Request(JOBS_CSV_URL, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            csv_text = response.read().decode('utf-8')
-            reader = csv.DictReader(io.StringIO(csv_text))
-            for row in reader:
-                clean_row = {k.strip(): str(v).strip() for k, v in row.items() if k}
-                status = clean_row.get("狀態", clean_row.get("職缺狀態", ""))
-                title = clean_row.get("職缺名稱(對外)", clean_row.get("職缺名稱", ""))
-                if title and "停招" not in status:
-                    active_jobs.append(clean_row)
-        print(f"[CSV 讀取成功] 共取得 {len(active_jobs)} 筆有效職缺！")
+        sheet = get_sheets_client()
+        # 尋找職缺分頁
+        ws = None
+        for name in ["職缺清單", "Jobs_職缺資料庫", "職缺列表", "Jobs", "工作表1"]:
+            try:
+                ws = sheet.worksheet(name)
+                break
+            except Exception:
+                continue
+        if not ws:
+            ws = sheet.get_worksheet(0)
+
+        all_values = ws.get_all_values()
+        if len(all_values) >= 2:
+            headers = [str(h).strip() for h in all_values[0]]
+            
+            stop_keywords = ["停招", "暫停", "額滿", "關閉", "下架", "結束", "否", "滿", "pause", "close"]
+
+            for row_idx, row in enumerate(all_values[1:], start=2):
+                if not any(str(cell).strip() for cell in row):
+                    continue  # 跳過完全空白列
+
+                # 建立欄位字典
+                row_dict = {}
+                for i, val in enumerate(row):
+                    h_name = headers[i] if i < len(headers) and headers[i] else f"COL_{i}"
+                    row_dict[h_name] = str(val).strip()
+
+                # 自動探索欄位值
+                title = ""
+                for k, v in row_dict.items():
+                    if any(t_kw in k for t_kw in ["職缺名稱", "職稱", "職務名稱", "工作名稱", "title"]):
+                        title = v
+                        break
+                if not title and len(row) >= 2:
+                    title = row[1].strip()  # 預設 B 欄為職稱
+
+                # 探索狀態
+                status = ""
+                for k, v in row_dict.items():
+                    if any(s_kw in k for s_kw in ["狀態", "職缺狀態", "招募狀態", "status"]):
+                        status = v
+                        break
+
+                # 只要有職稱且未標註停招，全部載入
+                if title and not any(stop_kw in status for stop_kw in stop_keywords):
+                    row_dict["_parsed_title"] = title
+                    row_dict["_raw_row_text"] = " ".join([str(c).strip() for c in row])
+                    active_jobs.append(row_dict)
+
+        print(f"[試算表載入成功] 工作表「{ws.title}」共載入 {len(active_jobs)} 筆招募中職缺！")
         _cached_jobs = active_jobs
         _last_jobs_fetch = now
         return active_jobs
     except Exception as e:
-        print(f"[CSV 讀取失敗，改用 gspread]: {e}")
-
-    # 策略 B：gspread 備援讀取
-    try:
-        sheet = get_sheets_client()
-        if sheet:
-            ws = None
-            for name in ["職缺清單", "Jobs_職缺資料庫", "職缺列表", "Jobs"]:
-                try:
-                    ws = sheet.worksheet(name)
-                    break
-                except Exception:
-                    continue
-            if not ws:
-                ws = sheet.get_worksheet(0)
-            values = ws.get_all_values()
-            if len(values) >= 2:
-                headers = [h.strip() for h in values[0]]
-                for r in values[1:]:
-                    row_dict = {headers[i]: r[i].strip() for i in range(min(len(headers), len(r)))}
-                    status = row_dict.get("狀態", row_dict.get("職缺狀態", ""))
-                    title = row_dict.get("職缺名稱(對外)", row_dict.get("職缺名稱", ""))
-                    if title and "停招" not in status:
-                        active_jobs.append(row_dict)
-            _cached_jobs = active_jobs
-            _last_jobs_fetch = now
-            return active_jobs
-    except Exception as e:
-        print(f"[gspread 讀取失敗]: {e}")
-
-    return _cached_jobs or []
+        print(f"[讀取試算表職缺失敗]: {e}")
+        return _cached_jobs or []
 
 def fetch_faqs_data() -> list:
     global _cached_faqs, _last_faqs_fetch
@@ -149,21 +153,20 @@ def fetch_faqs_data() -> list:
     faqs = []
     try:
         sheet = get_sheets_client()
-        if sheet:
-            ws = None
-            for name in ["FAQ_客服問答", "FAQ知識庫", "FAQ", "問答清單"]:
-                try:
-                    ws = sheet.worksheet(name)
-                    break
-                except Exception:
-                    continue
-            if ws:
-                values = ws.get_all_values()
-                if len(values) >= 2:
-                    headers = [h.strip() for h in values[0]]
-                    for r in values[1:]:
-                        row_dict = {headers[i]: r[i].strip() for i in range(min(len(headers), len(r)))}
-                        faqs.append(row_dict)
+        ws = None
+        for name in ["FAQ_客服問答", "FAQ知識庫", "FAQ", "問答清單"]:
+            try:
+                ws = sheet.worksheet(name)
+                break
+            except Exception:
+                continue
+        if ws:
+            values = ws.get_all_values()
+            if len(values) >= 2:
+                headers = [str(h).strip() for h in values[0]]
+                for r in values[1:]:
+                    row_dict = {headers[i]: str(r[i]).strip() for i in range(min(len(headers), len(r)))}
+                    faqs.append(row_dict)
         _cached_faqs = faqs
         _last_faqs_fetch = now
     except Exception as e:
@@ -184,12 +187,13 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
 
     for job in jobs[:10]:
         job_id = str(job.get("職缺代碼") or job.get("職缺編號") or "JOB").strip()
-        job_title = str(job.get("職缺名稱(對外)") or job.get("職缺名稱") or "優質職缺").strip()
+        job_title = str(job.get("_parsed_title") or job.get("職缺名稱(對外)") or job.get("職缺名稱") or "優質職缺").strip()
+        
         county = str(job.get("縣市") or "").strip()
         district = str(job.get("行政區") or "").strip()
-        location = f"{county} {district}".strip() or "台灣各廠區"
+        location = f"{county} {district}".strip() or "桃園市/全區"
         
-        salary = str(job.get("薪資") or job.get("薪資待遇") or "依公司規定").strip()
+        salary = str(job.get("薪資") or job.get("薪資待遇") or "時薪 218~253元/月領/週領").strip()
         shift = str(job.get("班別") or "").strip()
         leave = str(job.get("休假制度") or job.get("休假方式") or "").strip()
         job_type = str(job.get("全職/兼職") or job.get("全/兼職") or "").strip()
@@ -197,15 +201,15 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         
         tags_contents = []
         if shift:
-            tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["shift"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": shift, "size": "xxs", "color": badge_styles["shift"]["text"], "weight": "bold"}]})
+            tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["shift"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": shift[:8], "size": "xxs", "color": badge_styles["shift"]["text"], "weight": "bold"}]})
         if leave:
-            tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["leave"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": leave, "size": "xxs", "color": badge_styles["leave"]["text"], "weight": "bold"}]})
+            tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["leave"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": leave[:8], "size": "xxs", "color": badge_styles["leave"]["text"], "weight": "bold"}]})
         if job_type:
-            tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["type"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": job_type, "size": "xxs", "color": badge_styles["type"]["text"], "weight": "bold"}]})
+            tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["type"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": job_type[:8], "size": "xxs", "color": badge_styles["type"]["text"], "weight": "bold"}]})
         if pay_method:
-            tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["pay"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": pay_method, "size": "xxs", "color": badge_styles["pay"]["text"], "weight": "bold"}]})
+            tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["pay"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": pay_method[:8], "size": "xxs", "color": badge_styles["pay"]["text"], "weight": "bold"}]})
 
-        raw_desc = str(job.get("工作內容(對外)") or job.get("工作內容與條件") or "").strip()
+        raw_desc = str(job.get("工作內容(對外)") or job.get("工作內容與條件") or job.get("工作需求") or "").strip()
         clean_desc = re.sub(r'[\r\n\t]+', ' ', raw_desc).strip()
         if len(clean_desc) > 50:
             clean_desc = clean_desc[:50] + "..."
@@ -273,10 +277,10 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 4. 核心對話處理邏輯
+# 4. 核心對話處理邏輯 (全文檢索 + 同義詞)
 # ==========================================
 SYNONYM_GROUPS = [
-    ["理貨", "揀貨", "包裝", "倉管", "倉儲", "物流", "加工", "理貨員", "揀貨員", "物流士"],
+    ["理貨", "揀貨", "包裝", "倉管", "倉儲", "物流", "加工", "理貨員", "揀貨員", "物流士", "momo"],
     ["作業員", "技術員", "品檢", "組裝", "測試", "產線", "助理", "操作員", "工廠"],
     ["晚班", "夜班", "大夜", "小夜", "夜間", "大夜班"],
     ["早班", "日班", "晨班", "日間"],
@@ -303,8 +307,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
     active_jobs = fetch_jobs_data()
     active_faqs = fetch_faqs_data()
-
-    print(f"[目前載入職缺數]: {len(active_jobs)} 筆")
 
     # 1. 泛稱查詢
     if raw_msg in ["找工作", "有工作嗎", "有哪些工作", "工作推薦", "職缺列表", "看職缺", "全部職缺", "推薦職缺", "工作", "職缺"] or clean_msg == "":
@@ -338,10 +340,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     matched_jobs = []
     if active_jobs:
         for job in active_jobs:
-            row_text = " ".join([str(v) for v in job.values()]).replace("台", "臺").lower()
-            
+            row_text = str(job.get("_raw_row_text", "")).replace("台", "臺").lower()
+            if not row_text:
+                row_text = " ".join([str(v) for v in job.values()]).replace("台", "臺").lower()
+
+            # A. 命中搜尋詞（如：理貨、momo、桃園）
             if any(token in row_text for token in search_tokens):
                 matched_jobs.append(job)
+            # B. 雙字滑動比對
             elif len(clean_msg) >= 2:
                 for i in range(len(clean_msg) - 1):
                     sub = clean_msg[i:i+2]
@@ -353,7 +359,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         unique_jobs = []
         seen_ids = set()
         for j in matched_jobs:
-            jid = j.get("職缺代碼") or j.get("職缺名稱(對外)") or str(j)
+            jid = j.get("職缺代碼") or j.get("_parsed_title") or str(j)
             if jid not in seen_ids:
                 seen_ids.add(jid)
                 unique_jobs.append(j)
