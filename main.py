@@ -22,7 +22,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="6.5.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="6.6.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -261,13 +261,13 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         raw_desc = str(job.get("工作內容(對外)") or job.get("工作內容與條件") or job.get("工作需求") or "").strip()
         clean_desc = extract_smart_summary(raw_desc, job_title)
             
-        website_job_url = "https://tsaipei.netlify.app/#jobs"
+        website_job_url = "https://tsaipei.netlify.app/#jobs"[cite: 1]
         raw_resume_url = str(job.get("線上履歷網址") or job.get("線上履歷連結") or "").strip()
         if raw_resume_url.startswith("http://") or raw_resume_url.startswith("https://"):
             separator = "&" if "?" in raw_resume_url else "?"
             apply_link = f"{raw_resume_url}{separator}job_id={job_id}&line_id={user_id}"
         else:
-            apply_link = "https://tsaipei.netlify.app/#jobs"
+            apply_link = "https://tsaipei.netlify.app/#jobs"[cite: 1]
 
         body_contents = [
             {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
@@ -327,7 +327,6 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
         return ""
-    # 更新為官方指定支援之模型清單
     models = ["gemini-3.6-flash", "gemini-3.5-flash"]
     for m in models:
         try:
@@ -371,7 +370,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         for kw in q_keywords:
             kw_clean = kw.strip()
             if kw_clean and (kw_clean in raw_msg or raw_msg in kw_clean):
-                reply_text = f"{answer}\n\n💡 材霈小提醒：本回覆由材霈AI智能助理自動提供。若有更細節的問題，歡迎上班時間由專員為您服務！"
+                reply_text = f"{answer}\n\n💡 材霈小提醒：本回覆由材霈智能AI助理自動提供。若有更細節的問題，歡迎上班時間由專員為您服務！"
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                 return
 
@@ -513,7 +512,7 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
     target_line_bot_api.reply_message(reply_token, TextSendMessage(text=HUMAN_GUIDE_TEXT, quick_reply=quick_reply))
 
 # ==========================================
-# 7. Webhook 路由端點
+# 7. Webhook 路由端點 (加入防呆簽章檢查)
 # ==========================================
 @app.get("/")
 def health_check():
@@ -521,6 +520,8 @@ def health_check():
 
 @app.post("/test-callback")
 async def test_callback(request: Request, x_line_signature: str = Header(None)):
+    if not x_line_signature:
+        raise HTTPException(status_code=400, detail="Missing X-Line-Signature header")
     body = await request.body()
     try:
         test_handler.handle(body.decode("utf-8"), x_line_signature)
@@ -534,6 +535,8 @@ def handle_test_message(event):
 
 @app.post("/callback")
 async def callback(request: Request, x_line_signature: str = Header(None)):
+    if not x_line_signature:
+        raise HTTPException(status_code=400, detail="Missing X-Line-Signature header")
     body = await request.body()
     try:
         handler.handle(body.decode("utf-8"), x_line_signature)
