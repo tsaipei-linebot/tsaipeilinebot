@@ -22,7 +22,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="6.0.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="6.1.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -52,7 +52,6 @@ if GEMINI_API_KEY:
 # ==========================================
 # 2. 對話記憶體快取 (Session Context)
 # ==========================================
-# 記錄每個使用者的歷史對話與求職偏好 (記憶時效 15 分鐘)
 user_sessions = {}
 SESSION_TTL = 900
 
@@ -323,7 +322,7 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 6. Gemini 真人招募大腦（多輪引導與職缺媒合）
+# 6. Gemini 真人顧問決策核心
 # ==========================================
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
@@ -331,10 +330,17 @@ def query_gemini_ai(prompt: str) -> str:
     models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     for m in models:
         try:
-            res = ai_client.models.generate_content(model=m, contents=prompt)
-            if res and hasattr(res, 'text') and res.text:
-                return res.text.strip()
-        except Exception:
+            # 支援 google-genai 最新版介面
+            if hasattr(ai_client, 'models'):
+                res = ai_client.models.generate_content(model=m, contents=prompt)
+                if res and hasattr(res, 'text') and res.text:
+                    return res.text.strip()
+            elif hasattr(ai_client, 'interactions'):
+                interaction = ai_client.interactions.create(model=m, input=prompt)
+                if hasattr(interaction, 'text') and interaction.text:
+                    return interaction.text.strip()
+        except Exception as e:
+            print(f"[Gemini 呼叫異常 {m}]: {e}")
             continue
     return ""
 
@@ -350,7 +356,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     active_jobs = fetch_jobs_data()
     active_faqs = fetch_faqs_data()
 
-    # 1. 快速檢索 FAQ（若為標準問答，優先直接回覆）
+    # 1. 快速檢索 FAQ
     for faq in active_faqs:
         q_keywords = str(faq.get("問題與常見問法") or faq.get("問題") or "").replace("、", ",").replace("，", ",").replace("/", ",").split(",")
         answer = faq.get("標準回覆內容") or faq.get("回答") or ""
@@ -361,69 +367,60 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                 return
 
-    # 2. 載入該求職者的對話歷史紀錄
+    # 2. 載入對話歷史紀錄
     history = get_user_history(user_id)
     history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history])
 
-    # 建立職缺簡易索引清單供 Gemini 媒合
     job_index_text = ""
     for idx, j in enumerate(active_jobs):
         t = j.get("_parsed_title", "")
         loc = f"{j.get('縣市', '')}{j.get('行政區', '')}"
         shift = j.get('班別', '')
         salary = j.get('薪資', '')
-        desc = j.get('_raw_row_text', '')[:60]
-        job_index_text += f"[ID:{idx}] 名稱:{t} | 地點:{loc} | 班別:{shift} | 待遇:{salary} | 描述:{desc}\n"
+        job_index_text += f"[ID:{idx}] 名稱:{t} | 地點:{loc} | 班別:{shift} | 待遇:{salary}\n"
 
-    # 3. Gemini 真人顧問大腦提示詞
-    ai_prompt = f"""你是一位「材霈有限公司」非常親切、專業、高情商的真人在線人資招募顧問（名字叫沛沛）。
-你的目標是：以真人專員的口吻與求職者自然對話，一步步引導、了解對方的求職需求（如：工作地區、偏好班別、工作類型、是否需週領/週休等），並在條件明確時推薦合適的職缺。
+    # 3. Gemini 真人顧問提示詞
+    ai_prompt = f"""你是一位「材霈有限公司」非常親切、專業、高情商的真人在線人資招募顧問（名字叫小霈）。
+你的目標是：結合過去對話歷史，以真人專員的口吻引導求職者，理解其求職條件（地區、班別、工種），並在有符合職缺時推薦。
 
 【目前公司招募中的職缺清單】：
-{job_index_text}
+{job_index_text if job_index_text else "（目前職缺以北部、桃園、新莊、龜山為主）"}
 
-【過去幾句對話歷史】：
+【過去對話歷史】：
 {history_text if history_text else "（對話剛開始）"}
 
 【求職者剛說的話】：
 「{raw_msg}」
 
-【你的思考與決策任務】：
-請判斷目前應該進行「步驟A：親切引導與追問」還是「步驟B：條件足夠，推薦職缺」：
+【決策指令】：
+請分析求職者剛說的話以及上下文，選擇下列其中一種格式輸出：
 
-情況 1（求職者剛打招呼、說想找工作，或條件還很模糊）：
-- 請以親切溫暖的口吻回應他。
-- 一步一步詢問他：「想在哪個地區上班？」或「偏好早班、夜班，還是特定工作類型（如理貨、作業員）？」。
-- 格式請輸出：
+格式 A（求職者剛打招呼、說想找工作，或條件還很模糊）：
 ACTION:ASK
-REPLY:（你要對求職者說的話，字數約 40-70 字，態度親切自然，帶有適當 Emoji）
-BUTTONS:（提供 3-5 個方便求職者點選的建議標籤，以逗號分隔，例如：📍桃園工作,📍新莊工作,☀️固定早班,📦momo理貨,🏭廠區作業員）
+REPLY:（以真人顧問口吻親切詢問其偏好的【地區】或【班別】，約 40-70 字，適度使用 Emoji）
+BUTTONS:（提供 3-5 個方便點選的建議標籤，以逗號分隔，例如：📍桃園工作,📍新莊工作,☀️固定早班,🌙夜班/大夜,📦momo理貨）
 
-情況 2（求職者已表達明確條件，或在清單中找到高度符合的職缺）：
-- 請從清單中挑選 1 到 3 個最符合的職缺 [ID 數字]。
-- 格式請輸出：
+格式 B（求職者提出的條件有符合的職缺，或指定地區/班別有缺）：
 ACTION:RECOMMEND
-IDS:（符合的職缺數字，例如 0 或 0,2）
-REPLY:（給求職者的溫暖過場引導語，例如：太棒了！為您找到以下符合您早班且在桃園的熱門職缺，歡迎點擊下方查看簡章或線上填寫履歷喔！）
+IDS:（符合的職缺數字，例如 0 或 0,1）
+REPLY:（給求職者的溫暖過場語，例如：為您找到以下符合您需求的優質職缺，歡迎點擊查看簡章或線上填寫履歷喔！）
 
-情況 3（求職者提出的條件在清單中完全沒有符合）：
-- 格式請輸出：
+格式 C（求職者提出的條件在清單中「完全沒有」符合，例如求職者要找台南/高雄/台中但目前只有桃園新北，或是無該班別）：
 ACTION:NO_MATCH
-REPLY:（以真人專員口吻致歉，說明目前該條件暫無開放，並主動詢問是否考慮鄰近地區或其他班別）
+REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並主動詢問是否考慮其他地區如桃園/新莊，約 40-60 字）
 
-請直接輸出你的判斷結果（請嚴格遵守上述格式）："""
+請直接輸出："""
 
     ai_output = query_gemini_ai(ai_prompt)
-    print(f"[Gemini 顧問決策]:\n{ai_output}\n")
+    print(f"[Gemini 決策輸出]:\n{ai_output}\n")
 
-    # 4. 解析 Gemini 決策並生成 LINE 訊息
     append_user_history(user_id, "求職者", raw_msg)
 
+    # 4. 解析 AI 輸出
     if "ACTION:RECOMMEND" in ai_output:
         ids_match = re.search(r'IDS:\s*([0-9,\s]+)', ai_output)
         reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
-        
-        reply_text = reply_match.group(1).strip() if reply_match else "為您推薦以下最符合您需求的職缺："
+        reply_text = reply_match.group(1).strip() if reply_match else "太棒了！為您推薦以下最符合您需求的職缺："
         append_user_history(user_id, "招募顧問", reply_text)
 
         matched_jobs = []
@@ -442,7 +439,7 @@ REPLY:（以真人專員口吻致歉，說明目前該條件暫無開放，並�
         reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|$)', ai_output, re.DOTALL)
         buttons_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
 
-        reply_text = reply_match.group(1).strip() if reply_match else "您好！很高興為您服務，請問您目前希望在哪個地區工作呢？"
+        reply_text = reply_match.group(1).strip() if reply_match else "您好！很高興為您服務，請問您目前希望在哪個地區工作？偏好早班還是夜班呢？"
         append_user_history(user_id, "招募顧問", reply_text)
 
         buttons = []
@@ -457,8 +454,8 @@ REPLY:（以真人專員口吻致歉，說明目前該條件暫無開放，並�
                 QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
                 QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
                 QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
-                QuickReplyButton(action=MessageAction(label="📦 momo理貨", text="理貨工作")),
-                QuickReplyButton(action=MessageAction(label="🏭 廠區作業員", text="作業員"))
+                QuickReplyButton(action=MessageAction(label="🌙 晚班/夜班", text="夜班工作")),
+                QuickReplyButton(action=MessageAction(label="📦 momo理貨", text="理貨工作"))
             ]
 
         quick_reply = QuickReply(items=buttons)
@@ -467,51 +464,16 @@ REPLY:（以真人專員口吻致歉，說明目前該條件暫無開放，並�
 
     elif "ACTION:NO_MATCH" in ai_output:
         reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
-        reply_text = reply_match.group(1).strip() if reply_match else f"您好！目前暫時沒有完全符合「{raw_msg}」的職缺，專員已為您記錄，您也可以看看其他地區喔！"
+        reply_text = reply_match.group(1).strip() if reply_match else f"您好！目前在「{raw_msg}」暫時沒有開放中的職缺，已為您記錄需求！"
         append_user_history(user_id, "招募顧問", reply_text)
         
         quick_reply = QuickReply(items=[
             QuickReplyButton(action=MessageAction(label="📍 看看桃園職缺", text="桃園工作")),
             QuickReplyButton(action=MessageAction(label="📍 看看新北職缺", text="新莊工作")),
-            QuickReplyButton(action=MessageAction(label="🌐 瀏覽全區職缺", text="找工作"))
+            QuickReplyButton(action=MessageAction(label="📦 看看理貨職缺", text="理貨工作"))
         ])
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
         return
 
-    # 5. 後援兜底回覆
-    fallback_text = "您好！我是材霈招募專員 😊 請問您目前希望在哪個地區找工作？有偏好早班或夜班嗎？"
-    append_user_history(user_id, "招募顧問", fallback_text)
-    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=fallback_text))
-
-# ==========================================
-# 7. Webhook 路由端點
-# ==========================================
-@app.get("/")
-def health_check():
-    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant is running."}
-
-@app.post("/test-callback")
-async def test_callback(request: Request, x_line_signature: str = Header(None)):
-    body = await request.body()
-    try:
-        test_handler.handle(body.decode("utf-8"), x_line_signature)
-    except InvalidSignatureError:
-        raise HTTPException(status_code=400, detail="Invalid signature")
-    return "OK"
-
-@test_handler.add(MessageEvent, message=TextMessage)
-def handle_test_message(event):
-    process_user_message(event, test_line_bot_api)
-
-@app.post("/callback")
-async def callback(request: Request, x_line_signature: str = Header(None)):
-    body = await request.body()
-    try:
-        handler.handle(body.decode("utf-8"), x_line_signature)
-    except InvalidSignatureError:
-        raise HTTPException(status_code=400, detail="Invalid signature")
-    return "OK"
-
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    process_user_message(event, line_bot_api)
+    # 5. 智慧本地容錯（當 AI 呼叫未返回時，依關鍵字判斷地區/班別）
+    print("
