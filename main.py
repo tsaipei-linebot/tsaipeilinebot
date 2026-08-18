@@ -22,7 +22,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="6.1.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="6.4.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -240,7 +240,7 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         
         county = str(job.get("縣市") or "").strip()
         district = str(job.get("行政區") or "").strip()
-        location = f"{county} {district}".strip() or "全區廠區"
+        location = f"{county} {district}".strip() or "全台各廠區"
         
         salary = str(job.get("薪資") or job.get("薪資待遇") or "依公司規定").strip()
         shift = str(job.get("班別") or "").strip()
@@ -322,7 +322,7 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 6. Gemini 真人顧問決策核心
+# 6. Gemini 真人顧問決策核心 (全台職缺支援)
 # ==========================================
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
@@ -330,7 +330,6 @@ def query_gemini_ai(prompt: str) -> str:
     models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     for m in models:
         try:
-            # 支援 google-genai 最新版介面
             if hasattr(ai_client, 'models'):
                 res = ai_client.models.generate_content(model=m, contents=prompt)
                 if res and hasattr(res, 'text') and res.text:
@@ -352,6 +351,15 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     raw_msg = event.message.text.strip()
     user_id = getattr(event.source, 'user_id', 'USER')
     print(f"\n[收到使用者訊息]: 「{raw_msg}」 (User: {user_id})")
+
+    # 定義全台適用的人性化問候語
+    HUMAN_GUIDE_TEXT = (
+        "您好！我是材霈的人資招募專員 😊\n\n"
+        "很高興為您服務！為了幫您精準媒合最合適的工作，想先了解一下：\n\n"
+        "1. 您希望在【哪個地區】上班？（例如：桃園、新莊、台中、台南、高雄等）\n"
+        "2. 有偏好的【工作類型】或【班別】嗎？（例如：理貨、作業員、早班、夜班）\n\n"
+        "💡 您可以直接點擊下方快捷按鈕，或直接打字告訴我您的需求喔！"
+    )
 
     active_jobs = fetch_jobs_data()
     active_faqs = fetch_faqs_data()
@@ -379,12 +387,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         salary = j.get('薪資', '')
         job_index_text += f"[ID:{idx}] 名稱:{t} | 地點:{loc} | 班別:{shift} | 待遇:{salary}\n"
 
-    # 3. Gemini 真人顧問提示詞
+    # 3. Gemini 真人顧問提示詞 (已支援全台北中南職缺)
     ai_prompt = f"""你是一位「材霈有限公司」非常親切、專業、高情商的真人在線人資招募顧問（名字叫小霈）。
-你的目標是：結合過去對話歷史，以真人專員的口吻引導求職者，理解其求職條件（地區、班別、工種），並在有符合職缺時推薦。
+你的目標是：結合過去對話歷史，以真人專員的口吻引導求職者，理解其求職條件（地區、班別、工種），並在有符合職缺時推薦。我們在全台灣（北、中、南區）皆有職缺。
 
 【目前公司招募中的職缺清單】：
-{job_index_text if job_index_text else "（目前職缺以北部、桃園、新莊、龜山為主）"}
+{job_index_text if job_index_text else "（目前公司在全台灣北、中、南區均有開放各類優質職缺）"}
 
 【過去對話歷史】：
 {history_text if history_text else "（對話剛開始）"}
@@ -397,17 +405,17 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
 格式 A（求職者剛打招呼、說想找工作，或條件還很模糊）：
 ACTION:ASK
-REPLY:（以真人顧問口吻親切詢問其偏好的【地區】或【班別】，約 40-70 字，適度使用 Emoji）
-BUTTONS:（提供 3-5 個方便點選的建議標籤，以逗號分隔，例如：📍桃園工作,📍新莊工作,☀️固定早班,🌙夜班/大夜,📦momo理貨）
+REPLY:{HUMAN_GUIDE_TEXT}
+BUTTONS:📍 桃園工作,📍 新莊/新北,📍 台中工作,📍 南部工作,☀️ 固定早班,🌙 夜班/大夜,📦 理貨工作
 
 格式 B（求職者提出的條件有符合的職缺，或指定地區/班別有缺）：
 ACTION:RECOMMEND
 IDS:（符合的職缺數字，例如 0 或 0,1）
 REPLY:（給求職者的溫暖過場語，例如：為您找到以下符合您需求的優質職缺，歡迎點擊查看簡章或線上填寫履歷喔！）
 
-格式 C（求職者提出的條件在清單中「完全沒有」符合，例如求職者要找台南/高雄/台中但目前只有桃園新北，或是無該班別）：
+格式 C（求職者提出的條件在清單中「完全沒有」符合）：
 ACTION:NO_MATCH
-REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並主動詢問是否考慮其他地區如桃園/新莊，約 40-60 字）
+REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並主動詢問是否考慮其他地區或班別，約 40-60 字）
 
 請直接輸出："""
 
@@ -439,7 +447,7 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
         reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|$)', ai_output, re.DOTALL)
         buttons_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
 
-        reply_text = reply_match.group(1).strip() if reply_match else "您好！很高興為您服務，請問您目前希望在哪個地區工作？偏好早班還是夜班呢？"
+        reply_text = reply_match.group(1).strip() if reply_match else HUMAN_GUIDE_TEXT
         append_user_history(user_id, "招募顧問", reply_text)
 
         buttons = []
@@ -453,9 +461,10 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
             buttons = [
                 QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
                 QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+                QuickReplyButton(action=MessageAction(label="📍 台中工作", text="台中工作")),
+                QuickReplyButton(action=MessageAction(label="📍 台南/高雄", text="台南工作")),
                 QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
-                QuickReplyButton(action=MessageAction(label="🌙 晚班/夜班", text="夜班工作")),
-                QuickReplyButton(action=MessageAction(label="📦 momo理貨", text="理貨工作"))
+                QuickReplyButton(action=MessageAction(label="🌙 晚班/夜班", text="夜班工作"))
             ]
 
         quick_reply = QuickReply(items=buttons)
@@ -468,39 +477,22 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
         append_user_history(user_id, "招募顧問", reply_text)
         
         quick_reply = QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="📍 看看桃園職缺", text="桃園工作")),
-            QuickReplyButton(action=MessageAction(label="📍 看看新北職缺", text="新莊工作")),
-            QuickReplyButton(action=MessageAction(label="📦 看看理貨職缺", text="理貨工作"))
+            QuickReplyButton(action=MessageAction(label="📍 看看北部職缺", text="桃園工作")),
+            QuickReplyButton(action=MessageAction(label="📍 看看中部職缺", text="台中工作")),
+            QuickReplyButton(action=MessageAction(label="📍 看看南部職缺", text="台南工作")),
+            QuickReplyButton(action=MessageAction(label="🌐 瀏覽全部工作", text="找工作"))
         ])
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
         return
 
-    # 5. 智慧本地容錯（當 AI 呼叫未返回時，依關鍵字判斷地區/班別）
-    print("[執行智慧本地容錯]")
-    msg_norm = raw_msg.replace("台", "臺")
-    
-    # 判斷是否指定了非北部地區（如台南、高雄、台中）
-    non_support_locs = ["台南", "臺南", "高雄", "台中", "臺中", "彰化", "新竹", "苗栗", "屏東", "花蓮", "台東"]
-    found_non_support = [loc for loc in non_support_locs if loc in msg_norm]
-    
-    if found_non_support:
-        loc_name = found_non_support[0]
-        reply_text = f"您好！專員為您查詢後，目前材霈在「{loc_name}」地區暫時沒有開放中的職缺喔！\n\n目前我們主要的優質職缺集中在【桃園】與【新北（新莊/三重）】，請問您是否會考慮鄰近地區的職缺呢？ 😊"
-        append_user_history(user_id, "招募顧問", reply_text)
-        quick_reply = QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="📍 看看桃園職缺", text="桃園工作")),
-            QuickReplyButton(action=MessageAction(label="📍 看看新莊職缺", text="新莊工作")),
-            QuickReplyButton(action=MessageAction(label="📦 看看理貨工作", text="理貨工作"))
-        ])
-        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
-        return
-
-    # 本地直接比對現有職缺
+    # 5. 智慧本地容錯（全台職缺直接動態比對）
+    print("[執行智慧本地容錯比對]")
     matched_jobs = []
-    clean_msg = re.sub(r'[？\?！!。，,\s]+', '', raw_msg).lower()
+    clean_msg = re.sub(r'[？\?！!。，,\s]+', '', raw_msg).replace("台", "臺").lower()
+    
     for j in active_jobs:
         row_text = str(j.get("_raw_row_text", "")).replace("台", "臺").lower()
-        if any(token in row_text for token in [clean_msg, "夜班", "早班", "理貨", "作業員"] if token and token in clean_msg):
+        if clean_msg and (clean_msg in row_text or any(token in row_text for token in ["夜班", "早班", "理貨", "作業員", "司機", "包裝", "中班"] if token in clean_msg)):
             matched_jobs.append(j)
 
     if matched_jobs:
@@ -509,16 +501,17 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
         target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_jobs[:3], user_id)])
         return
 
-    # 兜底引導
-    default_text = "您好！很高興為您服務 😊 請問您目前希望在【桃園】還是【新北】找工作？偏好早班或夜班呢？"
-    append_user_history(user_id, "招募顧問", default_text)
+    # 兜底引導（採用全台人性化問候語）
+    append_user_history(user_id, "招募顧問", HUMAN_GUIDE_TEXT)
     quick_reply = QuickReply(items=[
         QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
-        QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+        QuickReplyButton(action=MessageAction(label="📍 新莊/新北", text="新莊工作")),
+        QuickReplyButton(action=MessageAction(label="📍 台中工作", text="台中工作")),
+        QuickReplyButton(action=MessageAction(label="📍 台南/高雄", text="台南工作")),
         QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
         QuickReplyButton(action=MessageAction(label="🌙 晚班/夜班", text="夜班工作"))
     ])
-    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=default_text, quick_reply=quick_reply))
+    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=HUMAN_GUIDE_TEXT, quick_reply=quick_reply))
 
 # ==========================================
 # 7. Webhook 路由端點
