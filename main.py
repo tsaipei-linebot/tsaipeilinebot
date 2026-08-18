@@ -5,6 +5,7 @@ import io
 import time
 import datetime
 import urllib.request
+import json
 import pytz
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Header, HTTPException
@@ -21,7 +22,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei LineBot Humanized", version="5.0.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="6.0.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -49,39 +50,49 @@ if GEMINI_API_KEY:
         print(f"[系統警告] Gemini AI 初始化失敗: {e}")
 
 # ==========================================
-# 2. 職缺內容智慧去噪與重點摘要模組
+# 2. 對話記憶體快取 (Session Context)
+# ==========================================
+# 記錄每個使用者的歷史對話與求職偏好 (記憶時效 15 分鐘)
+user_sessions = {}
+SESSION_TTL = 900
+
+def get_user_history(user_id: str) -> list:
+    now = time.time()
+    if user_id in user_sessions:
+        session = user_sessions[user_id]
+        if now - session["last_time"] < SESSION_TTL:
+            session["last_time"] = now
+            return session["messages"]
+    user_sessions[user_id] = {"last_time": now, "messages": []}
+    return user_sessions[user_id]["messages"]
+
+def append_user_history(user_id: str, role: str, text: str):
+    history = get_user_history(user_id)
+    history.append({"role": role, "text": text})
+    if len(history) > 8:
+        history.pop(0)
+
+# ==========================================
+# 3. 職缺內容智慧去噪與重點摘要模組
 # ==========================================
 def extract_smart_summary(raw_desc: str, title: str) -> str:
-    """自動過濾公司名、門牌、重複工期人數等雜訊，提煉為精華工作說明"""
     if not raw_desc:
         return f"歡迎應徵【{title}】，點擊下方按鈕瞭解完整工作說明！"
 
     text = str(raw_desc)
-    
-    # 1. 移除公司名稱
     text = re.sub(r'[\w\s]*(?:股份有限公司|有限公司|企業社|商行)', '', text)
-    
-    # 2. 移除詳細門牌地址
     text = re.sub(r'[台臺\w]{2,3}[市縣][\w]{2,3}[區鄉鎮市][\w\d號路街巷弄段\-]+', '', text)
-    
-    # 3. 移除後台行政重複標籤 (工期、人數、工作時間等)
     text = re.sub(r'(?:工期|預計工期|需求人數|人數|工作地點|工作時間|上班時間|班別|薪資|待遇|休假制度|休假|領薪方式)\s*[:：][^\n\r,，、;；]*', '', text)
-    
-    # 4. 移除特殊符號與連續空白
     text = re.sub(r'[*•▶►◆◇■□▲▼\r\n\t]+', ' ', text)
     text = re.sub(r'\s{2,}', ' ', text).strip()
-    
-    # 5. 去除殘留首尾標點
     text = re.sub(r'^[,\.，。、:：;\s]+', '', text)
     text = re.sub(r'[,\.，。、:：;\s]+$', '', text)
     
-    # 6. 精華長度截斷
     if len(text) >= 8:
         if len(text) > 42:
             return text[:42] + "..."
         return text
         
-    # 7. 若原始字串全為雜訊被清空，依標題自動給予清晰描述
     if any(k in title for k in ["理貨", "揀貨", "倉", "物流"]):
         return "負責商品分揀、理貨貼標與包裝出貨，免經驗環境佳！"
     elif any(k in title for k in ["作業員", "包裝", "組裝", "產線", "技術員"]):
@@ -92,7 +103,7 @@ def extract_smart_summary(raw_desc: str, title: str) -> str:
     return f"開放應徵【{title}】，工作環境單純，歡迎點擊下方履歷應徵！"
 
 # ==========================================
-# 3. Google Sheets 資料庫直連模組
+# 4. Google Sheets 資料庫直連模組
 # ==========================================
 CACHE_TTL = 30
 _cached_jobs, _last_jobs_fetch = None, 0
@@ -124,7 +135,6 @@ def get_sheets_client():
     return _gspread_client.open(SPREADSHEET_NAME)
 
 def fetch_jobs_data() -> list:
-    """直接連線 Google 試算表本體讀取職缺"""
     global _cached_jobs, _last_jobs_fetch
     now = time.time()
     if _cached_jobs is not None and (now - _last_jobs_fetch < CACHE_TTL):
@@ -214,7 +224,7 @@ def fetch_faqs_data() -> list:
     return _cached_faqs or []
 
 # ==========================================
-# 4. 雙按鈕 + 4 標籤 Flex 卡片
+# 5. 雙按鈕 + 4 標籤 Flex 卡片
 # ==========================================
 def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     bubbles = []
@@ -313,20 +323,20 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 5. 核心對話處理邏輯（擬真人多輪引導 + 全文檢索）
+# 6. Gemini 真人招募大腦（多輪引導與職缺媒合）
 # ==========================================
-SYNONYM_GROUPS = [
-    ["理貨", "揀貨", "包裝", "倉管", "倉儲", "物流", "加工", "理貨員", "揀貨員", "物流士", "momo"],
-    ["作業員", "技術員", "品檢", "組裝", "測試", "產線", "助理", "操作員", "工廠"],
-    ["晚班", "夜班", "大夜", "小夜", "夜間", "大夜班"],
-    ["早班", "日班", "晨班", "日間"],
-    ["中班", "午後班"],
-    ["司機", "送貨", "外送", "物流司機", "駕駛", "貨車"],
-    ["週休", "周休", "排休", "見紅休", "月休八天", "休六日"],
-    ["週領", "周領", "日領", "預支", "借支", "領錢"],
-    ["兼職", "工讀", "打工", "pt", "PT", "短期"],
-    ["全職", "正職", "常態"]
-]
+def query_gemini_ai(prompt: str) -> str:
+    if not ai_client:
+        return ""
+    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    for m in models:
+        try:
+            res = ai_client.models.generate_content(model=m, contents=prompt)
+            if res and hasattr(res, 'text') and res.text:
+                return res.text.strip()
+        except Exception:
+            continue
+    return ""
 
 def process_user_message(event, target_line_bot_api: LineBotApi):
     reply_token = event.reply_token
@@ -335,39 +345,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
     raw_msg = event.message.text.strip()
     user_id = getattr(event.source, 'user_id', 'USER')
-    print(f"\n[收到使用者訊息]: 「{raw_msg}」")
-
-    # 1. 核心字詞萃取
-    clean_msg = re.sub(r'[？\?！!。，,\s]+', '', raw_msg).replace("台", "臺").lower()
-    for filler in ["有嗎", "有沒有", "我想找", "想找", "我要找", "請問", "可以推薦", "推薦", "的工作", "工作", "職缺", "的", "你好", "您好"]:
-        clean_msg = clean_msg.replace(filler, "")
+    print(f"\n[收到使用者訊息]: 「{raw_msg}」 (User: {user_id})")
 
     active_jobs = fetch_jobs_data()
     active_faqs = fetch_faqs_data()
 
-    # ---------------- 步驟 1：擬真人需求探索引導（當求職者表達泛稱找工作時） ----------------
-    general_intents = ["找工作", "有工作嗎", "我想找工作", "工作推薦", "看職缺", "推薦職缺", "工作", "職缺", "想找工作", "有哪些工作", "有缺嗎", "求職"]
-    if raw_msg in general_intents or clean_msg in ["工作", "職缺", "缺額", "找工作", "看工作", ""]:
-        guide_text = (
-            "您好！我是材霈的人資招募專員 😊\n\n"
-            "很高興為您服務！為了幫您精準媒合最合適的工作，想先了解一下：\n\n"
-            "1. 您希望在【哪個地區】上班？（例如：桃園、龜山、新莊、蘆竹）\n"
-            "2. 有偏好的【工作類型】或【班別】嗎？（例如：理貨、作業員、早班、夜班）\n\n"
-            "💡 您可以直接點擊下方快捷按鈕，或直接打字告訴我您的需求喔！"
-        )
-        quick_reply = QuickReply(items=[
-            QuickReplyButton(action=MessageAction(label="📍 桃園地區", text="桃園工作")),
-            QuickReplyButton(action=MessageAction(label="📍 新莊/新北", text="新莊工作")),
-            QuickReplyButton(action=MessageAction(label="📦 momo/理貨", text="理貨工作")),
-            QuickReplyButton(action=MessageAction(label="🏭 廠區作業員", text="作業員")),
-            QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
-            QuickReplyButton(action=MessageAction(label="🌙 晚班/夜班", text="夜班工作"))
-        ])
-        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=guide_text, quick_reply=quick_reply))
-        print("[擬真引導] 已發送需求探索引導問話與快捷按鈕")
-        return
-
-    # ---------------- 步驟 2：FAQ 知識庫精確比對 ----------------
+    # 1. 快速檢索 FAQ（若為標準問答，優先直接回覆）
     for faq in active_faqs:
         q_keywords = str(faq.get("問題與常見問法") or faq.get("問題") or "").replace("、", ",").replace("，", ",").replace("/", ",").split(",")
         answer = faq.get("標準回覆內容") or faq.get("回答") or ""
@@ -378,61 +361,134 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                 return
 
-    # ---------------- 步驟 3：全文檢索 + 同義詞擴展比對 ----------------
-    msg_norm = raw_msg.replace("台", "臺").lower()
-    search_tokens = set()
-    if clean_msg:
-        search_tokens.add(clean_msg)
+    # 2. 載入該求職者的對話歷史紀錄
+    history = get_user_history(user_id)
+    history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history])
 
-    for group in SYNONYM_GROUPS:
-        if any(kw.lower() in msg_norm or (clean_msg and kw.lower() in clean_msg) for kw in group if kw):
-            for kw in group:
-                if kw:
-                    search_tokens.add(kw.lower())
+    # 建立職缺簡易索引清單供 Gemini 媒合
+    job_index_text = ""
+    for idx, j in enumerate(active_jobs):
+        t = j.get("_parsed_title", "")
+        loc = f"{j.get('縣市', '')}{j.get('行政區', '')}"
+        shift = j.get('班別', '')
+        salary = j.get('薪資', '')
+        desc = j.get('_raw_row_text', '')[:60]
+        job_index_text += f"[ID:{idx}] 名稱:{t} | 地點:{loc} | 班別:{shift} | 待遇:{salary} | 描述:{desc}\n"
 
-    matched_jobs = []
-    if active_jobs:
-        for job in active_jobs:
-            row_text = str(job.get("_raw_row_text", "")).replace("台", "臺").lower()
-            if not row_text:
-                row_text = " ".join([str(v) for v in job.values()]).replace("台", "臺").lower()
+    # 3. Gemini 真人顧問大腦提示詞
+    ai_prompt = f"""你是一位「材霈有限公司」非常親切、專業、高情商的真人在線人資招募顧問（名字叫沛沛）。
+你的目標是：以真人專員的口吻與求職者自然對話，一步步引導、了解對方的求職需求（如：工作地區、偏好班別、工作類型、是否需週領/週休等），並在條件明確時推薦合適的職缺。
 
-            if any(token in row_text for token in search_tokens):
-                matched_jobs.append(job)
-            elif len(clean_msg) >= 2:
-                for i in range(len(clean_msg) - 1):
-                    sub = clean_msg[i:i+2]
-                    if sub in row_text:
-                        matched_jobs.append(job)
-                        break
+【目前公司招募中的職缺清單】：
+{job_index_text}
 
-    if matched_jobs:
-        unique_jobs = []
-        seen_ids = set()
-        for j in matched_jobs:
-            jid = j.get("職缺代碼") or j.get("_parsed_title") or str(j)
-            if jid not in seen_ids:
-                seen_ids.add(jid)
-                unique_jobs.append(j)
+【過去幾句對話歷史】：
+{history_text if history_text else "（對話剛開始）"}
 
-        target_line_bot_api.reply_message(reply_token, create_job_flex_card(unique_jobs, user_id))
-        print(f"[職缺命中] 關鍵字: {search_tokens}，成功推播 {len(unique_jobs)} 筆職缺！")
+【求職者剛說的話】：
+「{raw_msg}」
+
+【你的思考與決策任務】：
+請判斷目前應該進行「步驟A：親切引導與追問」還是「步驟B：條件足夠，推薦職缺」：
+
+情況 1（求職者剛打招呼、說想找工作，或條件還很模糊）：
+- 請以親切溫暖的口吻回應他。
+- 一步一步詢問他：「想在哪個地區上班？」或「偏好早班、夜班，還是特定工作類型（如理貨、作業員）？」。
+- 格式請輸出：
+ACTION:ASK
+REPLY:（你要對求職者說的話，字數約 40-70 字，態度親切自然，帶有適當 Emoji）
+BUTTONS:（提供 3-5 個方便求職者點選的建議標籤，以逗號分隔，例如：📍桃園工作,📍新莊工作,☀️固定早班,📦momo理貨,🏭廠區作業員）
+
+情況 2（求職者已表達明確條件，或在清單中找到高度符合的職缺）：
+- 請從清單中挑選 1 到 3 個最符合的職缺 [ID 數字]。
+- 格式請輸出：
+ACTION:RECOMMEND
+IDS:（符合的職缺數字，例如 0 或 0,2）
+REPLY:（給求職者的溫暖過場引導語，例如：太棒了！為您找到以下符合您早班且在桃園的熱門職缺，歡迎點擊下方查看簡章或線上填寫履歷喔！）
+
+情況 3（求職者提出的條件在清單中完全沒有符合）：
+- 格式請輸出：
+ACTION:NO_MATCH
+REPLY:（以真人專員口吻致歉，說明目前該條件暫無開放，並主動詢問是否考慮鄰近地區或其他班別）
+
+請直接輸出你的判斷結果（請嚴格遵守上述格式）："""
+
+    ai_output = query_gemini_ai(ai_prompt)
+    print(f"[Gemini 顧問決策]:\n{ai_output}\n")
+
+    # 4. 解析 Gemini 決策並生成 LINE 訊息
+    append_user_history(user_id, "求職者", raw_msg)
+
+    if "ACTION:RECOMMEND" in ai_output:
+        ids_match = re.search(r'IDS:\s*([0-9,\s]+)', ai_output)
+        reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
+        
+        reply_text = reply_match.group(1).strip() if reply_match else "為您推薦以下最符合您需求的職缺："
+        append_user_history(user_id, "招募顧問", reply_text)
+
+        matched_jobs = []
+        if ids_match:
+            indices = [int(n.strip()) for n in ids_match.group(1).split(",") if n.strip().isdigit() and int(n.strip()) < len(active_jobs)]
+            matched_jobs = [active_jobs[i] for i in indices]
+
+        if not matched_jobs and active_jobs:
+            matched_jobs = active_jobs[:3]
+
+        flex_card = create_job_flex_card(matched_jobs, user_id)
+        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), flex_card])
         return
 
-    # ---------------- 步驟 4：擬真人查無符合回覆 ----------------
-    reply_no_job = (
-        f"您好！專員為您查詢後，目前暫時沒有完全符合「{raw_msg}」條件的開放職缺。\n\n"
-        "不過沒關係，已為您記錄您的求職偏好！一旦有最新適合的職缺開出，專員會第一時間主動為您推薦 😊\n\n"
-        "👉 您也可以輸入其他想了解的地區（如：龜山、蘆竹、新莊）或班別再試試看喔！"
-    )
-    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_no_job))
+    elif "ACTION:ASK" in ai_output:
+        reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|$)', ai_output, re.DOTALL)
+        buttons_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
+
+        reply_text = reply_match.group(1).strip() if reply_match else "您好！很高興為您服務，請問您目前希望在哪個地區工作呢？"
+        append_user_history(user_id, "招募顧問", reply_text)
+
+        buttons = []
+        if buttons_match:
+            raw_buttons = [b.strip() for b in buttons_match.group(1).split(",") if b.strip()]
+            for b_label in raw_buttons[:6]:
+                clean_txt = re.sub(r'^[📍☀️🌙📦🏭\s]+', '', b_label)
+                buttons.append(QuickReplyButton(action=MessageAction(label=b_label[:20], text=clean_txt)))
+        
+        if not buttons:
+            buttons = [
+                QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
+                QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+                QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
+                QuickReplyButton(action=MessageAction(label="📦 momo理貨", text="理貨工作")),
+                QuickReplyButton(action=MessageAction(label="🏭 廠區作業員", text="作業員"))
+            ]
+
+        quick_reply = QuickReply(items=buttons)
+        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
+        return
+
+    elif "ACTION:NO_MATCH" in ai_output:
+        reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
+        reply_text = reply_match.group(1).strip() if reply_match else f"您好！目前暫時沒有完全符合「{raw_msg}」的職缺，專員已為您記錄，您也可以看看其他地區喔！"
+        append_user_history(user_id, "招募顧問", reply_text)
+        
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="📍 看看桃園職缺", text="桃園工作")),
+            QuickReplyButton(action=MessageAction(label="📍 看看新北職缺", text="新莊工作")),
+            QuickReplyButton(action=MessageAction(label="🌐 瀏覽全區職缺", text="找工作"))
+        ])
+        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
+        return
+
+    # 5. 後援兜底回覆
+    fallback_text = "您好！我是材霈招募專員 😊 請問您目前希望在哪個地區找工作？有偏好早班或夜班嗎？"
+    append_user_history(user_id, "招募顧問", fallback_text)
+    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=fallback_text))
 
 # ==========================================
-# 6. Webhook 路由端點
+# 7. Webhook 路由端點
 # ==========================================
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "Tsaipei LineBot is running."}
+    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant is running."}
 
 @app.post("/test-callback")
 async def test_callback(request: Request, x_line_signature: str = Header(None)):
