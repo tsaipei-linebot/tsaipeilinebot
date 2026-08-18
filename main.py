@@ -22,7 +22,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="6.4.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="6.5.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -143,7 +143,7 @@ def fetch_jobs_data() -> list:
     try:
         sheet = get_sheets_client()
         ws = None
-        for name in ["職缺清單", "Jobs_職缺資料庫", "職缺列表", "Jobs", "工作表1"]:
+        for name in ["Jobs_職缺資料庫", "職缺清單", "職缺列表", "Jobs", "工作表1"]:
             try:
                 ws = sheet.worksheet(name)
                 break
@@ -322,12 +322,13 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 6. Gemini 真人顧問決策核心 (全台職缺支援)
+# 6. Gemini 真人顧問決策核心 (支援 3.6 / 3.5 模型)
 # ==========================================
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
         return ""
-    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    # 更新為官方指定支援之模型清單
+    models = ["gemini-3.6-flash", "gemini-3.5-flash"]
     for m in models:
         try:
             if hasattr(ai_client, 'models'):
@@ -352,7 +353,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     user_id = getattr(event.source, 'user_id', 'USER')
     print(f"\n[收到使用者訊息]: 「{raw_msg}」 (User: {user_id})")
 
-    # 定義全台適用的人性化問候語
     HUMAN_GUIDE_TEXT = (
         "您好！我是材霈的人資招募專員 😊\n\n"
         "很高興為您服務！為了幫您精準媒合最合適的工作，想先了解一下：\n\n"
@@ -387,7 +387,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         salary = j.get('薪資', '')
         job_index_text += f"[ID:{idx}] 名稱:{t} | 地點:{loc} | 班別:{shift} | 待遇:{salary}\n"
 
-    # 3. Gemini 真人顧問提示詞 (已支援全台北中南職缺)
+    # 3. Gemini 真人顧問提示詞
     ai_prompt = f"""你是一位「材霈有限公司」非常親切、專業、高情商的真人在線人資招募顧問（名字叫小霈）。
 你的目標是：結合過去對話歷史，以真人專員的口吻引導求職者，理解其求職條件（地區、班別、工種），並在有符合職缺時推薦。我們在全台灣（北、中、南區）皆有職缺。
 
@@ -501,7 +501,6 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
         target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_jobs[:3], user_id)])
         return
 
-    # 兜底引導（採用全台人性化問候語）
     append_user_history(user_id, "招募顧問", HUMAN_GUIDE_TEXT)
     quick_reply = QuickReply(items=[
         QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
