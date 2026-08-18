@@ -21,7 +21,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei LineBot Universal", version="4.3.0")
+app = FastAPI(title="Tsaipei LineBot Production", version="4.3.1")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -254,13 +254,13 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         raw_desc = str(job.get("工作內容(對外)") or job.get("工作內容與條件") or job.get("工作需求") or "").strip()
         clean_desc = extract_smart_summary(raw_desc, job_title)
             
-        website_job_url = "https://tsaipei.netlify.app/#jobs"[cite: 1]
+        website_job_url = "https://tsaipei.netlify.app/#jobs"
         raw_resume_url = str(job.get("線上履歷網址") or job.get("線上履歷連結") or "").strip()
         if raw_resume_url.startswith("http://") or raw_resume_url.startswith("https://"):
             separator = "&" if "?" in raw_resume_url else "?"
             apply_link = f"{raw_resume_url}{separator}job_id={job_id}&line_id={user_id}"
         else:
-            apply_link = "https://tsaipei.netlify.app/#jobs"[cite: 1]
+            apply_link = "https://tsaipei.netlify.app/#jobs"
 
         body_contents = [
             {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
@@ -439,7 +439,3 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
     except InvalidSignatureError:
         raise HTTPException(status_code=400, detail="Invalid signature")
     return "OK"
-
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    process_user_message(event, line_bot_api)
