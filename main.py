@@ -12,7 +12,7 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
     MessageEvent, TextMessage, TextSendMessage, 
-    FlexSendMessage
+    FlexSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -21,7 +21,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei LineBot Production", version="4.3.1")
+app = FastAPI(title="Tsaipei LineBot Humanized", version="5.0.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -52,36 +52,36 @@ if GEMINI_API_KEY:
 # 2. 職缺內容智慧去噪與重點摘要模組
 # ==========================================
 def extract_smart_summary(raw_desc: str, title: str) -> str:
-    """自動過濾公司名、地址、人數等後台雜訊，提取精華工作內容"""
+    """自動過濾公司名、門牌、重複工期人數等雜訊，提煉為精華工作說明"""
     if not raw_desc:
         return f"歡迎應徵【{title}】，點擊下方按鈕瞭解完整工作說明！"
 
     text = str(raw_desc)
     
-    # 1. 移除常見公司名稱 (例：XX股份有限公司、XX有限公司)
+    # 1. 移除公司名稱
     text = re.sub(r'[\w\s]*(?:股份有限公司|有限公司|企業社|商行)', '', text)
     
-    # 2. 移除詳細地址 (例：桃園市龜山區興業街13號、XX路XX號)
+    # 2. 移除詳細門牌地址
     text = re.sub(r'[台臺\w]{2,3}[市縣][\w]{2,3}[區鄉鎮市][\w\d號路街巷弄段\-]+', '', text)
     
-    # 3. 移除後台行政重複資訊（工期、人數、工作時間等已在標籤顯示的資訊）
+    # 3. 移除後台行政重複標籤 (工期、人數、工作時間等)
     text = re.sub(r'(?:工期|預計工期|需求人數|人數|工作地點|工作時間|上班時間|班別|薪資|待遇|休假制度|休假|領薪方式)\s*[:：][^\n\r,，、;；]*', '', text)
     
-    # 4. 移除特殊符號與多餘空白
+    # 4. 移除特殊符號與連續空白
     text = re.sub(r'[*•▶►◆◇■□▲▼\r\n\t]+', ' ', text)
     text = re.sub(r'\s{2,}', ' ', text).strip()
     
-    # 5. 去除開頭結尾殘留的標點符號
+    # 5. 去除殘留首尾標點
     text = re.sub(r'^[,\.，。、:：;\s]+', '', text)
     text = re.sub(r'[,\.，。、:：;\s]+$', '', text)
     
-    # 6. 若清理後內容仍充實，取精華長度
+    # 6. 精華長度截斷
     if len(text) >= 8:
         if len(text) > 42:
             return text[:42] + "..."
         return text
         
-    # 7. 若原始字串全是地址/公司名被清空，則依職缺標題生成清晰摘要
+    # 7. 若原始字串全為雜訊被清空，依標題自動給予清晰描述
     if any(k in title for k in ["理貨", "揀貨", "倉", "物流"]):
         return "負責商品分揀、理貨貼標與包裝出貨，免經驗環境佳！"
     elif any(k in title for k in ["作業員", "包裝", "組裝", "產線", "技術員"]):
@@ -214,7 +214,7 @@ def fetch_faqs_data() -> list:
     return _cached_faqs or []
 
 # ==========================================
-# 4. 雙按鈕 + 4 標籤 Flex 卡片 (整合重點摘要)
+# 4. 雙按鈕 + 4 標籤 Flex 卡片
 # ==========================================
 def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     bubbles = []
@@ -239,7 +239,6 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         job_type = str(job.get("全職/兼職") or job.get("全/兼職") or "").strip()
         pay_method = str(job.get("領薪方式") or "").strip()
         
-        # 標籤膠囊
         tags_contents = []
         if shift:
             tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["shift"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": shift[:8], "size": "xxs", "color": badge_styles["shift"]["text"], "weight": "bold"}]})
@@ -250,7 +249,6 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         if pay_method:
             tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["pay"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": pay_method[:8], "size": "xxs", "color": badge_styles["pay"]["text"], "weight": "bold"}]})
 
-        # 智能去噪與重點摘要提煉
         raw_desc = str(job.get("工作內容(對外)") or job.get("工作內容與條件") or job.get("工作需求") or "").strip()
         clean_desc = extract_smart_summary(raw_desc, job_title)
             
@@ -315,7 +313,7 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 5. 核心對話處理邏輯 (全文檢索 + 同義詞)
+# 5. 核心對話處理邏輯（擬真人多輪引導 + 全文檢索）
 # ==========================================
 SYNONYM_GROUPS = [
     ["理貨", "揀貨", "包裝", "倉管", "倉儲", "物流", "加工", "理貨員", "揀貨員", "物流士", "momo"],
@@ -339,20 +337,37 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     user_id = getattr(event.source, 'user_id', 'USER')
     print(f"\n[收到使用者訊息]: 「{raw_msg}」")
 
+    # 1. 核心字詞萃取
     clean_msg = re.sub(r'[？\?！!。，,\s]+', '', raw_msg).replace("台", "臺").lower()
-    for filler in ["有嗎", "有沒有", "我想找", "想找", "我要找", "請問", "可以推薦", "推薦", "的工作", "工作", "職缺", "的"]:
+    for filler in ["有嗎", "有沒有", "我想找", "想找", "我要找", "請問", "可以推薦", "推薦", "的工作", "工作", "職缺", "的", "你好", "您好"]:
         clean_msg = clean_msg.replace(filler, "")
 
     active_jobs = fetch_jobs_data()
     active_faqs = fetch_faqs_data()
 
-    # 1. 泛稱查詢
-    if raw_msg in ["找工作", "有工作嗎", "有哪些工作", "工作推薦", "職缺列表", "看職缺", "全部職缺", "推薦職缺", "工作", "職缺"] or clean_msg == "":
-        if active_jobs:
-            target_line_bot_api.reply_message(reply_token, create_job_flex_card(active_jobs, user_id))
-            return
+    # ---------------- 步驟 1：擬真人需求探索引導（當求職者表達泛稱找工作時） ----------------
+    general_intents = ["找工作", "有工作嗎", "我想找工作", "工作推薦", "看職缺", "推薦職缺", "工作", "職缺", "想找工作", "有哪些工作", "有缺嗎", "求職"]
+    if raw_msg in general_intents or clean_msg in ["工作", "職缺", "缺額", "找工作", "看工作", ""]:
+        guide_text = (
+            "您好！我是材霈的人資招募專員 😊\n\n"
+            "很高興為您服務！為了幫您精準媒合最合適的工作，想先了解一下：\n\n"
+            "1. 您希望在【哪個地區】上班？（例如：桃園、龜山、新莊、蘆竹）\n"
+            "2. 有偏好的【工作類型】或【班別】嗎？（例如：理貨、作業員、早班、夜班）\n\n"
+            "💡 您可以直接點擊下方快捷按鈕，或直接打字告訴我您的需求喔！"
+        )
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="📍 桃園地區", text="桃園工作")),
+            QuickReplyButton(action=MessageAction(label="📍 新莊/新北", text="新莊工作")),
+            QuickReplyButton(action=MessageAction(label="📦 momo/理貨", text="理貨工作")),
+            QuickReplyButton(action=MessageAction(label="🏭 廠區作業員", text="作業員")),
+            QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
+            QuickReplyButton(action=MessageAction(label="🌙 晚班/夜班", text="夜班工作"))
+        ])
+        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=guide_text, quick_reply=quick_reply))
+        print("[擬真引導] 已發送需求探索引導問話與快捷按鈕")
+        return
 
-    # 2. FAQ 比對
+    # ---------------- 步驟 2：FAQ 知識庫精確比對 ----------------
     for faq in active_faqs:
         q_keywords = str(faq.get("問題與常見問法") or faq.get("問題") or "").replace("、", ",").replace("，", ",").replace("/", ",").split(",")
         answer = faq.get("標準回覆內容") or faq.get("回答") or ""
@@ -363,7 +378,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                 return
 
-    # 3. 全文檢索 + 同義詞擴展比對
+    # ---------------- 步驟 3：全文檢索 + 同義詞擴展比對 ----------------
     msg_norm = raw_msg.replace("台", "臺").lower()
     search_tokens = set()
     if clean_msg:
@@ -404,10 +419,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         print(f"[職缺命中] 關鍵字: {search_tokens}，成功推播 {len(unique_jobs)} 筆職缺！")
         return
 
-    # 4. 兜底查無回覆
+    # ---------------- 步驟 4：擬真人查無符合回覆 ----------------
     reply_no_job = (
-        f"您好！目前開放的職缺中，暫時沒有完全符合「{raw_msg}」條件的工作。\n\n"
-        "已為您記錄需求，若後續有最新符合的職缺開放，專員將第一時間主動聯繫您！"
+        f"您好！專員為您查詢後，目前暫時沒有完全符合「{raw_msg}」條件的開放職缺。\n\n"
+        "不過沒關係，已為您記錄您的求職偏好！一旦有最新適合的職缺開出，專員會第一時間主動為您推薦 😊\n\n"
+        "👉 您也可以輸入其他想了解的地區（如：龜山、蘆竹、新莊）或班別再試試看喔！"
     )
     target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_no_job))
 
@@ -439,3 +455,7 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
     except InvalidSignatureError:
         raise HTTPException(status_code=400, detail="Invalid signature")
     return "OK"
+
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    process_user_message(event, line_bot_api)
