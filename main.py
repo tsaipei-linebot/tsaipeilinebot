@@ -476,4 +476,79 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
         return
 
     # 5. 智慧本地容錯（當 AI 呼叫未返回時，依關鍵字判斷地區/班別）
-    print("
+    print("[執行智慧本地容錯]")
+    msg_norm = raw_msg.replace("台", "臺")
+    
+    # 判斷是否指定了非北部地區（如台南、高雄、台中）
+    non_support_locs = ["台南", "臺南", "高雄", "台中", "臺中", "彰化", "新竹", "苗栗", "屏東", "花蓮", "台東"]
+    found_non_support = [loc for loc in non_support_locs if loc in msg_norm]
+    
+    if found_non_support:
+        loc_name = found_non_support[0]
+        reply_text = f"您好！專員為您查詢後，目前材霈在「{loc_name}」地區暫時沒有開放中的職缺喔！\n\n目前我們主要的優質職缺集中在【桃園】與【新北（新莊/三重）】，請問您是否會考慮鄰近地區的職缺呢？ 😊"
+        append_user_history(user_id, "招募顧問", reply_text)
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="📍 看看桃園職缺", text="桃園工作")),
+            QuickReplyButton(action=MessageAction(label="📍 看看新莊職缺", text="新莊工作")),
+            QuickReplyButton(action=MessageAction(label="📦 看看理貨工作", text="理貨工作"))
+        ])
+        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
+        return
+
+    # 本地直接比對現有職缺
+    matched_jobs = []
+    clean_msg = re.sub(r'[？\?！!。，,\s]+', '', raw_msg).lower()
+    for j in active_jobs:
+        row_text = str(j.get("_raw_row_text", "")).replace("台", "臺").lower()
+        if any(token in row_text for token in [clean_msg, "夜班", "早班", "理貨", "作業員"] if token and token in clean_msg):
+            matched_jobs.append(j)
+
+    if matched_jobs:
+        reply_text = "為您找到以下符合條件的推薦職缺，歡迎點擊下方查看簡章或線上應徵喔："
+        append_user_history(user_id, "招募顧問", reply_text)
+        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_jobs[:3], user_id)])
+        return
+
+    # 兜底引導
+    default_text = "您好！很高興為您服務 😊 請問您目前希望在【桃園】還是【新北】找工作？偏好早班或夜班呢？"
+    append_user_history(user_id, "招募顧問", default_text)
+    quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
+        QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+        QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
+        QuickReplyButton(action=MessageAction(label="🌙 晚班/夜班", text="夜班工作"))
+    ])
+    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=default_text, quick_reply=quick_reply))
+
+# ==========================================
+# 7. Webhook 路由端點
+# ==========================================
+@app.get("/")
+def health_check():
+    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant is running."}
+
+@app.post("/test-callback")
+async def test_callback(request: Request, x_line_signature: str = Header(None)):
+    body = await request.body()
+    try:
+        test_handler.handle(body.decode("utf-8"), x_line_signature)
+    except InvalidSignatureError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    return "OK"
+
+@test_handler.add(MessageEvent, message=TextMessage)
+def handle_test_message(event):
+    process_user_message(event, test_line_bot_api)
+
+@app.post("/callback")
+async def callback(request: Request, x_line_signature: str = Header(None)):
+    body = await request.body()
+    try:
+        handler.handle(body.decode("utf-8"), x_line_signature)
+    except InvalidSignatureError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    return "OK"
+
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    process_user_message(event, line_bot_api)
