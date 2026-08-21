@@ -363,14 +363,18 @@ def create_job_flex_card(jobs: list, user_id: str):
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
         return ""
-    # 使用正確官方模型名稱
-    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    # 根據 API 提示，使用最新的 gemini-3.6-flash 與 gemini-3.5-flash
+    models = ["gemini-3.6-flash", "gemini-3.5-flash"]
     for m in models:
         try:
             if hasattr(ai_client, 'models'):
                 res = ai_client.models.generate_content(model=m, contents=prompt)
                 if res and hasattr(res, 'text') and res.text:
                     return res.text.strip()
+            elif hasattr(ai_client, 'interactions'):
+                interaction = ai_client.interactions.create(model=m, input=prompt)
+                if hasattr(interaction, 'text') and interaction.text:
+                    return interaction.text.strip()
         except Exception as e:
             print(f"[Gemini 呼叫異常 {m}]: {e}")
             continue
