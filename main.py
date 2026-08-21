@@ -435,4 +435,344 @@ def create_job_flex_card(jobs: list, user_id: str):
         if job_type:
             tags_contents.append(create_badge(job_type, badge_styles["type"]["bg"], badge_styles["type"]["text"]))
         if pay_method:
-            tags_contents.append
+            tags_contents.append(create_badge(pay_method, badge_styles["pay"]["bg"], badge_styles["pay"]["text"]))
+
+        raw_desc = str(job.get("工作內容(對外)") or job.get("工作內容與條件") or job.get("工作需求") or "").strip()
+        clean_desc = extract_smart_summary(raw_desc, job_title)
+            
+        website_job_url = "https://tsaipei.netlify.app/#jobs"
+        raw_resume_url = str(job.get("線上履歷網址") or job.get("線上履歷連結") or "").strip()
+        if raw_resume_url.startswith("http://") or raw_resume_url.startswith("https://"):
+            separator = "&" if "?" in raw_resume_url else "?"
+            apply_link = f"{raw_resume_url}{separator}job_id={job_id}&line_id={user_id}"
+        else:
+            apply_link = "https://tsaipei.netlify.app/#jobs"
+
+        body_contents = [
+            {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
+            {"type": "text", "text": job_title, "weight": "bold", "size": "lg", "margin": "xs", "wrap": True}
+        ]
+        
+        if tags_contents:
+            body_contents.append({
+                "type": "box",
+                "layout": "horizontal",
+                "spacing": "xs",
+                "margin": "sm",
+                "contents": tags_contents
+            })
+            
+        body_contents.extend([
+            {"type": "separator", "margin": "md"},
+            {
+                "type": "box",
+                "layout": "vertical",
+                "margin": "md",
+                "spacing": "xs",
+                "contents": [
+                    {"type": "text", "text": f"📍 地點：{location}", "size": "sm", "color": "#444444", "wrap": True},
+                    {"type": "text", "text": f"💰 待遇：{salary}", "size": "sm", "color": "#D32F2F", "weight": "bold", "wrap": True},
+                    {"type": "text", "text": f"📝 說明：{clean_desc}", "size": "xs", "color": "#555555", "wrap": True, "margin": "xs"}
+                ]
+            }
+        ])
+
+        bubble = {
+            "type": "bubble",
+            "body": {"type": "box", "layout": "vertical", "contents": body_contents},
+            "footer": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "color": "#F0F0F0",
+                        "height": "sm",
+                        "action": {"type": "uri", "label": "🌐 查看官網簡章", "uri": website_job_url}
+                    },
+                    {
+                        "type": "button",
+                        "style": "primary",
+                        "color": "#00B900",
+                        "height": "sm",
+                        "action": {"type": "uri", "label": "📄 填寫線上履歷", "uri": apply_link}
+                    }
+                ]
+            }
+        }
+        bubbles.append(bubble)
+        
+    if not bubbles:
+        return None
+    return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門推薦職缺！", contents={"type": "carousel", "contents": bubbles})
+
+# ==========================================
+# 8. Gemini 決策核心 (支援 3.6 / 3.5 模型)
+# ==========================================
+def query_gemini_ai(prompt: str) -> str:
+    if not ai_client:
+        return ""
+    models = ["gemini-3.6-flash", "gemini-3.5-flash"]
+    for m in models:
+        try:
+            if hasattr(ai_client, 'models'):
+                res = ai_client.models.generate_content(model=m, contents=prompt)
+                if res and hasattr(res, 'text') and res.text:
+                    return res.text.strip()
+            elif hasattr(ai_client, 'interactions'):
+                interaction = ai_client.interactions.create(model=m, input=prompt)
+                if hasattr(interaction, 'text') and interaction.text:
+                    return interaction.text.strip()
+        except Exception as e:
+            print(f"[Gemini 呼叫異常 {m}]: {e}")
+            continue
+    return ""
+
+def process_user_message(event, target_line_bot_api: LineBotApi):
+    if not target_line_bot_api:
+        return
+
+    reply_token = event.reply_token
+    if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
+        return
+
+    raw_msg = event.message.text.strip()
+    user_id = getattr(event.source, 'user_id', 'USER')
+    print(f"\n[收到使用者訊息]: 「{raw_msg}」 (User: {user_id})")
+
+    active_jobs = fetch_jobs_data()
+    active_faqs = fetch_faqs_data()
+
+    # 1. 快速檢索 FAQ
+    for faq in active_faqs:
+        q_keywords = str(faq.get("問題與常見問法") or faq.get("問題") or "").replace("、", ",").replace("，", ",").replace("/", ",").split(",")
+        answer = faq.get("標準回覆內容") or faq.get("回答") or ""
+        for kw in q_keywords:
+            kw_clean = kw.strip()
+            if kw_clean and (kw_clean in raw_msg or raw_msg in kw_clean):
+                reply_text = f"{answer}\n\n💡 材霈小提醒：若有想了解的工作地區或班別，歡迎直接告訴小霈喔！"
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
+                append_user_history(user_id, "求職者", raw_msg)
+                append_user_history(user_id, "招募顧問", reply_text)
+                async_log_user_interaction(user_id, raw_msg, reply_text, {"job_type": "FAQ諮詢"})
+                return
+
+    # 2. 載入對話歷史與使用者目前累積的條件
+    session = get_user_session(user_id)
+    history = session["messages"]
+    user_profile = session["profile"]
+    history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history])
+
+    job_index_text = ""
+    for idx, j in enumerate(active_jobs):
+        t = j.get("_parsed_title", "")
+        loc = f"{j.get('縣市', '')}{j.get('行政區', '')}"
+        shift = j.get('班別', '')
+        salary = j.get('薪資', '')
+        job_index_text += f"[ID:{idx}] 名稱:{t} | 地點:{loc} | 班別:{shift} | 待遇:{salary}\n"
+
+    # 3. Gemini 決策提示詞
+    ai_prompt = f"""你是一位「材霈有限公司」非常親切、專業、高情商的真人在線人資招募顧問（名字叫小霈）。
+求職者尋求工作的 5 大關鍵重點為：
+1. 【地區】（例如：桃園、新莊、台中、台南等）
+2. 【班別與休假】（例如：固定早班、中班、夜班/大夜、週休二日、排休等）
+3. 【行業別與工作內容】（例如：物流理貨、產線作業員、包裝、門市服務、司機等）
+4. 【薪資與領薪方式】（例如：時薪200以上、月薪3萬5以上、日領、週領、月領等）
+
+【目前求職者已累計確認的條件】：
+- 地區：{user_profile.get('area') or '未確認'}
+- 班別：{user_profile.get('shift') or '未確認'}
+- 工作內容/行業別：{user_profile.get('job_type') or '未確認'}
+- 薪資期待/領薪：{user_profile.get('salary') or '未確認'}
+
+【目前公司開放中的職缺資料庫】：
+{job_index_text}
+
+【過去對話歷史】：
+{history_text if history_text else "（對話剛開始）"}
+
+【求職者最新輸入】：
+「{raw_msg}」
+
+【對話流程與決策準則】：
+請分析求職者最新輸入，並更新求職者條件：
+1. 階段一【初次對話 / 深入了解 (INTENT: CHAT)】：
+   - 若求職者只提了【地區】（如只說有新莊工作嗎），但【班別】與【工作內容】都尚未明確：
+   - 必須設定 INTENT 為 CHAT，IDS 填寫空字串。**絕對不要推薦職缺或輸出 IDS！**
+   - 請以親切專員口吻，肯定對方的地區需求，並【自然追問其偏好的班別（早班/夜班）或工作性質】。
+   - 提供 3-5 個適合的 QuickReply 按鈕（例如：☀️ 固定早班, 🌙 夜班/大夜, 📦 物流理貨, 🏭 廠區作業員）。
+
+2. 階段二【精準推薦 (INTENT: RECOMMEND)】：
+   - 只有在下列情況才能輸出 RECOMMEND：
+     (a) 求職者條件已具體（已確認【地區】＋【班別】或【工種】）。
+     (b) 求職者明確點選或打字要求看職缺（例如「查看職缺細節」、「查看詳細簡章」、「直接給我看職缺」）。
+   - 請從職缺清單中挑選 1~3 個最符合條件的職缺數字填入 IDS（例如 0, 2）。
+   - 回覆溫暖親切的推薦導引文字（例如：「太好了！依據您的需求，小霈為您整理出以下熱門職缺卡片，點擊下方卡片即可查看簡章與線上填寫履歷喔！」）。
+
+3. 階段三【無符合職缺 (INTENT: NO_MATCH)】：
+   - 若求職者要求的條件在資料庫中完全沒有符合職缺，請以真人專員口吻說明，並主動詢問是否能接受鄰近地區或不同班別。
+
+請依照以下格式輸出：
+INTENT: [CHAT / RECOMMEND / NO_MATCH]
+UPDATED_DATA: {{"area": "地區或延續舊值", "shift": "班別或延續舊值", "job_type": "工種或延續舊值", "salary": "薪資/領薪或延續舊值"}}
+IDS: [若為 RECOMMEND 請填數字例如 0, 2；若為 CHAT 則留空]
+REPLY: [真人顧問小霈的回覆內容，自然親切，50-90字]
+BUTTONS: [3-5個快捷按鈕標籤，逗號分隔]
+"""
+
+    ai_output = query_gemini_ai(ai_prompt)
+    print(f"[Gemini 決策輸出]:\n{ai_output}\n")
+
+    # 4. 解析 AI 回應結構
+    intent = "CHAT"
+    updated_data = {}
+    matched_ids = []
+    reply_text = ""
+    buttons = []
+
+    if ai_output:
+        if "INTENT: RECOMMEND" in ai_output:
+            intent = "RECOMMEND"
+        elif "INTENT: NO_MATCH" in ai_output:
+            intent = "NO_MATCH"
+        
+        # 萃取更新後的條件
+        data_match = re.search(r'UPDATED_DATA:\s*(\{.*?\})', ai_output, re.DOTALL)
+        if data_match:
+            try:
+                updated_data = json.loads(data_match.group(1))
+                for k, v in updated_data.items():
+                    if v and str(v).strip():
+                        user_profile[k] = str(v).strip()
+            except Exception:
+                pass
+
+        # 萃取職缺 ID (支援、0, 1 等所有格式)
+        ids_match = re.search(r'IDS:\s*(.+)', ai_output)
+        if ids_match:
+            raw_ids_str = ids_match.group(1).split('\n')[0]
+            matched_ids = [
+                int(n) for n in re.findall(r'\d+', raw_ids_str) 
+                if int(n) < len(active_jobs)
+            ]
+
+        # 萃取回覆文字
+        reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|\nIDS:|$)', ai_output, re.DOTALL)
+        if reply_match:
+            reply_text = reply_match.group(1).strip()
+
+        # 萃取按鈕
+        btn_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
+        if btn_match:
+            buttons = [b.strip() for b in btn_match.group(1).split(",") if b.strip()]
+
+    # 若剛開始或 AI 未能產生回覆時，採用您指定的專屬開場引導詞
+    if not reply_text:
+        reply_text = HUMAN_GUIDE_TEXT
+        buttons = DEFAULT_QUICK_BUTTONS
+
+    # 記錄對話歷史
+    append_user_history(user_id, "求職者", raw_msg)
+    append_user_history(user_id, "招募顧問", reply_text)
+
+    # 非同步背景寫入 Google Sheet (極速回覆，不阻塞 Webhook)
+    async_log_user_interaction(user_id, raw_msg, reply_text, user_profile)
+
+    # 5. 處理 Quick Reply 按鈕
+    quick_reply_buttons = []
+    for b_label in buttons[:6]:
+        clean_label = b_label.strip()[:20]
+        clean_text = re.sub(r'^[📍☀️🌙📦🏭🌐💵💰💼📞💬❓📄\s]+', '', clean_label) or clean_label
+        quick_reply_buttons.append(
+            QuickReplyButton(action=MessageAction(label=clean_label, text=clean_text))
+        )
+    
+    quick_reply = QuickReply(items=quick_reply_buttons) if quick_reply_buttons else None
+
+    # 6. 嚴格卡片門檻判定：只有在 (1) 求職者明確點選查看簡章 或 (2) 已確認地區＋班別/工種 且 AI 判定推薦時才發送卡片
+    area_val = user_profile.get("area", "").strip()
+    shift_val = user_profile.get("shift", "").strip()
+    job_type_val = user_profile.get("job_type", "").strip()
+    has_concrete_conditions = bool(area_val and (shift_val or job_type_val))
+
+    explicit_card_triggers = [
+        "查看職缺細節", "查看詳細簡章", "直接給我看職缺", "看職缺清單", 
+        "直接推薦", "推薦職缺給我", "有哪些可以選", "查看推薦職缺"
+    ]
+    is_explicit_request = any(trigger in raw_msg for trigger in explicit_card_triggers)
+
+    should_send_card = is_explicit_request or (intent == "RECOMMEND" and has_concrete_conditions)
+
+    if should_send_card:
+        target_jobs = find_best_matching_jobs(active_jobs, user_profile, matched_ids)
+        if target_jobs:
+            flex_card = create_job_flex_card(target_jobs[:6], user_id)
+            if flex_card:
+                target_line_bot_api.reply_message(
+                    reply_token, 
+                    [TextSendMessage(text=reply_text, quick_reply=quick_reply), flex_card]
+                )
+                return
+
+    # 階段一（探索對話）或條件尚未齊全時，只發送文字與快捷選項
+    target_line_bot_api.reply_message(
+        reply_token, 
+        TextSendMessage(text=reply_text, quick_reply=quick_reply)
+    )
+
+# ==========================================
+# 9. Webhook 路由端點 (支援有無結尾斜線，防呆 404)
+# ==========================================
+@app.get("/")
+def health_check():
+    return {
+        "status": "ok", 
+        "service": "Tsaipei AI Recruitment Consultant", 
+        "version": "tsaipeilinebotmark2"
+    }
+
+@app.get("/test-callback")
+@app.get("/test-callback/")
+def test_callback_get():
+    return {"status": "ok", "message": "test-callback endpoint is ready"}
+
+@app.post("/test-callback")
+@app.post("/test-callback/")
+async def test_callback(request: Request, x_line_signature: str = Header(None, alias="x-line-signature")):
+    sig = x_line_signature or request.headers.get("X-Line-Signature") or request.headers.get("x-line-signature")
+    if not sig:
+        raise HTTPException(status_code=400, detail="Missing X-Line-Signature header")
+    body = await request.body()
+    try:
+        test_handler.handle(body.decode("utf-8"), sig)
+    except InvalidSignatureError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    return "OK"
+
+@test_handler.add(MessageEvent, message=TextMessage)
+def handle_test_message(event):
+    process_user_message(event, test_line_bot_api)
+
+@app.get("/callback")
+@app.get("/callback/")
+def callback_get():
+    return {"status": "ok", "message": "callback endpoint is ready"}
+
+@app.post("/callback")
+@app.post("/callback/")
+async def callback(request: Request, x_line_signature: str = Header(None, alias="x-line-signature")):
+    sig = x_line_signature or request.headers.get("X-Line-Signature") or request.headers.get("x-line-signature")
+    if not sig:
+        raise HTTPException(status_code=400, detail="Missing X-Line-Signature header")
+    body = await request.body()
+    try:
+        handler.handle(body.decode("utf-8"), sig)
+    except InvalidSignatureError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    return "OK"
+
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    process_user_message(event, line_bot_api)
