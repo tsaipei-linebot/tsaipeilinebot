@@ -22,7 +22,7 @@ from google import genai
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="7.0.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant", version="7.5.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -50,26 +50,39 @@ if GEMINI_API_KEY:
         print(f"[系統警告] Gemini AI 初始化失敗: {e}")
 
 # ==========================================
-# 2. 對話記憶體快取 (Session Context)
+# 2. 對話記憶與使用者求職輪廓累積快取
 # ==========================================
 user_sessions = {}
-SESSION_TTL = 1800  # 延長至 30 分鐘
+SESSION_TTL = 1800  # 30 分鐘
 
-def get_user_history(user_id: str) -> list:
+def get_user_session(user_id: str) -> dict:
     now = time.time()
     if user_id in user_sessions:
         session = user_sessions[user_id]
         if now - session["last_time"] < SESSION_TTL:
             session["last_time"] = now
-            return session["messages"]
-    user_sessions[user_id] = {"last_time": now, "messages": []}
-    return user_sessions[user_id]["messages"]
+            return session
+    
+    # 建立全新求職者輪廓
+    user_sessions[user_id] = {
+        "last_time": now,
+        "messages": [],
+        "profile": {
+            "area": "",      # 地區 (例: 新莊)
+            "shift": "",     # 班別 (例: 早班)
+            "job_type": "",  # 行業別/工作內容 (例: 理貨、作業員)
+            "salary": "",    # 薪資期待/領薪方式
+            "name": "",
+            "phone": ""
+        }
+    }
+    return user_sessions[user_id]
 
 def append_user_history(user_id: str, role: str, text: str):
-    history = get_user_history(user_id)
-    history.append({"role": role, "text": text})
-    if len(history) > 10:
-        history.pop(0)
+    session = get_user_session(user_id)
+    session["messages"].append({"role": role, "text": text})
+    if len(session["messages"]) > 10:
+        session["messages"].pop(0)
 
 # ==========================================
 # 3. 職缺內容智慧去噪與重點摘要模組
@@ -132,14 +145,12 @@ def get_sheets_client():
             _gspread_client = gspread.authorize(creds)
         return _gspread_client.open(SPREADSHEET_NAME)
     except Exception as e:
-        # Token 過期或連線中斷時強制重新認證
         print(f"[Google Sheets 重新認證中...]: {e}")
         creds = ServiceAccountCredentials.from_json_keyfile_name(key_path, scope)
         _gspread_client = gspread.authorize(creds)
         return _gspread_client.open(SPREADSHEET_NAME)
 
-def log_user_interaction_to_sheet(user_id: str, user_msg: str, bot_reply: str, user_data: dict = None):
-    """將使用者的對話紀錄與求職偏好自動記錄至 Google Sheet"""
+def log_user_interaction_to_sheet(user_id: str, user_msg: str, bot_reply: str, user_profile: dict = None):
     try:
         sheet = get_sheets_client()
         ws_name = "求職諮詢紀錄"
@@ -147,20 +158,19 @@ def log_user_interaction_to_sheet(user_id: str, user_msg: str, bot_reply: str, u
             ws = sheet.worksheet(ws_name)
         except Exception:
             ws = sheet.add_worksheet(title=ws_name, rows="1000", cols="8")
-            ws.append_row(["時間戳記", "LINE_User_ID", "求職者訊息", "AI顧問回覆", "希望地區", "偏好班別", "偏好工種", "備註資訊"])
+            ws.append_row(["時間戳記", "LINE_User_ID", "求職者訊息", "AI顧問回覆", "希望地區", "偏好班別", "偏好工種", "薪資期待/備註"])
         
         tw_tz = pytz.timezone("Asia/Taipei")
         now_str = datetime.datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
         
-        area = user_data.get("area", "") if user_data else ""
-        shift = user_data.get("shift", "") if user_data else ""
-        job_type = user_data.get("job_type", "") if user_data else ""
-        name = user_data.get("name", "") if user_data else ""
-        phone = user_data.get("phone", "") if user_data else ""
-        extra = f"姓名:{name} 電話:{phone}".strip() if (name or phone) else ""
+        prof = user_profile or {}
+        area = prof.get("area", "")
+        shift = prof.get("shift", "")
+        job_type = prof.get("job_type", "")
+        salary = prof.get("salary", "")
         
-        ws.append_row([now_str, user_id, user_msg, bot_reply, area, shift, job_type, extra])
-        print(f"[成功寫入求職者紀錄] User: {user_id}, 地區:{area}, 班別:{shift}")
+        ws.append_row([now_str, user_id, user_msg, bot_reply, area, shift, job_type, salary])
+        print(f"[成功寫入求職者紀錄] User: {user_id}, 累計需求 -> 地區:{area} 班別:{shift} 工種:{job_type} 薪資:{salary}")
     except Exception as e:
         print(f"[寫入求職者紀錄失敗]: {e}")
 
@@ -254,7 +264,7 @@ def fetch_faqs_data() -> list:
     return _cached_faqs or []
 
 # ==========================================
-# 5. 雙按鈕 + 4 標籤 Flex 卡片 (含防呆)
+# 5. 雙按鈕 + 4 標籤 Flex 卡片
 # ==========================================
 def create_job_flex_card(jobs: list, user_id: str):
     if not jobs:
@@ -358,12 +368,11 @@ def create_job_flex_card(jobs: list, user_id: str):
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 6. Gemini 真人顧問決策核心 (修正官方可用模型)
+# 6. Gemini 真人顧問決策核心 (階梯式需求探索)
 # ==========================================
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
         return ""
-    # 根據 API 提示，使用最新的 gemini-3.6-flash 與 gemini-3.5-flash
     models = ["gemini-3.6-flash", "gemini-3.5-flash"]
     for m in models:
         try:
@@ -382,7 +391,6 @@ def query_gemini_ai(prompt: str) -> str:
 
 def process_user_message(event, target_line_bot_api: LineBotApi):
     if not target_line_bot_api:
-        print("[警告] LINE Bot API 未正確初始化，請檢查 Channel Access Token！")
         return
 
     reply_token = event.reply_token
@@ -403,15 +411,17 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         for kw in q_keywords:
             kw_clean = kw.strip()
             if kw_clean and (kw_clean in raw_msg or raw_msg in kw_clean):
-                reply_text = f"{answer}\n\n💡 材霈小提醒：若有更進一步想了解的職缺條件，歡迎直接打字告訴我喔！"
+                reply_text = f"{answer}\n\n💡 材霈小提醒：若有想了解的工作地區或班別，歡迎直接告訴小霈喔！"
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問", reply_text)
-                log_user_interaction_to_sheet(user_id, raw_msg, reply_text, {"area": "", "shift": "", "job_type": "FAQ諮詢"})
+                log_user_interaction_to_sheet(user_id, raw_msg, reply_text, {"job_type": "FAQ諮詢"})
                 return
 
-    # 2. 載入對話歷史紀錄
-    history = get_user_history(user_id)
+    # 2. 載入對話歷史與使用者目前累積的條件
+    session = get_user_session(user_id)
+    history = session["messages"]
+    user_profile = session["profile"]
     history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history])
 
     job_index_text = ""
@@ -422,28 +432,53 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         salary = j.get('薪資', '')
         job_index_text += f"[ID:{idx}] 名稱:{t} | 地點:{loc} | 班別:{shift} | 待遇:{salary}\n"
 
-    # 3. Gemini 真人顧問提示詞 (支援自然對話、資料萃取與推薦)
+    # 3. Gemini 真人顧問提示詞 (階梯式對話：一層一層了解需求)
     ai_prompt = f"""你是一位「材霈有限公司」非常親切、專業、高情商的真人在線人資招募顧問（名字叫小霈）。
-你的目標是：
-1. 像真人專員一樣與求職者自然對話，解答其疑問，並親切引導了解其求職條件（地區、班別、工種偏好）。
-2. 同時從對話中萃取求職者的資訊（如：地區、班別、工種、姓名、電話）。
-3. 當求職者的條件有明確符合的職缺，或求職者主動要求推薦職缺時，推薦最合適的職缺 ID。
+求職者尋求工作的 5 大關鍵重點為：
+1. 【地區】（例如：新莊、桃園、台中、台南等）
+2. 【班別與休假】（例如：固定早班、中班、夜班/大夜、週休二日、排休等）
+3. 【行業別與工作內容】（例如：物流理貨、產線作業員、包裝、門市服務、司機等）
+4. 【薪資與領薪方式】（例如：時薪200以上、月薪3萬5以上、日領、週領、月領等）
 
-【目前公司招募中的職缺清單】：
-{job_index_text if job_index_text else "（目前公司在全台灣北、中、南區均有開放各類優質職缺）"}
+【目前求職者已累計確認的條件】：
+- 地區：{user_profile.get('area') or '未確認'}
+- 班別：{user_profile.get('shift') or '未確認'}
+- 工作內容/行業別：{user_profile.get('job_type') or '未確認'}
+- 薪資期待/領薪：{user_profile.get('salary') or '未確認'}
+
+【目前公司開放中的職缺資料庫】：
+{job_index_text}
 
 【過去對話歷史】：
 {history_text if history_text else "（對話剛開始）"}
 
-【求職者剛說的話】：
+【求職者最新輸入】：
 「{raw_msg}」
 
-【請依照以下格式輸出】：
+【對話流程與決策準則】：
+請分析求職者最新輸入，並更新求職者條件：
+1. 階段一【深入了解 (INTENT: CHAT)】：
+   - 若求職者的條件「尚未完整」（例如只提了地區，但班別或工作內容還不知道），或剛打招呼、提問：
+   - 必須設定 INTENT 為 CHAT。**絕對不要在此時推薦職缺或輸出 IDS！**
+   - 請以真人顧問小霈的親切口吻，先肯定求職者的需求，然後**自然詢問下一個未確認的重點（例如班別、工作性質或薪資需求）**。
+   - 同時提供 3-5 個適合的 QuickReply 按鈕（例如：☀️ 固定早班, 🌙 夜班, 📦 物流理貨, 🏭 廠區作業員）。
+
+2. 階段二【精準推薦 (INTENT: RECOMMEND)】：
+   - 只有在下列情況下才輸出 RECOMMEND：
+     (a) 求職者已經提供明確的核心條件（至少已確認【地區】＋【班別】或【工種】）。
+     (b) 求職者明確要求看職缺（例如「直接給我看職缺」、「有哪些可以選」、「推薦給我」）。
+   - 請從職缺清單中挑選 1~3 個最符合條件的職缺 ID 填入 IDS。
+   - 回覆溫暖的引導語（例如：「太好了！為您推薦新莊地區符合早班/理貨需求的熱門職缺，歡迎點擊下方查看簡章或線上應徵喔！」）。
+
+3. 階段三【無符合職缺 (INTENT: NO_MATCH)】：
+   - 若求職者要求的條件在資料庫中確實完全沒有符合職缺，請以真人專員口吻說明，並主動詢問是否能接受鄰近地區或不同班別。
+
+請依照以下格式輸出：
 INTENT: [CHAT / RECOMMEND / NO_MATCH]
-USER_DATA: {{"area": "萃取出的地區或空字串", "shift": "萃取出的班別或空字串", "job_type": "萃取出的工種或空字串", "name": "姓名或空字串", "phone": "電話或空字串"}}
-IDS: [符合的職缺數字，例如 0, 1，若無則留空]
-REPLY: [以真人專員小霈的口吻回覆求職者的自然對話內容，親切自然，50-100字]
-BUTTONS: [3-5個適合求職者點選的快捷選項，用逗號分隔，例如：📍 桃園工作, 📍 新北工作, ☀️ 早班, 🌙 夜班]
+UPDATED_DATA: {{"area": "地區或延續舊值", "shift": "班別或延續舊值", "job_type": "工種或延續舊值", "salary": "薪資/領薪或延續舊值"}}
+IDS: [若為 RECOMMEND 請填數字例如 0, 2；若為 CHAT 則留空]
+REPLY: [真人顧問小霈的回覆內容，自然親切，50-90字]
+BUTTONS: [3-5個快捷按鈕標籤，逗號分隔]
 """
 
     ai_output = query_gemini_ai(ai_prompt)
@@ -451,7 +486,7 @@ BUTTONS: [3-5個適合求職者點選的快捷選項，用逗號分隔，例如�
 
     # 4. 解析 AI 回應結構
     intent = "CHAT"
-    user_data = {"area": "", "shift": "", "job_type": "", "name": "", "phone": ""}
+    updated_data = {}
     matched_ids = []
     reply_text = ""
     buttons = []
@@ -462,17 +497,20 @@ BUTTONS: [3-5個適合求職者點選的快捷選項，用逗號分隔，例如�
         elif "INTENT: NO_MATCH" in ai_output:
             intent = "NO_MATCH"
         
-        # 萃取求職者資料
-        data_match = re.search(r'USER_DATA:\s*(\{.*?\})', ai_output, re.DOTALL)
+        # 萃取更新後的條件
+        data_match = re.search(r'UPDATED_DATA:\s*(\{.*?\})', ai_output, re.DOTALL)
         if data_match:
             try:
-                user_data = json.loads(data_match.group(1))
+                updated_data = json.loads(data_match.group(1))
+                for k, v in updated_data.items():
+                    if v and str(v).strip():
+                        user_profile[k] = str(v).strip()
             except Exception:
                 pass
 
         # 萃取職缺 ID
         ids_match = re.search(r'IDS:\s*([0-9,\s]+)', ai_output)
-        if ids_match:
+        if ids_match and intent == "RECOMMEND":
             matched_ids = [int(n.strip()) for n in ids_match.group(1).split(",") if n.strip().isdigit() and int(n.strip()) < len(active_jobs)]
 
         # 萃取回覆文字
@@ -485,40 +523,58 @@ BUTTONS: [3-5個適合求職者點選的快捷選項，用逗號分隔，例如�
         if btn_match:
             buttons = [b.strip() for b in btn_match.group(1).split(",") if b.strip()]
 
-    # 若 AI 無法正常產出時的預設真人回覆
+    # 預設對話防呆
     if not reply_text:
         reply_text = "您好！我是材霈的招募專員小霈 😊 很高興為您服務！想先了解您希望在哪個地區工作？有偏好的班別或工作類型嗎？"
-        buttons = ["📍 桃園工作", "📍 新莊工作", "📍 台中工作", "📍 南部工作", "☀️ 固定早班", "🌙 夜班/大夜"]
+        buttons = ["📍 桃園工作", "📍 新莊工作", "📍 台中工作", "☀️ 固定早班", "🌙 夜班/大夜", "📦 物流理貨"]
 
     # 記錄對話歷史
     append_user_history(user_id, "求職者", raw_msg)
     append_user_history(user_id, "招募顧問", reply_text)
 
-    # 將紀錄寫入 Google Sheet
-    log_user_interaction_to_sheet(user_id, raw_msg, reply_text, user_data)
+    # 同步紀錄寫入 Google Sheet
+    log_user_interaction_to_sheet(user_id, raw_msg, reply_text, user_profile)
 
     # 5. 處理 Quick Reply 按鈕
     quick_reply_buttons = []
     for b_label in buttons[:6]:
         clean_label = b_label.strip()[:20]
-        clean_text = re.sub(r'^[📍☀️🌙📦🏭🌐\s]+', '', clean_label) or clean_label
+        clean_text = re.sub(r'^[📍☀️🌙📦🏭🌐💵💰💼\s]+', '', clean_label) or clean_label
         quick_reply_buttons.append(QuickReplyButton(action=MessageAction(label=clean_label, text=clean_text)))
     
     quick_reply = QuickReply(items=quick_reply_buttons) if quick_reply_buttons else None
 
-    # 6. 依意圖發送訊息與職缺卡片
-    if intent == "RECOMMEND" and (matched_ids or active_jobs):
-        target_jobs = [active_jobs[i] for i in matched_ids] if matched_ids else active_jobs[:3]
-        flex_card = create_job_flex_card(target_jobs, user_id)
-        
-        if flex_card:
-            target_line_bot_api.reply_message(
-                reply_token, 
-                [TextSendMessage(text=reply_text, quick_reply=quick_reply), flex_card]
-            )
-            return
+    # 6. 依意圖發送訊息（嚴格控制：只有 RECOMMEND 且有符合職缺時才發卡片）
+    if intent == "RECOMMEND":
+        target_jobs = []
+        if matched_ids:
+            target_jobs = [active_jobs[i] for i in matched_ids]
+        else:
+            # 本地精準比對 (避免胡亂推薦不相干地區)
+            area_kw = user_profile.get("area", "").replace("台", "臺")
+            shift_kw = user_profile.get("shift", "")
+            job_type_kw = user_profile.get("job_type", "")
+            
+            for j in active_jobs:
+                row_txt = j.get("_raw_row_text", "").replace("台", "臺")
+                if area_kw and area_kw not in row_txt:
+                    continue
+                if shift_kw and shift_kw not in row_txt:
+                    continue
+                if job_type_kw and job_type_kw not in row_txt:
+                    continue
+                target_jobs.append(j)
 
-    # 一般自然對話或無符合職缺時的回覆
+        if target_jobs:
+            flex_card = create_job_flex_card(target_jobs[:5], user_id)
+            if flex_card:
+                target_line_bot_api.reply_message(
+                    reply_token, 
+                    [TextSendMessage(text=reply_text, quick_reply=quick_reply), flex_card]
+                )
+                return
+
+    # 階段一（探索對話）或無符合職缺時，只發送文字與快捷選項
     target_line_bot_api.reply_message(
         reply_token, 
         TextSendMessage(text=reply_text, quick_reply=quick_reply)
