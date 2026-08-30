@@ -1,9 +1,8 @@
 fastapi
 uvicorn[standard]
 line-bot-sdk
-gspread
-oauth2client
 google-genai
+notion-client
 python-dotenv
 pytz
 requests
