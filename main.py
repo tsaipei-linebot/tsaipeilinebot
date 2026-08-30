@@ -17,7 +17,7 @@ from google import genai
 
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant - Ultra Safe Engine", version="8.5.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine", version="8.7.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -69,11 +69,19 @@ def append_user_history(user_id: str, role: str, text: str):
         history.pop(0)
 
 # ==========================================
-# 3. 職缺內容智慧去噪與重點摘要模組
+# 3. AI 職缺內容美化與吸睛亮點提煉模組
 # ==========================================
-def extract_smart_summary(raw_desc: str, title: str) -> str:
+summary_cache = {}
+detail_cache = {}
+
+def polish_job_description_with_ai(raw_desc: str, title: str) -> str:
+    """使用 AI 將生硬的工作內容提煉美化為卡片精華短句 (35-45字)"""
     if not raw_desc:
-        return f"歡迎應徵【{title}】，點擊下方按鈕瞭解完整工作說明！"
+        return f"歡迎應徵【{title}】，環境單純、福利健全，點擊下方立即應徵！"
+
+    cache_key = f"{title}_{raw_desc[:30]}"
+    if cache_key in summary_cache:
+        return summary_cache[cache_key]
 
     text = str(raw_desc)
     text = re.sub(r'[\w\s]*(?:股份有限公司|有限公司|企業社|商行)', '', text)
@@ -81,29 +89,98 @@ def extract_smart_summary(raw_desc: str, title: str) -> str:
     text = re.sub(r'(?:工期|預計工期|需求人數|人數|工作地點|工作時間|上班時間|班別|薪資|待遇|休假制度|休假|領薪方式)\s*[:：][^\n\r,，、;；]*', '', text)
     text = re.sub(r'[*•▶►◆◇■□▲▼\r\n\t]+', ' ', text)
     text = re.sub(r'\s{2,}', ' ', text).strip()
-    text = re.sub(r'^[,\.，。、:：;\s]+', '', text)
-    text = re.sub(r'[,\.，。、:：;\s]+$', '', text)
-    
-    if len(text) >= 8:
-        if len(text) > 42:
-            return text[:42] + "..."
-        return text
-        
-    if any(k in title for k in ["外送", "司機", "配送"]):
-        return "負責指定區域包裹快遞配送作業，趟次穩定，享高額趟次津貼！"
-    elif any(k in title for k in ["momo", "富邦", "富昇"]):
-        return "知名電商物流中心，負責商品揀貨、包裝與出貨作業！"
-    elif "蝦皮" in title:
-        return "負責蝦皮門市包裹點交、進出貨盤點與顧客接待，工作環境單純！"
-    elif any(k in title for k in ["理貨", "揀貨", "倉", "物流"]):
-        return "負責商品分揀、理貨貼標與包裝出貨，免經驗環境佳！"
-    elif any(k in title for k in ["作業員", "包裝", "組裝", "產線", "技術員"]):
-        return "負責機台操作、產品組裝檢驗與成品包裝，免經驗可！"
-        
-    return f"開放應徵【{title}】，工作環境單純，歡迎點擊下方履歷應徵！"
+
+    fallback_text = text[:40] + "..." if len(text) > 40 else text
+    if not fallback_text or len(fallback_text) < 6:
+        fallback_text = f"開放應徵【{title}】，工作環境良好、無經驗可，歡迎應徵！"
+
+    if not ai_client:
+        summary_cache[cache_key] = fallback_text
+        return fallback_text
+
+    prompt = f"""請將以下職缺工作內容改寫為一句「極具吸引力、親切、吸引求職者應徵」的精華短句（字數控制在 30-42 字之間，繁體中文）：
+職缺名稱：{title}
+原始工作內容：{raw_desc[:300]}
+請直接回覆改寫後的一句話："""
+
+    try:
+        models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        for m in models:
+            if hasattr(ai_client, 'models'):
+                res = ai_client.models.generate_content(model=m, contents=prompt)
+                if res and hasattr(res, 'text') and res.text:
+                    polished = res.text.strip().replace("\n", " ")
+                    summary_cache[cache_key] = polished
+                    return polished
+    except Exception as e:
+        print(f"[AI 文案美化異常]: {e}")
+
+    summary_cache[cache_key] = fallback_text
+    return fallback_text
+
+def format_full_job_detail_with_ai(job: dict, location_display: str) -> str:
+    """使用 AI 進行「詳細工作說明」排版與《就業服務法》合規審查"""
+    job_id = job.get("_page_id", "JOB")
+    if job_id in detail_cache:
+        return detail_cache[job_id]
+
+    title = job.get("職缺名稱(對外)") or job.get("職缺名稱") or "優質職缺"
+    salary = job.get("薪資") or "依公司規定"
+    shift = job.get("班別") or "依排班規定"
+    raw_desc = job.get("工作內容(對外)") or "歡迎點擊線上履歷應徵。"
+
+    fallback_layout = (
+        f"📋【{title} 完整工作說明】\n\n"
+        f"📍 上班地點：{location_display}\n"
+        f"💰 薪資待遇：{salary}\n"
+        f"⏰ 工作班別：{shift}\n\n"
+        f"📝 工作內容詳細說明：\n{raw_desc}\n\n"
+        f"💡 依法所有職缺無性別、年齡歧視限制，歡迎所有朋友應徵！"
+    )
+
+    if not ai_client:
+        detail_cache[job_id] = fallback_layout
+        return fallback_layout
+
+    prompt = f"""你是一位專業的人資顧問，請將以下職缺資料進行【優雅美化排版】並進行【就業服務法合規審查】：
+
+職缺名稱：{title}
+上班地點：{location_display}
+薪資待遇：{salary}
+工作班別：{shift}
+原始工作內容：
+{raw_desc}
+
+【處理與合規原則】：
+1. 《就業服務法》第5條合規審查：若原文中有涉及年齡（如限幾歲）、性別（如限男女）、外貌等歧視性條件，請直接移除或轉化為客觀條件（如「需配合走動作業/具備基本體能」）。
+2. 使用清晰條列式排版，搭配適當 Emoji，讓手機閱讀體感極佳。
+3. 排版結構建議包含：
+   📌【職缺亮點】（約 1-2 句吸引人的優勢）
+   📍【工作地點與班別】
+   💰【薪資與福利】
+   📝【工作主要內容】（條列式 3-4 點）
+   ✨【應徵條件】（強調免經驗、體能勝任等）
+4. 結尾加上一句親切鼓勵應徵的招呼語。
+
+請直接輸出排版後的繁體中文內容："""
+
+    try:
+        models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        for m in models:
+            if hasattr(ai_client, 'models'):
+                res = ai_client.models.generate_content(model=m, contents=prompt)
+                if res and hasattr(res, 'text') and res.text:
+                    formatted = res.text.strip()
+                    detail_cache[job_id] = formatted
+                    return formatted
+    except Exception as e:
+        print(f"[AI 詳細內容排版異常]: {e}")
+
+    detail_cache[job_id] = fallback_layout
+    return fallback_layout
 
 # ==========================================
-# 4. Notion 原生 HTTP Direct Query
+# 4. Notion 原生 Direct HTTP Query
 # ==========================================
 CACHE_TTL = 30
 _cached_jobs, _last_jobs_fetch = None, 0
@@ -119,7 +196,6 @@ def clean_text_for_search(text: str) -> str:
     return re.sub(r'[\(\)（）\/\s\-_,，、\?!？！。🛵☀️🌙📦🏭🏬🍽️🔄]+', '', t)
 
 def sanitize_uri(url: str) -> str:
-    """確保輸出的 URL 100% 符合 LINE URIAction 要求"""
     default_fallback = "https://tsaipei.netlify.app/#jobs"
     if not url or not isinstance(url, str):
         return default_fallback
@@ -216,7 +292,7 @@ def fetch_jobs_data() -> list:
             job_dict = {"_page_id": page_id}
             raw_text_parts = []
 
-            # 1. 偵測 Title
+            # 1. Title
             title_val = ""
             for p_name, p_val in props.items():
                 if isinstance(p_val, dict) and p_val.get("type") == "title":
@@ -224,7 +300,7 @@ def fetch_jobs_data() -> list:
                     break
             job_dict["職缺名稱"] = title_val
 
-            # 2. 偵測 Multi-Select 職務類別
+            # 2. Multi-Select 職務類別
             category_val = ""
             for p_name, p_val in props.items():
                 if "類別" in p_name or "職務" in p_name:
@@ -232,7 +308,7 @@ def fetch_jobs_data() -> list:
                     break
             job_dict["職務類別"] = category_val
 
-            # 3. 讀取其餘白名單
+            # 3. 其餘欄位
             for field_name in ALLOWED_PROPERTIES:
                 if field_name in props and field_name not in ["職缺名稱", "職務類別"]:
                     val_str = parse_notion_property(props[field_name])
@@ -305,7 +381,7 @@ def fetch_faqs_data() -> list:
         return _cached_faqs or []
 
 # ==========================================
-# 5. 精準履歷路由與 Flex 卡片 (標準安全 URI)
+# 5. 精準履歷路由與 Flex 卡片 (地點智慧過濾 + AI 美化說明)
 # ==========================================
 DEFAULT_RESUME_URLS = {
     "Spx": "https://resume.tsaipei.com.tw/eyJEYXRhTm8iOiIiLCJVc2VyTm8iOiI0ODIiLCJSZXN1bWVLaW5kIjoiU3B4IiwiU3lzdGVtIjoiWWVzIn0=?openExternalBrowser=1",
@@ -313,7 +389,7 @@ DEFAULT_RESUME_URLS = {
     "Manufacture": "https://resume.tsaipei.com.tw/eyJEYXRhTm8iOiIiLCJVc2VyTm8iOiI0ODIiLCJSZXN1bWVLaW5kIjoiTWFudWZhY3R1cmUiLCJTeXN0ZW0iOiJZZXMifQ==?openExternalBrowser=1"
 }
 
-def resolve_apply_url_by_industry(job: dict, faq_list: list) -> str:
+def resolve_apply_url_by_industry(job: dict) -> str:
     full_search_text = f"{job.get('職缺名稱(對外)', '')} {job.get('職缺名稱', '')} {job.get('職務類別', '')} {job.get('行業別', '')} {job.get('工作內容(對外)', '')}".lower()
 
     if any(k in full_search_text for k in ["蝦皮", "智取店", "店到店", "spx", "外送"]):
@@ -324,41 +400,65 @@ def resolve_apply_url_by_industry(job: dict, faq_list: list) -> str:
 
     return DEFAULT_RESUME_URLS["Manufacture"]
 
-def create_job_flex_card(jobs: list, user_id: str, faq_list: list) -> FlexSendMessage:
+def format_clean_location(job: dict, target_location: str) -> str:
+    county = str(job.get("縣市") or "").strip()
+    district = str(job.get("行政區") or "").strip()
+
+    if target_location:
+        dist_list = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
+        for d in dist_list:
+            if target_location in d or d in target_location:
+                return f"{county.split(',')[0] if county else ''} {d}（可自選門市/廠區）".strip()
+        
+        county_list = [c.strip() for c in re.split(r'[,，、\s]+', county) if c.strip()]
+        for c in county_list:
+            if target_location in c or c in target_location:
+                return f"{c} 各區門市/廠區均有缺額".strip()
+
+    main_districts = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
+    if main_districts:
+        short_dist = "、".join(main_districts[:3])
+        if len(main_districts) > 3:
+            short_dist += " 等多區可自選"
+        return short_dist
+        
+    return f"{county} 各區".strip() or "全台各區均可安排"
+
+def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") -> FlexSendMessage:
     bubbles = []
     badge_styles = {
         "shift": {"bg": "#E8F5E9", "text": "#2E7D32"},
         "industry": {"bg": "#E3F2FD", "text": "#1565C0"},
         "type": {"bg": "#FFF3E0", "text": "#E65100"},
-        "pay": {"bg": "#F3E5F5", "text": "#7B1FA2"}
+        "category": {"bg": "#F3E5F5", "text": "#7B1FA2"}
     }
 
     for job in jobs[:10]:
         job_id = str(job.get("_page_id") or "JOB").replace("-", "")[:8]
         job_title = str(job.get("職缺名稱(對外)") or job.get("職缺名稱") or job.get("職務類別") or "優質職缺").strip()
         
-        county = str(job.get("縣市") or "").strip()
-        district = str(job.get("行政區") or "").strip()
-        location = f"{county} {district}".strip() or "全台各廠區"
-        
+        display_location = format_clean_location(job, target_location)
         salary = str(job.get("薪資") or "依公司規定").strip()
         shift = str(job.get("班別") or "").strip()
         industry = str(job.get("行業別") or "").strip()
         job_type = str(job.get("全/兼職") or "").strip()
+        job_category = str(job.get("職務類別") or "").strip()
         
         tags_contents = []
         if shift:
             tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["shift"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": shift[:8], "size": "xxs", "color": badge_styles["shift"]["text"], "weight": "bold"}]})
-        if industry:
+        if job_category:
+            first_cat = job_category.split(",")[0].strip()
+            tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["category"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": first_cat[:8], "size": "xxs", "color": badge_styles["category"]["text"], "weight": "bold"}]})
+        elif industry:
             tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["industry"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": industry[:8], "size": "xxs", "color": badge_styles["industry"]["text"], "weight": "bold"}]})
         if job_type:
             tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["type"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": job_type[:8], "size": "xxs", "color": badge_styles["type"]["text"], "weight": "bold"}]})
 
         raw_desc = str(job.get("工作內容(對外)") or "").strip()
-        clean_desc = extract_smart_summary(raw_desc, job_title)
+        polished_desc = polish_job_description_with_ai(raw_desc, job_title)
             
-        website_job_url = sanitize_uri("https://tsaipei.netlify.app/#jobs")
-        final_apply_link = sanitize_uri(resolve_apply_url_by_industry(job, faq_list))
+        final_apply_link = sanitize_uri(resolve_apply_url_by_industry(job))
 
         body_contents = [
             {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
@@ -376,9 +476,9 @@ def create_job_flex_card(jobs: list, user_id: str, faq_list: list) -> FlexSendMe
                 "margin": "md",
                 "spacing": "xs",
                 "contents": [
-                    {"type": "text", "text": f"📍 地點：{location}", "size": "sm", "color": "#444444", "wrap": True},
+                    {"type": "text", "text": f"📍 地點：{display_location}", "size": "sm", "color": "#444444", "wrap": True},
                     {"type": "text", "text": f"💰 待遇：{salary}", "size": "sm", "color": "#D32F2F", "weight": "bold", "wrap": True},
-                    {"type": "text", "text": f"📝 說明：{clean_desc}", "size": "xs", "color": "#555555", "wrap": True, "margin": "xs"}
+                    {"type": "text", "text": f"✨ 特色：{polished_desc}", "size": "xs", "color": "#555555", "wrap": True, "margin": "xs"}
                 ]
             }
         ])
@@ -396,7 +496,11 @@ def create_job_flex_card(jobs: list, user_id: str, faq_list: list) -> FlexSendMe
                         "style": "secondary",
                         "color": "#F0F0F0",
                         "height": "sm",
-                        "action": {"type": "uri", "label": "🌐 查看官網簡章", "uri": website_job_url}
+                        "action": {
+                            "type": "message",
+                            "label": "📖 了解詳細內容",
+                            "text": f"查看職缺詳情 {job_title}"
+                        }
                     },
                     {
                         "type": "button",
@@ -413,7 +517,7 @@ def create_job_flex_card(jobs: list, user_id: str, faq_list: list) -> FlexSendMe
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 6. Gemini 多模型輪詢容錯與決策核心
+# 6. Gemini 決策核心
 # ==========================================
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
@@ -435,7 +539,11 @@ def query_gemini_ai(prompt: str) -> str:
     return ""
 
 def extract_current_target_location(history_and_msg: str) -> str:
-    locs = ["三重", "板橋", "新莊", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "台北", "臺北", "新北", "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "台中", "臺中", "台南", "臺南", "高雄"]
+    locs = [
+        "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
+        "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
+        "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東"
+    ]
     for loc in locs:
         if loc in history_and_msg:
             return loc.replace("臺", "台")
@@ -454,6 +562,35 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     active_jobs = fetch_jobs_data()
     faq_list = fetch_faqs_data()
 
+    # ---------------- 步驟 0-1：處理「了解詳細內容」（AI 排版美化 + 就業服務法審查） ----------------
+    if raw_msg.startswith("查看職缺詳情"):
+        target_title = raw_msg.replace("查看職缺詳情", "").strip()
+        matched_job = None
+        for j in active_jobs:
+            if target_title and (target_title in j.get("_parsed_title", "") or j.get("_parsed_title", "") in target_title):
+                matched_job = j
+                break
+        
+        if not matched_job and active_jobs:
+            matched_job = active_jobs[0]
+
+        if matched_job:
+            loc_display = format_clean_location(matched_job, "")
+            apply_url = sanitize_uri(resolve_apply_url_by_industry(matched_job))
+            
+            # 透過 AI 進行內容排版與就業服務法審查
+            formatted_detail = format_full_job_detail_with_ai(matched_job, loc_display)
+            final_reply_text = f"{formatted_detail}\n\n👉 立即填寫線上履歷：\n{apply_url}"
+
+            append_user_history(user_id, "招募顧問沛沛", final_reply_text)
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="📄 立即線上應徵", text="我要應徵")),
+                QuickReplyButton(action=MessageAction(label="📍 看看其他工作", text="都給我看看")),
+                QuickReplyButton(action=MessageAction(label="💬 詢問發薪與福利", text="發薪日是什麼時候？"))
+            ])
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=final_reply_text, quick_reply=quick_reply))
+            return
+
     # 2. 載入對話歷史紀錄 (7天)
     history = get_user_history(user_id)
     history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history])
@@ -461,7 +598,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     current_location = extract_current_target_location(full_conversation_context)
     clean_input = clean_text_for_search(raw_msg)
 
-    # ---------------- 步驟 0：就業服務法合規防呆攔截 ----------------
+    # ---------------- 步驟 0-2：就業服務法合規防呆攔截 ----------------
     age_gender_keywords = ["年齡限制", "幾歲", "年紀", "年齡", "限女性", "限男性", "性別限制", "幾歲以上", "幾歲以下", "高齡", "中高齡"]
     if any(k in raw_msg for k in age_gender_keywords) and ("有嗎" in raw_msg or "可以嗎" in raw_msg or "限制" in raw_msg or "能不能" in raw_msg or "可以做嗎" in raw_msg):
         legal_reply = (
@@ -481,39 +618,56 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
         return
 
-    # ---------------- 步驟 1：【最高優先級】全能精準工種直達攔截 ----------------
+    # ---------------- 步驟 1：【最高優先級】精準「職務類別」多工種嚴格直達攔截 ----------------
     direct_matches = []
     
-    # 1-1. 蝦皮外送 / 外送員 / 司機 / 配送
-    if any(k in clean_input for k in ["外送", "外送員", "配送", "司機", "送貨"]):
-        if current_location:
-            loc_clean = current_location.replace("台", "臺")
-            for j in active_jobs:
-                s_text = j.get("_search_text", "")
-                if any(k in s_text for k in ["外送", "司機", "配送", "送貨"]) and (current_location in s_text or loc_clean in s_text):
+    is_delivery_intent = any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作"])
+    is_store_intent = any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]) and not is_delivery_intent
+    is_momo_intent = any(k in clean_input for k in ["momo", "富邦", "富昇"])
+
+    # 1-1. 外送員 / 司機
+    if is_delivery_intent:
+        for j in active_jobs:
+            cat = str(j.get("_job_category", "")).lower()
+            int_t = str(j.get("_internal_title", "")).lower()
+            pub_t = str(j.get("職缺名稱(對外)", "")).lower()
+            if any(k in cat for k in ["外送", "司機", "配送"]) or any(k in int_t for k in ["外送", "司機", "配送"]) or any(k in pub_t for k in ["外送", "司機", "配送"]):
+                if current_location:
+                    loc_clean = current_location.replace("台", "臺")
+                    if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", ""):
+                        direct_matches.append(j)
+                else:
                     direct_matches.append(j)
         if not direct_matches:
             for j in active_jobs:
-                s_text = j.get("_search_text", "")
-                if any(k in s_text for k in ["外送", "司機", "配送", "送貨"]):
+                cat = str(j.get("_job_category", "")).lower()
+                int_t = str(j.get("_internal_title", "")).lower()
+                if any(k in cat for k in ["外送", "司機", "配送"]) or any(k in int_t for k in ["外送", "司機", "配送"]):
                     direct_matches.append(j)
 
-    # 1-2. 蝦皮門市 / 蝦皮店到店 / 智取店 / 蝦皮
-    elif any(k in clean_input for k in ["蝦皮", "店到店", "智取店", "蝦皮門市"]):
-        if current_location:
-            loc_clean = current_location.replace("台", "臺")
-            for j in active_jobs:
-                s_text = j.get("_search_text", "")
-                if any(k in s_text for k in ["蝦皮", "店到店", "智取店"]) and (current_location in s_text or loc_clean in s_text):
+    # 1-2. 門市人員 / 店到店
+    elif is_store_intent:
+        for j in active_jobs:
+            cat = str(j.get("_job_category", "")).lower()
+            int_t = str(j.get("_internal_title", "")).lower()
+            pub_t = str(j.get("職缺名稱(對外)", "")).lower()
+            if (any(k in cat for k in ["門市", "服務", "店員"]) or any(k in int_t for k in ["門市", "店到店", "智取店"]) or any(k in pub_t for k in ["門市", "店到店"])) and not ("外送" in int_t or "外送" in pub_t):
+                if current_location:
+                    loc_clean = current_location.replace("台", "臺")
+                    if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", ""):
+                        direct_matches.append(j)
+                else:
                     direct_matches.append(j)
         if not direct_matches:
             for j in active_jobs:
-                s_text = j.get("_search_text", "")
-                if any(k in s_text for k in ["蝦皮", "店到店", "智取店"]):
-                    direct_matches.append(j)
+                int_t = str(j.get("_internal_title", "")).lower()
+                pub_t = str(j.get("職缺名稱(對外)", "")).lower()
+                if any(k in int_t for k in ["門市", "店到店", "智取店", "蝦皮"]) or any(k in pub_t for k in ["門市", "店到店"]):
+                    if not ("外送" in int_t or "外送" in pub_t):
+                        direct_matches.append(j)
 
     # 1-3. momo / 富邦 / 富昇
-    elif any(k in clean_input for k in ["momo", "富邦", "富昇"]):
+    elif is_momo_intent:
         if current_location:
             loc_clean = current_location.replace("台", "臺")
             for j in active_jobs:
@@ -522,16 +676,15 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                     direct_matches.append(j)
         if not direct_matches:
             for j in active_jobs:
-                s_text = j.get("_search_text", "")
-                if any(k in s_text for k in ["momo", "富邦", "富昇"]):
+                if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"]):
                     direct_matches.append(j)
 
     if direct_matches:
-        reply_text = f"有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方查看簡章或線上填寫履歷應徵喔 😊"
+        reply_text = f"有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
         append_user_history(user_id, "求職者", raw_msg)
         append_user_history(user_id, "招募顧問沛沛", reply_text)
-        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:3], user_id, faq_list)])
-        print(f"[最高優先級直達命中] 成功推播 {len(direct_matches)} 筆職缺！")
+        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:3], user_id, current_location)])
+        print(f"[最高優先級精準職務類別命中] 成功推播 {len(direct_matches)} 筆職缺！")
         return
 
     # ---------------- 步驟 2：【泛意圖與全部瀏覽攔截】（「都給我看看」、「都可以」） ----------------
@@ -550,10 +703,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         if not matched_show_all:
             matched_show_all = active_jobs[:3]
 
-        reply_text = f"沒問題！沛沛馬上為您整理{current_location if current_location else ''}目前招募中的熱門職缺，歡迎點擊查看簡章或線上應徵喔 😊"
+        reply_text = f"沒問題！沛沛馬上為您整理{current_location if current_location else ''}目前招募中的熱門職缺，歡迎點擊查看詳細說明或線上應徵喔 😊"
         append_user_history(user_id, "求職者", raw_msg)
         append_user_history(user_id, "招募顧問沛沛", reply_text)
-        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, faq_list)])
+        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, current_location)])
         print(f"[泛意圖攔截命中] 成功推播 {len(matched_show_all[:5])} 筆職缺！")
         return
 
@@ -579,8 +732,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
 【極重要規則（絕對禁止幻覺）】：
 1. 自稱一律為「沛沛」。遵守就業服務法（無年齡性別限制）。
-2. 【禁止擅自宣稱額滿或沒有職缺】：只要下方清單中存在該工種/職務類別（包含外送員、司機、蝦皮門市、理貨、作業員等），一律視為開放招募中並直接推薦（ACTION:RECOMMEND）！
-3. 【全欄位比對】：比對【內部職缺名稱】、【職務類別】、【對外名稱】與【說明】。
+2. 【禁止擅自宣稱額滿或沒有職缺】：只要下方清單中存在該工種/職務類別（包含門市人員、外送員、司機、理貨、作業員等），一律視為開放招募中並直接推薦（ACTION:RECOMMEND）！
+3. 【職務類別精確辨識】：
+   - 求職者詢問「門市/店面」，推薦【職務類別:門市人員/店員】之職缺。
+   - 求職者詢問「外送/司機」，推薦【職務類別:外送員/司機】之職缺。
 4. 【求職者想看全部/隨便/都可以】：若求職者說「都給我看看」、「都可以」、「全部」，請直接推薦目前地區的所有職缺（ACTION:RECOMMEND），絕對不要繼續反問！
 5. 【情境與按鈕規則】：
    - 目前對話鎖定的地區是：【{current_location if current_location else "未指定"}】。
@@ -589,7 +744,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 【公司官方常見問題庫 (FAQ)】：
 {faq_index_text if faq_index_text else "（暫無額外 FAQ）"}
 
-【目前公司招募中的職缺清單 (已全部載入)】：
+【目前公司招募中的職缺清單】：
 {job_index_text if job_index_text else "（目前公司在全台灣北、中、南區均有開放各類優質職缺）"}
 
 【過去對話歷史】：
@@ -638,7 +793,7 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
         if not matched_jobs and active_jobs:
             matched_jobs = active_jobs[:3]
 
-        flex_card = create_job_flex_card(matched_jobs, user_id, faq_list)
+        flex_card = create_job_flex_card(matched_jobs, user_id, current_location)
         target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), flex_card])
         return
 
@@ -692,17 +847,17 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
         if any(k in combined_query for k in ["momo", "富邦", "富昇"]) and any(k in s_text for k in ["momo", "富邦", "富昇"]):
             matched_jobs.append(j)
             continue
-        if any(k in combined_query for k in ["蝦皮", "店到店"]) and any(k in s_text for k in ["蝦皮", "店到店"]):
+        if any(k in combined_query for k in ["蝦皮", "門市", "店到店"]) and any(k in s_text for k in ["蝦皮", "門市", "店到店"]):
             matched_jobs.append(j)
             continue
-        tokens = [t for t in ["三重", "板橋", "新莊", "台北", "新北", "桃園", "中壢", "龜山", "早班", "夜班", "理貨", "作業員"] if t in combined_query]
+        tokens = [t for t in ["板橋", "新莊", "三重", "台北", "新北", "桃園", "中壢", "龜山", "早班", "夜班", "理貨", "作業員"] if t in combined_query]
         if tokens and all(t in s_text for t in tokens):
             matched_jobs.append(j)
 
     if matched_jobs:
-        reply_text = "太棒了！沛沛為您找到以下符合條件的推薦職缺，歡迎點擊下方查看簡章或線上應徵喔 😊"
+        reply_text = "太棒了！沛沛為您找到以下符合條件的推薦職缺，歡迎點擊下方「了解詳細內容」或線上應徵喔 😊"
         append_user_history(user_id, "招募顧問沛沛", reply_text)
-        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_jobs[:3], user_id, faq_list)])
+        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_jobs[:3], user_id, current_location)])
         return
 
     # 預設引導
@@ -722,7 +877,7 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
 # ==========================================
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (PeiPei Ultra Safe Engine) is running."}
+    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (PeiPei Legal & Formatted Detail Engine) is running."}
 
 @app.post("/test-callback")
 async def test_callback(request: Request, x_line_signature: str = Header(None)):
