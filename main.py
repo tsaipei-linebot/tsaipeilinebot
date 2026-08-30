@@ -17,7 +17,7 @@ from google import genai
 
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine", version="8.7.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine", version="9.0.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -544,6 +544,105 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
 # ==========================================
 # 6. Gemini 決策核心
 # ==========================================
+def _tokenize_search_terms(text: str) -> list:
+    """將自然語言拆成可用於本地候選職缺/FAQ 篩選的詞彙。"""
+    normalized = clean_text_for_search(text)
+    candidates = [
+        "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
+        "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
+        "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東",
+        "早班", "早上", "白班", "日班", "晚班", "小夜", "大夜", "夜班", "假日", "彈性",
+        "外送", "司機", "配送", "送貨", "門市", "店員", "店到店", "智取店", "蝦皮", "momo", "富邦", "富昇",
+        "理貨", "揀貨", "倉管", "作業員", "包裝", "產線", "倉儲", "餐飲", "服飾", "服務",
+    ]
+    return [k for k in candidates if clean_text_for_search(k) in normalized]
+
+
+def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", slots: dict = None) -> int:
+    """只做候選排序，不改變原本職缺資料或既有精準攔截邏輯。"""
+    slots = slots or {}
+    search_text = job.get("_search_text", "")
+    score = 0
+    query_clean = clean_text_for_search(query_text)
+
+    if current_location:
+        loc = clean_text_for_search(current_location)
+        if loc and loc in search_text:
+            score += 30
+
+    category = slots.get("category", "")
+    for keyword in category_search_keywords(category):
+        if clean_text_for_search(keyword) in search_text:
+            score += 15
+
+    shift = slots.get("shift", "")
+    if shift and shift != "不限":
+        shift_keywords = {
+            "早班": ["早班", "早上", "白班", "日班"],
+            "晚班": ["晚班", "小夜"],
+            "大夜班": ["大夜", "夜班"],
+            "假日班": ["假日"],
+            "彈性排班": ["彈性", "排班"],
+        }
+        for keyword in shift_keywords.get(shift, [shift]):
+            if clean_text_for_search(keyword) in search_text:
+                score += 12
+                break
+
+    for term in _tokenize_search_terms(query_text):
+        term_clean = clean_text_for_search(term)
+        if term_clean and term_clean in search_text:
+            score += 8
+
+    title_clean = clean_text_for_search(job.get("_parsed_title", ""))
+    category_clean = clean_text_for_search(job.get("職務類別", ""))
+    if title_clean and title_clean in query_clean:
+        score += 25
+    if category_clean and category_clean in query_clean:
+        score += 20
+    return score
+
+
+def build_ai_job_candidates(active_jobs: list, query_text: str, current_location: str = "", slots: dict = None, limit: int = 40) -> list:
+    """保留既有 Notion 職缺來源與白名單機制，只在送 Gemini 前縮小候選集合。"""
+    if not active_jobs:
+        return []
+    scored = [(_score_job_for_ai(job, query_text, current_location, slots), idx, job) for idx, job in enumerate(active_jobs)]
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    positive = [item for item in scored if item[0] > 0]
+    selected = positive[:limit] if positive else scored[:limit]
+    return [item[2] for item in selected]
+
+
+def _score_faq_for_ai(faq: dict, query_text: str) -> int:
+    q = clean_text_for_search(faq.get("question", ""))
+    query = clean_text_for_search(query_text)
+    if not q or not query:
+        return 0
+    score = 0
+    if q in query or query in q:
+        score += 50
+    for term in _tokenize_search_terms(query_text):
+        t = clean_text_for_search(term)
+        if t and t in q:
+            score += 10
+    for i in range(max(0, len(query) - 1)):
+        piece = query[i:i + 2]
+        if piece and piece in q:
+            score += 2
+    return score
+
+
+def build_ai_faq_candidates(faq_list: list, query_text: str, limit: int = 20) -> list:
+    if not faq_list:
+        return []
+    scored = [(_score_faq_for_ai(faq, query_text), idx, faq) for idx, faq in enumerate(faq_list)]
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    positive = [item for item in scored if item[0] > 0]
+    selected = positive[:limit] if positive else scored[:limit]
+    return [item[2] for item in selected]
+
+
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
         return ""
@@ -862,21 +961,33 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         print(f"[泛意圖攔截命中] 成功推播 {len(matched_show_all[:5])} 筆職缺！")
         return
 
-    # ---------------- 步驟 3：組合 Notion 職缺索引給 Gemini 進行多輪推理 ----------------
+    # ---------------- 步驟 3：組合「候選」Notion 職缺/FAQ 索引給 Gemini 進行多輪推理 ----------------
+    # Notion 仍是唯一職缺/FAQ 資料來源；既有 Notion 權限與白名單設定不異動。
+    # 這裡只在送 Gemini 前縮小候選集合，降低 Token 與延遲，不改變前面的精準攔截邏輯。
+    _current_slots_for_candidates = get_user_slots(user_id)
+    ai_job_candidates = build_ai_job_candidates(
+        active_jobs,
+        f"{history_text} {raw_msg}",
+        current_location,
+        _current_slots_for_candidates,
+        limit=40,
+    )
+    ai_faq_candidates = build_ai_faq_candidates(faq_list, raw_msg, limit=20)
+
     job_index_text = ""
-    for idx, j in enumerate(active_jobs):
+    for idx, j in enumerate(ai_job_candidates):
         public_t = j.get("職缺名稱(對外)", "")
         internal_t = j.get("職缺名稱", "")
         cat_t = j.get("職務類別", "")
         loc = f"{j.get('縣市', '')}{j.get('行政區', '')}"
-        shift = j.get('班別', '')
-        ind = j.get('行業別', '')
-        salary = j.get('薪資', '')
-        desc = j.get('工作內容(對外)', '')
-        job_index_text += f"[ID:{idx}] 內部名稱:{internal_t} | 職務類別:{cat_t} | 對外名稱:{public_t} | 地點:{loc} | 行業:{ind} | 班別:{shift} | 待遇:{salary} | 說明:{desc}\n"
+        shift = j.get("班別", "")
+        ind = j.get("行業別", "")
+        salary = j.get("薪資", "")
+        desc = j.get("工作內容(對外)", "")
+        job_index_text += f"[ID:{idx}] 職缺唯一ID:{j.get('_page_id', '')} | 內部名稱:{internal_t} | 職務類別:{cat_t} | 對外名稱:{public_t} | 地點:{loc} | 行業:{ind} | 班別:{shift} | 待遇:{salary} | 說明:{desc}\n"
 
     faq_index_text = ""
-    for idx, f in enumerate(faq_list):
+    for f in ai_faq_candidates:
         faq_index_text += f"問：{f.get('question')} => 答：{f.get('answer')}\n"
 
     _current_slots = get_user_slots(user_id)
@@ -949,11 +1060,12 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
 
         matched_jobs = []
         if ids_match:
-            indices = [int(n.strip()) for n in ids_match.group(1).split(",") if n.strip().isdigit() and int(n.strip()) < len(active_jobs)]
-            matched_jobs = [active_jobs[i] for i in indices]
+            indices = [int(n.strip()) for n in ids_match.group(1).split(",") if n.strip().isdigit() and int(n.strip()) < len(ai_job_candidates)]
+            matched_jobs = [ai_job_candidates[i] for i in indices]
 
-        if not matched_jobs and active_jobs:
-            matched_jobs = active_jobs[:3]
+        if not matched_jobs:
+            # AI 輸出格式異常時，優先使用本次候選集合；完全沒有候選才沿用原本全庫前三筆保底。
+            matched_jobs = ai_job_candidates[:3] if ai_job_candidates else active_jobs[:3]
 
         flex_card = create_job_flex_card(matched_jobs, user_id, current_location)
         target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), flex_card])
