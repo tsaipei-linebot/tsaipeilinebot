@@ -2,6 +2,8 @@ import os
 import re
 import time
 import json
+import urllib.request
+import urllib.error
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Header, HTTPException
 from linebot import LineBotApi, WebhookHandler
@@ -11,11 +13,10 @@ from linebot.models import (
     FlexSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
 from google import genai
-from notion_client import Client
 
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant - Precision Status Engine", version="8.2.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant - Direct API Engine", version="8.3.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -43,14 +44,6 @@ if GEMINI_API_KEY:
         print("[系統提示] Gemini AI 客戶端初始化成功！")
     except Exception as e:
         print(f"[系統警告] Gemini AI 初始化失敗: {e}")
-
-notion_client = None
-if NOTION_API_KEY:
-    try:
-        notion_client = Client(auth=NOTION_API_KEY)
-        print("[系統提示] Notion API 客戶端初始化成功！")
-    except Exception as e:
-        print(f"[系統警告] Notion 初始化失敗: {e}")
 
 # ==========================================
 # 2. 對話記憶體快取 (Session Context - 7 天)
@@ -109,7 +102,7 @@ def extract_smart_summary(raw_desc: str, title: str) -> str:
     return f"開放應徵【{title}】，工作環境單純，歡迎點擊下方履歷應徵！"
 
 # ==========================================
-# 4. Notion 資料庫讀取 (嚴格僅排除「停招」+ 完整翻頁讀取)
+# 4. Notion 原生 HTTP Direct Query (零依賴、全版本相容)
 # ==========================================
 CACHE_TTL = 30
 _cached_jobs, _last_jobs_fetch = None, 0
@@ -125,7 +118,6 @@ def clean_text_for_search(text: str) -> str:
     return re.sub(r'[\(\)（）\/\s\-_,，、\?!？！。🛵☀️🌙📦🏭🏬🍽️🔄]+', '', t)
 
 def parse_notion_property(prop: dict) -> str:
-    """全面解析 Notion 所有屬性結構"""
     if not isinstance(prop, dict):
         return str(prop or "").strip()
     
@@ -163,82 +155,102 @@ def parse_notion_property(prop: dict) -> str:
             
     return ""
 
+def query_notion_database_direct(database_id: str) -> list:
+    """使用原生物理 HTTP 請求讀取 Notion，擺脫 SDK 版本相容問題"""
+    if not NOTION_API_KEY or not database_id:
+        return []
+
+    clean_db_id = database_id.replace("-", "").strip()
+    url = f"https://api.notion.com/v1/databases/{clean_db_id}/query"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY.strip()}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+    }
+
+    all_results = []
+    has_more = True
+    start_cursor = None
+
+    while has_more:
+        body_data = {"page_size": 100}
+        if start_cursor:
+            body_data["start_cursor"] = start_cursor
+
+        req = urllib.request.Request(url, data=json.dumps(body_data).encode("utf-8"), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as res:
+                res_json = json.loads(res.read().decode("utf-8"))
+                all_results.extend(res_json.get("results", []))
+                has_more = res_json.get("has_more", False)
+                start_cursor = res_json.get("next_cursor", None)
+        except Exception as e:
+            print(f"[Notion Direct Query 異常]: {e}")
+            break
+
+    return all_results
+
 def fetch_jobs_data() -> list:
     global _cached_jobs, _last_jobs_fetch
     now = time.time()
     if _cached_jobs is not None and (now - _last_jobs_fetch < CACHE_TTL):
         return _cached_jobs
 
-    if not notion_client or not NOTION_JOBS_DB_ID:
-        print("[Notion 警告] 未設定 NOTION_API_KEY 或 NOTION_JOBS_DB_ID")
-        return _cached_jobs or []
-
     active_jobs = []
     try:
-        has_more = True
-        start_cursor = None
+        results = query_notion_database_direct(NOTION_JOBS_DB_ID)
 
-        while has_more:
-            query_kwargs = {"database_id": NOTION_JOBS_DB_ID, "page_size": 100}
-            if start_cursor:
-                query_kwargs["start_cursor"] = start_cursor
+        for page in results:
+            props = page.get("properties", {})
+            page_id = page.get("id", "")
+            job_dict = {"_page_id": page_id}
+            raw_text_parts = []
 
-            response = notion_client.databases.query(**query_kwargs)
+            # 1. 偵測 Title
+            title_val = ""
+            for p_name, p_val in props.items():
+                if isinstance(p_val, dict) and p_val.get("type") == "title":
+                    title_val = parse_notion_property(p_val)
+                    break
+            job_dict["職缺名稱"] = title_val
 
-            for page in response.get("results", []):
-                props = page.get("properties", {})
-                page_id = page.get("id", "")
-                job_dict = {"_page_id": page_id}
-                raw_text_parts = []
+            # 2. 偵測 Multi-Select 職務類別
+            category_val = ""
+            for p_name, p_val in props.items():
+                if "類別" in p_name or "職務" in p_name:
+                    category_val = parse_notion_property(p_val)
+                    break
+            job_dict["職務類別"] = category_val
 
-                # 1. 自動偵測 Notion Title 欄位（內部職缺名稱）
-                title_val = ""
-                for p_name, p_val in props.items():
-                    if isinstance(p_val, dict) and p_val.get("type") == "title":
-                        title_val = parse_notion_property(p_val)
-                        break
-                job_dict["職缺名稱"] = title_val
+            # 3. 讀取其餘白名單
+            for field_name in ALLOWED_PROPERTIES:
+                if field_name in props and field_name not in ["職缺名稱", "職務類別"]:
+                    val_str = parse_notion_property(props[field_name])
+                    job_dict[field_name] = val_str
 
-                # 2. 自動偵測 Notion Multi-Select 職務類別欄位
-                category_val = ""
-                for p_name, p_val in props.items():
-                    if "類別" in p_name or "職務" in p_name:
-                        category_val = parse_notion_property(p_val)
-                        break
-                job_dict["職務類別"] = category_val
+            # 4. 嚴格過濾「停招」
+            status = str(job_dict.get("狀態", "")).strip()
+            if status == "停招":
+                continue
 
-                # 3. 讀取其他白名單欄位
-                for field_name in ALLOWED_PROPERTIES:
-                    if field_name in props and field_name not in ["職缺名稱", "職務類別"]:
-                        val_str = parse_notion_property(props[field_name])
-                        job_dict[field_name] = val_str
+            for k, v in job_dict.items():
+                if isinstance(v, str) and v and k != "狀態" and not k.startswith("_"):
+                    raw_text_parts.append(v)
 
-                # 4. 【核心規則】：只有狀態精準為「停招」才過濾，其餘一律視為有缺招募中！
-                status = str(job_dict.get("狀態", "")).strip()
-                if status == "停招":
-                    continue
-
-                for k, v in job_dict.items():
-                    if isinstance(v, str) and v and k != "狀態" and not k.startswith("_"):
-                        raw_text_parts.append(v)
-
-                public_title = job_dict.get("職缺名稱(對外)") or ""
-                internal_title = job_dict.get("職缺名稱") or ""
-                job_category = job_dict.get("職務類別") or ""
-                display_title = public_title or internal_title or job_category
-                
-                if display_title:
-                    job_dict["_parsed_title"] = display_title
-                    job_dict["_internal_title"] = internal_title
-                    job_dict["_internal_title_clean"] = clean_text_for_search(internal_title)
-                    job_dict["_job_category"] = job_category
-                    job_dict["_job_category_clean"] = clean_text_for_search(job_category)
-                    job_dict["_raw_row_text"] = " ".join(raw_text_parts)
-                    job_dict["_search_text"] = clean_text_for_search(" ".join(raw_text_parts))
-                    active_jobs.append(job_dict)
-
-            has_more = response.get("has_more", False)
-            start_cursor = response.get("next_cursor", None)
+            public_title = job_dict.get("職缺名稱(對外)") or ""
+            internal_title = job_dict.get("職缺名稱") or ""
+            job_category = job_dict.get("職務類別") or ""
+            display_title = public_title or internal_title or job_category
+            
+            if display_title:
+                job_dict["_parsed_title"] = display_title
+                job_dict["_internal_title"] = internal_title
+                job_dict["_internal_title_clean"] = clean_text_for_search(internal_title)
+                job_dict["_job_category"] = job_category
+                job_dict["_job_category_clean"] = clean_text_for_search(job_category)
+                job_dict["_raw_row_text"] = " ".join(raw_text_parts)
+                job_dict["_search_text"] = clean_text_for_search(" ".join(raw_text_parts))
+                active_jobs.append(job_dict)
 
         print(f"[Notion 職缺載入成功] 共載入 {len(active_jobs)} 筆招募中職缺！")
         _cached_jobs = active_jobs
@@ -254,13 +266,10 @@ def fetch_faqs_data() -> list:
     if _cached_faqs is not None and (now - _last_faqs_fetch < CACHE_TTL):
         return _cached_faqs
 
-    if not notion_client or not NOTION_FAQ_DB_ID:
-        return _cached_faqs or []
-
     faqs = []
     try:
-        response = notion_client.databases.query(database_id=NOTION_FAQ_DB_ID, page_size=100)
-        for page in response.get("results", []):
+        results = query_notion_database_direct(NOTION_FAQ_DB_ID)
+        for page in results:
             props = page.get("properties", {})
             q_text, a_text, status = "", "", "啟用"
             
@@ -421,12 +430,13 @@ def create_job_flex_card(jobs: list, user_id: str, faq_list: list) -> FlexSendMe
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 6. Gemini 決策核心
+# 6. Gemini 多模型輪詢容錯與決策核心
 # ==========================================
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
         return ""
-    models = ["gemini-3.6-flash", "gemini-3.5-flash"]
+    # 自動支援多模型輪詢降級，避免 429 配額不足
+    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-3.6-flash"]
     for m in models:
         try:
             if hasattr(ai_client, 'models'):
@@ -443,7 +453,7 @@ def query_gemini_ai(prompt: str) -> str:
     return ""
 
 def extract_current_target_location(history_and_msg: str) -> str:
-    locs = ["板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "台北", "臺北", "新北", "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "台中", "臺中", "台南", "臺南", "高雄"]
+    locs = ["三重", "板橋", "新莊", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "台北", "臺北", "新北", "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "台中", "臺中", "台南", "臺南", "高雄"]
     for loc in locs:
         if loc in history_and_msg:
             return loc.replace("臺", "台")
@@ -494,21 +504,19 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     
     # 1-1. 蝦皮外送 / 外送員 / 司機 / 配送
     if any(k in clean_input for k in ["外送", "外送員", "配送", "司機", "送貨"]):
-        # 優先搜尋特定區域
         if current_location:
             loc_clean = current_location.replace("台", "臺")
             for j in active_jobs:
                 s_text = j.get("_search_text", "")
                 if any(k in s_text for k in ["外送", "司機", "配送", "送貨"]) and (current_location in s_text or loc_clean in s_text):
                     direct_matches.append(j)
-        # 若指定地區沒有，直接抓取全台的外送職缺推薦
         if not direct_matches:
             for j in active_jobs:
                 s_text = j.get("_search_text", "")
                 if any(k in s_text for k in ["外送", "司機", "配送", "送貨"]):
                     direct_matches.append(j)
 
-    # 1-2. 蝦皮門市 / 蝦皮店到店 / 智取店
+    # 1-2. 蝦皮門市 / 蝦皮店到店 / 智取店 / 蝦皮
     elif any(k in clean_input for k in ["蝦皮", "店到店", "智取店", "蝦皮門市"]):
         if current_location:
             loc_clean = current_location.replace("台", "臺")
@@ -578,7 +586,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         ind = j.get('行業別', '')
         salary = j.get('薪資', '')
         desc = j.get('工作內容(對外)', '')
-        job_index_text += f"[ID:{idx}] 內部職缺名稱:{internal_t} | 職務類別:{cat_t} | 對外名稱:{public_t} | 地點:{loc} | 行業:{ind} | 班別:{shift} | 待遇:{salary} | 說明:{desc}\n"
+        job_index_text += f"[ID:{idx}] 內部名稱:{internal_t} | 職務類別:{cat_t} | 對外名稱:{public_t} | 地點:{loc} | 行業:{ind} | 班別:{shift} | 待遇:{salary} | 說明:{desc}\n"
 
     faq_index_text = ""
     for idx, f in enumerate(faq_list):
@@ -705,7 +713,7 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
         if any(k in combined_query for k in ["蝦皮", "店到店"]) and any(k in s_text for k in ["蝦皮", "店到店"]):
             matched_jobs.append(j)
             continue
-        tokens = [t for t in ["板橋", "新莊", "三重", "台北", "新北", "桃園", "中壢", "龜山", "早班", "夜班", "理貨", "作業員"] if t in combined_query]
+        tokens = [t for t in ["三重", "板橋", "新莊", "台北", "新北", "桃園", "中壢", "龜山", "早班", "夜班", "理貨", "作業員"] if t in combined_query]
         if tokens and all(t in s_text for t in tokens):
             matched_jobs.append(j)
 
@@ -732,7 +740,7 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
 # ==========================================
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (PeiPei Status Precision Engine) is running."}
+    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (PeiPei Direct API Engine) is running."}
 
 @app.post("/test-callback")
 async def test_callback(request: Request, x_line_signature: str = Header(None)):
