@@ -15,7 +15,7 @@ from notion_client import Client
 
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant - Direct Priority Engine", version="7.7.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant - Job Category Precision Engine", version="7.9.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -109,21 +109,21 @@ def extract_smart_summary(raw_desc: str, title: str) -> str:
     return f"開放應徵【{title}】，工作環境單純，歡迎點擊下方履歷應徵！"
 
 # ==========================================
-# 4. Notion 資料庫讀取模組
+# 4. Notion 資料庫讀取模組 (包含「職務類別」白名單)
 # ==========================================
 CACHE_TTL = 30
 _cached_jobs, _last_jobs_fetch = None, 0
 _cached_faqs, _last_faqs_fetch = None, 0
 
+# 新增「職務類別」欄位
 ALLOWED_PROPERTIES = {
-    "職缺名稱", "職缺名稱(對外)", "縣市", "行政區", "行業別", 
+    "職缺名稱", "職缺名稱(對外)", "職務類別", "縣市", "行政區", "行業別", 
     "全/兼職", "班別", "薪資", "工作內容(對外)", "狀態"
 }
 
 def clean_text_for_search(text: str) -> str:
-    """清理文字以便於比對（轉小寫、去除標點符號與括號）"""
     t = str(text or "").lower().replace("台", "臺")
-    return re.sub(r'[\(\)（）\/\s\-_,，、\?!？！。]+', '', t)
+    return re.sub(r'[\(\)（）\/\s\-_,，、\?!？！。🛵☀️🌙📦🏭🏬🍽️🔄]+', '', t)
 
 def parse_notion_property(prop: dict) -> str:
     if not isinstance(prop, dict):
@@ -187,6 +187,7 @@ def fetch_jobs_data() -> list:
                 job_dict["_parsed_title"] = title
                 job_dict["_internal_title"] = internal_title
                 job_dict["_internal_title_clean"] = clean_text_for_search(internal_title)
+                job_dict["_job_category"] = job_dict.get("職務類別") or ""
                 job_dict["_raw_row_text"] = " ".join(raw_text_parts)
                 job_dict["_search_text"] = clean_text_for_search(" ".join(raw_text_parts))
                 active_jobs.append(job_dict)
@@ -246,7 +247,7 @@ DEFAULT_RESUME_URLS = {
 }
 
 def resolve_apply_url_by_industry(job: dict, faq_list: list) -> str:
-    full_search_text = f"{job.get('職缺名稱(對外)', '')} {job.get('職缺名稱', '')} {job.get('行業別', '')} {job.get('工作內容(對外)', '')}".lower()
+    full_search_text = f"{job.get('職缺名稱(對外)', '')} {job.get('職缺名稱', '')} {job.get('職務類別', '')} {job.get('行業別', '')} {job.get('工作內容(對外)', '')}".lower()
 
     if any(k in full_search_text for k in ["蝦皮", "智取店", "店到店", "spx", "外送"]):
         for f in faq_list:
@@ -394,10 +395,10 @@ def query_gemini_ai(prompt: str) -> str:
     return ""
 
 def extract_current_target_location(history_and_msg: str) -> str:
-    locs = ["桃園", "新莊", "三重", "中壢", "龜山", "蘆竹", "大園", "八德", "台中", "台南", "高雄", "新北", "台北"]
+    locs = ["台北", "臺北", "新北", "新莊", "三重", "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "台中", "臺中", "台南", "臺南", "高雄"]
     for loc in locs:
         if loc in history_and_msg:
-            return loc
+            return loc.replace("臺", "台")
     return ""
 
 def process_user_message(event, target_line_bot_api: LineBotApi):
@@ -440,66 +441,73 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
         return
 
-    # ---------------- 步驟 1：【最高優先級】「職缺名稱」精確品牌與工種命中攔截 ----------------
-    # 只要求職者明確詢問的詞彙精準出現在「職缺名稱」內部欄位中（如：蝦皮外送、momo、富昇、欣興等），直接推薦
-    direct_title_matches = []
-    
-    # 特殊別名轉換表
-    alias_dict = {
-        "momo": ["momo", "富邦", "富昇"],
-        "富邦": ["momo", "富邦", "富昇"],
-        "富昇": ["momo", "富邦", "富昇"],
-        "蝦皮外送": ["蝦皮外送", "外送", "智取店外送"],
-        "蝦皮門市": ["蝦皮門市", "蝦皮店到店", "店到店", "門市", "智取店"]
-    }
-
-    # 1-1. 檢查是否有別名直接命中職缺名稱
-    for alias_key, alias_values in alias_dict.items():
-        if alias_key in clean_input or any(v in clean_input for v in alias_values):
-            for j in active_jobs:
-                int_title_clean = j.get("_internal_title_clean", "")
-                if any(v in int_title_clean for v in alias_values):
-                    # 若上下文已鎖定地區，優先考慮該地區
-                    if current_location and current_location not in j.get("_search_text", ""):
-                        continue
-                    direct_title_matches.append(j)
-            
-            # 若鎖定地區沒缺，退回全台該工種
-            if not direct_title_matches:
-                for j in active_jobs:
-                    int_title_clean = j.get("_internal_title_clean", "")
-                    if any(v in int_title_clean for v in alias_values):
-                        direct_title_matches.append(j)
-            if direct_title_matches:
-                break
-
-    # 1-2. 一般字串命中內部「職缺名稱」
-    if not direct_title_matches:
+    # ---------------- 步驟 1：【泛意圖與全部瀏覽攔截】（「都給我看看」、「都可以」） ----------------
+    show_all_keywords = ["都給我看", "都要看", "都可以", "全部", "隨便", "推薦一下", "有什麼工作", "還有什麼", "看全部", "都看"]
+    if any(k in clean_input for k in show_all_keywords):
+        matched_show_all = []
         for j in active_jobs:
-            int_title_clean = j.get("_internal_title_clean", "")
-            # 若求職者輸入的文字直接包含在內部職缺名稱，或內部職缺名稱包含在輸入中
-            if (len(clean_input) >= 3 and clean_input in int_title_clean) or (len(int_title_clean) >= 3 and int_title_clean in clean_input):
-                direct_title_matches.append(j)
+            s_text = j.get("_search_text", "")
+            if current_location:
+                loc_clean = current_location.replace("台", "臺")
+                if current_location in s_text or loc_clean in s_text:
+                    matched_show_all.append(j)
+            else:
+                matched_show_all.append(j)
+                
+        if not matched_show_all:
+            matched_show_all = active_jobs[:3]
 
-    if direct_title_matches:
-        reply_text = "有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方查看簡章或線上填寫履歷應徵喔 😊"
+        reply_text = f"沒問題！沛沛馬上為您整理{current_location if current_location else ''}目前招募中的熱門職缺，歡迎點擊查看簡章或線上應徵喔 😊"
         append_user_history(user_id, "求職者", raw_msg)
         append_user_history(user_id, "招募顧問沛沛", reply_text)
-        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_title_matches[:3], user_id, faq_list)])
-        print(f"[職缺名稱精準攔截命中] 找到 {len(direct_title_matches)} 筆職缺！")
+        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, faq_list)])
+        print(f"[泛意圖攔截命中] 成功推播 {len(matched_show_all[:5])} 筆職缺！")
         return
 
-    # ---------------- 步驟 2：組合 Notion 職缺索引給 Gemini 進行多輪對話 ----------------
+    # ---------------- 步驟 2：【最高優先級】內部職缺名稱/職務類別與工種班別彈性命中 ----------------
+    direct_matches = []
+    
+    is_delivery = any(k in clean_input for k in ["外送", "外送員", "配送", "司機"])
+    is_momo = any(k in clean_input for k in ["momo", "富邦", "富昇"])
+    is_spx = any(k in clean_input for k in ["蝦皮", "店到店", "智取店"])
+
+    for j in active_jobs:
+        s_text = j.get("_search_text", "")
+        
+        # 地區匹配檢查
+        if current_location:
+            loc_clean = current_location.replace("台", "臺")
+            if current_location not in s_text and loc_clean not in s_text:
+                continue
+
+        # 條件檢索（涵蓋職務類別、內部名稱、對外名稱與內容）
+        if is_delivery and any(k in s_text for k in ["外送", "司機", "配送"]):
+            direct_matches.append(j)
+        elif is_momo and any(k in s_text for k in ["momo", "富邦", "富昇"]):
+            direct_matches.append(j)
+        elif is_spx and any(k in s_text for k in ["蝦皮", "店到店", "智取店"]):
+            direct_matches.append(j)
+
+    if direct_matches:
+        reply_text = f"有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方查看簡章或線上填寫履歷應徵喔 😊"
+        append_user_history(user_id, "求職者", raw_msg)
+        append_user_history(user_id, "招募顧問沛沛", reply_text)
+        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:3], user_id, faq_list)])
+        print(f"[彈性工種/職務類別攔截命中] 找到 {len(direct_matches)} 筆職缺！")
+        return
+
+    # ---------------- 步驟 3：組合 Notion 職缺索引給 Gemini 進行多輪推理 (含職務類別) ----------------
     job_index_text = ""
     for idx, j in enumerate(active_jobs):
         public_t = j.get("職缺名稱(對外)", "")
         internal_t = j.get("職缺名稱", "")
+        cat_t = j.get("職務類別", "")
         loc = f"{j.get('縣市', '')}{j.get('行政區', '')}"
         shift = j.get('班別', '')
         ind = j.get('行業別', '')
         salary = j.get('薪資', '')
         desc = j.get('工作內容(對外)', '')
-        job_index_text += f"[ID:{idx}] 內部職缺名稱:{internal_t} | 對外名稱:{public_t} | 地點:{loc} | 行業:{ind} | 班別:{shift} | 待遇:{salary} | 說明:{desc}\n"
+        job_index_text += f"[ID:{idx}] 內部名稱:{internal_t} | 對外名稱:{public_t} | 職務類別:{cat_t} | 地點:{loc} | 行業:{ind} | 班別:{shift} | 待遇:{salary} | 說明:{desc}\n"
 
     faq_index_text = ""
     for idx, f in enumerate(faq_list):
@@ -508,21 +516,19 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的真人在線人資招募顧問（名字叫「沛沛」）。
 你的目標是：結合過去 7 天的對話歷史，以真人顧問口吻引導求職者，並在資料庫中有符合職缺時推薦。
 
-【極重要規則】：
-1. 自稱一律為「沛沛」。嚴格遵守就業服務法（無年齡性別限制）。
-2. 【內部職缺名稱與工種最高優先比對】：
-   - 【絕對禁止】自行宣稱「我們暫無外送/某某工種」！請仔細檢查下方清單中的【內部職缺名稱】。
-   - 只要清單中出現「蝦皮外送」、「momo」、「富昇」等名稱，求職者詢問時務必直接視為符合職缺並推薦（ACTION:RECOMMEND）！
-3. 【情境與按鈕規則】：
+【極重要規則（絕對禁止幻覺）】：
+1. 自稱一律為「沛沛」。遵守就業服務法（無年齡性別限制）。
+2. 【禁止擅自宣稱額滿】：只要下方清單中存在該地區與工種/職務類別的職缺，即使班別稍微寬鬆（例如求職者說大夜，清單寫夜班或輪班），一律視為符合並直接推薦（ACTION:RECOMMEND）！
+3. 【全欄位比對】：請比對【內部名稱】、【對外名稱】、【職務類別】與【說明】。
+4. 【求職者想看全部/隨便/都可以】：若求職者說「都給我看看」、「都可以」、「全部」，請直接推薦目前地區的所有職缺（ACTION:RECOMMEND），絕對不要繼續反問！
+5. 【情境與按鈕規則】：
    - 目前對話鎖定的地區是：【{current_location if current_location else "未指定"}】。
-   - 若求職者正在詢問特定地區（如桃園、新莊），按鈕請一律圍繞該地區推薦，【絕對不要】在詢問桃園時跳出「台中工作、台南工作」！
-   - 當詢問班別時，按鈕提供：☀️ 固定早班,🌙 夜班/大夜,🔄 配合輪班
-   - 當在特定地區暫無特定品牌時，按鈕提供該地區的其他工種，例如：📦 {current_location}其他理貨,🏭 {current_location}作業員,☀️ {current_location}早班
+   - 按鈕請一律圍繞該地區推薦，絕對不要跨縣市跳出不相干按鈕。
 
 【公司官方常見問題庫 (FAQ)】：
 {faq_index_text if faq_index_text else "（暫無額外 FAQ）"}
 
-【目前公司招募中的職缺清單 (請務必比對內部職缺名稱)】：
+【目前公司招募中的職缺清單 (請務必比對內部名稱與職務類別)】：
 {job_index_text if job_index_text else "（目前公司在全台灣北、中、南區均有開放各類優質職缺）"}
 
 【過去對話歷史】：
@@ -539,7 +545,7 @@ ACTION:ASK
 REPLY:（以沛沛口吻親切回答，約 40-70 字）
 BUTTONS:（緊扣目前地區與當前話題的 3-5 個按鈕，逗號分隔）
 
-格式 B（求職者條件（包含內部職缺名稱比對）在清單中有符合的職缺）：
+格式 B（求職者條件在清單中有符合的職缺，或求職者表示都可以/都給我看）：
 ACTION:RECOMMEND
 IDS:（符合的職缺數字，例如 0 或 0,1）
 REPLY:（給求職者的溫暖推薦語）
@@ -586,7 +592,7 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
         if buttons_match:
             raw_buttons = [b.strip() for b in buttons_match.group(1).split(",") if b.strip()]
             for b_label in raw_buttons[:6]:
-                clean_txt = re.sub(r'^[📍☀️🌙📦🏭🏬🍽️🔄\s]+', '', b_label)
+                clean_txt = re.sub(r'^[📍☀️🌙📦🏭🏬🍽️🔄🛵\s]+', '', b_label)
                 buttons.append(QuickReplyButton(action=MessageAction(label=b_label[:20], text=clean_txt)))
         
         # 本地情境防呆按鈕生成
@@ -596,13 +602,13 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
                     QuickReplyButton(action=MessageAction(label=f"☀️ {current_location}早班", text=f"{current_location}早班")),
                     QuickReplyButton(action=MessageAction(label=f"🌙 {current_location}夜班", text=f"{current_location}夜班")),
                     QuickReplyButton(action=MessageAction(label=f"📦 {current_location}理貨", text=f"{current_location}理貨")),
-                    QuickReplyButton(action=MessageAction(label=f"🏭 {current_location}作業員", text=f"{current_location}作業員")),
-                    QuickReplyButton(action=MessageAction(label="🏬 蝦皮門市", text="蝦皮門市"))
+                    QuickReplyButton(action=MessageAction(label=f"🛵 {current_location}外送", text=f"{current_location}外送")),
+                    QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
                 ]
             else:
                 buttons = [
+                    QuickReplyButton(action=MessageAction(label="📍 台北/新北", text="台北工作")),
                     QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
-                    QuickReplyButton(action=MessageAction(label="📍 新莊/新北", text="新莊工作")),
                     QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
                     QuickReplyButton(action=MessageAction(label="📦 momo理貨", text="momo理貨")),
                     QuickReplyButton(action=MessageAction(label="🏬 蝦皮門市", text="蝦皮門市"))
@@ -612,20 +618,23 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
         return
 
-    # 5. 智慧本地多輪上下文合流容錯檢索
+    # 5. 智慧本地多輪上下文合流容錯檢索 (涵蓋職務類別)
     print("[執行智慧本地多輪容錯比對]")
     combined_query = clean_text_for_search(history_text + " " + raw_msg)
     matched_jobs = []
 
     for j in active_jobs:
         s_text = j.get("_search_text", "")
+        if any(k in combined_query for k in ["外送", "司機", "配送"]) and any(k in s_text for k in ["外送", "司機", "配送"]):
+            matched_jobs.append(j)
+            continue
         if any(k in combined_query for k in ["momo", "富邦", "富昇"]) and any(k in s_text for k in ["momo", "富邦", "富昇"]):
             matched_jobs.append(j)
             continue
-        if any(k in combined_query for k in ["蝦皮", "外送", "店到店"]) and any(k in s_text for k in ["蝦皮", "外送", "店到店"]):
+        if any(k in combined_query for k in ["蝦皮", "店到店"]) and any(k in s_text for k in ["蝦皮", "店到店"]):
             matched_jobs.append(j)
             continue
-        tokens = [t for t in ["桃園", "新莊", "中壢", "龜山", "蘆竹", "大園", "早班", "夜班", "理貨", "作業員"] if t in combined_query]
+        tokens = [t for t in ["台北", "新莊", "桃園", "中壢", "龜山", "早班", "夜班", "理貨", "作業員"] if t in combined_query]
         if tokens and all(t in s_text for t in tokens):
             matched_jobs.append(j)
 
@@ -639,11 +648,11 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
     default_text = "您好呀！我是招募顧問沛沛 😊\n\n很高興為您服務！想了解您偏好在哪個地區上班？或是哪種工作類型與班別呢？"
     append_user_history(user_id, "招募顧問沛沛", default_text)
     quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="📍 台北/新北", text="台北工作")),
         QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
-        QuickReplyButton(action=MessageAction(label="📍 新莊/新北", text="新莊工作")),
         QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
         QuickReplyButton(action=MessageAction(label="📦 momo理貨", text="momo理貨")),
-        QuickReplyButton(action=MessageAction(label="🏬 蝦皮門市", text="蝦皮門市"))
+        QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
     ])
     target_line_bot_api.reply_message(reply_token, TextSendMessage(text=default_text, quick_reply=quick_reply))
 
@@ -652,7 +661,7 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
 # ==========================================
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (PeiPei Priority Engine) is running."}
+    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (PeiPei with Job Category) is running."}
 
 @app.post("/test-callback")
 async def test_callback(request: Request, x_line_signature: str = Header(None)):
