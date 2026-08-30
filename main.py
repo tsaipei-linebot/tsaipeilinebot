@@ -17,7 +17,7 @@ from google import genai
 
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine", version="9.0.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine - V11", version="11.0.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -700,15 +700,147 @@ def detect_category_label(clean_input: str) -> str:
     return ""
 
 def category_search_keywords(category_label: str) -> list:
-    """依已知的工作類別 slot，回傳對應的搜尋關鍵字。
-    用於「都給我看看/不限時段」等泛意圖情境下，仍要保留已確認過的類別條件，避免跳出不相干的職缺卡片（問題修正）。"""
+    """依已知工作類別 slot，回傳「工作類別」關鍵字。
+    品牌（例如蝦皮）與工作類別分開處理，避免品牌名稱直接代表職務。
+    """
     mapping = {
-        "外送": ["外送", "司機", "配送"],
-        "門市": ["門市", "店到店", "智取店", "蝦皮"],
+        "外送": ["外送", "外送員", "司機", "配送", "配送員", "送貨"],
+        "門市": ["門市", "店員", "門市人員", "店到店", "智取店"],
         "momo": ["momo", "富邦", "富昇"],
-        "理貨/倉儲": ["理貨", "倉管", "作業員", "包裝", "產線"]
+        "理貨/倉儲": ["理貨", "揀貨", "倉管", "作業員", "包裝", "產線", "倉儲"]
     }
     return mapping.get(category_label, [])
+
+
+def detect_brand_label(text: str) -> str:
+    """從目前訊息/對話文字辨識明確提到的廠商或品牌。
+    品牌條件與工作類別分開處理，避免「品牌名稱」被當成「職務類別」。
+    """
+    normalized = clean_text_for_search(text)
+    if any(k in normalized for k in ["蝦皮", "spx"]):
+        return "蝦皮"
+    if any(k in normalized for k in ["momo", "富邦", "富昇"]):
+        return "momo"
+    return ""
+
+
+def _job_title_and_category_text(job: dict) -> tuple:
+    """主要精準欄位：職缺名稱（內/對外）與職務類別。"""
+    internal_title = clean_text_for_search(job.get("_internal_title", ""))
+    public_title = clean_text_for_search(job.get("職缺名稱(對外)", ""))
+    category = clean_text_for_search(job.get("_job_category", "") or job.get("職務類別", ""))
+    return internal_title, public_title, category
+
+
+def _job_extended_search_text(job: dict) -> str:
+    """第二層放寬搜尋欄位；仍只使用 ALLOWED_PROPERTIES 產生的公開資料。"""
+    fields = [
+        job.get("職缺名稱", ""),
+        job.get("職缺名稱(對外)", ""),
+        job.get("職務類別", ""),
+        job.get("行業別", ""),
+        job.get("工作內容(對外)", ""),
+    ]
+    return clean_text_for_search(" ".join(str(x or "") for x in fields))
+
+
+def _job_has_delivery_conflict(job: dict) -> bool:
+    """門市類別的安全排除：只依職缺名稱/職務類別判斷明確外送衝突。
+    不把工作內容中的一般「配送」描述直接視為外送職務，以免篩選過嚴。
+    """
+    internal_title, public_title, category = _job_title_and_category_text(job)
+    primary_text = " ".join([internal_title, public_title, category])
+    return any(k in primary_text for k in ["外送", "外送員", "配送", "配送員", "司機", "送貨"])
+
+
+def _brand_matches_text(text: str, brand_label: str) -> bool:
+    text = clean_text_for_search(text)
+    if brand_label == "蝦皮":
+        return any(k in text for k in ["蝦皮", "spx"])
+    if brand_label == "momo":
+        return any(k in text for k in ["momo", "富邦", "富昇"])
+    return True
+
+
+def _category_matches_text(text: str, category_label: str) -> bool:
+    keywords = category_search_keywords(category_label)
+    if not keywords:
+        return True
+    text = clean_text_for_search(text)
+    return any(clean_text_for_search(k) in text for k in keywords)
+
+
+def job_matches_category_filter(job: dict, category_label: str, brand_label: str = "", allow_relaxed: bool = True) -> bool:
+    """分級判斷職缺是否符合工作類別/品牌。
+
+    Level 1：職缺名稱 + 職務類別，優先求精準。
+    Level 2：若 Level 1 找不到，放寬到「行業別 + 工作內容(對外)」等公開欄位，
+             但仍保留品牌與工種的雙重條件，避免「蝦皮外送」被當成「蝦皮門市」。
+
+    注意：此函式只讀取 fetch_jobs_data() 已經依 ALLOWED_PROPERTIES 過濾後的資料，
+    不會繞過既有白名單。
+    """
+    if not category_label or category_label == "不限":
+        return True
+
+    internal_title, public_title, category = _job_title_and_category_text(job)
+    primary_text = " ".join([internal_title, public_title, category])
+    extended_text = _job_extended_search_text(job)
+
+    # 「momo」在既有系統中本質上是品牌/廠商型需求，維持原本品牌搜尋能力，
+    # 但由「精準欄位 → 公開延伸欄位」兩級判斷，避免無謂漏職缺。
+    if category_label == "momo":
+        if _brand_matches_text(primary_text, "momo"):
+            return True
+        return allow_relaxed and _brand_matches_text(extended_text, "momo")
+
+    # 門市：品牌若有指定，品牌與門市工種必須同時成立。
+    # 「蝦皮」不是門市職務，因此不能只因名稱有蝦皮就命中。
+    if category_label == "門市":
+        if _job_has_delivery_conflict(job):
+            return False
+
+        primary_category_match = _category_matches_text(primary_text, "門市")
+        primary_brand_match = True if not brand_label else _brand_matches_text(primary_text, brand_label)
+
+        # Level 1：名稱/職務類別同時符合。
+        if primary_category_match and primary_brand_match:
+            return True
+
+        if not allow_relaxed:
+            return False
+
+        # Level 2：允許行業別/對外工作內容補足缺漏，但仍需同時符合
+        # 「門市工種語意」與「指定品牌語意」。
+        relaxed_category_match = _category_matches_text(extended_text, "門市")
+        relaxed_brand_match = True if not brand_label else _brand_matches_text(extended_text, brand_label)
+        return relaxed_category_match and relaxed_brand_match
+
+    # 其他工作類別：同樣採「精準優先、公開欄位補漏」。
+    if _category_matches_text(primary_text, category_label):
+        return True
+
+    return allow_relaxed and _category_matches_text(extended_text, category_label)
+
+
+def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label: str = "") -> list:
+    """執行兩級職缺篩選：先精準，再在精準無結果時放寬。
+    回傳結果仍維持原 active_jobs 順序，避免改變既有推薦排序/顯示行為。
+    """
+    if not category_label or category_label == "不限":
+        return list(jobs)
+
+    strict_matches = [
+        j for j in jobs
+        if job_matches_category_filter(j, category_label, brand_label, allow_relaxed=False)
+    ]
+    if strict_matches:
+        return strict_matches
+
+    return [
+        j for j in jobs
+        if job_matches_category_filter(j, category_label, brand_label, allow_relaxed=True)
+    ]
 
 def build_progressive_question(user_id: str, current_location: str) -> tuple:
     """
@@ -880,24 +1012,23 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
     # 1-2. 門市人員 / 店到店
     elif is_store_intent:
+        _store_brand = "蝦皮" if "蝦皮門市" in clean_input else ""
+        _location_jobs = []
         for j in active_jobs:
-            cat = str(j.get("_job_category", "")).lower()
-            int_t = str(j.get("_internal_title", "")).lower()
-            pub_t = str(j.get("職缺名稱(對外)", "")).lower()
-            if (any(k in cat for k in ["門市", "服務", "店員"]) or any(k in int_t for k in ["門市", "店到店", "智取店"]) or any(k in pub_t for k in ["門市", "店到店"])) and not ("外送" in int_t or "外送" in pub_t):
-                if current_location:
-                    loc_clean = current_location.replace("台", "臺")
-                    if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", ""):
-                        direct_matches.append(j)
-                else:
-                    direct_matches.append(j)
+            if current_location:
+                loc_clean = current_location.replace("台", "臺")
+                if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", ""):
+                    _location_jobs.append(j)
+            else:
+                _location_jobs.append(j)
+
+        # V11：同一地區內先做 Level 1 精準篩選，無結果才放寬到公開欄位。
+        direct_matches = filter_jobs_by_category_tiered(_location_jobs, "門市", _store_brand)
+
+        # 維持原本行為：指定地區沒有結果時，仍可在全庫找同類型職缺，
+        # 但絕不跨類別把外送職缺當成門市。
         if not direct_matches:
-            for j in active_jobs:
-                int_t = str(j.get("_internal_title", "")).lower()
-                pub_t = str(j.get("職缺名稱(對外)", "")).lower()
-                if any(k in int_t for k in ["門市", "店到店", "智取店", "蝦皮"]) or any(k in pub_t for k in ["門市", "店到店"]):
-                    if not ("外送" in int_t or "外送" in pub_t):
-                        direct_matches.append(j)
+            direct_matches = filter_jobs_by_category_tiered(active_jobs, "門市", _store_brand)
 
     # 1-3. momo / 富邦 / 富昇
     elif is_momo_intent:
@@ -937,12 +1068,37 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         # 「都給我看看/不限時段」等泛意圖詞語意上只代表「地區/時段不限」，不代表放棄原本的工作類別。
         # 這裡在既有地區篩選結果之上，再依已知類別關鍵字進一步收斂，避免跳出不相干的職缺卡片；
         # 若收斂後查無結果，才退回原本純地區範圍的結果，避免完全沒有卡片可看。
-        _known_category_for_filter = get_user_slots(user_id).get("category", "")
-        _category_kw = category_search_keywords(_known_category_for_filter)
-        if _category_kw:
-            _narrowed_by_category = [j for j in matched_show_all if any(k in j.get("_search_text", "") for k in _category_kw)]
-            if _narrowed_by_category:
-                matched_show_all = _narrowed_by_category
+        _slots_for_show_all = get_user_slots(user_id)
+        _known_category_for_filter = _slots_for_show_all.get("category", "")
+        _brand_for_filter = detect_brand_label(f"{history_text} {raw_msg}")
+
+        # 【問題修正】「都給我看」代表放寬時段，不代表放棄已確認的工作類別/品牌。
+        # 類別以「職缺名稱 + 職務類別」嚴格判斷；若是「蝦皮門市」，必須同時
+        # 符合蝦皮品牌與門市工種，不能因為職缺名稱含「蝦皮」就把外送職缺選進來。
+        if _known_category_for_filter and _known_category_for_filter != "不限":
+            # V11：精準優先；若精準欄位完全找不到，再使用公開欄位補漏。
+            # 這可避免「蝦皮門市」誤出現蝦皮外送，同時避免因職缺資料欄位填寫不一致而漏掉真正相關職缺。
+            matched_show_all = filter_jobs_by_category_tiered(
+                matched_show_all,
+                _known_category_for_filter,
+                _brand_for_filter,
+            )
+
+        # 有明確工作類別/品牌條件卻查無結果時，不再用 active_jobs[:3] 跨類別補卡，
+        # 避免「蝦皮門市」無結果時誤送蝦皮外送等不相干職缺。
+        if not matched_show_all and _known_category_for_filter and _known_category_for_filter != "不限":
+            reply_text = f"目前{current_location if current_location else ''}沒有符合您指定條件的職缺喔！沛沛可以再幫您看看其他工作 😊"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", reply_text)
+            buttons = [
+                QuickReplyButton(action=MessageAction(label="🏬 其他門市", text=f"{current_location}門市" if current_location else "門市")),
+                QuickReplyButton(action=MessageAction(label="📦 理貨/倉儲", text=f"{current_location}理貨" if current_location else "理貨")),
+                QuickReplyButton(action=MessageAction(label="🛵 外送/司機", text=f"{current_location}外送" if current_location else "外送")),
+                QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+            ]
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons)))
+            print(f"[泛意圖攔截] 已保留指定類別/品牌條件，但查無符合職缺（類別:{_known_category_for_filter} 品牌:{_brand_for_filter}）")
+            return
 
         if not matched_show_all:
             matched_show_all = active_jobs[:3]
@@ -1121,9 +1277,11 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
         if any(k in combined_query for k in ["momo", "富邦", "富昇"]) and any(k in s_text for k in ["momo", "富邦", "富昇"]):
             matched_jobs.append(j)
             continue
-        if any(k in combined_query for k in ["蝦皮", "門市", "店到店"]) and any(k in s_text for k in ["蝦皮", "門市", "店到店"]):
-            matched_jobs.append(j)
-            continue
+        if any(k in combined_query for k in ["蝦皮", "門市", "店到店"]):
+            _local_brand = "蝦皮" if "蝦皮" in combined_query else ""
+            if job_matches_category_filter(j, "門市", _local_brand, allow_relaxed=True):
+                matched_jobs.append(j)
+                continue
         tokens = [t for t in ["板橋", "新莊", "三重", "台北", "新北", "桃園", "中壢", "龜山", "早班", "夜班", "理貨", "作業員"] if t in combined_query]
         if tokens and all(t in s_text for t in tokens):
             matched_jobs.append(j)
