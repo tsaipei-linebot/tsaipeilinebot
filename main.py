@@ -128,7 +128,7 @@ def polish_job_description_with_ai(raw_desc: str, title: str) -> str:
 請直接回覆改寫後的一句話："""
 
     try:
-        models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        models = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
         for m in models:
             if hasattr(ai_client, 'models'):
                 res = ai_client.models.generate_content(model=m, contents=prompt)
@@ -154,7 +154,7 @@ def format_full_job_detail_with_ai(job: dict, location_display: str) -> str:
     raw_desc = job.get("工作內容(對外)") or "歡迎點擊線上履歷應徵。"
 
     fallback_layout = (
-        f"📋【{title} 完整工作說明】\n\n"
+        f"📋【職缺名稱：{title}】\n\n"
         f"📍 上班地點：{location_display}\n"
         f"💰 薪資待遇：{salary}\n"
         f"⏰ 工作班別：{shift}\n\n"
@@ -179,6 +179,7 @@ def format_full_job_detail_with_ai(job: dict, location_display: str) -> str:
 1. 《就業服務法》第5條合規審查：若原文中有涉及年齡（如限幾歲）、性別（如限男女）、外貌等歧視性條件，請直接移除或轉化為客觀條件（如「需配合走動作業/具備基本體能」）。
 2. 使用清晰條列式排版，搭配適當 Emoji，讓手機閱讀體感極佳。
 3. 排版結構建議包含：
+   📋【職缺名稱：{title}】（請務必放在最上方第一行，直接使用上方提供的職缺名稱，不要自行更改職缺名稱文字）
    📌【職缺亮點】（約 1-2 句吸引人的優勢）
    📍【工作地點與班別】
    💰【薪資與福利】
@@ -189,7 +190,7 @@ def format_full_job_detail_with_ai(job: dict, location_display: str) -> str:
 請直接輸出排版後的繁體中文內容："""
 
     try:
-        models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        models = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
         for m in models:
             if hasattr(ai_client, 'models'):
                 res = ai_client.models.generate_content(model=m, contents=prompt)
@@ -546,7 +547,7 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
         return ""
-    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-3.6-flash"]
+    models = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
     for m in models:
         try:
             if hasattr(ai_client, 'models'):
@@ -598,6 +599,17 @@ def detect_category_label(clean_input: str) -> str:
     if any(k in clean_input for k in ["理貨", "揀貨", "倉管", "作業員", "包裝", "產線"]):
         return "理貨/倉儲"
     return ""
+
+def category_search_keywords(category_label: str) -> list:
+    """依已知的工作類別 slot，回傳對應的搜尋關鍵字。
+    用於「都給我看看/不限時段」等泛意圖情境下，仍要保留已確認過的類別條件，避免跳出不相干的職缺卡片（問題修正）。"""
+    mapping = {
+        "外送": ["外送", "司機", "配送"],
+        "門市": ["門市", "店到店", "智取店", "蝦皮"],
+        "momo": ["momo", "富邦", "富昇"],
+        "理貨/倉儲": ["理貨", "倉管", "作業員", "包裝", "產線"]
+    }
+    return mapping.get(category_label, [])
 
 def build_progressive_question(user_id: str, current_location: str) -> tuple:
     """
@@ -821,9 +833,27 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                     matched_show_all.append(j)
             else:
                 matched_show_all.append(j)
-                
+
+        # 【問題修正 1】若對話中已掌握求職者指定的工作類別（例如先前已表示要找外送），
+        # 「都給我看看/不限時段」等泛意圖詞語意上只代表「地區/時段不限」，不代表放棄原本的工作類別。
+        # 這裡在既有地區篩選結果之上，再依已知類別關鍵字進一步收斂，避免跳出不相干的職缺卡片；
+        # 若收斂後查無結果，才退回原本純地區範圍的結果，避免完全沒有卡片可看。
+        _known_category_for_filter = get_user_slots(user_id).get("category", "")
+        _category_kw = category_search_keywords(_known_category_for_filter)
+        if _category_kw:
+            _narrowed_by_category = [j for j in matched_show_all if any(k in j.get("_search_text", "") for k in _category_kw)]
+            if _narrowed_by_category:
+                matched_show_all = _narrowed_by_category
+
         if not matched_show_all:
             matched_show_all = active_jobs[:3]
+
+        # 求職者已明確表示不限，順手補齊尚未回答的條件，避免之後又重複詢問同樣的問題
+        _slots_to_complete = get_user_slots(user_id)
+        if not _slots_to_complete.get("category"):
+            _slots_to_complete["category"] = "不限"
+        if not _slots_to_complete.get("shift"):
+            _slots_to_complete["shift"] = "不限"
 
         reply_text = f"沒問題！沛沛馬上為您整理{current_location if current_location else ''}目前招募中的熱門職缺，歡迎點擊查看詳細說明或線上應徵喔 😊"
         append_user_history(user_id, "求職者", raw_msg)
