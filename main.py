@@ -52,15 +52,39 @@ if GEMINI_API_KEY:
 user_sessions = {}
 SESSION_TTL = 7 * 24 * 3600
 
-def get_user_history(user_id: str) -> list:
+def _get_or_create_session(user_id: str) -> dict:
+    """取得（或建立）使用者的對話 Session，內含歷史訊息與已收集到的需求條件 (slots)。"""
     now = time.time()
     if user_id in user_sessions:
         session = user_sessions[user_id]
         if now - session["last_time"] < SESSION_TTL:
             session["last_time"] = now
-            return session["messages"]
-    user_sessions[user_id] = {"last_time": now, "messages": []}
-    return user_sessions[user_id]["messages"]
+            return session
+    user_sessions[user_id] = {
+        "last_time": now,
+        "messages": [],
+        # 漸進式需求收集 (Slot-Filling)：地區 / 工作類別(行業別) / 時段班別
+        "slots": {"location": "", "category": "", "shift": ""}
+    }
+    return user_sessions[user_id]
+
+def get_user_history(user_id: str) -> list:
+    return _get_or_create_session(user_id)["messages"]
+
+def get_user_slots(user_id: str) -> dict:
+    """回傳使用者目前已被顧問掌握的需求條件（地區/類別/時段）。"""
+    return _get_or_create_session(user_id)["slots"]
+
+def update_user_slots(user_id: str, location: str = "", category: str = "", shift: str = "") -> dict:
+    """更新使用者的已知需求條件，只有傳入非空值才會覆寫，避免把已掌握的條件洗掉。"""
+    slots = get_user_slots(user_id)
+    if location:
+        slots["location"] = location
+    if category:
+        slots["category"] = category
+    if shift:
+        slots["shift"] = shift
+    return slots
 
 def append_user_history(user_id: str, role: str, text: str):
     history = get_user_history(user_id)
@@ -549,6 +573,77 @@ def extract_current_target_location(history_and_msg: str) -> str:
             return loc.replace("臺", "台")
     return ""
 
+def extract_shift_preference(text: str) -> str:
+    """從文字中判斷求職者偏好的時段/班別，供漸進式需求收集使用。"""
+    shift_map = {
+        "早班": ["早班", "早上班", "白班", "日班"],
+        "晚班": ["晚班", "小夜"],
+        "大夜班": ["大夜", "夜班", "大夜班"],
+        "假日班": ["假日班", "假日"],
+        "彈性排班": ["彈性排班", "自由排班", "排班彈性", "時段彈性", "不限時段"]
+    }
+    for label, keys in shift_map.items():
+        if any(k in text for k in keys):
+            return label
+    return ""
+
+def detect_category_label(clean_input: str) -> str:
+    """從文字中判斷求職者偏好的工作類別/行業別，供漸進式需求收集使用（不影響步驟1原有的精準攔截邏輯）。"""
+    if any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作", "司機"]):
+        return "外送"
+    if any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]):
+        return "門市"
+    if any(k in clean_input for k in ["momo", "富邦", "富昇"]):
+        return "momo"
+    if any(k in clean_input for k in ["理貨", "揀貨", "倉管", "作業員", "包裝", "產線"]):
+        return "理貨/倉儲"
+    return ""
+
+def build_progressive_question(user_id: str, current_location: str) -> tuple:
+    """
+    像真人顧問一樣「一步一步」詢問還缺少的條件（地區 → 工作類別 → 時段），
+    並回傳 (提問文字, QuickReplyButton 清單)。若三項條件皆已齊全則回傳空字串。
+    """
+    slots = get_user_slots(user_id)
+    known_location = current_location or slots.get("location", "")
+    known_category = slots.get("category", "")
+    known_shift = slots.get("shift", "")
+
+    # 缺少「地區」→ 優先詢問地區
+    if not known_location:
+        prefix = f"想找【{known_category}】類型的工作對嗎？😊\n\n" if known_category else "您好呀！我是招募顧問沛沛 😊\n\n"
+        text = prefix + "請問您方便在【哪個地區】上班呢？（例如板橋、新莊、桃園等）"
+        buttons = [
+            QuickReplyButton(action=MessageAction(label="📍 板橋/新莊", text=f"新莊{known_category}".strip())),
+            QuickReplyButton(action=MessageAction(label="📍 桃園/中壢", text=f"桃園{known_category}".strip())),
+            QuickReplyButton(action=MessageAction(label="📍 台北/新北", text=f"台北{known_category}".strip())),
+            QuickReplyButton(action=MessageAction(label="👀 都可以，先看看", text="都給我看看"))
+        ]
+        return text, buttons
+
+    # 已知地區、缺少「工作類別/行業別」→ 詢問想找哪種工作
+    if not known_category:
+        text = f"好的，鎖定在【{known_location}】附近幫您找工作 📍\n\n請問您比較想找哪一種工作類型呢？"
+        buttons = [
+            QuickReplyButton(action=MessageAction(label="🛵 外送/司機", text=f"{known_location}外送")),
+            QuickReplyButton(action=MessageAction(label="🏬 門市/店到店", text=f"{known_location}門市")),
+            QuickReplyButton(action=MessageAction(label="📦 理貨/倉儲作業員", text=f"{known_location}理貨")),
+            QuickReplyButton(action=MessageAction(label="👀 都可以，先看看", text="都給我看看"))
+        ]
+        return text, buttons
+
+    # 地區與類別皆已知、缺少「時段班別」→ 詢問時段（最後一步）
+    if not known_shift:
+        text = f"了解！【{known_location}】的【{known_category}】職缺為您安排 😊\n\n請問時段班別上您有偏好嗎？（沒有特別限制也沒關係喔）"
+        buttons = [
+            QuickReplyButton(action=MessageAction(label="☀️ 早班", text=f"{known_location}{known_category}早班")),
+            QuickReplyButton(action=MessageAction(label="🌙 晚班/大夜", text=f"{known_location}{known_category}晚班")),
+            QuickReplyButton(action=MessageAction(label="🔄 不限時段，先看看", text="都給我看看"))
+        ]
+        return text, buttons
+
+    return "", []
+
 def process_user_message(event, target_line_bot_api: LineBotApi):
     reply_token = event.reply_token
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
@@ -598,6 +693,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     current_location = extract_current_target_location(full_conversation_context)
     clean_input = clean_text_for_search(raw_msg)
 
+    # 漸進式需求收集：即時更新目前已掌握的地區 / 工作類別 / 時段 條件（供後續各步驟判斷是否還需繼續詢問）
+    detected_shift = extract_shift_preference(raw_msg)
+    detected_category_from_text = detect_category_label(clean_input)
+    update_user_slots(user_id, location=current_location, category=detected_category_from_text, shift=detected_shift)
+
     # ---------------- 步驟 0-2：就業服務法合規防呆攔截 ----------------
     age_gender_keywords = ["年齡限制", "幾歲", "年紀", "年齡", "限女性", "限男性", "性別限制", "幾歲以上", "幾歲以下", "高齡", "中高齡"]
     if any(k in raw_msg for k in age_gender_keywords) and ("有嗎" in raw_msg or "可以嗎" in raw_msg or "限制" in raw_msg or "能不能" in raw_msg or "可以做嗎" in raw_msg):
@@ -619,11 +719,33 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         return
 
     # ---------------- 步驟 1：【最高優先級】精準「職務類別」多工種嚴格直達攔截 ----------------
-    direct_matches = []
-    
     is_delivery_intent = any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作"])
     is_store_intent = any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]) and not is_delivery_intent
     is_momo_intent = any(k in clean_input for k in ["momo", "富邦", "富昇"])
+
+    # ---------------- 步驟 1-0：像真人顧問一樣「漸進式需求收集」(地區 → 工作類別 → 時段) ----------------
+    # 求職者一提到具體工種關鍵字時，先確認地區/類別/時段是否都已掌握；
+    # 若求職者已明確表示「都可以/隨便/全部/看全部」，則視為主動略過詢問，直接放行到下方原有比對邏輯。
+    show_all_bypass_keywords = ["都給我看", "都要看", "都可以", "全部", "隨便", "看全部", "都看"]
+    has_explicit_category_intent = is_delivery_intent or is_store_intent or is_momo_intent
+    if has_explicit_category_intent and not any(k in clean_input for k in show_all_bypass_keywords):
+        _slots_now = get_user_slots(user_id)
+        _location_ready = bool(current_location or _slots_now.get("location"))
+        _category_ready = bool(_slots_now.get("category"))
+        _shift_ready = bool(_slots_now.get("shift"))
+        if not (_location_ready and _category_ready and _shift_ready):
+            question_text, question_buttons = build_progressive_question(user_id, current_location)
+            if question_text:
+                append_user_history(user_id, "求職者", raw_msg)
+                append_user_history(user_id, "招募顧問沛沛", question_text)
+                target_line_bot_api.reply_message(
+                    reply_token,
+                    TextSendMessage(text=question_text, quick_reply=QuickReply(items=question_buttons))
+                )
+                print(f"[漸進式需求收集] 條件尚未齊全（地區:{_location_ready} 類別:{_category_ready} 時段:{_shift_ready}），先引導求職者補充")
+                return
+
+    direct_matches = []
 
     # 1-1. 外送員 / 司機
     if is_delivery_intent:
@@ -727,6 +849,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     for idx, f in enumerate(faq_list):
         faq_index_text += f"問：{f.get('question')} => 答：{f.get('answer')}\n"
 
+    _current_slots = get_user_slots(user_id)
+    slot_location_text = current_location or _current_slots.get("location") or "尚未提供"
+    slot_category_text = _current_slots.get("category") or "尚未提供"
+    slot_shift_text = _current_slots.get("shift") or "尚未提供"
+
     ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的真人在線人資招募顧問（名字叫「沛沛」）。
 你的目標是：結合過去 7 天的對話歷史，以真人顧問口吻引導求職者，並在資料庫中有符合職缺時推薦。
 
@@ -740,6 +867,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 5. 【情境與按鈕規則】：
    - 目前對話鎖定的地區是：【{current_location if current_location else "未指定"}】。
    - 按鈕請一律圍繞該地區推薦，絕對不要跨縣市跳出不相干按鈕。
+6. 【漸進式需求收集原則（像真人顧問一步一步了解需求）】：
+   - 目前已掌握的條件 → 地區：【{slot_location_text}】、工作類別/行業別：【{slot_category_text}】、時段班別：【{slot_shift_text}】。
+   - 除非求職者已明確表示「不限地區/都可以/隨便/全部/都給我看看」，否則請依序一次只確認一項缺少的條件：① 地區 → ② 工作類別/行業別 → ③ 時段班別，語氣自然親切，不要一次條列三個問題。
+   - 只有在地區、工作類別/行業別、時段班別三項都已掌握（或求職者已表示不限/都可以），才可以輸出 ACTION:RECOMMEND；否則請輸出 ACTION:ASK，並在 REPLY 中只詢問「尚未提供」的那一項，絕對不要重複詢問已經掌握的條件。
+   - 此原則不影響規則 2-4：只要條件確認齊全（或求職者表示都可以），只要清單中有符合的職缺，依然要直接推薦，不得宣稱額滿或無此職缺。
 
 【公司官方常見問題庫 (FAQ)】：
 {faq_index_text if faq_index_text else "（暫無額外 FAQ）"}
@@ -860,7 +992,17 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
         target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_jobs[:3], user_id, current_location)])
         return
 
-    # 預設引導
+    # 預設引導：優先以漸進式提問（依目前已知的地區/類別/時段客製化問句），像真人顧問一步一步了解需求
+    progressive_text, progressive_buttons = build_progressive_question(user_id, current_location)
+    if progressive_text:
+        append_user_history(user_id, "招募顧問沛沛", progressive_text)
+        target_line_bot_api.reply_message(
+            reply_token,
+            TextSendMessage(text=progressive_text, quick_reply=QuickReply(items=progressive_buttons))
+        )
+        return
+
+    # 條件皆已齊全但仍未匹配到任何職缺時的保底引導語（原有邏輯，維持不變）
     default_text = "您好呀！我是招募顧問沛沛 😊\n\n很高興為您服務！想了解您偏好在哪個地區上班？或是哪種工作類型與班別呢？"
     append_user_history(user_id, "招募顧問沛沛", default_text)
     quick_reply = QuickReply(items=[
