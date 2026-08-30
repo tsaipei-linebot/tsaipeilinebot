@@ -433,7 +433,9 @@ def format_clean_location(job: dict, target_location: str) -> str:
         dist_list = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
         for d in dist_list:
             if target_location in d or d in target_location:
-                return f"{county.split(',')[0] if county else ''} {d}（可自選門市/廠區）".strip()
+                # 已知求職者指定行政區時，卡片地點只顯示行政區，不重複顯示縣市。
+                # 例如「板橋」→「板橋區」，不再顯示「新北市 板橋區」。
+                return d
         
         county_list = [c.strip() for c in re.split(r'[,，、\s]+', county) if c.strip()]
         for c in county_list:
@@ -1033,12 +1035,16 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     # 1-3. momo / 富邦 / 富昇
     elif is_momo_intent:
         if current_location:
+            # 有明確指定行政區/地區時，momo 必須同時符合「品牌 + 該地區」。
+            # 不再因指定地區查無 momo 就退回全台 momo，避免「板橋有 momo 嗎？」
+            # 卻推薦桃園職缺。
             loc_clean = current_location.replace("台", "臺")
             for j in active_jobs:
                 s_text = j.get("_search_text", "")
                 if any(k in s_text for k in ["momo", "富邦", "富昇"]) and (current_location in s_text or loc_clean in s_text):
                     direct_matches.append(j)
-        if not direct_matches:
+        else:
+            # 沒有指定地區時，維持原本行為：可從全庫尋找 momo / 富邦 / 富昇。
             for j in active_jobs:
                 if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"]):
                     direct_matches.append(j)
