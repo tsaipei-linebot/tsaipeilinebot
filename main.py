@@ -16,7 +16,7 @@ from notion_client import Client
 # 載入 .env 環境變數
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant - Notion Powered", version="7.0.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant - Precision Resume & Company Routing", version="7.4.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -34,6 +34,7 @@ test_handler = WebhookHandler(TEST_LINE_CHANNEL_SECRET) if TEST_LINE_CHANNEL_SEC
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_JOBS_DB_ID = os.getenv("NOTION_JOBS_DB_ID")
+NOTION_FAQ_DB_ID = os.getenv("NOTION_FAQ_DB_ID")
 OFFICIAL_WEBSITE_BASE = os.getenv("OFFICIAL_WEBSITE_BASE", "https://tsaipei.netlify.app")
 
 ai_client = None
@@ -53,10 +54,10 @@ if NOTION_API_KEY:
         print(f"[系統警告] Notion 初始化失敗: {e}")
 
 # ==========================================
-# 2. 對話記憶體快取 (Session Context)
+# 2. 對話記憶體快取 (Session Context - 延長至 7 天)
 # ==========================================
 user_sessions = {}
-SESSION_TTL = 900  # 15 分鐘無互動自動重置
+SESSION_TTL = 7 * 24 * 3600  # 7 天 (604,800 秒)
 
 def get_user_history(user_id: str) -> list:
     now = time.time()
@@ -71,7 +72,7 @@ def get_user_history(user_id: str) -> list:
 def append_user_history(user_id: str, role: str, text: str):
     history = get_user_history(user_id)
     history.append({"role": role, "text": text})
-    if len(history) > 8:
+    if len(history) > 10:
         history.pop(0)
 
 # ==========================================
@@ -95,7 +96,9 @@ def extract_smart_summary(raw_desc: str, title: str) -> str:
             return text[:42] + "..."
         return text
         
-    if any(k in title for k in ["理貨", "揀貨", "倉", "物流"]):
+    if "蝦皮" in title:
+        return "負責蝦皮門市包裹點交、進出貨盤點與顧客接待，工作環境單純！"
+    elif any(k in title for k in ["理貨", "揀貨", "倉", "物流"]):
         return "負責商品分揀、理貨貼標與包裝出貨，免經驗環境佳！"
     elif any(k in title for k in ["作業員", "包裝", "組裝", "產線", "技術員"]):
         return "負責機台操作、產品組裝檢驗與成品包裝，免經驗可！"
@@ -105,19 +108,19 @@ def extract_smart_summary(raw_desc: str, title: str) -> str:
     return f"開放應徵【{title}】，工作環境單純，歡迎點擊下方履歷應徵！"
 
 # ==========================================
-# 4. Notion 職缺資料庫讀取模組 (白名單隔離 + 狀態過濾)
+# 4. Notion 資料庫讀取模組 (白名單讀取 + 包含「職缺名稱」欄位)
 # ==========================================
-CACHE_TTL = 30  # 30 秒記憶體快取
+CACHE_TTL = 30
 _cached_jobs, _last_jobs_fetch = None, 0
+_cached_faqs, _last_faqs_fetch = None, 0
 
-# 定義嚴格白名單欄位
+# 新增「職缺名稱」欄位至白名單
 ALLOWED_PROPERTIES = {
-    "職缺名稱(對外)", "縣市", "行政區", "行業別", 
+    "職缺名稱", "職缺名稱(對外)", "縣市", "行政區", "行業別", 
     "全/兼職", "班別", "薪資", "工作內容(對外)", "狀態"
 }
 
 def parse_notion_property(prop: dict) -> str:
-    """自動解析 Notion 各類屬性型態為乾淨字串"""
     if not isinstance(prop, dict):
         return ""
     p_type = prop.get("type", "")
@@ -135,6 +138,8 @@ def parse_notion_property(prop: dict) -> str:
         return prop.get("url", "") or ""
     elif p_type == "number":
         return str(prop.get("number", ""))
+    elif p_type == "checkbox":
+        return "true" if prop.get("checkbox") else "false"
     return ""
 
 def fetch_jobs_data() -> list:
@@ -149,12 +154,7 @@ def fetch_jobs_data() -> list:
 
     active_jobs = []
     try:
-        # 1. 透過 Notion API 查詢資料庫
-        response = notion_client.databases.query(
-            database_id=NOTION_JOBS_DB_ID,
-            page_size=100
-        )
-
+        response = notion_client.databases.query(database_id=NOTION_JOBS_DB_ID, page_size=100)
         stop_keywords = ["停招", "暫停", "額滿", "關閉", "下架", "結束", "否", "滿", "pause", "close"]
 
         for page in response.get("results", []):
@@ -163,7 +163,7 @@ def fetch_jobs_data() -> list:
             job_dict = {"_page_id": page_id}
             raw_text_parts = []
 
-            # 2. 嚴格白名單過濾：只讀取指定的公開欄位
+            # 白名單精準讀取
             for field_name in ALLOWED_PROPERTIES:
                 if field_name in props:
                     val_str = parse_notion_property(props[field_name])
@@ -171,29 +171,119 @@ def fetch_jobs_data() -> list:
                     if val_str and field_name != "狀態":
                         raw_text_parts.append(val_str)
 
-            # 3. 狀態過濾防線：若狀態包含「停招」等關鍵字則直接略過
+            # 狀態安全過濾
             status = job_dict.get("狀態", "")
             if any(stop_kw in status for stop_kw in stop_keywords):
                 continue
 
-            title = job_dict.get("職缺名稱(對外)") or ""
+            public_title = job_dict.get("職缺名稱(對外)") or ""
+            internal_title = job_dict.get("職缺名稱") or ""
+            
+            # 以對外名稱為主要顯示，若無則備用內部名稱
+            title = public_title or internal_title
             if title:
                 job_dict["_parsed_title"] = title
+                job_dict["_internal_title"] = internal_title
                 job_dict["_raw_row_text"] = " ".join(raw_text_parts)
                 active_jobs.append(job_dict)
 
-        print(f"[Notion 載入成功] 共載入 {len(active_jobs)} 筆招募中職缺！")
+        print(f"[Notion 職缺載入成功] 共載入 {len(active_jobs)} 筆招募中職缺！")
         _cached_jobs = active_jobs
         _last_jobs_fetch = now
         return active_jobs
     except Exception as e:
-        print(f"[Notion 讀取失敗]: {e}")
+        print(f"[Notion 職缺讀取失敗]: {e}")
         return _cached_jobs or []
 
+def fetch_faqs_data() -> list:
+    global _cached_faqs, _last_faqs_fetch
+    now = time.time()
+    if _cached_faqs is not None and (now - _last_faqs_fetch < CACHE_TTL):
+        return _cached_faqs
+
+    if not notion_client or not NOTION_FAQ_DB_ID:
+        return _cached_faqs or []
+
+    faqs = []
+    try:
+        response = notion_client.databases.query(database_id=NOTION_FAQ_DB_ID, page_size=100)
+        for page in response.get("results", []):
+            props = page.get("properties", {})
+            q_text, a_text, status = "", "", "啟用"
+            
+            for k, v in props.items():
+                val = parse_notion_property(v)
+                k_lower = k.lower()
+                if any(x in k_lower for x in ["問", "題目", "問題", "question", "title"]):
+                    q_text = val
+                elif any(x in k_lower for x in ["答", "回覆", "內容", "answer", "content"]):
+                    a_text = val
+                elif any(x in k_lower for x in ["狀態", "啟用", "status"]):
+                    status = val
+
+            if status not in ["停用", "關閉", "false"] and q_text and a_text:
+                faqs.append({"question": q_text, "answer": a_text})
+
+        print(f"[Notion FAQ 載入成功] 共載入 {len(faqs)} 筆常見問答！")
+        _cached_faqs = faqs
+        _last_faqs_fetch = now
+        return faqs
+    except Exception as e:
+        print(f"[Notion FAQ 讀取失敗]: {e}")
+        return _cached_faqs or []
+
 # ==========================================
-# 5. 雙按鈕 + 4 標籤 Flex 卡片
+# 5. 精準履歷路由（支援蝦皮門市優先級）與 Flex 卡片
 # ==========================================
-def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
+DEFAULT_RESUME_URLS = {
+    "Spx": "https://resume.tsaipei.com.tw/eyJEYXRhTm8iOiIiLCJVc2VyTm8iOiI0ODIiLCJSZXN1bWVLaW5kIjoiU3B4IiwiU3lzdGVtIjoiWWVzIn0=?openExternalBrowser=1",
+    "Service": "https://resume.tsaipei.com.tw/eyJEYXRhTm8iOiIiLCJVc2VyTm8iOiI0ODIiLCJSZXN1bWVLaW5kIjoiU2VydmljZSIsIlN5c3RlbSI6IlllcyJ9?openExternalBrowser=1",
+    "Manufacture": "https://resume.tsaipei.com.tw/eyJEYXRhTm8iOiIiLCJVc2VyTm8iOiI0ODIiLCJSZXN1bWVLaW5kIjoiTWFudWZhY3R1cmUiLCJTeXN0ZW0iOiJZZXMifQ==?openExternalBrowser=1"
+}
+
+def resolve_apply_url_by_industry(job: dict, faq_list: list) -> str:
+    """精準判定各行業與蝦皮門市的專屬履歷連結"""
+    title = str(job.get("職缺名稱(對外)") or job.get("職缺名稱") or "").strip()
+    industry = str(job.get("行業別") or "").strip()
+    raw_desc = str(job.get("工作內容(對外)") or "").strip()
+
+    # 1. 【最高優先級】：只要標題或內容含有「蝦皮 / 智取店 / 店到店」，一律採用蝦皮專屬連結 (Spx)
+    if any(k in title for k in ["蝦皮", "智取店", "店到店", "spx"]) or "蝦皮" in raw_desc:
+        for f in faq_list:
+            q = f.get("question", "")
+            ans = f.get("answer", "").strip()
+            if any(k in q for k in ["蝦皮", "spx", "智取店"]) and (ans.startswith("http://") or ans.startswith("https://")):
+                return ans
+        return DEFAULT_RESUME_URLS["Spx"]
+
+    # 2. 【第二優先級】：服務業 / 餐飲業 / 服飾業 (Service)
+    if any(k in industry for k in ["服務", "餐飲", "服飾", "門市", "專櫃"]) or any(k in title for k in ["服務員", "餐飲", "廚助", "門市", "服飾"]):
+        for f in faq_list:
+            q = f.get("question", "")
+            ans = f.get("answer", "").strip()
+            if any(k in q for k in ["服務", "餐飲", "服飾"]) and (ans.startswith("http://") or ans.startswith("https://")):
+                return ans
+        return DEFAULT_RESUME_URLS["Service"]
+
+    # 3. 【第三優先級】：製造業 / 科技業 / 物流業 / 倉儲理貨 (Manufacture)
+    if any(k in industry for k in ["製造", "科技", "物流", "電子", "工業"]) or any(k in title for k in ["製造", "作業員", "包裝", "組裝", "物流", "理貨", "技術員"]):
+        for f in faq_list:
+            q = f.get("question", "")
+            ans = f.get("answer", "").strip()
+            if any(k in q for k in ["製造", "科技", "物流"]) and (ans.startswith("http://") or ans.startswith("https://")):
+                return ans
+        return DEFAULT_RESUME_URLS["Manufacture"]
+
+    # 4. 【預設容錯】
+    for f in faq_list:
+        q = f.get("question", "")
+        ans = f.get("answer", "").strip()
+        if any(k in q for k in ["線上履歷", "履歷連結", "預設", "通用"]) and (ans.startswith("http://") or ans.startswith("https://")):
+            return ans
+
+    return DEFAULT_RESUME_URLS["Manufacture"]
+
+def create_job_flex_card(jobs: list, user_id: str, faq_list: list) -> FlexSendMessage:
     bubbles = []
     badge_styles = {
         "shift": {"bg": "#E8F5E9", "text": "#2E7D32"},
@@ -204,7 +294,8 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
 
     for job in jobs[:10]:
         job_id = str(job.get("_page_id") or "JOB").replace("-", "")[:8]
-        job_title = str(job.get("職缺名稱(對外)") or "優質職缺").strip()
+        # 卡片上維持顯示對外名稱
+        job_title = str(job.get("職缺名稱(對外)") or job.get("職缺名稱") or "優質職缺").strip()
         
         county = str(job.get("縣市") or "").strip()
         district = str(job.get("行政區") or "").strip()
@@ -227,7 +318,12 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
         clean_desc = extract_smart_summary(raw_desc, job_title)
             
         website_job_url = "https://tsaipei.netlify.app/#jobs"
-        apply_link = f"https://tsaipei.netlify.app/#jobs?job_id={job_id}&line_id={user_id}"
+        
+        # 動態取得各行業/蝦皮的專屬線上履歷網址
+        base_apply_url = resolve_apply_url_by_industry(job, faq_list)
+        
+        connector = "&" if "?" in base_apply_url else "?"
+        final_apply_link = f"{base_apply_url}{connector}job_id={job_id}&line_id={user_id}"
 
         body_contents = [
             {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
@@ -272,7 +368,7 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
                         "style": "primary",
                         "color": "#00B900",
                         "height": "sm",
-                        "action": {"type": "uri", "label": "📄 填寫線上履歷", "uri": apply_link}
+                        "action": {"type": "uri", "label": "📄 填寫線上履歷", "uri": final_apply_link}
                     }
                 ]
             }
@@ -282,7 +378,7 @@ def create_job_flex_card(jobs: list, user_id: str) -> FlexSendMessage:
     return FlexSendMessage(alt_text=f"為您找到 {len(bubbles)} 筆熱門職缺！", contents={"type": "carousel", "contents": bubbles})
 
 # ==========================================
-# 6. Gemini 真人顧問決策核心 (嚴格法律合規)
+# 6. Gemini 真人顧問決策核心 (嚴格法律合規 + 廠商名稱問答守則)
 # ==========================================
 def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
@@ -316,11 +412,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         "您好！我是材霈的人資招募專員 😊\n\n"
         "很高興為您服務！為了幫您精準媒合最合適的工作，想先了解一下：\n\n"
         "1. 您希望在【哪個地區】上班？（例如：桃園、新莊、台中、台南、高雄等）\n"
-        "2. 有偏好的【工作類型】或【班別】嗎？（例如：理貨、作業員、早班、夜班）\n\n"
+        "2. 有偏好的【工作類型】或【班別】嗎？（例如：理貨、作業員、早班、夜班、蝦皮門市）\n\n"
         "💡 您可以直接點擊下方快捷按鈕，或直接打字告訴我您的需求喔！"
     )
 
-    # ---------------- 步驟 0：勞動就業法規防護層（年齡/性別歧視防呆攔截） ----------------
+    # ---------------- 步驟 0：勞動就業法規防護層 ----------------
     age_gender_keywords = ["年齡限制", "幾歲", "年紀", "年齡", "限女性", "限男性", "性別限制", "幾歲以上", "幾歲以下", "高齡", "中高齡"]
     if any(k in raw_msg for k in age_gender_keywords) and ("有嗎" in raw_msg or "可以嗎" in raw_msg or "限制" in raw_msg or "能不能" in raw_msg or "可以做嗎" in raw_msg):
         legal_reply = (
@@ -334,34 +430,46 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             QuickReplyButton(action=MessageAction(label="📍 新莊/新北", text="新莊工作")),
             QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
             QuickReplyButton(action=MessageAction(label="📦 momo理貨", text="理貨工作")),
-            QuickReplyButton(action=MessageAction(label="🏭 廠區作業員", text="作業員"))
+            QuickReplyButton(action=MessageAction(label="🏬 蝦皮門市", text="蝦皮門市"))
         ])
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
         print("[法規防護命中] 已發送就業服務法合規說明回覆")
         return
 
-    # 1. 讀取 Notion 職缺資料庫
+    # 1. 讀取 Notion 職缺與 FAQ
     active_jobs = fetch_jobs_data()
+    faq_list = fetch_faqs_data()
 
-    # 2. 載入對話歷史紀錄
+    # 2. 載入對話歷史紀錄 (7天內有效)
     history = get_user_history(user_id)
     history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history])
 
     job_index_text = ""
     for idx, j in enumerate(active_jobs):
-        t = j.get("職缺名稱(對外)", "")
+        public_t = j.get("職缺名稱(對外)", "")
+        internal_t = j.get("職缺名稱", "")
         loc = f"{j.get('縣市', '')}{j.get('行政區', '')}"
         shift = j.get('班別', '')
+        ind = j.get('行業別', '')
         salary = j.get('薪資', '')
-        job_index_text += f"[ID:{idx}] 名稱:{t} | 地點:{loc} | 班別:{shift} | 待遇:{salary}\n"
+        job_index_text += f"[ID:{idx}] 對外名稱:{public_t} | 內部/廠商名稱:{internal_t} | 地點:{loc} | 行業:{ind} | 班別:{shift} | 待遇:{salary}\n"
 
-    # 3. Gemini 真人顧問提示詞
+    faq_index_text = ""
+    for idx, f in enumerate(faq_list):
+        faq_index_text += f"問：{f.get('question')} => 答：{f.get('answer')}\n"
+
+    # 3. Gemini 決策提示詞
     ai_prompt = f"""你是一位「材霈有限公司」非常親切、專業、高情商的真人在線人資招募顧問（名字叫沛沛）。
-你的目標是：結合過去對話歷史，以真人專員的口吻引導求職者，理解其求職條件（地區、班別、工種），並在有符合職缺時推薦。我們在全台灣（北、中、南區）皆有職缺。
+你的目標是：結合過去 7 天的對話歷史，以真人專員的口吻回答求職者的各類諮詢，理解其求職條件（地區、班別、工種），並在有符合職缺時推薦。我們在全台灣（北、中、南區）皆有職缺。
 
-【重要！就業法規遵循守則（最高優先級）】：
-1. 嚴格遵守台灣《就業服務法》第5條規定：任何職缺「一律不得」設定或提及年齡、性別、容貌、身心障礙等歧視性條件。
-2. 若求職者詢問自身年齡、性別是否能應徵（例如：「我55歲可以嗎？」、「這工作收女生嗎？」），你必須明確回答：「依就業服務法規定無年齡與性別限制，主要視工作內容體能是否能配合（如久站、走動、輪班），只要勝任都非常歡迎應徵！」，絕不能回答任何限制年齡的話術。
+【重要守則】：
+1. 《就業服務法》遵循：任何職缺一律不得設定或提及年齡、性別限制。若求職者詢問，必須告知依規定無年齡性別限制。
+2. 【廠商/公司名稱揭露守則（非常重要）】：
+   - 一般主動推薦職缺時，請一律使用「對外名稱」來稱呼該職缺。
+   - 若求職者【明確主動詢問】「這是哪間公司？」、「廠商是哪家？」、「公司名稱是什麼？」、「是哪間企業？」等，為了避免詐騙疑慮並建立求職信任感，你必須親切且明確地依據職缺的「內部/廠商名稱」告知求職者具體的合作企業名稱（例如：知名電商momo/富邦媒、蝦皮店到店、欣興電子等），並引導其安心點擊線上履歷應徵！
+
+【公司官方常見問題庫 (FAQ)】：
+{faq_index_text if faq_index_text else "（目前暫無額外 FAQ 設定）"}
 
 【目前公司招募中的職缺清單】：
 {job_index_text if job_index_text else "（目前公司在全台灣北、中、南區均有開放各類優質職缺）"}
@@ -375,10 +483,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 【決策指令】：
 請分析求職者剛說的話以及上下文，選擇下列其中一種格式輸出：
 
-格式 A（求職者剛打招呼、說想找工作、詢問法規限制問題，或條件還很模糊）：
+格式 A（求職者剛打招呼、詢問一般FAQ問題、詢問特定職缺是哪間公司/廠商、說想找工作、或條件還很模糊）：
 ACTION:ASK
-REPLY:（以真人顧問口吻親切回覆或引導詢問其偏好的【地區】或【班別】，約 40-70 字，適度使用 Emoji）
-BUTTONS:📍 桃園工作,📍 新莊/新北,📍 台中工作,📍 南部工作,☀️ 固定早班,🌙 夜班/大夜,📦 理貨工作
+REPLY:（以真人顧問口吻親切回答問題/告知廠商名稱，或引導詢問其偏好的【地區】或【班別】，約 40-80 字，適度使用 Emoji）
+BUTTONS:📍 桃園工作,📍 新莊/新北,📍 台中工作,📍 南部工作,☀️ 固定早班,🌙 夜班/大夜,📦 理貨工作,🏬 蝦皮門市
 
 格式 B（求職者提出的條件有符合的職缺，或指定地區/班別有缺）：
 ACTION:RECOMMEND
@@ -411,7 +519,7 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
         if not matched_jobs and active_jobs:
             matched_jobs = active_jobs[:3]
 
-        flex_card = create_job_flex_card(matched_jobs, user_id)
+        flex_card = create_job_flex_card(matched_jobs, user_id, faq_list)
         target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), flex_card])
         return
 
@@ -426,7 +534,7 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
         if buttons_match:
             raw_buttons = [b.strip() for b in buttons_match.group(1).split(",") if b.strip()]
             for b_label in raw_buttons[:6]:
-                clean_txt = re.sub(r'^[📍☀️🌙📦🏭\s]+', '', b_label)
+                clean_txt = re.sub(r'^[📍☀️🌙📦🏭🏬\s]+', '', b_label)
                 buttons.append(QuickReplyButton(action=MessageAction(label=b_label[:20], text=clean_txt)))
         
         if not buttons:
@@ -436,7 +544,7 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
                 QuickReplyButton(action=MessageAction(label="📍 台中工作", text="台中工作")),
                 QuickReplyButton(action=MessageAction(label="📍 台南/高雄", text="台南工作")),
                 QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
-                QuickReplyButton(action=MessageAction(label="🌙 晚班/夜班", text="夜班工作"))
+                QuickReplyButton(action=MessageAction(label="🏬 蝦皮門市", text="蝦皮門市"))
             ]
 
         quick_reply = QuickReply(items=buttons)
@@ -457,20 +565,20 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
         return
 
-    # 5. 智慧本地容錯（全台職缺直接動態比對）
+    # 5. 智慧本地容錯
     print("[執行智慧本地容錯比對]")
     matched_jobs = []
     clean_msg = re.sub(r'[？\?！!。，,\s]+', '', raw_msg).replace("台", "臺").lower()
     
     for j in active_jobs:
         row_text = str(j.get("_raw_row_text", "")).replace("台", "臺").lower()
-        if clean_msg and (clean_msg in row_text or any(token in row_text for token in ["夜班", "早班", "理貨", "作業員", "司機", "包裝", "中班"] if token in clean_msg)):
+        if clean_msg and (clean_msg in row_text or any(token in row_text for token in ["蝦皮", "夜班", "早班", "理貨", "作業員", "司機", "包裝", "中班"] if token in clean_msg)):
             matched_jobs.append(j)
 
     if matched_jobs:
         reply_text = "為您找到以下符合條件的推薦職缺，歡迎點擊下方查看簡章或線上應徵喔："
         append_user_history(user_id, "招募顧問", reply_text)
-        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_jobs[:3], user_id)])
+        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_jobs[:3], user_id, faq_list)])
         return
 
     append_user_history(user_id, "招募顧問", HUMAN_GUIDE_TEXT)
@@ -480,7 +588,7 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
         QuickReplyButton(action=MessageAction(label="📍 台中工作", text="台中工作")),
         QuickReplyButton(action=MessageAction(label="📍 台南/高雄", text="台南工作")),
         QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
-        QuickReplyButton(action=MessageAction(label="🌙 晚班/夜班", text="夜班工作"))
+        QuickReplyButton(action=MessageAction(label="🏬 蝦皮門市", text="蝦皮門市"))
     ])
     target_line_bot_api.reply_message(reply_token, TextSendMessage(text=HUMAN_GUIDE_TEXT, quick_reply=quick_reply))
 
@@ -489,7 +597,7 @@ REPLY:（以真人專員口吻說明目前該地區或條件暫無開放，並�
 # ==========================================
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (Notion Connected) is running."}
+    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (Notion & Company Routing) is running."}
 
 @app.post("/test-callback")
 async def test_callback(request: Request, x_line_signature: str = Header(None)):
