@@ -17,7 +17,7 @@ from google import genai
 
 load_dotenv()
 
-app = FastAPI(title="Tsaipei AI Recruitment Consultant - Direct API Engine Safe URI", version="8.4.0")
+app = FastAPI(title="Tsaipei AI Recruitment Consultant - Ultra Safe Engine", version="8.5.0")
 
 # ==========================================
 # 1. 環境設定與金鑰
@@ -118,15 +118,14 @@ def clean_text_for_search(text: str) -> str:
     t = str(text or "").lower().replace("台", "臺")
     return re.sub(r'[\(\)（）\/\s\-_,，、\?!？！。🛵☀️🌙📦🏭🏬🍽️🔄]+', '', t)
 
-def sanitize_uri(url: str, default_fallback: str = "https://tsaipei.netlify.app/#jobs") -> str:
+def sanitize_uri(url: str) -> str:
     """確保輸出的 URL 100% 符合 LINE URIAction 要求"""
+    default_fallback = "https://tsaipei.netlify.app/#jobs"
     if not url or not isinstance(url, str):
         return default_fallback
-    url = url.strip()
+    url = url.strip().replace("\r", "").replace("\n", "").replace(" ", "")
     if not (url.startswith("http://") or url.startswith("https://") or url.startswith("line://")):
         return default_fallback
-    # 去除字串內的換行符號與前後空白
-    url = re.sub(r'[\r\n\t]+', '', url)
     return url
 
 def parse_notion_property(prop: dict) -> str:
@@ -306,7 +305,7 @@ def fetch_faqs_data() -> list:
         return _cached_faqs or []
 
 # ==========================================
-# 5. 精準履歷路由與 Flex 卡片 (全面安全 URI 驗證)
+# 5. 精準履歷路由與 Flex 卡片 (標準安全 URI)
 # ==========================================
 DEFAULT_RESUME_URLS = {
     "Spx": "https://resume.tsaipei.com.tw/eyJEYXRhTm8iOiIiLCJVc2VyTm8iOiI0ODIiLCJSZXN1bWVLaW5kIjoiU3B4IiwiU3lzdGVtIjoiWWVzIn0=?openExternalBrowser=1",
@@ -318,34 +317,10 @@ def resolve_apply_url_by_industry(job: dict, faq_list: list) -> str:
     full_search_text = f"{job.get('職缺名稱(對外)', '')} {job.get('職缺名稱', '')} {job.get('職務類別', '')} {job.get('行業別', '')} {job.get('工作內容(對外)', '')}".lower()
 
     if any(k in full_search_text for k in ["蝦皮", "智取店", "店到店", "spx", "外送"]):
-        for f in faq_list:
-            q = f.get("question", "")
-            ans = f.get("answer", "").strip()
-            if any(k in q for k in ["蝦皮", "spx", "智取店"]) and (ans.startswith("http://") or ans.startswith("https://")):
-                return sanitize_uri(ans, DEFAULT_RESUME_URLS["Spx"])
         return DEFAULT_RESUME_URLS["Spx"]
 
     if any(k in full_search_text for k in ["服務", "餐飲", "服飾", "門市", "專櫃", "店員", "廚助"]):
-        for f in faq_list:
-            q = f.get("question", "")
-            ans = f.get("answer", "").strip()
-            if any(k in q for k in ["服務", "餐飲", "服飾"]) and (ans.startswith("http://") or ans.startswith("https://")):
-                return sanitize_uri(ans, DEFAULT_RESUME_URLS["Service"])
         return DEFAULT_RESUME_URLS["Service"]
-
-    if any(k in full_search_text for k in ["製造", "科技", "物流", "電子", "工業", "作業員", "包裝", "組裝", "理貨", "技術員", "momo", "富邦"]):
-        for f in faq_list:
-            q = f.get("question", "")
-            ans = f.get("answer", "").strip()
-            if any(k in q for k in ["製造", "科技", "物流"]) and (ans.startswith("http://") or ans.startswith("https://")):
-                return sanitize_uri(ans, DEFAULT_RESUME_URLS["Manufacture"])
-        return DEFAULT_RESUME_URLS["Manufacture"]
-
-    for f in faq_list:
-        q = f.get("question", "")
-        ans = f.get("answer", "").strip()
-        if any(k in q for k in ["線上履歷", "履歷連結", "預設", "通用"]) and (ans.startswith("http://") or ans.startswith("https://")):
-            return sanitize_uri(ans, DEFAULT_RESUME_URLS["Manufacture"])
 
     return DEFAULT_RESUME_URLS["Manufacture"]
 
@@ -357,8 +332,6 @@ def create_job_flex_card(jobs: list, user_id: str, faq_list: list) -> FlexSendMe
         "type": {"bg": "#FFF3E0", "text": "#E65100"},
         "pay": {"bg": "#F3E5F5", "text": "#7B1FA2"}
     }
-
-    clean_user_id = urllib.parse.quote(str(user_id or "USER").strip())
 
     for job in jobs[:10]:
         job_id = str(job.get("_page_id") or "JOB").replace("-", "")[:8]
@@ -385,11 +358,7 @@ def create_job_flex_card(jobs: list, user_id: str, faq_list: list) -> FlexSendMe
         clean_desc = extract_smart_summary(raw_desc, job_title)
             
         website_job_url = sanitize_uri("https://tsaipei.netlify.app/#jobs")
-        base_apply_url = resolve_apply_url_by_industry(job, faq_list)
-        
-        connector = "&" if "?" in base_apply_url else "?"
-        raw_final_apply_link = f"{base_apply_url}{connector}job_id={job_id}&line_id={clean_user_id}"
-        final_apply_link = sanitize_uri(raw_final_apply_link)
+        final_apply_link = sanitize_uri(resolve_apply_url_by_industry(job, faq_list))
 
         body_contents = [
             {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
@@ -753,7 +722,7 @@ BUTTONS:（提供目前所在地區的其他工種或班別選項）
 # ==========================================
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (PeiPei URI-Safe Direct Engine) is running."}
+    return {"status": "ok", "service": "Tsaipei AI Recruitment Consultant (PeiPei Ultra Safe Engine) is running."}
 
 @app.post("/test-callback")
 async def test_callback(request: Request, x_line_signature: str = Header(None)):
