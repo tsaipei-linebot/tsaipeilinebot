@@ -4,7 +4,7 @@ from config import DEFAULT_RESUME_URLS
 from services.notion_service import sanitize_uri
 
 def resolve_apply_url_by_industry(job: dict) -> str:
-    """依職缺行業/關鍵字精準解析對應的線上履歷網址 (維持原設定)"""
+    """依職缺行業精準解析對應的線上履歷網址 (維持原設定)"""
     full_search_text = f"{job.get('職缺名稱(對外)', '')} {job.get('職缺名稱', '')} {job.get('職務類別', '')} {job.get('行業別', '')} {job.get('工作內容(對外)', '')}".lower()
 
     if any(k in full_search_text for k in ["蝦皮", "智取店", "店到店", "spx", "外送"]):
@@ -15,12 +15,32 @@ def resolve_apply_url_by_industry(job: dict) -> str:
 
     return DEFAULT_RESUME_URLS["Manufacture"]
 
+def get_location_suffix_by_industry(job: dict) -> str:
+    """依職缺產業類別動態回傳專屬地點描述語"""
+    text = f"{job.get('行業別', '')} {job.get('職務類別', '')} {job.get('職缺名稱(對外)', '')} {job.get('職缺名稱', '')}".lower()
+    
+    # 1. 科技 / 半導體 / 製造 / 作業員
+    if any(k in text for k in ["科技", "半導體", "製造", "作業員", "晶圓", "工程師", "電子", "廠", "美光", "欣興", "設備", "技術員"]):
+        return "主要廠區/園區"
+    
+    # 2. 門市 / 零售 / 餐飲
+    if any(k in text for k in ["門市", "零售", "餐飲", "專櫃", "店面", "店員", "服飾", "店到店"]):
+        return "各區門市據點（自選區域）"
+        
+    # 3. 倉儲 / 物流 / 外送
+    if any(k in text for k in ["倉儲", "物流", "外送", "理貨", "司機", "配送", "揀貨", "倉管"]):
+        return "各區物流倉儲據點"
+        
+    # 4. 一般預設
+    return "各區據點（自選區域）"
+
 def format_clean_location(job: dict, target_location: str = "") -> str:
-    """地點智慧聚合器：依搜尋條件與行政區數量智慧格式化"""
+    """地點智慧聚合器：依產業別與行政區數量精準格式化"""
     county = str(job.get("縣市") or "").strip()
     district = str(job.get("行政區") or "").strip()
+    suffix = get_location_suffix_by_industry(job)
 
-    # 1. 若使用者有明確指定地區
+    # 1. 使用者有明確指定行政區時，優先顯示該行政區
     if target_location:
         dist_list = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
         for d in dist_list:
@@ -30,7 +50,7 @@ def format_clean_location(job: dict, target_location: str = "") -> str:
         county_list = [c.strip() for c in re.split(r'[,，、\s]+', county) if c.strip()]
         for c in county_list:
             if target_location in c or c in target_location:
-                return f"{c} 各區門市據點（可就近分發）".strip()
+                return f"{c} {suffix}".strip()
 
     # 2. 智慧地點聚合 (依行政區數量級距)
     dist_list = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
@@ -43,10 +63,10 @@ def format_clean_location(job: dict, target_location: str = "") -> str:
         short_dist = "、".join(dist_list)
         return f"{county}（{short_dist}）" if county else short_dist
 
-    # 行政區 >= 5 個時聚合
+    # 行政區 >= 5 個時套用產業專屬描述語
     if county:
-        return f"{county} 各區門市據點（共 {dist_count} 區，就近分發）"
-    return f"各區門市據點（共 {dist_count} 區，就近分發）"
+        return f"{county} {suffix}"
+    return suffix
 
 def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") -> FlexSendMessage:
     """建構職缺推薦 Flex Carousel 輪播卡片"""
@@ -68,7 +88,6 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
         job_type = str(job.get("全/兼職") or "").strip()
         job_category = str(job.get("職務類別") or "").strip()
         
-        # 標籤列組裝
         tags_contents = []
         if shift:
             tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["shift"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": shift[:8], "size": "xxs", "color": badge_styles["shift"]["text"], "weight": "bold"}]})
@@ -80,7 +99,6 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
         if job_type:
             tags_contents.append({"type": "box", "layout": "horizontal", "backgroundColor": badge_styles["type"]["bg"], "cornerRadius": "sm", "paddingAll": "xs", "paddingStart": "sm", "paddingEnd": "sm", "contents": [{"type": "text", "text": job_type[:8], "size": "xxs", "color": badge_styles["type"]["text"], "weight": "bold"}]})
 
-        # 特色欄位：直接讀取 Notion 精華亮點 (0 毫秒極速反應，自帶自然句尾)
         highlight_desc = str(job.get("精華亮點") or "").strip()
         if not highlight_desc:
             raw_desc = str(job.get("工作內容(對外)") or "").strip()

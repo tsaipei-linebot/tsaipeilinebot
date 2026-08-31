@@ -101,7 +101,7 @@ def query_notion_database_direct(database_id: str) -> list:
     return all_results
 
 def fetch_jobs_data() -> list:
-    """取得招募中職缺資料（完整納入廠商名稱與結構化屬性）"""
+    """取得招募中職缺資料（完整納入休假方式與廠商名稱）"""
     global _cached_jobs, _last_jobs_fetch
     now = time.time()
     if _cached_jobs is not None and (now - _last_jobs_fetch < CACHE_TTL):
@@ -133,7 +133,7 @@ def fetch_jobs_data() -> list:
                     break
             job_dict["職務類別"] = category_val
 
-            # 3. 讀取其餘白名單屬性 (含 系統廠商名稱、精華亮點、排版工作說明)
+            # 3. 讀取其餘白名單屬性 (含 休假方式、系統廠商名稱、精華亮點、排版工作說明)
             for field_name in ALLOWED_PROPERTIES:
                 if field_name in props and field_name not in ["職缺名稱", "職務類別"]:
                     val_str = parse_notion_property(props[field_name])
@@ -152,6 +152,7 @@ def fetch_jobs_data() -> list:
             internal_title = job_dict.get("職缺名稱") or ""
             job_category = job_dict.get("職務類別") or ""
             vendor_name = job_dict.get("系統廠商名稱") or ""
+            leave_type = job_dict.get("休假方式") or ""
             display_title = public_title or internal_title or job_category
             
             if display_title:
@@ -162,6 +163,8 @@ def fetch_jobs_data() -> list:
                 job_dict["_job_category_clean"] = clean_text_for_search(job_category)
                 job_dict["_vendor_name"] = vendor_name
                 job_dict["_vendor_name_clean"] = clean_text_for_search(vendor_name)
+                job_dict["_leave_type"] = leave_type
+                job_dict["_leave_type_clean"] = clean_text_for_search(leave_type)
                 job_dict["_raw_row_text"] = " ".join(raw_text_parts)
                 job_dict["_search_text"] = clean_text_for_search(" ".join(raw_text_parts))
                 active_jobs.append(job_dict)
