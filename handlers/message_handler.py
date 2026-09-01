@@ -300,8 +300,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     slot_category_text = _slots_now.get("category") or "尚未提供"
     slot_shift_text = _slots_now.get("shift") or "尚未提供"
 
-    ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的真人在線人資招募顧問（名字叫「沛沛」）。
-你的目標是：結合過去 7 天的對話歷史，以真人顧問口吻引導求職者，並在資料庫中有符合職缺時推薦。
+    ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的線上招募顧問（名字叫「沛沛」）。
+你的目標是：結合過去 7 天的對話歷史，以專業親切的顧問口吻引導求職者，並在資料庫中有符合職缺時推薦。
 
 【極重要規則（絕對禁止幻覺）】：
 1. 自稱一律為「沛沛」。遵守就業服務法（無年齡性別限制）。
