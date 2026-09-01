@@ -19,6 +19,12 @@ def _tokenize_search_terms(text: str) -> list:
     ]
     return [k for k in candidates if clean_text_for_search(k) in normalized]
 
+def has_negative_intent(text: str) -> bool:
+    """判斷是否帶有否定、排除或不要的語氣"""
+    clean = clean_text_for_search(text)
+    negative_words = ["除了", "不要", "不想", "排除", "不考慮", "不想要", "除了這個", "除了這些", "換別的", "非"]
+    return any(w in clean for w in negative_words)
+
 def extract_current_target_location(raw_msg: str, history_text: str = "") -> str:
     """從使用者最新訊息擷取鎖定地區（避免被對話歷史中的範例字詞干擾）[cite: 1]"""
     locs = [
@@ -59,6 +65,27 @@ def extract_leave_preference(text: str) -> str:
     if any(k in clean for k in ["排休", "輪休", "排班休", "月休八天", "月休8天"]):
         return "排休"
     return ""
+
+def extract_numeric_salary_preference(text: str) -> dict:
+    """解析文字中的具體數值型薪資需求（例如：時薪200以上、月薪4萬以上）[cite: 1]"""
+    clean = clean_text_for_search(text)
+    
+    # 時薪匹配 (例如: 時薪220, 時薪>200)
+    hourly_match = re.search(r'時薪[^\d]*?(\d{3})', clean)
+    if hourly_match:
+        return {"type": "hourly", "min_amount": int(hourly_match.group(1))}
+        
+    # 月薪萬數匹配 (例如: 月薪4萬, 月薪3.8萬)
+    monthly_wan_match = re.search(r'月薪[^\d]*?(\d+(?:\.\d+)?)萬', clean)
+    if monthly_wan_match:
+        return {"type": "monthly", "min_amount": int(float(monthly_wan_match.group(1)) * 10000)}
+        
+    # 月薪五位數字匹配 (例如: 月薪38000)
+    monthly_match = re.search(r'月薪[^\d]*?(\d{5})', clean)
+    if monthly_match:
+        return {"type": "monthly", "min_amount": int(monthly_match.group(1))}
+        
+    return None
 
 def extract_salary_preference(text: str) -> bool:
     """判斷求職者是否特別指定高時薪/高薪偏好[cite: 1]"""
@@ -239,7 +266,7 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
         if loc and loc in search_text:
             score += 40
 
-    # 2. 廠商權重加分（大幅提高廠商精準度）[cite: 1]
+    # 2. 廠商權重加分[cite: 1]
     vendor_clean = clean_text_for_search(job.get("系統廠商名稱", ""))
     brand_slot = slots.get("brand", "")
     if brand_slot and brand_slot.lower() in search_text:
@@ -247,9 +274,27 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
     elif vendor_clean and vendor_clean in query_clean:
         score += 70
 
-    # 3. 高時薪意圖加分[cite: 1]
-    if extract_salary_preference(query_text):
-        if "時薪" in salary_text or "2" in salary_text:
+    # 3. 數值型與意圖薪資加減分
+    num_salary_pref = extract_numeric_salary_preference(query_text)
+    if num_salary_pref:
+        pref_type = num_salary_pref["type"]
+        min_target = num_salary_pref["min_amount"]
+        job_numbers = [int(n) for n in re.findall(r'\d+', salary_text)]
+        
+        if pref_type == "hourly" and "時薪" in salary_text:
+            max_hourly = max(job_numbers) if job_numbers else 0
+            if max_hourly >= min_target:
+                score += 55
+            else:
+                score -= 40
+        elif pref_type == "monthly" and ("月薪" in salary_text or any(n >= 25000 for n in job_numbers)):
+            max_monthly = max(job_numbers) if job_numbers else 0
+            if max_monthly >= min_target:
+                score += 55
+            else:
+                score -= 40
+    elif extract_salary_preference(query_text):
+        if "時薪" in salary_text or any(k in salary_text for k in ["2", "3", "4"]):
             score += 35
 
     # 4. 班別精準加減分
@@ -323,7 +368,6 @@ def build_ai_job_candidates(active_jobs: list, query_text: str, current_location
         weekend_pool = [j for j in target_pool if any(k in str(j.get("休假方式") or "") for k in ["週休", "周休", "見紅", "六日"])]
         if weekend_pool:
             target_pool = weekend_pool
-        # 若嚴格週休為 0 筆，不將 pool 歸零，而是保留 target_pool（退讓為排休/輪休候選）供 AI 說明
 
     scored = [(_score_job_for_ai(job, query_text, current_location, slots), idx, job) for idx, job in enumerate(target_pool)]
     scored.sort(key=lambda x: (-x[0], x[1]))
