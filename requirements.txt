@@ -6,3 +6,4 @@ notion-client
 python-dotenv
 pytz
 requests
+google-cloud-firestore
