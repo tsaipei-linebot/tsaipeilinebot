@@ -45,3 +45,9 @@ DEFAULT_RESUME_URLS = {
     "Service": "https://resume.tsaipei.com.tw/eyJEYXRhTm8iOiIiLCJVc2VyTm8iOiI0ODIiLCJSZXN1bWVLaW5kIjoiU2VydmljZSIsIlN5c3RlbSI6IlllcyJ9?openExternalBrowser=1",
     "Manufacture": "https://resume.tsaipei.com.tw/eyJEYXRhTm8iOiIiLCJVc2VyTm8iOiI0ODIiLCJSZXN1bWVLaW5kIjoiTWFudWZhY3R1cmUiLCJTeXN0ZW0iOiJZZXMifQ==?openExternalBrowser=1"
 }
+
+# ==========================================
+# 6. Google Cloud / Vertex AI 設定
+# ==========================================
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "tsaipei-505807")
+GCP_LOCATION = os.getenv("GCP_LOCATION", "asia-east1")
