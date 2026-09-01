@@ -4,12 +4,19 @@ from config import SESSION_TTL
 user_sessions = {}
 
 def _get_or_create_session(user_id: str) -> dict:
-    """取得（或建立）使用者的對話 Session[cite: 2]"""
+    """取得（或建立）使用者的對話 Session（支援軟過期：保留地點偏好）[cite: 2]"""
     now = time.time()
     if user_id in user_sessions:
         session = user_sessions[user_id]
         if now - session["last_time"] < SESSION_TTL:
             session["last_time"] = now
+            return session
+        else:
+            # 軟過期（Soft Expiration）：超時清空對話歷程，但保留使用者最後鎖定的地點偏好
+            old_loc = session.get("slots", {}).get("location", "")
+            session["last_time"] = now
+            session["messages"] = []
+            session["slots"] = {"location": old_loc, "category": "", "shift": "", "leave": "", "brand": ""}
             return session
             
     user_sessions[user_id] = {
