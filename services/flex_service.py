@@ -4,7 +4,7 @@ from config import DEFAULT_RESUME_URLS
 from services.notion_service import sanitize_uri
 
 def resolve_apply_url_by_industry(job: dict) -> str:
-    """依職缺行業精準解析對應的線上履歷網址 (維持原設定)"""
+    """依職缺行業精準解析對應的線上履歷網址 (維持原設定)[cite: 8]"""
     full_search_text = f"{job.get('職缺名稱(對外)', '')} {job.get('職缺名稱', '')} {job.get('職務類別', '')} {job.get('行業別', '')} {job.get('工作內容(對外)', '')}".lower()
 
     if any(k in full_search_text for k in ["蝦皮", "智取店", "店到店", "spx", "外送"]):
@@ -16,31 +16,31 @@ def resolve_apply_url_by_industry(job: dict) -> str:
     return DEFAULT_RESUME_URLS["Manufacture"]
 
 def get_location_suffix_by_industry(job: dict) -> str:
-    """依職缺產業類別動態回傳專屬地點描述語"""
+    """依職缺產業類別動態回傳專屬地點描述語[cite: 8]"""
     text = f"{job.get('行業別', '')} {job.get('職務類別', '')} {job.get('職缺名稱(對外)', '')} {job.get('職缺名稱', '')}".lower()
     
-    # 1. 科技 / 半導體 / 製造 / 作業員
+    # 1. 科技 / 半導體 / 製造 / 作業員[cite: 8]
     if any(k in text for k in ["科技", "半導體", "製造", "作業員", "晶圓", "工程師", "電子", "廠", "美光", "欣興", "設備", "技術員"]):
         return "主要廠區/園區"
     
-    # 2. 門市 / 零售 / 餐飲
+    # 2. 門市 / 零售 / 餐飲[cite: 8]
     if any(k in text for k in ["門市", "零售", "餐飲", "專櫃", "店面", "店員", "服飾", "店到店"]):
         return "各區門市據點（自選區域）"
         
-    # 3. 倉儲 / 物流 / 外送
+    # 3. 倉儲 / 物流 / 外送[cite: 8]
     if any(k in text for k in ["倉儲", "物流", "外送", "理貨", "司機", "配送", "揀貨", "倉管"]):
         return "各區物流倉儲據點"
         
-    # 4. 一般預設
+    # 4. 一般預設[cite: 8]
     return "各區據點（自選區域）"
 
 def format_clean_location(job: dict, target_location: str = "") -> str:
-    """地點智慧聚合器：依產業別與行政區數量精準格式化"""
+    """地點智慧聚合器：依產業別與行政區數量精準格式化[cite: 8]"""
     county = str(job.get("縣市") or "").strip()
     district = str(job.get("行政區") or "").strip()
     suffix = get_location_suffix_by_industry(job)
 
-    # 1. 使用者有明確指定行政區時，優先顯示該行政區
+    # 1. 使用者有明確指定行政區時，優先顯示該行政區[cite: 8]
     if target_location:
         dist_list = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
         for d in dist_list:
@@ -52,7 +52,7 @@ def format_clean_location(job: dict, target_location: str = "") -> str:
             if target_location in c or c in target_location:
                 return f"{c} {suffix}".strip()
 
-    # 2. 智慧地點聚合 (依行政區數量級距)
+    # 2. 智慧地點聚合 (依行政區數量級距)[cite: 8]
     dist_list = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
     dist_count = len(dist_list)
 
@@ -63,13 +63,13 @@ def format_clean_location(job: dict, target_location: str = "") -> str:
         short_dist = "、".join(dist_list)
         return f"{county}（{short_dist}）" if county else short_dist
 
-    # 行政區 >= 5 個時套用產業專屬描述語
+    # 行政區 >= 5 個時套用產業專屬描述語[cite: 8]
     if county:
         return f"{county} {suffix}"
     return suffix
 
 def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") -> FlexSendMessage:
-    """建構職缺推薦 Flex Carousel 輪播卡片"""
+    """建構職缺推薦 Flex Carousel 輪播卡片（綁定 Notion 唯一職缺名稱）[cite: 8]"""
     bubbles = []
     badge_styles = {
         "shift": {"bg": "#E8F5E9", "text": "#2E7D32"},
@@ -79,7 +79,9 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
     }
 
     for job in jobs[:10]:
-        job_title = str(job.get("職缺名稱(對外)") or job.get("職缺名稱") or job.get("職務類別") or "優質職缺").strip()
+        public_job_title = str(job.get("職缺名稱(對外)") or job.get("職缺名稱") or job.get("職務類別") or "優質職缺").strip()
+        # Notion 唯一識別鍵：職缺名稱 (內部名稱)
+        unique_internal_title = str(job.get("職缺名稱") or job.get("_internal_title") or public_job_title).strip()
         
         display_location = format_clean_location(job, target_location)
         salary = str(job.get("薪資") or "依公司規定").strip()
@@ -103,13 +105,13 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
         if not highlight_desc:
             raw_desc = str(job.get("工作內容(對外)") or "").strip()
             clean_raw = re.sub(r'[*•▶►◆◇■□▲▼\r\n\t]+', ' ', raw_desc)
-            highlight_desc = f"開放應徵【{job_title}】，環境單純、福利健全，歡迎點擊應徵！" if len(clean_raw) < 5 else (clean_raw[:40] + "...")
+            highlight_desc = f"開放應徵【{public_job_title}】，環境單純、福利健全，歡迎點擊應徵！" if len(clean_raw) < 5 else (clean_raw[:40] + "...")
             
         final_apply_link = sanitize_uri(resolve_apply_url_by_industry(job))
 
         body_contents = [
             {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
-            {"type": "text", "text": job_title, "weight": "bold", "size": "lg", "margin": "xs", "wrap": True}
+            {"type": "text", "text": public_job_title, "weight": "bold", "size": "lg", "margin": "xs", "wrap": True}
         ]
         
         if tags_contents:
@@ -146,7 +148,7 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
                         "action": {
                             "type": "message",
                             "label": "📖 了解詳細內容",
-                            "text": f"查看職缺詳情 {job_title}"
+                            "text": f"查看職缺詳情 {unique_internal_title}"
                         }
                     },
                     {
