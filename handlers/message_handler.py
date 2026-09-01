@@ -20,8 +20,9 @@ from services.matcher_service import (
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 
+
 def process_user_message(event, target_line_bot_api: LineBotApi):
-    """處理求職端所有對話與按鈕點擊事件"""
+    """處理求職端所有對話與按鈕點擊事件（整合 Vertex AI 顧問決策與 Flex UI）"""
     reply_token = event.reply_token
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
         return
@@ -33,7 +34,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     active_jobs = fetch_jobs_data()
     faq_list = fetch_faqs_data()
 
-    # ---------------- 步驟 0-1：處理「了解詳細內容」（格式化抬頭） ----------------
+    # ---------------- 步驟 0-1：處理「查看職缺詳情」（格式化抬頭與 AI 美化） ----------------
     if raw_msg.startswith("查看職缺詳情"):
         target_title = raw_msg.replace("查看職缺詳情", "").strip()
         matched_job = None
@@ -72,43 +73,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=final_reply_text, quick_reply=quick_reply))
             return
 
-    # 2. 載入對話歷史紀錄 (7天) 與已儲存的 Slot 狀態
-    history = get_user_history(user_id)
-    history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history])
-    user_slots = get_user_slots(user_id)
-    clean_input = clean_text_for_search(raw_msg)
-
-    # 判斷使用者是否主動表達「地點不限/都可以」
-    explicit_any_location = any(k in clean_input for k in ["都可以", "不限地區", "隨便", "哪裡都", "不限地點", "全台", "全區"])
-
-    # 地點判定
-    extracted_loc = extract_current_target_location(raw_msg, "")
-    if extracted_loc:
-        current_location = extracted_loc
-    elif explicit_any_location:
-        current_location = ""  # 使用者說都可以，主動解除舊地點鎖定
-    else:
-        current_location = user_slots.get("location", "")
-
-    # 漸進式需求收集
-    detected_shift = extract_shift_preference(raw_msg) or user_slots.get("shift", "")
-    detected_leave = extract_leave_preference(raw_msg) or user_slots.get("leave", "")
-    detected_category_from_text = detect_category_label(clean_input) or user_slots.get("category", "")
-    detected_brand = detect_brand_label(raw_msg, active_jobs) or user_slots.get("brand", "")
-    has_salary_intent = extract_salary_preference(raw_msg)
-
-    update_user_slots(
-        user_id, 
-        location=current_location, 
-        category=detected_category_from_text, 
-        shift=detected_shift, 
-        leave=detected_leave, 
-        brand=detected_brand
-    )
-
     # ---------------- 步驟 0-2：就業服務法合規防呆攔截 ----------------
     age_gender_keywords = ["年齡限制", "幾歲", "年紀", "年齡", "限女性", "限男性", "性別限制", "幾歲以上", "幾歲以下", "高齡", "中高齡"]
-    if any(k in raw_msg for k in age_gender_keywords) and ("有嗎" in raw_msg or "可以嗎" in raw_msg or "限制" in raw_msg or "能不能" in raw_msg or "可以做嗎" in raw_msg):
+    if any(k in raw_msg for k in age_gender_keywords) and any(k in raw_msg for k in ["有嗎", "可以嗎", "限制", "能不能", "可以做嗎", "超齡", "算老"]):
         legal_reply = (
             "您好呀！我是招募顧問沛沛 😊\n\n"
             "依《就業服務法》規定，材霈所有職缺皆【無性別與年齡限制】，歡迎所有求職朋友應徵！\n\n"
@@ -126,7 +93,41 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
         return
 
-    # ---------------- 步驟 0-3：純泛意圖與全部瀏覽攔截（排除帶有特定品牌/工種者） ----------------
+    # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋 ----------------
+    history = get_user_history(user_id)
+    history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history[-6:]])  # 取最近 6 輪對話
+    user_slots = get_user_slots(user_id)
+    clean_input = clean_text_for_search(raw_msg)
+
+    # 判斷求職者是否主動表達「地點不限/都可以」
+    explicit_any_location = any(k in clean_input for k in ["都可以", "不限地區", "隨便", "哪裡都", "不限地點", "全台", "全區"])
+
+    # 地區抽取與覆蓋
+    extracted_loc = extract_current_target_location(raw_msg, "")
+    if extracted_loc:
+        current_location = extracted_loc
+    elif explicit_any_location:
+        current_location = ""
+    else:
+        current_location = user_slots.get("location", "")
+
+    # 漸進式需求收集（若有新輸入則覆蓋，無則保留既有偏好）
+    detected_shift = extract_shift_preference(raw_msg) or user_slots.get("shift", "")
+    detected_leave = extract_leave_preference(raw_msg) or user_slots.get("leave", "")
+    detected_category_from_text = detect_category_label(clean_input) or user_slots.get("category", "")
+    detected_brand = detect_brand_label(raw_msg, active_jobs) or user_slots.get("brand", "")
+    has_salary_intent = extract_salary_preference(raw_msg)
+
+    update_user_slots(
+        user_id, 
+        location=current_location, 
+        category=detected_category_from_text, 
+        shift=detected_shift, 
+        leave=detected_leave, 
+        brand=detected_brand
+    )
+
+    # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截 ----------------
     show_all_keywords = ["都給我看", "都要看", "都可以", "全部", "隨便", "推薦一下", "有什麼工作", "還有什麼", "看全部", "都看"]
     has_specific_intent = bool(detected_brand or detected_category_from_text or any(k in clean_input for k in ["momo", "蝦皮", "酷澎", "美光", "欣興", "外送", "門市", "作業員", "製造"]))
     is_show_all = any(k in clean_input for k in show_all_keywords) and not has_specific_intent
@@ -171,13 +172,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 loc_clean = current_location.replace("台", "臺")
                 matched_show_all = [j for j in active_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
             if not matched_show_all:
-                matched_show_all = active_jobs[:3]
-
-        _slots_to_complete = get_user_slots(user_id)
-        if not _slots_to_complete.get("category"):
-            _slots_to_complete["category"] = "不限"
-        if not _slots_to_complete.get("shift"):
-            _slots_to_complete["shift"] = "不限"
+                matched_show_all = active_jobs[:5]
 
         reply_text = f"沒問題！沛沛馬上為您整理{current_location if current_location else ''}目前招募中的熱門職缺，歡迎點擊查看詳細說明或線上應徵喔 😊"
         append_user_history(user_id, "求職者", raw_msg)
@@ -186,30 +181,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         print(f"[泛意圖攔截命中] 成功推播 {len(matched_show_all[:5])} 筆職缺！")
         return
 
-    # ---------------- 步驟 0-4：【全域漸進式需求閘門】 ----------------
-    faq_keywords = ["發薪", "領薪", "幾號", "薪水幾號", "面試要帶", "勞保", "健保", "體檢", "公司在哪", "統編", "電話", "聯絡", "休假制度"]
-    is_faq_query = any(k in clean_input for k in faq_keywords)
-
-    _slots_now = get_user_slots(user_id)
-    _location_ready = bool(current_location or _slots_now.get("location"))
-    _category_ready = bool(_slots_now.get("category"))
-    _shift_ready = bool(_slots_now.get("shift"))
-    all_slots_completed = _location_ready and _category_ready and _shift_ready
-
-    # 若求職者有指定廠商、特定品牌或特定關鍵字，一律放行檢索
-    if not is_faq_query and not all_slots_completed and not detected_brand and not detected_leave and not has_salary_intent and not has_specific_intent and ("嗎" in raw_msg and not any(loc in raw_msg for loc in ["台南", "台中", "高雄", "台北", "新北", "桃園", "新竹"])):
-        question_text, question_buttons = build_progressive_question(user_id, current_location)
-        if question_text:
-            append_user_history(user_id, "求職者", raw_msg)
-            append_user_history(user_id, "招募顧問沛沛", question_text)
-            target_line_bot_api.reply_message(
-                reply_token,
-                TextSendMessage(text=question_text, quick_reply=QuickReply(items=question_buttons))
-            )
-            print(f"[全域漸進式引導] 條件未齊全，優先引導求職者補充")
-            return
-
-    # ---------------- 步驟 1：【條件齊全或指定廠商/休假/高時薪】精準多工種直達攔截 ----------------
+    # ---------------- 步驟 1：精準工種與特定廠商直達攔截 ----------------
     is_delivery_intent = any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作"])
     is_store_intent = any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]) and not is_delivery_intent
     is_momo_intent = any(k in clean_input for k in ["momo", "富邦", "富昇"])
@@ -243,7 +215,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         direct_matches = filter_jobs_by_category_tiered(_location_jobs, "門市", _store_brand)
 
     elif is_momo_intent:
-        # momo 查詢：優先查指定地區，若指定地區無缺額則自動擴大為全台檢索
         momo_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"])]
         if current_location:
             loc_clean = current_location.replace("台", "臺")
@@ -256,33 +227,33 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         reply_text = f"有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
         append_user_history(user_id, "求職者", raw_msg)
         append_user_history(user_id, "招募顧問沛沛", reply_text)
-        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:3], user_id, current_location)])
-        print(f"[最高優先級精準職務類別命中] 成功推播 {len(direct_matches)} 筆職缺！")
+        target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:4], user_id, current_location)])
+        print(f"[最高優先級精準職務類別命中] 成功推播 {len(direct_matches[:4])} 筆職缺！")
         return
 
-    # ---------------- 步驟 2：組合「候選」Notion 職缺/FAQ 給 Gemini 推理 ----------------
+    # ---------------- 步驟 2：組合候選職缺與 FAQ 進行 Vertex AI 顧問決策 ----------------
     _current_slots_for_candidates = get_user_slots(user_id)
     ai_job_candidates = build_ai_job_candidates(
         active_jobs,
         f"{history_text} {raw_msg}",
         current_location,
         _current_slots_for_candidates,
-        limit=40,
+        limit=35,
     )
     ai_faq_candidates = build_ai_faq_candidates(faq_list, raw_msg, limit=20)
 
-    # 確定性檢索狀態判定
+    # 確定性檢索狀態提示
     has_exact_vendor_match = False
     if detected_brand:
         has_exact_vendor_match = any(detected_brand.lower() in j.get("_search_text", "") for j in ai_job_candidates)
 
     system_grounding_note = ""
     if current_location and not ai_job_candidates:
-        system_grounding_note = f"\n【系統真實檢索結果】：求職者詢問的地區【{current_location}】目前「本公司暫無配合職缺」。請輸出 ACTION:NO_MATCH，親切說明【{current_location}】目前暫無職缺，並詢問是否願意考慮其他熱門地區（如雙北、桃園等）。【絕對禁止強硬拒絕換區或要求求職者只能看舊地區】！"
+        system_grounding_note = f"\n【系統真實檢索結果】：求職者詢問的地區【{current_location}】目前「本公司暫無配合職缺」。請輸出 ACTION:NO_MATCH，親切說明【{current_location}】目前暫無職缺，並主動詢問是否願意考慮鄰近熱門地區（如雙北、桃園等）。"
     elif detected_brand and not has_exact_vendor_match:
-        system_grounding_note = f"\n【系統真實檢索結果】：求職者詢問的特定廠商【{detected_brand}】目前在【{current_location if current_location else '全台'}】「無缺額」。請輸出 ACTION:NO_MATCH，以親切口吻誠實說明【{detected_brand}】目前暫無職缺開放，並主動引導求職者參考【{current_location if current_location else '目前地區'}】的其他優質大廠工作！"
+        system_grounding_note = f"\n【系統真實檢索結果】：求職者詢問的特定廠商【{detected_brand}】目前在【{current_location if current_location else '全台'}】「暫無缺額」。請輸出 ACTION:NO_MATCH，以親切口吻誠實說明【{detected_brand}】目前暫無職缺開放，並引導求職者參考【{current_location if current_location else '目前地區'}】的其他優質大廠工作！"
     elif ai_job_candidates:
-        system_grounding_note = f"\n【系統真實檢索結果】：清單中存在符合求職者條件之職缺，請務必輸出 ACTION:RECOMMEND 並推薦最吻合之職缺 ID！"
+        system_grounding_note = f"\n【系統真實檢索結果】：清單中存在符合求職者條件之職缺，請輸出 ACTION:RECOMMEND 並推薦最吻合之職缺 ID！"
 
     job_index_text = ""
     for idx, j in enumerate(ai_job_candidates):
@@ -303,20 +274,20 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         faq_index_text += f"問：{f.get('question')} => 答：{f.get('answer')}\n"
 
     ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的線上招募顧問（名字叫「沛沛」）。
-你的目標是：結合過去 7 天的對話歷史，以專業親切的顧問口吻引導求職者，並在資料庫中有符合職缺時推薦。
+你的目標是：結合過去對話歷史與求職者偏好，以專業親切的顧問口吻解答問題或引導求職，並在有符合職缺時推薦。
 
-【極重要規則（絕對禁止幻覺）】：
-1. 自稱一律為「沛沛」。遵守就業服務法（無年齡性別限制）。
-2. 【地區切換原則】：以求職者【最新提到】的地區【{current_location if current_location else "未指定"}】為準！若求職者想改問其他縣市，請完全尊重求職者。
-3. 【廠商精確比對】：求職者指名廠商（如 momo）時，若清單中有該廠商請精確推薦該廠商職缺，不得任意換成其他廠商（如蝦皮）。若無該廠商職缺，請誠實輸出 ACTION:NO_MATCH 說明目前無開放。
-4. 【休假制度嚴格比對】：若求職者要求「週休/見紅休」，只能推薦休假方式包含「週休二日/見紅休」之職缺！
+【極重要規則（絕對遵守）】：
+1. 自稱一律為「沛沛」。嚴格遵守就業服務法（所有職缺皆無年齡、性別限制）。
+2. 【地區切換原則】：以求職者【最新提到】的地區【{current_location if current_location else "未指定"}】為準！求職者若更換地區，完全尊重其選擇。
+3. 【精準比對】：若求職者指定廠商（如 momo），有缺就推該廠商，無缺則輸出 ACTION:NO_MATCH 誠實說明。
+4. 【休假與班別】：若求職者要求「週休/見紅休」或「特定班別」，只能推薦相符條件之職缺。
 {system_grounding_note}
 
 【公司官方常見問題庫 (FAQ)】：
 {faq_index_text if faq_index_text else "（暫無額外 FAQ）"}
 
 【目前公司招募中的職缺清單】：
-{job_index_text if job_index_text else "（目前此地區暫無直接相符職缺）"}
+{job_index_text if job_index_text else "（目前此條件暫無直接相符職缺）"}
 
 【過去對話歷史】：
 {history_text if history_text else "（對話剛開始）"}
@@ -325,22 +296,22 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 「{raw_msg}」
 
 【決策指令】：
-請分析上下文，輸出下列其中一種格式：
+請分析上下文與意圖，嚴格輸出以下三種格式之一（不得有多餘贅字）：
 
-格式 A（求職者剛打招呼、詢問FAQ、詢問公司名稱、或條件仍需進一步引導）：
+格式 A（打招呼、詢問FAQ、福利、發薪日、公司資訊或條件仍需引導）：
 ACTION:ASK
-REPLY:（以沛沛口吻親切回答，約 40-70 字）
-BUTTONS:（緊扣目前話題的 3-5 個按鈕，逗號分隔）
+REPLY:（以沛沛口吻親切回覆，約 35-70 字）
+BUTTONS:（緊扣對話情境的 3-5 個快速按鈕，逗號分隔）
 
-格式 B（清單中有符合的職缺）：
+格式 B（清單中有符合求職者條件的職缺）：
 ACTION:RECOMMEND
-IDS:（符合的職缺數字，例如 0 或 0,1）
-REPLY:（給求職者的溫暖推薦語）
+IDS:（符合的職缺數字 ID，例如 0 或 0,1，最多 4 個）
+REPLY:（給求職者的溫暖推薦語，約 20-50 字）
 
-格式 C（指定廠商/地區暫無職缺或完全無符合條件）：
+格式 C（指定廠商/地區暫無職缺或條件完全無相符）：
 ACTION:NO_MATCH
-REPLY:（誠實親切說明目前暫無開放，並主動詢問或推薦其他優質職缺）
-BUTTONS:（提供相關的地區或工種選項）
+REPLY:（誠實親切說明目前暫無開放，並主動引導其他優質職缺）
+BUTTONS:（提供相關地區或工種選項，逗號分隔）
 
 請直接輸出："""
 
@@ -349,7 +320,7 @@ BUTTONS:（提供相關的地區或工種選項）
 
     append_user_history(user_id, "求職者", raw_msg)
 
-    # 3. 解析 AI 輸出
+    # ---------------- 步驟 3：解析 AI 輸出並渲染 LINE 訊息 ----------------
     if "ACTION:RECOMMEND" in ai_output:
         ids_match = re.search(r'IDS:\s*([0-9,\s]+)', ai_output)
         reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
@@ -362,7 +333,7 @@ BUTTONS:（提供相關的地區或工種選項）
             matched_jobs = [ai_job_candidates[i] for i in indices]
 
         if not matched_jobs:
-            matched_jobs = ai_job_candidates[:3]
+            matched_jobs = ai_job_candidates[:4]
 
         flex_card = create_job_flex_card(matched_jobs, user_id, current_location)
         target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), flex_card])
@@ -372,16 +343,16 @@ BUTTONS:（提供相關的地區或工種選項）
         reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|$)', ai_output, re.DOTALL)
         buttons_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
 
-        reply_text = reply_match.group(1).strip() if reply_match else f"您好呀！沛沛隨時為您服務，想請問您偏好哪個班別或工作類型呢？"
+        reply_text = reply_match.group(1).strip() if reply_match else f"您好呀！沛沛隨時為您服務，想請問您偏好哪個地區或工作班別呢？"
         append_user_history(user_id, "招募顧問沛沛", reply_text)
 
         buttons = []
         if buttons_match:
             raw_buttons = [b.strip() for b in buttons_match.group(1).split(",") if b.strip()]
-            for b_label in raw_buttons[:6]:
+            for b_label in raw_buttons[:5]:
                 clean_txt = re.sub(r'^[📍☀️🌙📦🏭🏬🍽️🔄🛵\s]+', '', b_label)
                 buttons.append(QuickReplyButton(action=MessageAction(label=b_label[:20], text=clean_txt)))
-        
+
         if not buttons:
             if current_location:
                 buttons = [
@@ -404,7 +375,7 @@ BUTTONS:（提供相關的地區或工種選項）
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
         return
 
-    # 4. 保底引導
+    # ---------------- 步驟 4：保底引導 ----------------
     progressive_text, progressive_buttons = build_progressive_question(user_id, current_location)
     if progressive_text:
         append_user_history(user_id, "招募顧問沛沛", progressive_text)
