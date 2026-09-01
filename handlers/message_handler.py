@@ -8,7 +8,8 @@ from services.session_service import (
     get_user_history, append_user_history, get_user_slots, update_user_slots
 )
 from services.notion_service import (
-    fetch_jobs_data, fetch_faqs_data, clean_text_for_search, sanitize_uri
+    fetch_jobs_data, fetch_faqs_data, clean_text_for_search, sanitize_uri,
+    append_unresolved_faq_to_notion
 )
 from services.flex_service import (
     create_job_flex_card, format_clean_location, resolve_apply_url_by_industry
@@ -23,7 +24,7 @@ from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 
 
 def process_user_message(event, target_line_bot_api: LineBotApi):
-    """處理求職端所有對話與按鈕點擊事件（具備全局防當與法規防呆機制）"""
+    """處理求職端所有對話，支援 FAQ 精確回答與未收錄問題自動入庫"""
     reply_token = event.reply_token
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
         return
@@ -75,7 +76,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=final_reply_text, quick_reply=quick_reply))
                 return
 
-        # ---------------- 步驟 0-2A：就業服務法合規攔截 (年齡/性別) ----------------
+        # ---------------- 步驟 0-2：就業服務法合規攔截 (年齡/性別) ----------------
         age_gender_keywords = ["年齡限制", "幾歲", "年紀", "年齡", "限女性", "限男性", "性別限制", "幾歲以上", "幾歲以下", "高齡", "中高齡"]
         if any(k in raw_msg for k in age_gender_keywords) and any(k in raw_msg for k in ["有嗎", "可以嗎", "限制", "能不能", "可以做嗎", "超齡", "算老"]):
             legal_reply = (
@@ -93,25 +94,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 QuickReplyButton(action=MessageAction(label="🏬 蝦皮門市", text="蝦皮門市"))
             ])
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
-            return
-
-        # ---------------- 步驟 0-2B：勞動法規防呆攔截 (不加保/領現避債) ----------------
-        no_insurance_keywords = ["不加保", "不用加保", "免加保", "不保勞保", "不用勞保", "不投保", "不報稅", "領現不報稅", "避債", "不用加健保"]
-        if any(k in raw_msg for k in no_insurance_keywords):
-            insurance_reply = (
-                "您好！我是招募顧問沛沛 😊\n\n"
-                "依台灣《勞動基準法》及《勞工保險條例》規定，為保障每位同仁的職場安全與合法權益，材霈所有合作廠商及職缺皆【一律依法投保勞健保與提撥勞退】喔！\n\n"
-                "我們目前沒有提供「不加保」或「未申報領現」的工作，請您多加包涵與理解。\n\n"
-                "若您有正常投保的求職需求，沛沛很樂意為您推薦合適的工作！"
-            )
-            append_user_history(user_id, "招募顧問沛沛", insurance_reply)
-            quick_reply = QuickReply(items=[
-                QuickReplyButton(action=MessageAction(label="📍 看看合法熱門職缺", text="都給我看看")),
-                QuickReplyButton(action=MessageAction(label="💰 了解發薪日期", text="發薪日是哪天")),
-                QuickReplyButton(action=MessageAction(label="☀️ 找早班工作", text="早班工作")),
-                QuickReplyButton(action=MessageAction(label="🌙 找夜班工作", text="夜班工作"))
-            ])
-            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=insurance_reply, quick_reply=quick_reply))
             return
 
         # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋 ----------------
@@ -233,7 +215,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:4], user_id, current_location)])
             return
 
-        # ---------------- 步驟 2：Vertex AI 顧問推理 ----------------
+        # ---------------- 步驟 2：Vertex AI 顧問推理 (FAQ 優先 + 未收錄捕獲) ----------------
         _current_slots_for_candidates = get_user_slots(user_id)
         ai_job_candidates = build_ai_job_candidates(
             active_jobs,
@@ -262,12 +244,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             faq_index_text += f"問：{f.get('question')} => 答：{f.get('answer')}\n"
 
         ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的線上招募顧問「沛沛」。
-你的任務是：結合對話歷史，解答問題並在有符合職缺時推薦。
+你的任務是：結合對話歷史，優先從常見問題庫 (FAQ) 精確解答，並在求職者尋找工作時推薦合適職缺。
 
-【極重要原則】：
+【極重要原則（嚴格遵守）】：
 1. 自稱一律為「沛沛」。遵守就業服務法（無年齡性別限制）。
-2. 【地區切換】：以最新提到的地區【{current_location if current_location else "未指定"}】為準。
-3. 【勞健保原則】：本公司所有職缺均依法投保勞健保，無不加保之工作。
+2. 【FAQ 絕對依據】：凡詢問公司規章、福利、發薪日、勞健保、投保、體檢、面試文件、休假規範等非找工作問題：
+   - 若【常見問題庫 (FAQ)】中有收錄，必須輸出 ACTION:ASK，並嚴格依據該內容回答！
+   - 若【常見問題庫 (FAQ)】中「完全沒有」收錄且非詢問職缺，必須輸出 ACTION:UNKNOWN_FAQ！
+3. 【職缺推薦】：若求職者是在尋找工作（指定地區、班別、工種），請從職缺清單中比對並輸出 ACTION:RECOMMEND。若完全無相符職缺才輸出 ACTION:NO_MATCH。
 
 【常見問題庫 (FAQ)】：
 {faq_index_text if faq_index_text else "（無相符 FAQ）"}
@@ -281,18 +265,23 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 【求職者最新輸入】：
 「{raw_msg}」
 
-請輸出以下三種格式之一：
-格式 A（FAQ解答、福利諮詢或引導條件）：
+請輸出以下四種格式之一：
+格式 A（命中 FAQ、日常問候或引導找工作條件）：
 ACTION:ASK
-REPLY:（親切回覆 35-70 字）
+REPLY:（嚴格依 FAQ 內容以沛沛口吻親切回覆，約 35-70 字）
 BUTTONS:（相關快速按鈕 3-5 個，逗號分隔）
 
-格式 B（有符合推薦之職缺）：
+格式 B（未收錄於 FAQ 的規章/制度/福利問題）：
+ACTION:UNKNOWN_FAQ
+REPLY:（親切說明已為求職者記錄此問題，會由招募專員確認，並主動詢問目前想看哪裡的工作，約 40-70 字）
+BUTTONS:（找工作的推薦按鈕，如：新莊工作,桃園工作,早班工作,夜班工作）
+
+格式 C（有符合推薦之職缺）：
 ACTION:RECOMMEND
 IDS:（符合的職缺數字 ID，例如 0 或 0,1）
 REPLY:（推薦語 20-50 字）
 
-格式 C（無符合職缺）：
+格式 D（指定廠商/地區暫無職缺）：
 ACTION:NO_MATCH
 REPLY:（親切說明暫無缺額並主動推薦其他方向）
 BUTTONS:（相關地區或工種按鈕，逗號分隔）
@@ -304,7 +293,35 @@ BUTTONS:（相關地區或工種按鈕，逗號分隔）
         append_user_history(user_id, "求職者", raw_msg)
 
         # ---------------- 步驟 3：解析 AI 輸出 ----------------
-        if "ACTION:RECOMMEND" in ai_output:
+        if "ACTION:UNKNOWN_FAQ" in ai_output:
+            # 自動將未收錄問題寫入 Notion FAQ 資料庫
+            append_unresolved_faq_to_notion(raw_msg)
+
+            reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|$)', ai_output, re.DOTALL)
+            buttons_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
+
+            reply_text = reply_match.group(1).strip() if reply_match else "謝謝您的提問！沛沛已先幫您把這個問題記錄下來回報給招募專員囉 😊 請問您目前想先看看哪個地區或班別的工作呢？"
+            append_user_history(user_id, "招募顧問沛沛", reply_text)
+
+            buttons = []
+            if buttons_match:
+                raw_buttons = [b.strip() for b in buttons_match.group(1).split(",") if b.strip()]
+                for b_label in raw_buttons[:5]:
+                    clean_txt = re.sub(r'^[📍☀️🌙📦🏭🏬🍽️🔄🛵\s]+', '', b_label)
+                    buttons.append(QuickReplyButton(action=MessageAction(label=b_label[:20], text=clean_txt)))
+
+            if not buttons:
+                buttons = [
+                    QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+                    QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
+                    QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
+                    QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+                ]
+
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons)))
+            return
+
+        elif "ACTION:RECOMMEND" in ai_output:
             ids_match = re.search(r'IDS:\s*([0-9,\s]+)', ai_output)
             reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
             reply_text = reply_match.group(1).strip() if reply_match else "太棒了！沛沛為您推薦以下符合需求的職缺："
