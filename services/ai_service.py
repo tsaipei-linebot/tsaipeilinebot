@@ -1,5 +1,11 @@
+import os
 from google import genai
-from config import GCP_PROJECT_ID, GCP_LOCATION
+
+# ==========================================
+# Google Cloud / Vertex AI 設定 (防呆讀取)
+# ==========================================
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "tsaipei-505807")
+GCP_LOCATION = os.getenv("GCP_LOCATION", "asia-east1")
 
 ai_client = None
 try:
@@ -13,11 +19,12 @@ try:
 except Exception as e:
     print(f"[系統警告] Vertex AI 初始化失敗: {e}")
 
+
 def query_gemini_ai(prompt: str) -> str:
     """呼叫 Vertex AI Gemini 進行招募問答與決策推理"""
     if not ai_client:
         return ""
-    
+
     # 支援 Vertex AI 的模型候選清單
     models = ["gemini-2.0-flash", "gemini-1.5-flash"]
     for m in models:
@@ -26,12 +33,13 @@ def query_gemini_ai(prompt: str) -> str:
                 model=m,
                 contents=prompt
             )
-            if res and hasattr(res, 'text') and res.text:
+            if res and hasattr(res, "text") and res.text:
                 return res.text.strip()
         except Exception as e:
             print(f"[Vertex AI 呼叫異常 {m}]: {e}")
             continue
     return ""
+
 
 def format_full_job_detail_with_ai(job: dict, location_display: str) -> str:
     """若 Notion 排版工作說明為空時的 AI 備援美化排版函式"""
@@ -79,7 +87,7 @@ def format_full_job_detail_with_ai(job: dict, location_display: str) -> str:
                 model=m,
                 contents=prompt
             )
-            if res and hasattr(res, 'text') and res.text:
+            if res and hasattr(res, "text") and res.text:
                 return res.text.strip()
     except Exception as e:
         print(f"[AI 詳細內容排版異常]: {e}")
