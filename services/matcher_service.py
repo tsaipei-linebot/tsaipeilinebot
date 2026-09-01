@@ -26,7 +26,6 @@ def extract_current_target_location(raw_msg: str, history_text: str = "") -> str
         "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
         "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆"
     ]
-    # 只比對使用者當下輸入的句子
     for loc in locs:
         if loc in raw_msg:
             return loc.replace("臺", "台")
@@ -115,7 +114,7 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
         if any(syn in normalized for syn in synonyms):
             return brand_key
 
-    # 3. 自然語言動態抽取（嚴格黑名單過濾，杜絕將「製造業」、「高時薪」當作廠商）
+    # 3. 自然語言動態抽取
     match = re.search(r'(?:有|想找|請問有|有沒有)\s*([a-zA-Z0-9\u4e00-\u9fa5]{2,8}?)\s*(?:嗎|的工作|職缺|廠|$)', text)
     if match:
         extracted = match.group(1).strip()
@@ -134,14 +133,12 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
     return ""
 
 def _job_title_and_category_text(job: dict) -> tuple:
-    """提取主要精準欄位：職缺名稱（內/對外）與職務類別"""
     internal_title = clean_text_for_search(job.get("_internal_title", ""))
     public_title = clean_text_for_search(job.get("職缺名稱(對外)", ""))
     category = clean_text_for_search(job.get("_job_category", "") or job.get("職務類別", ""))
     return internal_title, public_title, category
 
 def _job_extended_search_text(job: dict) -> str:
-    """提取公開延伸欄位"""
     fields = [
         job.get("職缺名稱", ""),
         job.get("系統廠商名稱", ""),
@@ -155,7 +152,6 @@ def _job_extended_search_text(job: dict) -> str:
     return clean_text_for_search(" ".join(str(x or "") for x in fields))
 
 def _job_has_delivery_conflict(job: dict) -> bool:
-    """門市類別的安全排除：只依職缺名稱/職務類別判斷外送衝突"""
     internal_title, public_title, category = _job_title_and_category_text(job)
     primary_text = " ".join([internal_title, public_title, category])
     return any(k in primary_text for k in ["外送", "外送員", "配送", "配送員", "司機", "送貨"])
@@ -180,7 +176,6 @@ def _category_matches_text(text: str, category_label: str) -> bool:
     return any(clean_text_for_search(k) in text for k in keywords)
 
 def job_matches_category_filter(job: dict, category_label: str, brand_label: str = "", allow_relaxed: bool = True) -> bool:
-    """分級判斷職缺是否符合工作類別/品牌"""
     if not category_label or category_label == "不限":
         return True
 
@@ -211,7 +206,6 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
     return allow_relaxed and _category_matches_text(extended_text, category_label)
 
 def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label: str = "") -> list:
-    """執行兩級階梯式職缺篩選"""
     if not category_label or category_label == "不限":
         return list(jobs)
 
@@ -228,7 +222,6 @@ def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label:
     ]
 
 def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", slots: dict = None) -> int:
-    """候選排序計分函式（加強製造業、高時薪、休假制度、廠商與地區權重）"""
     slots = slots or {}
     search_text = job.get("_search_text", "")
     leave_text = str(job.get("休假方式") or "")
@@ -242,13 +235,13 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
         if loc and loc in search_text:
             score += 40
 
-    # 2. 廠商權重加分
+    # 2. 廠商權重加分（大幅提高廠商精準度）
     vendor_clean = clean_text_for_search(job.get("系統廠商名稱", ""))
     brand_slot = slots.get("brand", "")
     if brand_slot and brand_slot.lower() in search_text:
-        score += 60
+        score += 80
     elif vendor_clean and vendor_clean in query_clean:
-        score += 50
+        score += 70
 
     # 3. 高時薪意圖加分
     if extract_salary_preference(query_text):
@@ -288,15 +281,23 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
     return score
 
 def build_ai_job_candidates(active_jobs: list, query_text: str, current_location: str = "", slots: dict = None, limit: int = 40) -> list:
-    """在送 Gemini 前縮小候選集合（具備物理級地區與休假隔離）"""
+    """在送 Gemini 前縮小候選集合（具備品牌跨區保底與實體隔離）"""
     if not active_jobs:
         return []
 
     slots = slots or {}
+    brand_slot = slots.get("brand", "")
     target_pool = active_jobs
 
-    # 1. 地區實體隔離
-    if current_location:
+    # 1. 廠商優先保底：若指定品牌在指定地區查無缺額，自動放寬至全體職缺庫尋找該廠商
+    if brand_slot:
+        brand_pool = [j for j in active_jobs if brand_slot.lower() in j.get("_search_text", "")]
+        if brand_pool:
+            target_pool = brand_pool
+        elif current_location:
+            loc_clean = current_location.replace("台", "臺")
+            target_pool = [j for j in active_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
+    elif current_location:
         loc_clean = current_location.replace("台", "臺")
         location_pool = [j for j in active_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
         target_pool = location_pool
@@ -343,7 +344,6 @@ def build_ai_faq_candidates(faq_list: list, query_text: str, limit: int = 20) ->
     return [item[2] for item in selected]
 
 def build_progressive_question(user_id: str, current_location: str) -> tuple:
-    """漸進式引導：依序確認地區 → 工作類別 → 時段"""
     slots = get_user_slots(user_id)
     known_location = current_location or slots.get("location", "")
     known_category = slots.get("category", "")

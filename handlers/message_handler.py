@@ -78,11 +78,19 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     user_slots = get_user_slots(user_id)
     clean_input = clean_text_for_search(raw_msg)
 
-    # 地點判定：當前訊息有提到地點優先更新；沒提到則沿用既有 Slot
-    extracted_loc = extract_current_target_location(raw_msg, "")
-    current_location = extracted_loc if extracted_loc else user_slots.get("location", "")
+    # 判斷使用者是否主動表達「地點不限/都可以」
+    explicit_any_location = any(k in clean_input for k in ["都可以", "不限地區", "隨便", "哪裡都", "不限地點", "全台", "全區"])
 
-    # 漸進式需求收集：有新提取條件才更新，保留先前輪次條件
+    # 地點判定
+    extracted_loc = extract_current_target_location(raw_msg, "")
+    if extracted_loc:
+        current_location = extracted_loc
+    elif explicit_any_location:
+        current_location = ""  # 使用者說都可以，主動解除舊地點鎖定
+    else:
+        current_location = user_slots.get("location", "")
+
+    # 漸進式需求收集
     detected_shift = extract_shift_preference(raw_msg) or user_slots.get("shift", "")
     detected_leave = extract_leave_preference(raw_msg) or user_slots.get("leave", "")
     detected_category_from_text = detect_category_label(clean_input) or user_slots.get("category", "")
@@ -118,9 +126,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
         return
 
-    # ---------------- 步驟 0-3：泛意圖與全部瀏覽攔截（「都給我看看」） ----------------
+    # ---------------- 步驟 0-3：純泛意圖與全部瀏覽攔截（排除帶有特定品牌/工種者） ----------------
     show_all_keywords = ["都給我看", "都要看", "都可以", "全部", "隨便", "推薦一下", "有什麼工作", "還有什麼", "看全部", "都看"]
-    is_show_all = any(k in clean_input for k in show_all_keywords)
+    has_specific_intent = bool(detected_brand or detected_category_from_text or any(k in clean_input for k in ["momo", "蝦皮", "酷澎", "美光", "欣興", "外送", "門市", "作業員", "製造"]))
+    is_show_all = any(k in clean_input for k in show_all_keywords) and not has_specific_intent
 
     if is_show_all:
         matched_show_all = []
@@ -187,8 +196,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     _shift_ready = bool(_slots_now.get("shift"))
     all_slots_completed = _location_ready and _category_ready and _shift_ready
 
-    # 若求職者有明確指定廠商、休假偏好、詢問薪資或詢問切換地區，放行進行檢索
-    if not is_faq_query and not all_slots_completed and not detected_brand and not detected_leave and not has_salary_intent and ("嗎" in raw_msg and not any(loc in raw_msg for loc in ["台南", "台中", "高雄", "台北", "新北", "桃園"])):
+    # 若求職者有指定廠商、特定品牌或特定關鍵字，一律放行檢索
+    if not is_faq_query and not all_slots_completed and not detected_brand and not detected_leave and not has_salary_intent and not has_specific_intent and ("嗎" in raw_msg and not any(loc in raw_msg for loc in ["台南", "台中", "高雄", "台北", "新北", "桃園", "新竹"])):
         question_text, question_buttons = build_progressive_question(user_id, current_location)
         if question_text:
             append_user_history(user_id, "求職者", raw_msg)
@@ -234,16 +243,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         direct_matches = filter_jobs_by_category_tiered(_location_jobs, "門市", _store_brand)
 
     elif is_momo_intent:
+        # momo 查詢：優先查指定地區，若指定地區無缺額則自動擴大為全台檢索
+        momo_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"])]
         if current_location:
             loc_clean = current_location.replace("台", "臺")
-            for j in active_jobs:
-                s_text = j.get("_search_text", "")
-                if any(k in s_text for k in ["momo", "富邦", "富昇"]) and (current_location in s_text or loc_clean in s_text):
-                    direct_matches.append(j)
+            loc_momo = [j for j in momo_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
+            direct_matches = loc_momo if loc_momo else momo_jobs
         else:
-            for j in active_jobs:
-                if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"]):
-                    direct_matches.append(j)
+            direct_matches = momo_jobs
 
     if direct_matches:
         reply_text = f"有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
@@ -270,10 +277,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         has_exact_vendor_match = any(detected_brand.lower() in j.get("_search_text", "") for j in ai_job_candidates)
 
     system_grounding_note = ""
-    # 情況 A：求職者指名的地區完全沒有開放任何職缺（例如：台南）
     if current_location and not ai_job_candidates:
         system_grounding_note = f"\n【系統真實檢索結果】：求職者詢問的地區【{current_location}】目前「本公司暫無配合職缺」。請輸出 ACTION:NO_MATCH，親切說明【{current_location}】目前暫無職缺，並詢問是否願意考慮其他熱門地區（如雙北、桃園等）。【絕對禁止強硬拒絕換區或要求求職者只能看舊地區】！"
-    # 情況 B：求職者指定的廠商查無缺額
     elif detected_brand and not has_exact_vendor_match:
         system_grounding_note = f"\n【系統真實檢索結果】：求職者詢問的特定廠商【{detected_brand}】目前在【{current_location if current_location else '全台'}】「無缺額」。請輸出 ACTION:NO_MATCH，以親切口吻誠實說明【{detected_brand}】目前暫無職缺開放，並主動引導求職者參考【{current_location if current_location else '目前地區'}】的其他優質大廠工作！"
     elif ai_job_candidates:
@@ -297,18 +302,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     for f in ai_faq_candidates:
         faq_index_text += f"問：{f.get('question')} => 答：{f.get('answer')}\n"
 
-    slot_location_text = current_location or _slots_now.get("location") or "尚未提供"
-    slot_category_text = _slots_now.get("category") or "尚未提供"
-    slot_shift_text = _slots_now.get("shift") or "尚未提供"
-
     ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的線上招募顧問（名字叫「沛沛」）。
 你的目標是：結合過去 7 天的對話歷史，以專業親切的顧問口吻引導求職者，並在資料庫中有符合職缺時推薦。
 
 【極重要規則（絕對禁止幻覺）】：
 1. 自稱一律為「沛沛」。遵守就業服務法（無年齡性別限制）。
-2. 【地區切換原則】：以求職者【最新提到】的地區【{current_location if current_location else "未指定"}】為準！若求職者想改問其他縣市（例如從板橋改問台南），請完全尊重求職者。若該新地區目前無缺額，請輸出 ACTION:NO_MATCH 誠實親切說明該地區暫無職缺，絕對禁止強硬拒絕求職者換地區或強逼求職者留在舊地區！
-3. 【休假制度嚴格比對】：若求職者要求「週休/見紅休」，只能推薦休假方式包含「週休二日/見紅休」之職缺，絕對嚴禁推薦「四休二/做四休二/輪休」職缺！
-4. 【廠商與無缺額原則】：若求職者指定之特定廠商在清單中確實不存在，請輸出 ACTION:NO_MATCH，誠實說明該廠商暫無開放，並主動引導同地區之其他優質工作。
+2. 【地區切換原則】：以求職者【最新提到】的地區【{current_location if current_location else "未指定"}】為準！若求職者想改問其他縣市，請完全尊重求職者。
+3. 【廠商精確比對】：求職者指名廠商（如 momo）時，若清單中有該廠商請精確推薦該廠商職缺，不得任意換成其他廠商（如蝦皮）。若無該廠商職缺，請誠實輸出 ACTION:NO_MATCH 說明目前無開放。
+4. 【休假制度嚴格比對】：若求職者要求「週休/見紅休」，只能推薦休假方式包含「週休二日/見紅休」之職缺！
 {system_grounding_note}
 
 【公司官方常見問題庫 (FAQ)】：
@@ -329,7 +330,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 格式 A（求職者剛打招呼、詢問FAQ、詢問公司名稱、或條件仍需進一步引導）：
 ACTION:ASK
 REPLY:（以沛沛口吻親切回答，約 40-70 字）
-BUTTONS:（緊扣目前地區與當前話題的 3-5 個按鈕，逗號分隔）
+BUTTONS:（緊扣目前話題的 3-5 個按鈕，逗號分隔）
 
 格式 B（清單中有符合的職缺）：
 ACTION:RECOMMEND
