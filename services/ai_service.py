@@ -1,31 +1,35 @@
 from google import genai
-from config import GEMINI_API_KEY
+from config import GCP_PROJECT_ID, GCP_LOCATION
 
 ai_client = None
-if GEMINI_API_KEY:
-    try:
-        ai_client = genai.Client(api_key=GEMINI_API_KEY)
-        print("[系統提示] Gemini AI 客戶端初始化成功！")
-    except Exception as e:
-        print(f"[系統警告] Gemini AI 初始化失敗: {e}")
+try:
+    # 啟用 Vertex AI 模式（自動套用 Cloud Run 服務帳戶 IAM 權限）
+    ai_client = genai.Client(
+        vertexai=True,
+        project=GCP_PROJECT_ID,
+        location=GCP_LOCATION
+    )
+    print("[系統提示] Vertex AI (Gemini) 客戶端初始化成功！")
+except Exception as e:
+    print(f"[系統警告] Vertex AI 初始化失敗: {e}")
 
 def query_gemini_ai(prompt: str) -> str:
-    """呼叫 Gemini 3.5 Flash Lite 進行多輪職缺決策推理"""
+    """呼叫 Vertex AI Gemini 進行招募問答與決策推理"""
     if not ai_client:
         return ""
-    models = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
+    
+    # 支援 Vertex AI 的模型候選清單
+    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
     for m in models:
         try:
-            if hasattr(ai_client, 'models'):
-                res = ai_client.models.generate_content(model=m, contents=prompt)
-                if res and hasattr(res, 'text') and res.text:
-                    return res.text.strip()
-            elif hasattr(ai_client, 'interactions'):
-                interaction = ai_client.interactions.create(model=m, input=prompt)
-                if hasattr(interaction, 'text') and interaction.text:
-                    return interaction.text.strip()
+            res = ai_client.models.generate_content(
+                model=m,
+                contents=prompt
+            )
+            if res and hasattr(res, 'text') and res.text:
+                return res.text.strip()
         except Exception as e:
-            print(f"[Gemini 呼叫異常 {m}]: {e}")
+            print(f"[Vertex AI 呼叫異常 {m}]: {e}")
             continue
     return ""
 
@@ -69,12 +73,14 @@ def format_full_job_detail_with_ai(job: dict, location_display: str) -> str:
 請直接輸出繁體中文內容："""
 
     try:
-        models = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
+        models = ["gemini-2.0-flash", "gemini-1.5-flash"]
         for m in models:
-            if hasattr(ai_client, 'models'):
-                res = ai_client.models.generate_content(model=m, contents=prompt)
-                if res and hasattr(res, 'text') and res.text:
-                    return res.text.strip()
+            res = ai_client.models.generate_content(
+                model=m,
+                contents=prompt
+            )
+            if res and hasattr(res, 'text') and res.text:
+                return res.text.strip()
     except Exception as e:
         print(f"[AI 詳細內容排版異常]: {e}")
 
