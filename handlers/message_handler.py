@@ -18,13 +18,13 @@ from services.matcher_service import (
     extract_current_target_location, extract_shift_preference, extract_leave_preference,
     extract_salary_preference, detect_category_label, detect_brand_label, filter_jobs_by_category_tiered,
     build_progressive_question, build_ai_job_candidates, build_ai_faq_candidates,
-    job_matches_category_filter
+    job_matches_category_filter, has_negative_intent, extract_numeric_salary_preference
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 
 
 def process_user_message(event, target_line_bot_api: LineBotApi):
-    """處理求職端所有對話，支援 5 大優化（槽位重置、禮貌收尾、條件退讓、單一焦點、FAQ 自動擴充）[cite: 3]"""
+    """處理求職端所有對話，支援 5 大優化與 4 項防呆精準升級[cite: 3, 6]"""
     reply_token = event.reply_token
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
         return
@@ -59,7 +59,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             "謝謝", "謝謝沛沛", "感謝", "感恩", "辛苦了", "好的謝謝", "那我先去填履歷", "先去應徵", 
             "了解了", "好的了解", "我知道了", "再見", "掰掰", "ok謝謝", "先這樣"
         ]
-        # 排除包含提問語氣的訊息（如「謝謝，請問還有職缺嗎？」）
         is_pure_polite = any(k in raw_msg for k in polite_close_keywords) and not any(q in raw_msg for q in ["嗎", "有沒有", "還有", "請問", "？", "?"])
         if is_pure_polite:
             polite_reply = "不客氣呀！很高興能為您服務 😊 預祝您求職面試順利！\n\n如果後續有任何工作或制度上的疑問，隨時歡迎回來找沛沛聊聊喔！"
@@ -68,14 +67,23 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=polite_reply))
             return
 
-        # ---------------- 步驟 0-1：處理「查看職缺詳情」[cite: 3] ----------------
+        # ---------------- 步驟 0-1：處理「查看職缺詳情」（Notion 唯一鍵精準定位）[cite: 6] ----------------
         if raw_msg.startswith("查看職缺詳情"):
             target_title = raw_msg.replace("查看職缺詳情", "").strip()
             matched_job = None
+            
+            # 1. 優先精準比對 Notion 唯一識別鍵「職缺名稱」
             for j in active_jobs:
-                if target_title and (target_title in j.get("_parsed_title", "") or j.get("_parsed_title", "") in target_title):
+                if target_title and (j.get("職缺名稱") == target_title or j.get("_internal_title") == target_title):
                     matched_job = j
                     break
+            
+            # 2. 次要包含比對
+            if not matched_job and target_title:
+                for j in active_jobs:
+                    if target_title in j.get("_parsed_title", "") or j.get("_parsed_title", "") in target_title:
+                        matched_job = j
+                        break
             
             if not matched_job and active_jobs:
                 matched_job = active_jobs[0]
@@ -107,7 +115,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=final_reply_text, quick_reply=quick_reply))
                 return
 
-        # ---------------- 步驟 0-2：就業服務法合規攔截 (年齡/性別)[cite: 3] ----------------
+        # ---------------- 步驟 0-2：就業服務法合規攔截 (年齡/性別)[cite: 6] ----------------
         age_gender_keywords = ["年齡限制", "幾歲", "年紀", "年齡", "限女性", "限男性", "性別限制", "幾歲以上", "幾歲以下", "高齡", "中高齡"]
         if any(k in raw_msg for k in age_gender_keywords) and any(k in raw_msg for k in ["有嗎", "可以嗎", "限制", "能不能", "可以做嗎", "超齡", "算老"]):
             legal_reply = (
@@ -127,7 +135,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
             return
 
-        # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋[cite: 3] ----------------
+        # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋[cite: 6] ----------------
         history = get_user_history(user_id)
         history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history[-6:]])
         user_slots = get_user_slots(user_id)
@@ -157,7 +165,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             brand=detected_brand
         )
 
-        # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截[cite: 3] ----------------
+        # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截[cite: 6] ----------------
         show_all_keywords = ["都給我看", "都要看", "都可以", "全部", "隨便", "推薦一下", "有什麼工作", "還有什麼", "看全部", "都看"]
         has_specific_intent = bool(detected_brand or detected_category_from_text or any(k in clean_input for k in ["momo", "蝦皮", "酷澎", "美光", "欣興", "外送", "門市", "作業員", "製造"]))
         is_show_all = any(k in clean_input for k in show_all_keywords) and not has_specific_intent
@@ -197,10 +205,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, current_location)])
             return
 
-        # ---------------- 步驟 1：精準工種直達攔截[cite: 3] ----------------
-        is_delivery_intent = any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作"])
-        is_store_intent = any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]) and not is_delivery_intent
-        is_momo_intent = any(k in clean_input for k in ["momo", "富邦", "富昇"])
+        # ---------------- 步驟 1：精準工種直達攔截（含否定語氣防呆）[cite: 6] ----------------
+        is_negative = has_negative_intent(raw_msg)
+        is_delivery_intent = any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作"]) and not is_negative
+        is_store_intent = any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]) and not is_delivery_intent and not is_negative
+        is_momo_intent = any(k in clean_input for k in ["momo", "富邦", "富昇"]) and not is_negative
 
         direct_matches = []
 
@@ -246,7 +255,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:4], user_id, current_location)])
             return
 
-        # ---------------- 步驟 2：Vertex AI 顧問推理 (FAQ 優先 + 未收錄捕獲 + 條件退讓建議)[cite: 3] ----------------
+        # ---------------- 步驟 2：Vertex AI 顧問推理 (FAQ 優先 + 未收錄捕獲 + 條件退讓)[cite: 6] ----------------
         _current_slots_for_candidates = get_user_slots(user_id)
         ai_job_candidates = build_ai_job_candidates(
             active_jobs,
@@ -326,9 +335,9 @@ BUTTONS:（相關地區或工種按鈕，逗號分隔）
 
         append_user_history(user_id, "求職者", raw_msg)
 
-        # ---------------- 步驟 3：解析 AI 輸出[cite: 3] ----------------
+        # ---------------- 步驟 3：解析 AI 輸出[cite: 6] ----------------
         if "ACTION:UNKNOWN_FAQ" in ai_output:
-            # 自動將未收錄問題寫入 Notion FAQ 資料庫[cite: 3]
+            # 自動將未收錄問題寫入 Notion FAQ 資料庫[cite: 6]
             append_unresolved_faq_to_notion(raw_msg)
 
             reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|$)', ai_output, re.DOTALL)
@@ -400,7 +409,7 @@ BUTTONS:（相關地區或工種按鈕，逗號分隔）
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
             return
 
-        # ---------------- 步驟 4：保底引導[cite: 3] ----------------
+        # ---------------- 步驟 4：保底引導[cite: 6] ----------------
         progressive_text, progressive_buttons = build_progressive_question(user_id, current_location)
         if progressive_text:
             append_user_history(user_id, "招募顧問沛沛", progressive_text)
