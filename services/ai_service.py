@@ -5,7 +5,7 @@ from google import genai
 # Google Cloud / Vertex AI 設定 (防呆讀取)
 # ==========================================
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "tsaipei-505807")
-GCP_LOCATION = os.getenv("GCP_LOCATION", "asia-east1")
+GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 
 ai_client = None
 try:
