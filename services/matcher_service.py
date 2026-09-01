@@ -20,18 +20,15 @@ def _tokenize_search_terms(text: str) -> list:
     return [k for k in candidates if clean_text_for_search(k) in normalized]
 
 def extract_current_target_location(raw_msg: str, history_text: str = "") -> str:
-    """從對話擷取鎖定地區（最新訊息優先）"""
+    """從使用者最新訊息擷取鎖定地區（避免被對話歷史中的範例字詞干擾）"""
     locs = [
         "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
         "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
         "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆"
     ]
+    # 只比對使用者當下輸入的句子
     for loc in locs:
         if loc in raw_msg:
-            return loc.replace("臺", "台")
-
-    for loc in locs:
-        if loc in history_text:
             return loc.replace("臺", "台")
             
     return ""

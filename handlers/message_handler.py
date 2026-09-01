@@ -72,29 +72,30 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=final_reply_text, quick_reply=quick_reply))
             return
 
-    # 2. 載入對話歷史紀錄 (7天)
+    # 2. 載入對話歷史紀錄 (7天) 與已儲存的 Slot 狀態
     history = get_user_history(user_id)
     history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history])
-    
-    # 最新訊息絕對優先擷取地區
-    current_location = extract_current_target_location(raw_msg, history_text)
+    user_slots = get_user_slots(user_id)
     clean_input = clean_text_for_search(raw_msg)
 
-    # 漸進式需求收集：即時更新 Slot
-    detected_shift = extract_shift_preference(raw_msg)
-    detected_leave = extract_leave_preference(raw_msg)
-    detected_category_from_text = detect_category_label(clean_input)
-    detected_brand = detect_brand_label(raw_msg, active_jobs)
+    # 地點判定：當前訊息有提到地點優先更新；沒提到則沿用既有 Slot
+    extracted_loc = extract_current_target_location(raw_msg, "")
+    current_location = extracted_loc if extracted_loc else user_slots.get("location", "")
+
+    # 漸進式需求收集：有新提取條件才更新，保留先前輪次條件
+    detected_shift = extract_shift_preference(raw_msg) or user_slots.get("shift", "")
+    detected_leave = extract_leave_preference(raw_msg) or user_slots.get("leave", "")
+    detected_category_from_text = detect_category_label(clean_input) or user_slots.get("category", "")
+    detected_brand = detect_brand_label(raw_msg, active_jobs) or user_slots.get("brand", "")
     has_salary_intent = extract_salary_preference(raw_msg)
 
-    # 若提到新地區或新廠商，立即覆寫
     update_user_slots(
         user_id, 
         location=current_location, 
         category=detected_category_from_text, 
         shift=detected_shift, 
         leave=detected_leave, 
-        brand=detected_brand if detected_brand else ""
+        brand=detected_brand
     )
 
     # ---------------- 步驟 0-2：就業服務法合規防呆攔截 ----------------
