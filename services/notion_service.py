@@ -211,3 +211,45 @@ def fetch_faqs_data() -> list:
     except Exception as e:
         print(f"[Notion FAQ 讀取失敗]: {e}")
         return _cached_faqs or []
+        import requests
+from config import NOTION_API_KEY, NOTION_FAQ_DB_ID
+
+def append_unresolved_faq_to_notion(question_text: str) -> bool:
+    """當求職者問了 FAQ 庫沒有收錄的規章/福利問題時，自動寫入 Notion FAQ 資料庫"""
+    if not NOTION_API_KEY or not NOTION_FAQ_DB_ID or not question_text:
+        return False
+
+    url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+
+    payload = {
+        "parent": {"database_id": NOTION_FAQ_DB_ID},
+        "properties": {
+            "問題": {
+                "title": [
+                    {"text": {"content": question_text.strip()}}
+                ]
+            },
+            "回答": {
+                "rich_text": [
+                    {"text": {"content": "【待補充解答】（由 LINE 機器人自動收集）"}}
+                ]
+            }
+        }
+    }
+
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=5)
+        if res.status_code in [200, 201]:
+            print(f"[Notion FAQ 自動擴充成功] 已記錄新問題: 「{question_text}」")
+            return True
+        else:
+            print(f"[Notion FAQ 寫入失敗 {res.status_code}]: {res.text}")
+            return False
+    except Exception as e:
+        print(f"[Notion FAQ 寫入異常]: {e}")
+        return False
