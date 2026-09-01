@@ -2,7 +2,7 @@ import os
 from google import genai
 
 # ==========================================
-# Google Cloud / Vertex AI 設定 (防呆讀取)
+# Google Cloud / Vertex AI 設定
 # ==========================================
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "tsaipei-505807")
 GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
@@ -25,8 +25,12 @@ def query_gemini_ai(prompt: str) -> str:
     if not ai_client:
         return ""
 
-    # 支援 Vertex AI 的模型候選清單
-    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    # 當前 Vertex AI 最新主流支援模型清單
+    models = [
+        "gemini-2.5-flash",
+        "gemini-3.5-flash",
+        "gemini-2.5-flash-lite"
+    ]
     for m in models:
         try:
             res = ai_client.models.generate_content(
@@ -80,8 +84,11 @@ def format_full_job_detail_with_ai(job: dict, location_display: str) -> str:
 
 請直接輸出繁體中文內容："""
 
+    models = [
+        "gemini-2.5-flash",
+        "gemini-3.5-flash"
+    ]
     try:
-        models = ["gemini-2.0-flash", "gemini-1.5-flash"]
         for m in models:
             res = ai_client.models.generate_content(
                 model=m,
