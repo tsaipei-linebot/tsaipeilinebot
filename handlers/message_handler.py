@@ -5,7 +5,7 @@ from linebot.models import (
     TextSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
 from services.session_service import (
-    get_user_history, append_user_history, get_user_slots, update_user_slots
+    get_user_history, append_user_history, get_user_slots, update_user_slots, clear_user_slots
 )
 from services.notion_service import (
     fetch_jobs_data, fetch_faqs_data, clean_text_for_search, sanitize_uri,
@@ -24,7 +24,7 @@ from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 
 
 def process_user_message(event, target_line_bot_api: LineBotApi):
-    """處理求職端所有對話，支援 FAQ 精確回答與未收錄問題自動入庫"""
+    """處理求職端所有對話，支援 5 大優化（槽位重置、禮貌收尾、條件退讓、單一焦點、FAQ 自動擴充）[cite: 3]"""
     reply_token = event.reply_token
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
         return
@@ -37,7 +37,38 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         active_jobs = fetch_jobs_data()
         faq_list = fetch_faqs_data()
 
-        # ---------------- 步驟 0-1：處理「查看職缺詳情」 ----------------
+        # ---------------- 步驟 0-0A：槽位主動重置攔截 ----------------
+        reset_keywords = ["重新找", "重選", "重設", "清空條件", "重新開始", "重來", "換個條件", "重頭開始", "清除條件"]
+        if any(k in raw_msg for k in reset_keywords):
+            clear_user_slots(user_id)
+            reset_reply = "好的！沛沛已經為您清空先前的搜尋條件囉 😊\n\n請問您目前希望在哪個地區找工作？想找早班還是夜班呢？"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", reset_reply)
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+                QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
+                QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
+                QuickReplyButton(action=MessageAction(label="🌙 固定夜班", text="夜班工作")),
+                QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+            ])
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reset_reply, quick_reply=quick_reply))
+            return
+
+        # ---------------- 步驟 0-0B：禮貌性收尾處理 ----------------
+        polite_close_keywords = [
+            "謝謝", "謝謝沛沛", "感謝", "感恩", "辛苦了", "好的謝謝", "那我先去填履歷", "先去應徵", 
+            "了解了", "好的了解", "我知道了", "再見", "掰掰", "ok謝謝", "先這樣"
+        ]
+        # 排除包含提問語氣的訊息（如「謝謝，請問還有職缺嗎？」）
+        is_pure_polite = any(k in raw_msg for k in polite_close_keywords) and not any(q in raw_msg for q in ["嗎", "有沒有", "還有", "請問", "？", "?"])
+        if is_pure_polite:
+            polite_reply = "不客氣呀！很高興能為您服務 😊 預祝您求職面試順利！\n\n如果後續有任何工作或制度上的疑問，隨時歡迎回來找沛沛聊聊喔！"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", polite_reply)
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=polite_reply))
+            return
+
+        # ---------------- 步驟 0-1：處理「查看職缺詳情」[cite: 3] ----------------
         if raw_msg.startswith("查看職缺詳情"):
             target_title = raw_msg.replace("查看職缺詳情", "").strip()
             matched_job = None
@@ -76,7 +107,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=final_reply_text, quick_reply=quick_reply))
                 return
 
-        # ---------------- 步驟 0-2：就業服務法合規攔截 (年齡/性別) ----------------
+        # ---------------- 步驟 0-2：就業服務法合規攔截 (年齡/性別)[cite: 3] ----------------
         age_gender_keywords = ["年齡限制", "幾歲", "年紀", "年齡", "限女性", "限男性", "性別限制", "幾歲以上", "幾歲以下", "高齡", "中高齡"]
         if any(k in raw_msg for k in age_gender_keywords) and any(k in raw_msg for k in ["有嗎", "可以嗎", "限制", "能不能", "可以做嗎", "超齡", "算老"]):
             legal_reply = (
@@ -96,7 +127,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
             return
 
-        # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋 ----------------
+        # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋[cite: 3] ----------------
         history = get_user_history(user_id)
         history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history[-6:]])
         user_slots = get_user_slots(user_id)
@@ -126,7 +157,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             brand=detected_brand
         )
 
-        # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截 ----------------
+        # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截[cite: 3] ----------------
         show_all_keywords = ["都給我看", "都要看", "都可以", "全部", "隨便", "推薦一下", "有什麼工作", "還有什麼", "看全部", "都看"]
         has_specific_intent = bool(detected_brand or detected_category_from_text or any(k in clean_input for k in ["momo", "蝦皮", "酷澎", "美光", "欣興", "外送", "門市", "作業員", "製造"]))
         is_show_all = any(k in clean_input for k in show_all_keywords) and not has_specific_intent
@@ -166,7 +197,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, current_location)])
             return
 
-        # ---------------- 步驟 1：精準工種直達攔截 ----------------
+        # ---------------- 步驟 1：精準工種直達攔截[cite: 3] ----------------
         is_delivery_intent = any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作"])
         is_store_intent = any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]) and not is_delivery_intent
         is_momo_intent = any(k in clean_input for k in ["momo", "富邦", "富昇"])
@@ -215,7 +246,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:4], user_id, current_location)])
             return
 
-        # ---------------- 步驟 2：Vertex AI 顧問推理 (FAQ 優先 + 未收錄捕獲) ----------------
+        # ---------------- 步驟 2：Vertex AI 顧問推理 (FAQ 優先 + 未收錄捕獲 + 條件退讓建議)[cite: 3] ----------------
         _current_slots_for_candidates = get_user_slots(user_id)
         ai_job_candidates = build_ai_job_candidates(
             active_jobs,
@@ -248,10 +279,13 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
 【極重要原則（嚴格遵守）】：
 1. 自稱一律為「沛沛」。遵守就業服務法（無年齡性別限制）。
-2. 【FAQ 絕對依據】：凡詢問公司規章、福利、發薪日、勞健保、投保、體檢、面試文件、休假規範等非找工作問題：
+2. 【FAQ 絕對依據】：凡詢問公司規章、福利、發薪日、勞健保、投保、體檢、面試文件、休假規範等問題：
    - 若【常見問題庫 (FAQ)】中有收錄，必須輸出 ACTION:ASK，並嚴格依據該內容回答！
-   - 若【常見問題庫 (FAQ)】中「完全沒有」收錄且非詢問職缺，必須輸出 ACTION:UNKNOWN_FAQ！
-3. 【職缺推薦】：若求職者是在尋找工作（指定地區、班別、工種），請從職缺清單中比對並輸出 ACTION:RECOMMEND。若完全無相符職缺才輸出 ACTION:NO_MATCH。
+   - 若【常見問題庫 (FAQ)】中完全沒有收錄且非詢問職缺，必須輸出 ACTION:UNKNOWN_FAQ！
+3. 【條件退讓與職缺推薦原則】：
+   - 若求職者指定條件在清單中有完全相符的職缺，輸出 ACTION:RECOMMEND 推薦該職缺。
+   - 若求職者的複合條件（例如：特定地區+班別+週休）無完全吻合項目，但有次要吻合（如：同地區但為排休制），請輸出 ACTION:RECOMMEND，並在 REPLY 誠懇說明（例如：「目前新莊暫無固定週休的夜班，但有排休制的優質夜班大廠職缺，為您推薦參考喔！」）。
+4. 【單一焦點追問】：若需引導求職者補充條件，每次僅拋出單一缺漏問題（優先順序：地區 -> 班別 -> 工作類型），避免一次詢問多個問題。
 
 【常見問題庫 (FAQ)】：
 {faq_index_text if faq_index_text else "（無相符 FAQ）"}
@@ -266,9 +300,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 「{raw_msg}」
 
 請輸出以下四種格式之一：
-格式 A（命中 FAQ、日常問候或引導找工作條件）：
+格式 A（命中 FAQ、日常問候或單一焦點引導）：
 ACTION:ASK
-REPLY:（嚴格依 FAQ 內容以沛沛口吻親切回覆，約 35-70 字）
+REPLY:（嚴格依 FAQ 內容或以沛沛口吻親切回覆，約 35-70 字）
 BUTTONS:（相關快速按鈕 3-5 個，逗號分隔）
 
 格式 B（未收錄於 FAQ 的規章/制度/福利問題）：
@@ -276,14 +310,14 @@ ACTION:UNKNOWN_FAQ
 REPLY:（親切說明已為求職者記錄此問題，會由招募專員確認，並主動詢問目前想看哪裡的工作，約 40-70 字）
 BUTTONS:（找工作的推薦按鈕，如：新莊工作,桃園工作,早班工作,夜班工作）
 
-格式 C（有符合推薦之職缺）：
+格式 C（有符合或退讓推薦之職缺）：
 ACTION:RECOMMEND
-IDS:（符合的職缺數字 ID，例如 0 或 0,1）
-REPLY:（推薦語 20-50 字）
+IDS:（符合或退讓推薦的職缺數字 ID，例如 0 或 0,1）
+REPLY:（推薦語或退讓說明，約 25-60 字）
 
-格式 D（指定廠商/地區暫無職缺）：
+格式 D（指定廠商/地區完全無任何相近職缺）：
 ACTION:NO_MATCH
-REPLY:（親切說明暫無缺額並主動推薦其他方向）
+REPLY:（親切說明暫無缺額並主動推薦其他熱門方向）
 BUTTONS:（相關地區或工種按鈕，逗號分隔）
 """
 
@@ -292,9 +326,9 @@ BUTTONS:（相關地區或工種按鈕，逗號分隔）
 
         append_user_history(user_id, "求職者", raw_msg)
 
-        # ---------------- 步驟 3：解析 AI 輸出 ----------------
+        # ---------------- 步驟 3：解析 AI 輸出[cite: 3] ----------------
         if "ACTION:UNKNOWN_FAQ" in ai_output:
-            # 自動將未收錄問題寫入 Notion FAQ 資料庫
+            # 自動將未收錄問題寫入 Notion FAQ 資料庫[cite: 3]
             append_unresolved_faq_to_notion(raw_msg)
 
             reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|$)', ai_output, re.DOTALL)
@@ -366,7 +400,16 @@ BUTTONS:（相關地區或工種按鈕，逗號分隔）
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
             return
 
-        # ---------------- 步驟 4：保底引導 ----------------
+        # ---------------- 步驟 4：保底引導[cite: 3] ----------------
+        progressive_text, progressive_buttons = build_progressive_question(user_id, current_location)
+        if progressive_text:
+            append_user_history(user_id, "招募顧問沛沛", progressive_text)
+            target_line_bot_api.reply_message(
+                reply_token,
+                TextSendMessage(text=progressive_text, quick_reply=QuickReply(items=progressive_buttons))
+            )
+            return
+
         default_text = "您好呀！我是招募顧問沛沛 😊\n\n很高興為您服務！想了解您偏好在哪個地區上班？或是偏好早班還是夜班呢？"
         append_user_history(user_id, "招募顧問沛沛", default_text)
         quick_reply = QuickReply(items=[
