@@ -14,23 +14,22 @@ def _tokenize_search_terms(text: str) -> list:
         "週休", "周休", "見紅休", "休六日", "四休二", "4休2", "排休", "輪休",
         "高時薪", "高薪", "時薪高", "日領", "週領",
         "外送", "司機", "配送", "送貨", "門市", "店員", "店到店", "智取店", "蝦皮", "momo", "富邦", "富昇", "美光", "欣興", "宏達電", "coupang", "酷澎",
-        "理貨", "揀貨", "倉管", "作業員", "包裝", "產線", "倉儲", "餐飲", "服飾", "服務",
+        "製造", "製造業", "科技", "科技廠", "作業員", "技術員", "產線", "組裝", "包裝", "機台", "半導體", "工廠",
+        "理貨", "揀貨", "倉管", "倉儲", "物流", "餐飲", "服飾", "服務",
     ]
     return [k for k in candidates if clean_text_for_search(k) in normalized]
 
 def extract_current_target_location(raw_msg: str, history_text: str = "") -> str:
-    """從對話擷取鎖定地區（【最新訊息絕對優先】，支援求職者隨時切換縣市）"""
+    """從對話擷取鎖定地區（最新訊息優先）"""
     locs = [
         "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
         "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
         "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆"
     ]
-    # 1. 優先檢查求職者當前最新輸入的一句話
     for loc in locs:
         if loc in raw_msg:
             return loc.replace("臺", "台")
 
-    # 2. 當前未提及時，才由近到遠從歷史紀錄回溯
     for loc in locs:
         if loc in history_text:
             return loc.replace("臺", "台")
@@ -68,13 +67,17 @@ def extract_salary_preference(text: str) -> bool:
     return any(k in clean for k in ["高時薪", "時薪高", "高薪", "時薪最高", "薪水高", "時薪多少"])
 
 def detect_category_label(clean_input: str) -> str:
-    """從文字中判斷求職者偏好的工作類別"""
+    """從文字中判斷求職者偏好的工作類別（完整支援製造業與多元工種）"""
     if any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作", "司機"]):
         return "外送"
     if any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]):
         return "門市"
-    if any(k in clean_input for k in ["理貨", "揀貨", "倉管", "作業員", "包裝", "產線"]):
+    if any(k in clean_input for k in ["製造", "製造業", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技廠", "電子廠"]):
+        return "製造/作業員"
+    if any(k in clean_input for k in ["理貨", "揀貨", "倉管", "包裝", "倉儲", "物流"]):
         return "理貨/倉儲"
+    if any(k in clean_input for k in ["餐飲", "服務", "廚房", "內場", "外場", "專櫃", "服飾"]):
+        return "餐飲/服務"
     return ""
 
 def category_search_keywords(category_label: str) -> list:
@@ -82,12 +85,14 @@ def category_search_keywords(category_label: str) -> list:
     mapping = {
         "外送": ["外送", "外送員", "司機", "配送", "配送員", "送貨"],
         "門市": ["門市", "店員", "門市人員", "店到店", "智取店"],
-        "理貨/倉儲": ["理貨", "揀貨", "倉管", "作業員", "包裝", "產線", "倉儲"]
+        "製造/作業員": ["製造", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技", "電子", "設備"],
+        "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "物流"],
+        "餐飲/服務": ["餐飲", "服務", "廚房", "內場", "外場", "專櫃", "服飾", "店員"]
     }
     return mapping.get(category_label, [])
 
 def detect_brand_label(text: str, active_jobs: list = None) -> str:
-    """動態從訊息辨識求職者詢問之特定廠商或品牌（嚴格過濾疑問詞與形容詞）"""
+    """動態從訊息辨識求職者詢問之特定廠商或品牌（嚴格排除行業別與疑問詞）"""
     normalized = clean_text_for_search(text)
     
     # 1. 優先精準比對 Notion 資料庫中現有的所有系統廠商名稱
@@ -113,14 +118,16 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
         if any(syn in normalized for syn in synonyms):
             return brand_key
 
-    # 3. 自然語言動態抽取（嚴格黑名單過濾，杜絕誤抓「什麼高時薪」）
+    # 3. 自然語言動態抽取（嚴格黑名單過濾，杜絕將「製造業」、「高時薪」當作廠商）
     match = re.search(r'(?:有|想找|請問有|有沒有)\s*([a-zA-Z0-9\u4e00-\u9fa5]{2,8}?)\s*(?:嗎|的工作|職缺|廠|$)', text)
     if match:
         extracted = match.group(1).strip()
         invalid_tokens = [
             "什麼", "甚麼", "哪些", "哪種", "哪裡", "哪家", "高薪", "高時薪", "時薪", "月薪", "薪水", 
             "工作", "職缺", "機會", "缺額", "早班", "晚班", "夜班", "日班", "白班", "大夜", "兼職", "全職", "pt",
-            "週休", "周休", "見紅", "排休", "輪班", "四休二", "門市", "外送", "理貨", "倉儲", "作業員", "技術員",
+            "週休", "周休", "見紅", "排休", "輪班", "四休二",
+            "製造業", "製造", "科技業", "服務業", "餐飲業", "物流業", "電子業", "半導體", "傳統產業", "傳產",
+            "作業員", "技術員", "產線", "工程師", "設備", "助理", "主管", "司機", "外送員", "門市", "店員", "理貨", "倉儲", "客服", "內勤", "行政",
             "台北", "新北", "桃園", "新竹", "台中", "台南", "高雄", "基隆", "宜蘭", "苗栗", "彰化", "嘉義", "屏東",
             "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "中壢", "龜山"
         ]
@@ -224,7 +231,7 @@ def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label:
     ]
 
 def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", slots: dict = None) -> int:
-    """候選排序計分函式（加強高時薪、休假制度、廠商與地區加減分權重）"""
+    """候選排序計分函式（加強製造業、高時薪、休假制度、廠商與地區權重）"""
     slots = slots or {}
     search_text = job.get("_search_text", "")
     leave_text = str(job.get("休假方式") or "")
@@ -259,17 +266,22 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
         elif any(k in leave_text for k in ["四休二", "4休2", "輪班", "排休", "做四休二"]):
             score -= 100
 
-    title_clean = clean_text_for_search(job.get("_parsed_title", ""))
-    category_clean = clean_text_for_search(job.get("職務類別", ""))
-    if title_clean and title_clean in query_clean:
-        score += 30
-    if category_clean and category_clean in query_clean:
-        score += 20
-
+    # 5. 產業別與類別加分
     category = slots.get("category", "")
     for keyword in category_search_keywords(category):
         if clean_text_for_search(keyword) in search_text:
-            score += 15
+            score += 30
+
+    title_clean = clean_text_for_search(job.get("_parsed_title", ""))
+    category_clean = clean_text_for_search(job.get("職務類別", ""))
+    industry_clean = clean_text_for_search(job.get("行業別", ""))
+
+    if title_clean and title_clean in query_clean:
+        score += 30
+    if category_clean and category_clean in query_clean:
+        score += 25
+    if industry_clean and industry_clean in query_clean:
+        score += 25
 
     for term in _tokenize_search_terms(query_text):
         term_clean = clean_text_for_search(term)
@@ -290,7 +302,6 @@ def build_ai_job_candidates(active_jobs: list, query_text: str, current_location
     if current_location:
         loc_clean = current_location.replace("台", "臺")
         location_pool = [j for j in active_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
-        # 若該地區有職缺，則只傳該地區的職缺；若該地區無職缺，target_pool 即為空清單，讓系統精準觸發無缺額
         target_pool = location_pool
 
     # 2. 週休制度實體隔離
@@ -355,9 +366,10 @@ def build_progressive_question(user_id: str, current_location: str) -> tuple:
     if not known_category:
         text = f"好的，鎖定在【{known_location}】附近幫您找工作 📍\n\n請問您比較想找哪一種工作類型呢？"
         buttons = [
-            QuickReplyButton(action=MessageAction(label="🛵 外送/司機", text=f"{known_location}外送")),
+            QuickReplyButton(action=MessageAction(label="🏭 製造/作業員", text=f"{known_location}製造業")),
             QuickReplyButton(action=MessageAction(label="🏬 門市/店到店", text=f"{known_location}門市")),
-            QuickReplyButton(action=MessageAction(label="📦 理貨/倉儲作業員", text=f"{known_location}理貨")),
+            QuickReplyButton(action=MessageAction(label="📦 理貨/倉儲", text=f"{known_location}理貨")),
+            QuickReplyButton(action=MessageAction(label="🛵 外送/司機", text=f"{known_location}外送")),
             QuickReplyButton(action=MessageAction(label="👀 都可以，先看看", text="都給我看看"))
         ]
         return text, buttons
