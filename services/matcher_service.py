@@ -9,24 +9,32 @@ def _tokenize_search_terms(text: str) -> list:
     candidates = [
         "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
         "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
-        "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東",
+        "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆",
         "早班", "早上", "白班", "日班", "晚班", "小夜", "大夜", "夜班", "假日", "彈性",
         "週休", "周休", "見紅休", "休六日", "四休二", "4休2", "排休", "輪休",
+        "高時薪", "高薪", "時薪高", "日領", "週領",
         "外送", "司機", "配送", "送貨", "門市", "店員", "店到店", "智取店", "蝦皮", "momo", "富邦", "富昇", "美光", "欣興", "宏達電", "coupang", "酷澎",
         "理貨", "揀貨", "倉管", "作業員", "包裝", "產線", "倉儲", "餐飲", "服飾", "服務",
     ]
     return [k for k in candidates if clean_text_for_search(k) in normalized]
 
-def extract_current_target_location(history_and_msg: str) -> str:
-    """從對話上下文擷取目前鎖定的行政區或縣市"""
+def extract_current_target_location(raw_msg: str, history_text: str = "") -> str:
+    """從對話擷取鎖定地區（【最新訊息絕對優先】，支援求職者隨時切換縣市）"""
     locs = [
         "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
         "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
-        "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東"
+        "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆"
     ]
+    # 1. 優先檢查求職者當前最新輸入的一句話
     for loc in locs:
-        if loc in history_and_msg:
+        if loc in raw_msg:
             return loc.replace("臺", "台")
+
+    # 2. 當前未提及時，才由近到遠從歷史紀錄回溯
+    for loc in locs:
+        if loc in history_text:
+            return loc.replace("臺", "台")
+            
     return ""
 
 def extract_shift_preference(text: str) -> str:
@@ -54,6 +62,11 @@ def extract_leave_preference(text: str) -> str:
         return "排休"
     return ""
 
+def extract_salary_preference(text: str) -> bool:
+    """判斷求職者是否特別指定高時薪/高薪偏好"""
+    clean = clean_text_for_search(text)
+    return any(k in clean for k in ["高時薪", "時薪高", "高薪", "時薪最高", "薪水高", "時薪多少"])
+
 def detect_category_label(clean_input: str) -> str:
     """從文字中判斷求職者偏好的工作類別"""
     if any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作", "司機"]):
@@ -74,36 +87,44 @@ def category_search_keywords(category_label: str) -> list:
     return mapping.get(category_label, [])
 
 def detect_brand_label(text: str, active_jobs: list = None) -> str:
-    """動態從訊息辨識求職者詢問之特定廠商或品牌"""
+    """動態從訊息辨識求職者詢問之特定廠商或品牌（嚴格過濾疑問詞與形容詞）"""
     normalized = clean_text_for_search(text)
     
-    # 1. 優先比對 Notion 資料庫中現有的所有系統廠商名稱
+    # 1. 優先精準比對 Notion 資料庫中現有的所有系統廠商名稱
     if active_jobs:
         for j in active_jobs:
             v_name = str(j.get("系統廠商名稱") or "").strip()
-            if v_name and clean_text_for_search(v_name) in normalized:
-                return v_name
+            if v_name and len(v_name) >= 2:
+                v_clean = clean_text_for_search(v_name)
+                if v_clean and v_clean in normalized:
+                    return v_name
 
-    # 2. 常見熱門品牌動態辨識
-    if any(k in normalized for k in ["蝦皮", "spx"]):
-        return "蝦皮"
-    if any(k in normalized for k in ["momo", "富邦", "富昇"]):
-        return "momo"
-    if any(k in normalized for k in ["coupang", "酷澎"]):
-        return "Coupang"
-    if "美光" in normalized:
-        return "美光"
-    if "欣興" in normalized:
-        return "欣興"
-    if "台積電" in normalized:
-        return "台積電"
+    # 2. 常見知名廠商白名單
+    known_brands = {
+        "蝦皮": ["蝦皮", "spx"],
+        "momo": ["momo", "富邦", "富昇"],
+        "Coupang": ["coupang", "酷澎"],
+        "美光": ["美光", "micron"],
+        "欣興": ["欣興"],
+        "台積電": ["台積電", "tsmc"],
+        "宏達電": ["宏達電", "htc"]
+    }
+    for brand_key, synonyms in known_brands.items():
+        if any(syn in normalized for syn in synonyms):
+            return brand_key
 
-    # 3. 自然語言動態抽取：辨識「有[品牌/公司]嗎」
+    # 3. 自然語言動態抽取（嚴格黑名單過濾，杜絕誤抓「什麼高時薪」）
     match = re.search(r'(?:有|想找|請問有|有沒有)\s*([a-zA-Z0-9\u4e00-\u9fa5]{2,8}?)\s*(?:嗎|的工作|職缺|廠|$)', text)
     if match:
         extracted = match.group(1).strip()
-        ignore_words = ["工作", "職缺", "早班", "晚班", "夜班", "週休", "周休", "門市", "外送", "理貨", "桃園", "台北", "新北", "林口", "新莊", "板橋", "中壢"]
-        if extracted and not any(w in extracted for w in ignore_words):
+        invalid_tokens = [
+            "什麼", "甚麼", "哪些", "哪種", "哪裡", "哪家", "高薪", "高時薪", "時薪", "月薪", "薪水", 
+            "工作", "職缺", "機會", "缺額", "早班", "晚班", "夜班", "日班", "白班", "大夜", "兼職", "全職", "pt",
+            "週休", "周休", "見紅", "排休", "輪班", "四休二", "門市", "外送", "理貨", "倉儲", "作業員", "技術員",
+            "台北", "新北", "桃園", "新竹", "台中", "台南", "高雄", "基隆", "宜蘭", "苗栗", "彰化", "嘉義", "屏東",
+            "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "中壢", "龜山"
+        ]
+        if extracted and not any(token in extracted for token in invalid_tokens):
             return extracted
 
     return ""
@@ -124,6 +145,7 @@ def _job_extended_search_text(job: dict) -> str:
         job.get("職務類別", ""),
         job.get("行業別", ""),
         job.get("休假方式", ""),
+        job.get("薪資", ""),
         job.get("工作內容(對外)", ""),
     ]
     return clean_text_for_search(" ".join(str(x or "") for x in fields))
@@ -202,19 +224,21 @@ def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label:
     ]
 
 def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", slots: dict = None) -> int:
-    """候選排序計分函式（加強休假制度、廠商與地區加減分權重）"""
+    """候選排序計分函式（加強高時薪、休假制度、廠商與地區加減分權重）"""
     slots = slots or {}
     search_text = job.get("_search_text", "")
     leave_text = str(job.get("休假方式") or "")
+    salary_text = str(job.get("薪資") or "")
     score = 0
     query_clean = clean_text_for_search(query_text)
 
+    # 1. 地區命中
     if current_location:
         loc = clean_text_for_search(current_location)
         if loc and loc in search_text:
             score += 40
 
-    # 1. 廠商權重加分
+    # 2. 廠商權重加分
     vendor_clean = clean_text_for_search(job.get("系統廠商名稱", ""))
     brand_slot = slots.get("brand", "")
     if brand_slot and brand_slot.lower() in search_text:
@@ -222,13 +246,18 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
     elif vendor_clean and vendor_clean in query_clean:
         score += 50
 
-    # 2. 休假制度加減分（硬性篩選週休）
+    # 3. 高時薪意圖加分
+    if extract_salary_preference(query_text):
+        if "時薪" in salary_text or "2" in salary_text:
+            score += 35
+
+    # 4. 休假制度加減分
     leave_slot = slots.get("leave", "")
     if leave_slot == "週休二日" or "週休" in query_clean or "周休" in query_clean:
         if any(k in leave_text for k in ["週休", "周休", "見紅", "六日"]):
             score += 45
         elif any(k in leave_text for k in ["四休二", "4休2", "輪班", "排休", "做四休二"]):
-            score -= 100  # 扣大分，徹底排除輪班
+            score -= 100
 
     title_clean = clean_text_for_search(job.get("_parsed_title", ""))
     category_clean = clean_text_for_search(job.get("職務類別", ""))
@@ -261,10 +290,10 @@ def build_ai_job_candidates(active_jobs: list, query_text: str, current_location
     if current_location:
         loc_clean = current_location.replace("台", "臺")
         location_pool = [j for j in active_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
-        if location_pool:
-            target_pool = location_pool
+        # 若該地區有職缺，則只傳該地區的職缺；若該地區無職缺，target_pool 即為空清單，讓系統精準觸發無缺額
+        target_pool = location_pool
 
-    # 2. 週休制度實體隔離（求職者指名週休時，候選集直接排除四休二/輪班）
+    # 2. 週休制度實體隔離
     leave_slot = slots.get("leave", "")
     query_clean = clean_text_for_search(query_text)
     if leave_slot == "週休二日" or "週休" in query_clean or "周休" in query_clean:

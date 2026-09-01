@@ -14,7 +14,7 @@ from services.flex_service import (
 )
 from services.matcher_service import (
     extract_current_target_location, extract_shift_preference, extract_leave_preference,
-    detect_category_label, detect_brand_label, filter_jobs_by_category_tiered,
+    extract_salary_preference, detect_category_label, detect_brand_label, filter_jobs_by_category_tiered,
     build_progressive_question, build_ai_job_candidates, build_ai_faq_candidates,
     job_matches_category_filter
 )
@@ -75,21 +75,27 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     # 2. 載入對話歷史紀錄 (7天)
     history = get_user_history(user_id)
     history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history])
-    full_conversation_context = f"{history_text}\n求職者: {raw_msg}"
-    current_location = extract_current_target_location(full_conversation_context)
+    
+    # 最新訊息絕對優先擷取地區
+    current_location = extract_current_target_location(raw_msg, history_text)
     clean_input = clean_text_for_search(raw_msg)
 
-    # 漸進式需求收集：更新已掌握條件
+    # 漸進式需求收集：即時更新 Slot
     detected_shift = extract_shift_preference(raw_msg)
     detected_leave = extract_leave_preference(raw_msg)
     detected_category_from_text = detect_category_label(clean_input)
     detected_brand = detect_brand_label(raw_msg, active_jobs)
+    has_salary_intent = extract_salary_preference(raw_msg)
 
-    # 若求職者提及新廠商 (如 coupang)，主動覆寫舊廠商記憶，避免殘留 momo
-    if detected_brand:
-        update_user_slots(user_id, location=current_location, category=detected_category_from_text, shift=detected_shift, leave=detected_leave, brand=detected_brand)
-    else:
-        update_user_slots(user_id, location=current_location, category=detected_category_from_text, shift=detected_shift, leave=detected_leave)
+    # 若提到新地區或新廠商，立即覆寫
+    update_user_slots(
+        user_id, 
+        location=current_location, 
+        category=detected_category_from_text, 
+        shift=detected_shift, 
+        leave=detected_leave, 
+        brand=detected_brand if detected_brand else ""
+    )
 
     # ---------------- 步驟 0-2：就業服務法合規防呆攔截 ----------------
     age_gender_keywords = ["年齡限制", "幾歲", "年紀", "年齡", "限女性", "限男性", "性別限制", "幾歲以上", "幾歲以下", "高齡", "中高齡"]
@@ -180,8 +186,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     _shift_ready = bool(_slots_now.get("shift"))
     all_slots_completed = _location_ready and _category_ready and _shift_ready
 
-    # 若求職者有明確指定廠商 (如: coupang、美光) 或休假偏好，放行直接檢索
-    if not is_faq_query and not all_slots_completed and not detected_brand and not detected_leave:
+    # 若求職者有明確指定廠商、休假偏好、詢問薪資或詢問切換地區，放行進行檢索
+    if not is_faq_query and not all_slots_completed and not detected_brand and not detected_leave and not has_salary_intent and ("嗎" in raw_msg and not any(loc in raw_msg for loc in ["台南", "台中", "高雄", "台北", "新北", "桃園"])):
         question_text, question_buttons = build_progressive_question(user_id, current_location)
         if question_text:
             append_user_history(user_id, "求職者", raw_msg)
@@ -193,7 +199,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             print(f"[全域漸進式引導] 條件未齊全，優先引導求職者補充")
             return
 
-    # ---------------- 步驟 1：【條件齊全或指定廠商/休假】精準多工種直達攔截 ----------------
+    # ---------------- 步驟 1：【條件齊全或指定廠商/休假/高時薪】精準多工種直達攔截 ----------------
     is_delivery_intent = any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作"])
     is_store_intent = any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]) and not is_delivery_intent
     is_momo_intent = any(k in clean_input for k in ["momo", "富邦", "富昇"])
@@ -257,13 +263,17 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     )
     ai_faq_candidates = build_ai_faq_candidates(faq_list, raw_msg, limit=20)
 
-    # 確定性檢索狀態判定（Deterministic Grounding）
+    # 確定性檢索狀態判定
     has_exact_vendor_match = False
     if detected_brand:
         has_exact_vendor_match = any(detected_brand.lower() in j.get("_search_text", "") for j in ai_job_candidates)
 
     system_grounding_note = ""
-    if detected_brand and not has_exact_vendor_match:
+    # 情況 A：求職者指名的地區完全沒有開放任何職缺（例如：台南）
+    if current_location and not ai_job_candidates:
+        system_grounding_note = f"\n【系統真實檢索結果】：求職者詢問的地區【{current_location}】目前「本公司暫無配合職缺」。請輸出 ACTION:NO_MATCH，親切說明【{current_location}】目前暫無職缺，並詢問是否願意考慮其他熱門地區（如雙北、桃園等）。【絕對禁止強硬拒絕換區或要求求職者只能看舊地區】！"
+    # 情況 B：求職者指定的廠商查無缺額
+    elif detected_brand and not has_exact_vendor_match:
         system_grounding_note = f"\n【系統真實檢索結果】：求職者詢問的特定廠商【{detected_brand}】目前在【{current_location if current_location else '全台'}】「無缺額」。請輸出 ACTION:NO_MATCH，以親切口吻誠實說明【{detected_brand}】目前暫無職缺開放，並主動引導求職者參考【{current_location if current_location else '目前地區'}】的其他優質大廠工作！"
     elif ai_job_candidates:
         system_grounding_note = f"\n【系統真實檢索結果】：清單中存在符合求職者條件之職缺，請務必輸出 ACTION:RECOMMEND 並推薦最吻合之職缺 ID！"
@@ -295,9 +305,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
 【極重要規則（絕對禁止幻覺）】：
 1. 自稱一律為「沛沛」。遵守就業服務法（無年齡性別限制）。
-2. 【情境與地區約束】：目前鎖定地區為【{current_location if current_location else "未指定"}】，推薦之職缺與按鈕必須 100% 圍繞該地區，絕對嚴禁跨縣市推薦！
+2. 【地區切換原則】：以求職者【最新提到】的地區【{current_location if current_location else "未指定"}】為準！若求職者想改問其他縣市（例如從板橋改問台南），請完全尊重求職者。若該新地區目前無缺額，請輸出 ACTION:NO_MATCH 誠實親切說明該地區暫無職缺，絕對禁止強硬拒絕求職者換地區或強逼求職者留在舊地區！
 3. 【休假制度嚴格比對】：若求職者要求「週休/見紅休」，只能推薦休假方式包含「週休二日/見紅休」之職缺，絕對嚴禁推薦「四休二/做四休二/輪休」職缺！
-4. 【廠商與無缺額原則】：若求職者指定之特定廠商在清單中確實不存在，請輸出 ACTION:NO_MATCH，誠實說明該廠商暫無開放，並主動引導同地區之其他優質大廠。
+4. 【廠商與無缺額原則】：若求職者指定之特定廠商在清單中確實不存在，請輸出 ACTION:NO_MATCH，誠實說明該廠商暫無開放，並主動引導同地區之其他優質工作。
 {system_grounding_note}
 
 【公司官方常見問題庫 (FAQ)】：
@@ -325,10 +335,10 @@ ACTION:RECOMMEND
 IDS:（符合的職缺數字，例如 0 或 0,1）
 REPLY:（給求職者的溫暖推薦語）
 
-格式 C（指定廠商暫無職缺或完全無符合條件）：
+格式 C（指定廠商/地區暫無職缺或完全無符合條件）：
 ACTION:NO_MATCH
-REPLY:（誠實說明目前暫無開放，並主動推薦同一地區的其他優質職缺）
-BUTTONS:（提供目前所在地區的其他工種或班別選項）
+REPLY:（誠實親切說明目前暫無開放，並主動詢問或推薦其他優質職缺）
+BUTTONS:（提供相關的地區或工種選項）
 
 請直接輸出："""
 
