@@ -217,7 +217,10 @@ def fetch_faqs_data() -> list:
 from config import NOTION_API_KEY, NOTION_FAQ_DB_ID
 
 def append_unresolved_faq_to_notion(question_text: str) -> bool:
-    """當求職者問了 FAQ 庫沒有收錄的規章/福利問題時，自動寫入 Notion FAQ 資料庫"""
+    """將未收錄問題寫入 Notion FAQ 資料庫的『問題/關鍵字』欄位"""
+    import requests
+    from config import NOTION_API_KEY, NOTION_FAQ_DB_ID
+
     if not NOTION_API_KEY or not NOTION_FAQ_DB_ID or not question_text:
         return False
 
@@ -228,17 +231,13 @@ def append_unresolved_faq_to_notion(question_text: str) -> bool:
         "Notion-Version": "2022-06-28"
     }
 
+    # 僅寫入必填的標題欄位『問題/關鍵字』，其餘欄位留空供管理員後續補上解答
     payload = {
         "parent": {"database_id": NOTION_FAQ_DB_ID},
         "properties": {
-            "問題": {
+            "問題/關鍵字": {
                 "title": [
                     {"text": {"content": question_text.strip()}}
-                ]
-            },
-            "回答": {
-                "rich_text": [
-                    {"text": {"content": "【待補充解答】（由 LINE 機器人自動收集）"}}
                 ]
             }
         }
@@ -247,7 +246,7 @@ def append_unresolved_faq_to_notion(question_text: str) -> bool:
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=5)
         if res.status_code in [200, 201]:
-            print(f"[Notion FAQ 自動擴充成功] 已記錄新問題: 「{question_text}」")
+            print(f"[Notion FAQ 自動擴充成功] 已記錄新問題至『問題/關鍵字』: 「{question_text}」")
             return True
         else:
             print(f"[Notion FAQ 寫入失敗 {res.status_code}]: {res.text}")
