@@ -173,17 +173,25 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
     
     # 1. 優先精準比對 Notion 資料庫中現有的所有系統廠商名稱（含核心名稱比對，
     #    避免同仁加註的內部後綴導致完整名稱永遠比對不到）[cite: 1]
+    #    無論哪種比對方式命中，一律回傳「核心名稱」而不是那一筆職缺的完整廠商名稱：
+    #    像「美光(桃園)」「美光(台中)」「美光(台南)」這種同一品牌、不同地區各自登記
+    #    一筆的情況，如果回傳的是命中的那一筆完整名稱（例如「美光(桃園)」），brand
+    #    槽位會被鎖在特定地區的寫法，而後續 build_ai_job_candidates／_score_job_for_ai
+    #    的品牌篩選/評分都是拿 brand 去對已清理過括號的 _search_text 做字串比對，
+    #    帶括號的完整名稱幾乎永遠比對不到，導致品牌保底機制形同虛設。回傳核心名稱
+    #    才能讓同一品牌旗下所有地區的職缺都能被正確篩選/加分到。
     if active_jobs:
         for j in active_jobs:
             v_name = str(j.get("系統廠商名稱") or "").strip()
             if v_name and len(v_name) >= 2:
+                v_core_name = _vendor_core_name(v_name)
                 v_clean = clean_text_for_search(v_name)
                 if v_clean and v_clean in normalized:
-                    return v_name
+                    return v_core_name
 
-                v_core_clean = clean_text_for_search(_vendor_core_name(v_name))
+                v_core_clean = clean_text_for_search(v_core_name)
                 if v_core_clean and len(v_core_clean) >= 2 and v_core_clean in normalized:
-                    return v_name
+                    return v_core_name
 
     # 2. 常見知名廠商白名單[cite: 1]
     known_brands = {
