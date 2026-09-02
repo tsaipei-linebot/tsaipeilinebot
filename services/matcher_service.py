@@ -205,7 +205,22 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
         # 「蝦皮門市」子字串、但本身是真實廠商名稱的詞。
         all_category_keywords = {kw for keywords in CATEGORY_KEYWORDS.values() for kw in keywords}
         is_category_word = extracted in all_category_keywords
-        if extracted and not is_category_word and not any(token in extracted for token in invalid_tokens):
+
+        # 這一步是「自然語言動態抽取」，本質上是從口語句型猜測公司名稱，
+        # 光靠關鍵字排除清單長期一定會漏（例如「其他的」「別的」這種口語填充詞）。
+        # 改成更根本的防呆：抓到的詞必須真的比對到 Notion 資料庫裡實際存在的廠商名稱，
+        # 才採信為 brand；否則寧可不設定，讓後面的地區/類別篩選機制處理就好，
+        # 不會因為使用者隨口說的詞被誤判成廠商，進而污染候選職缺清單。
+        matches_known_vendor = False
+        extracted_clean = clean_text_for_search(extracted)
+        if active_jobs and extracted_clean:
+            for j in active_jobs:
+                v_clean = str(j.get("_vendor_name_clean") or "")
+                if v_clean and (extracted_clean in v_clean or v_clean in extracted_clean):
+                    matches_known_vendor = True
+                    break
+
+        if extracted and not is_category_word and matches_known_vendor and not any(token in extracted for token in invalid_tokens):
             return extracted
 
     return ""
