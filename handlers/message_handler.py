@@ -421,10 +421,15 @@ BUTTONS:（相關地區或工種按鈕，逗號分隔）
             # 自動將未收錄問題寫入 Notion FAQ 資料庫[cite: 6]
             append_unresolved_faq_to_notion(raw_msg)
 
-            reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|$)', ai_output, re.DOTALL)
+            reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
             buttons_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
 
-            reply_text = reply_match.group(1).strip() if reply_match else "謝謝您的提問！沛沛已先幫您把這個問題記錄下來回報給招募專員囉 😊 請問您目前想先看看哪個地區或班別的工作呢？"
+            # Gemini 不一定會照格式範例在 REPLY 跟 BUTTONS 之間換行（有時兩者黏在同一行），
+            # 原本用 (?=\nBUTTONS:|$) 這種要求「一定要有換行」的寫法在這種情況下會找不到
+            # 停止點，導致整段 BUTTONS:... 原始文字被當成 REPLY 內容一起顯示給使用者。
+            # 改成先抓到 REPLY: 後面的全部文字，再用字串切割去掉 BUTTONS: 之後的部分，
+            # 不管兩者中間有沒有換行都能正確切開。
+            reply_text = reply_match.group(1).split("BUTTONS:")[0].strip() if reply_match else "謝謝您的提問！沛沛已先幫您把這個問題記錄下來回報給招募專員囉 😊 請問您目前想先看看哪個地區或班別的工作呢？"
             append_user_history(user_id, "招募顧問沛沛", reply_text)
 
             buttons = []
@@ -464,10 +469,13 @@ BUTTONS:（相關地區或工種按鈕，逗號分隔）
             return
 
         elif "ACTION:ASK" in ai_output or "ACTION:NO_MATCH" in ai_output:
-            reply_match = re.search(r'REPLY:\s*(.+?)(?=\nBUTTONS:|$)', ai_output, re.DOTALL)
+            reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
             buttons_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
 
-            reply_text = reply_match.group(1).strip() if reply_match else f"您好呀！沛沛隨時為您服務，想請問您偏好哪個地區或工作班別呢？"
+            # 同上：不依賴「REPLY 跟 BUTTONS 之間一定有換行」的假設，改用字串切割去掉
+            # BUTTONS: 之後的部分，避免 Gemini 把兩個欄位黏在同一行時，BUTTONS: 原始文字
+            # 被當成 REPLY 內容一起顯示出來（例如「有理貨的工作嗎」這類查詢實際出現過）。
+            reply_text = reply_match.group(1).split("BUTTONS:")[0].strip() if reply_match else f"您好呀！沛沛隨時為您服務，想請問您偏好哪個地區或工作班別呢？"
             append_user_history(user_id, "招募顧問沛沛", reply_text)
 
             buttons = []
