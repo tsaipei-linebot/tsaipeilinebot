@@ -19,7 +19,8 @@ from services.matcher_service import (
     extract_salary_preference, detect_category_label, detect_brand_label, filter_jobs_by_category_tiered,
     build_progressive_question, build_ai_job_candidates, build_ai_faq_candidates,
     job_matches_category_filter, has_negative_intent, extract_numeric_salary_preference,
-    detect_negated_location, detect_negated_category
+    detect_negated_location, detect_negated_category, has_recognizable_category_or_brand_keyword,
+    CATEGORY_KEYWORDS, KNOWN_BRANDS
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 
@@ -39,8 +40,13 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         faq_list = fetch_faqs_data()
 
         # ---------------- 步驟 0-0A：槽位主動重置攔截 ----------------
-        reset_keywords = ["重新找", "重選", "重設", "清空條件", "重新開始", "重來", "換個條件", "重頭開始", "清除條件"]
-        if any(k in raw_msg for k in reset_keywords):
+        # 「真的想全部重來」跟「只想換一個條件」拆成兩種情境分開處理：
+        # 全域重置才整組槽位清空；單一維度調整只詢問要換哪一項，讓後續訊息的
+        # 槽位抽取（步驟 0-3）自然覆蓋對應欄位，其餘已鎖定的條件保留不動。
+        full_reset_keywords = ["重新找", "重選", "重設", "清空條件", "重新開始", "重來", "重頭開始", "清除條件"]
+        single_dimension_keywords = ["換個條件", "換一個條件", "改個條件", "換條件", "改條件", "換一下條件"]
+
+        if any(k in raw_msg for k in full_reset_keywords):
             clear_user_slots(user_id)
             reset_reply = "好的！沛沛已經為您清空先前的搜尋條件囉 😊\n\n請問您目前希望在哪個地區找工作？想找早班還是夜班呢？"
             append_user_history(user_id, "求職者", raw_msg)
@@ -55,12 +61,31 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reset_reply, quick_reply=quick_reply))
             return
 
+        if any(k in raw_msg for k in single_dimension_keywords):
+            adjust_reply = "好的，請問您想調整地區、班別，還是工作類型呢？其他已經確認的條件沛沛會繼續保留 😊"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", adjust_reply)
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="📍 換地區", text="我想換地區")),
+                QuickReplyButton(action=MessageAction(label="⏰ 換班別", text="我想換班別")),
+                QuickReplyButton(action=MessageAction(label="🏭 換工作類型", text="我想換工作類型"))
+            ])
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=adjust_reply, quick_reply=quick_reply))
+            return
+
         # ---------------- 步驟 0-0B：禮貌性收尾處理 ----------------
         polite_close_keywords = [
-            "謝謝", "謝謝沛沛", "感謝", "感恩", "辛苦了", "好的謝謝", "那我先去填履歷", "先去應徵", 
+            "謝謝", "謝謝沛沛", "感謝", "感恩", "辛苦了", "好的謝謝", "那我先去填履歷", "先去應徵",
             "了解了", "好的了解", "我知道了", "再見", "掰掰", "ok謝謝", "先這樣"
         ]
-        is_pure_polite = any(k in raw_msg for k in polite_close_keywords) and not any(q in raw_msg for q in ["嗎", "有沒有", "還有", "請問", "？", "?"])
+        # 帶轉折/追加語氣的詞（例如「謝謝，不過還想問⋯」）代表使用者其實還有問題要問，
+        # 不能只靠有沒有問號判斷，否則這類句子會被誤判成單純道謝而整句被忽略。
+        polite_override_keywords = ["不過", "但是", "但", "可是", "只是", "另外", "而且", "還想", "還想問", "還想知道", "還要問"]
+        is_pure_polite = (
+            any(k in raw_msg for k in polite_close_keywords)
+            and not any(q in raw_msg for q in ["嗎", "有沒有", "還有", "請問", "？", "?"])
+            and not any(t in raw_msg for t in polite_override_keywords)
+        )
         if is_pure_polite:
             polite_reply = "不客氣呀！很高興能為您服務 😊 預祝您求職面試順利！\n\n如果後續有任何工作或制度上的疑問，隨時歡迎回來找沛沛聊聊喔！"
             append_user_history(user_id, "求職者", raw_msg)
@@ -196,7 +221,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
         # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截[cite: 6] ----------------
         show_all_keywords = ["都給我看", "都要看", "都可以", "全部", "隨便", "推薦一下", "有什麼工作", "還有什麼", "看全部", "都看"]
-        has_specific_intent = bool(detected_brand or detected_category_from_text or any(k in clean_input for k in ["momo", "蝦皮", "酷澎", "美光", "欣興", "外送", "門市", "作業員", "製造"]))
+        # 統一意圖判斷來源：改用 matcher_service 集中維護的 CATEGORY_KEYWORDS/KNOWN_BRANDS
+        # （has_recognizable_category_or_brand_keyword），取代原本這裡另外維護、
+        # 覆蓋範圍不完整的手動白名單（原本漏掉「理貨」「餐飲」等類別）。
+        has_specific_intent = bool(
+            detected_brand
+            or detected_category_from_text
+            or has_recognizable_category_or_brand_keyword(clean_input)
+        )
         is_show_all = any(k in clean_input for k in show_all_keywords) and not has_specific_intent
 
         if is_show_all:
@@ -236,9 +268,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
         # ---------------- 步驟 1：精準工種直達攔截（含否定語氣防呆）[cite: 6] ----------------
         is_negative = has_negative_intent(raw_msg)
-        is_delivery_intent = any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作"]) and not is_negative
-        is_store_intent = any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店"]) and not is_delivery_intent and not is_negative
-        is_momo_intent = any(k in clean_input for k in ["momo", "富邦", "富昇"]) and not is_negative
+        # 同樣改用 CATEGORY_KEYWORDS/KNOWN_BRANDS 當唯一來源，跟 has_specific_intent
+        # 共用同一份清單，避免各處關鍵字覆蓋範圍互相兜不起來。
+        is_delivery_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["外送"]) and not is_negative
+        is_store_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["門市"]) and not is_delivery_intent and not is_negative
+        is_momo_intent = any(k in clean_input for k in KNOWN_BRANDS["momo"]) and not is_negative
 
         direct_matches = []
 
@@ -291,7 +325,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             f"{history_text} {raw_msg}",
             current_location,
             _current_slots_for_candidates,
-            limit=35,
+            limit=70,
         )
         ai_faq_candidates = build_ai_faq_candidates(faq_list, raw_msg, limit=20)
 
