@@ -213,14 +213,10 @@ def fetch_faqs_data() -> list:
     except Exception as e:
         print(f"[Notion FAQ 讀取失敗]: {e}")
         return _cached_faqs or []
-        import requests
-from config import NOTION_API_KEY, NOTION_FAQ_DB_ID
+
 
 def append_unresolved_faq_to_notion(question_text: str) -> bool:
     """將未收錄問題寫入 Notion FAQ 資料庫的『問題/關鍵字』欄位"""
-    import requests
-    from config import NOTION_API_KEY, NOTION_FAQ_DB_ID
-
     if not NOTION_API_KEY or not NOTION_FAQ_DB_ID or not question_text:
         return False
 
