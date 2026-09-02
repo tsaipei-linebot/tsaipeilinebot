@@ -1,4 +1,6 @@
 import os
+import time
+import random
 from google import genai
 
 # ==========================================
@@ -20,23 +22,58 @@ except Exception as e:
     print(f"[系統警告] Vertex AI 初始化失敗: {e}")
 
 
+# ==========================================
+# 模型 fallback 清單（query_gemini_ai / format_full_job_detail_with_ai 共用同一份，避免兩處清單不一致）
+# ==========================================
+MODEL_FALLBACK_LIST = [
+    "gemini-2.5-flash",
+    "gemini-3.5-flash",
+    "gemini-2.5-flash-lite"
+]
+
+# ==========================================
+# 429（Dynamic Shared Quota 暫時用盡）重試設定
+# 只針對 429 重試，其他錯誤（模型名稱錯誤、參數錯誤等）重試也沒用，直接換下一個 fallback 模型
+# ==========================================
+MAX_RETRIES_PER_MODEL = 2           # 單一模型最多重試次數（不含第一次嘗試）
+RETRY_BASE_DELAY_SECONDS = 0.6      # 重試等待的基礎秒數（會逐次遞增 + 隨機抖動，避免多個請求同時重試又互相打架）
+
+
+def _is_resource_exhausted_error(e: Exception) -> bool:
+    """判斷例外是否為 429 RESOURCE_EXHAUSTED（Dynamic Shared Quota 當下共享池暫時滿載）"""
+    code = getattr(e, "code", None)
+    if code == 429:
+        return True
+    text = str(e)
+    return "429" in text or "RESOURCE_EXHAUSTED" in text.upper()
+
+
+def _generate_with_retry(model: str, prompt: str):
+    """對單一模型呼叫 Gemini。遇到 429 才短暫等待後重試；其他類型錯誤直接往上拋出，
+    交由呼叫端換下一個 fallback 模型，避免浪費時間重試注定失敗的請求。"""
+    last_error = None
+    for attempt in range(MAX_RETRIES_PER_MODEL + 1):
+        try:
+            return ai_client.models.generate_content(model=model, contents=prompt)
+        except Exception as e:
+            last_error = e
+            if not _is_resource_exhausted_error(e):
+                raise
+            if attempt < MAX_RETRIES_PER_MODEL:
+                wait_seconds = RETRY_BASE_DELAY_SECONDS * (attempt + 1) + random.uniform(0, 0.3)
+                print(f"[Vertex AI 429 暫時性配額用盡 {model}] 第 {attempt + 1} 次重試前等待 {wait_seconds:.2f} 秒")
+                time.sleep(wait_seconds)
+    raise last_error
+
+
 def query_gemini_ai(prompt: str) -> str:
-    """呼叫 Vertex AI Gemini 進行招募問答與決策推理"""
+    """呼叫 Vertex AI Gemini 進行招募問答與決策推理（含 429 重試 + 模型 fallback）"""
     if not ai_client:
         return ""
 
-    # 當前 Vertex AI 最新主流支援模型清單
-    models = [
-        "gemini-2.5-flash",
-        "gemini-3.5-flash",
-        "gemini-2.5-flash-lite"
-    ]
-    for m in models:
+    for m in MODEL_FALLBACK_LIST:
         try:
-            res = ai_client.models.generate_content(
-                model=m,
-                contents=prompt
-            )
+            res = _generate_with_retry(m, prompt)
             if res and hasattr(res, "text") and res.text:
                 return res.text.strip()
         except Exception as e:
@@ -84,19 +121,13 @@ def format_full_job_detail_with_ai(job: dict, location_display: str) -> str:
 
 請直接輸出繁體中文內容："""
 
-    models = [
-        "gemini-2.5-flash",
-        "gemini-3.5-flash"
-    ]
-    try:
-        for m in models:
-            res = ai_client.models.generate_content(
-                model=m,
-                contents=prompt
-            )
+    for m in MODEL_FALLBACK_LIST:
+        try:
+            res = _generate_with_retry(m, prompt)
             if res and hasattr(res, "text") and res.text:
                 return res.text.strip()
-    except Exception as e:
-        print(f"[AI 詳細內容排版異常]: {e}")
+        except Exception as e:
+            print(f"[AI 詳細內容排版異常 {m}]: {e}")
+            continue
 
     return fallback_layout
