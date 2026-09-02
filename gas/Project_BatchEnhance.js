@@ -6,47 +6,6 @@
 
 const BatchEnhanceJobService = {
   /**
-   * 地點智慧聚合器：縣市全數保留，行政區超過 4 個時自動聚合為「各區門市/據點」
-   */
-  formatSmartLocation: function(cityArray, districtArray) {
-    const cities = (Array.isArray(cityArray) ? cityArray : [cityArray])
-      .map(c => String(c || '').trim())
-      .filter(Boolean);
-    
-    // 移除重複縣市
-    const uniqueCities = Array.from(new Set(cities));
-    const cityStr = uniqueCities.join('、');
-
-    const districts = (Array.isArray(districtArray) ? districtArray : [districtArray])
-      .map(d => String(d || '').trim())
-      .filter(Boolean);
-
-    // 移除重複行政區
-    const uniqueDistricts = Array.from(new Set(districts));
-    const distCount = uniqueDistricts.length;
-
-    // 1. 若無行政區資料
-    if (distCount === 0) {
-      return cityStr || '依公司指定地點';
-    }
-
-    // 2. 行政區少於或等於 4 個：精準列出
-    if (distCount <= 4) {
-      const distStr = uniqueDistricts.join('、');
-      if (cityStr) {
-        return cityStr + '（' + distStr + '）';
-      }
-      return distStr;
-    }
-
-    // 3. 行政區大於等於 5 個：縣市不設限完整列出 + 聚合各區門市備註
-    if (cityStr) {
-      return cityStr + ' 各區門市據點（共 ' + distCount + ' 區，錄取後依居住地就近分發）';
-    }
-    return '各區門市據點（共 ' + distCount + ' 區，錄取後依居住地就近分發）';
-  },
-
-  /**
    * 批次執行主流程
    * @param {boolean} forceOverwrite 是否強制覆寫已有「精華亮點」的職缺
    */
@@ -78,7 +37,8 @@ const BatchEnhanceJobService = {
       const job = jobs[i];
       const pageId = String(job.id || '').trim();
       const title = job.external_title || job.title || '招募職缺';
-      const smartLocation = this.formatSmartLocation(job.cityList, job.districtList);
+      // 地點智慧聚合邏輯與單筆送審共用（AiJobDescriptionService.formatSmartLocation），避免兩邊各自維護一份容易失去同步
+      const smartLocation = AiJobDescriptionService.formatSmartLocation(job.cityList, job.districtList);
 
       // 斷點續傳檢查
       if (!forceOverwrite && job.existing_highlight && String(job.existing_highlight).trim() !== '') {
@@ -239,6 +199,8 @@ const BatchEnhanceJobService = {
       '}';
 
     const targetModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'];
+    const MAX_RETRY_PER_MODEL = 2; // 同一模型遇到 429 額度限制時的重試次數上限
+    const RETRY_BASE_DELAY_MS = 1000; // 重試遞增等待時間基準
 
     for (let i = 0; i < targetModels.length; i++) {
       const model = targetModels[i];
@@ -260,33 +222,55 @@ const BatchEnhanceJobService = {
         muteHttpExceptions: true
       };
 
-      try {
-        const response = UrlFetchApp.fetch(url, options);
-        if (response.getResponseCode() === 200) {
-          const jsonRes = JSON.parse(response.getContentText());
-          let textRes = '';
-          const parts = jsonRes.candidates && jsonRes.candidates[0] && jsonRes.candidates[0].content && jsonRes.candidates[0].content.parts;
-          if (Array.isArray(parts)) {
-            parts.forEach(p => { if (p.text) textRes += p.text; });
+      for (let attempt = 0; attempt <= MAX_RETRY_PER_MODEL; attempt++) {
+        try {
+          const response = UrlFetchApp.fetch(url, options);
+          const resCode = response.getResponseCode();
+
+          if (resCode === 200) {
+            const jsonRes = JSON.parse(response.getContentText());
+            let textRes = '';
+            const parts = jsonRes.candidates && jsonRes.candidates[0] && jsonRes.candidates[0].content && jsonRes.candidates[0].content.parts;
+            if (Array.isArray(parts)) {
+              parts.forEach(p => { if (p.text) textRes += p.text; });
+            }
+
+            if (textRes) {
+              const cleanJson = textRes.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+              const parsed = JSON.parse(cleanJson);
+              return {
+                highlight: String(parsed.highlight || '').trim(),
+                formatted_detail: String(parsed.formatted_detail || '').trim()
+              };
+            }
+            // HTTP 200 但沒有文字內容：換下一個模型，重試同一模型也不會有幫助
+            break;
           }
 
-          if (textRes) {
-            const cleanJson = textRes.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-            const parsed = JSON.parse(cleanJson);
-            return {
-              highlight: String(parsed.highlight || '').trim(),
-              formatted_detail: String(parsed.formatted_detail || '').trim()
-            };
+          if (resCode === 429) {
+            const willRetry = attempt < MAX_RETRY_PER_MODEL;
+            console.warn('⚠️ [BatchEnhance] 模型 [' + model + '] 額度限制 (HTTP 429)，' + (willRetry ? '等待後重試...' : '重試已達上限，換下一個模型'));
+            if (willRetry) {
+              Utilities.sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+              continue;
+            }
+            break;
           }
+
+          // 其他錯誤：記錄詳細狀態碼與回應內容方便排查，直接換下一個模型
+          console.warn('[BatchEnhance] 模型 [' + model + '] 呼叫失敗 (HTTP ' + resCode + '): ' + response.getContentText().slice(0, 300));
+          break;
+        } catch (e) {
+          console.warn('[BatchEnhance] 模型 [' + model + '] 呼叫或解析異常:', e);
+          break;
         }
-      } catch (e) {
-        console.warn('[BatchEnhance] 模型 [' + model + '] 呼叫或解析異常:', e);
       }
     }
 
-    // 自然閉合句保底回傳（絕不硬切半句）
+    // 保底回傳（AI 全部呼叫失敗時使用）：只陳述確定為真的事實（薪資、班別、地點），
+    // 不做「無經驗可」這類原始資料未提及、可能失真的宣稱
     return {
-      highlight: '開放應徵【' + title + '】，工作地點於' + location + '，無經驗可，歡迎立即點擊應徵！',
+      highlight: '開放應徵【' + title + '】！工作地點：' + location + '，班別：' + shift + '，薪資：' + salary + '，歡迎立即應徵！',
       formatted_detail: '📋【職缺名稱：' + title + '】\n\n📍【工作地點】：' + location + '\n💰【薪資待遇】：' + salary + '\n⏰【工作班別】：' + shift + '\n\n📝【工作內容】：\n' + rawDesc + '\n\n💡 依《就業服務法》規定，所有職缺皆無性別、年齡限制。'
     };
   },
