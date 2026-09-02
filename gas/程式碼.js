@@ -113,6 +113,9 @@ function doGet(e) {
   }
 
   if (action === 'check_supervisor') {
+    if (!isValidAdminApiSecret(e)) {
+      return createJsonResponse({ status: 'error', message: 'unauthorized' });
+    }
     const name = (e.parameter.name || '').trim();
     const supList = OrgService.getSupervisorsByApplicantUserId('', name);
     return createJsonResponse({
