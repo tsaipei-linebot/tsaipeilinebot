@@ -85,6 +85,7 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
         
         display_location = format_clean_location(job, target_location)
         salary = str(job.get("薪資") or "依公司規定").strip()
+        pay_method = str(job.get("領薪方式") or "").strip()
         shift = str(job.get("班別") or "").strip()
         industry = str(job.get("行業別") or "").strip()
         job_type = str(job.get("全/兼職") or "").strip()
@@ -117,6 +118,14 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
         if tags_contents:
             body_contents.append({"type": "box", "layout": "horizontal", "spacing": "xs", "margin": "sm", "contents": tags_contents})
             
+        detail_lines = [
+            {"type": "text", "text": f"📍 地點：{display_location}", "size": "sm", "color": "#444444", "wrap": True},
+            {"type": "text", "text": f"💰 待遇：{salary}", "size": "sm", "color": "#D32F2F", "weight": "bold", "wrap": True},
+        ]
+        if pay_method:
+            detail_lines.append({"type": "text", "text": f"💵 領薪方式：{pay_method}", "size": "sm", "color": "#444444", "wrap": True})
+        detail_lines.append({"type": "text", "text": f"✨ 特色：{highlight_desc}", "size": "xs", "color": "#555555", "wrap": True, "margin": "xs"})
+
         body_contents.extend([
             {"type": "separator", "margin": "md"},
             {
@@ -124,11 +133,7 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
                 "layout": "vertical",
                 "margin": "md",
                 "spacing": "xs",
-                "contents": [
-                    {"type": "text", "text": f"📍 地點：{display_location}", "size": "sm", "color": "#444444", "wrap": True},
-                    {"type": "text", "text": f"💰 待遇：{salary}", "size": "sm", "color": "#D32F2F", "weight": "bold", "wrap": True},
-                    {"type": "text", "text": f"✨ 特色：{highlight_desc}", "size": "xs", "color": "#555555", "wrap": True, "margin": "xs"}
-                ]
+                "contents": detail_lines
             }
         ])
 
