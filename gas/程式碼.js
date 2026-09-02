@@ -96,6 +96,9 @@ function doGet(e) {
   }
 
   if (action === 'test_push') {
+    if (!isValidAdminApiSecret(e)) {
+      return createJsonResponse({ status: 'error', message: 'unauthorized' });
+    }
     const targetId = (e.parameter.target_id || '').trim();
     if (!targetId) {
       return createJsonResponse({ status: 'error', message: '請在網址後加上 &target_id=欲測試的LINE_USER_ID' });
