@@ -399,9 +399,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             loc = format_clean_location(j)
             shift = j.get("班別", "")
             leave_t = j.get("休假方式", "")
+            pay_method = j.get("領薪方式", "")
             salary = j.get("薪資", "")
             desc = j.get("精華亮點") or j.get("工作內容(對外)", "")
-            job_index_text += f"[ID:{idx}] 廠商:{vendor_t} | 職缺:{internal_t} | 類別:{cat_t} | 地點:{loc} | 班別:{shift} | 休假:{leave_t} | 待遇:{salary} | 特色:{desc}\n"
+            job_index_text += f"[ID:{idx}] 廠商:{vendor_t} | 職缺:{internal_t} | 類別:{cat_t} | 地點:{loc} | 班別:{shift} | 休假:{leave_t} | 領薪方式:{pay_method or '未提供'} | 待遇:{salary} | 特色:{desc}\n"
 
         faq_index_text = ""
         for f in ai_faq_candidates:
