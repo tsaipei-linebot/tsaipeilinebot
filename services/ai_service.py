@@ -1,13 +1,7 @@
-import os
 import time
 import random
 from google import genai
-
-# ==========================================
-# Google Cloud / Vertex AI 設定
-# ==========================================
-GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "tsaipei-505807")
-GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+from config import GCP_PROJECT_ID, GCP_LOCATION
 
 ai_client = None
 try:
