@@ -342,10 +342,7 @@ const BatchEnhanceJobService = {
    * 透過 LINE 推播執行統計卡片給系統管理員
    */
   notifyAdminViaLine: function(summary) {
-    const adminLineId = CONFIG.ADMIN_LINE_USER_ID;
-    if (!adminLineId) return;
-
-    const adminIds = adminLineId.split(/[,，、\/\\\s\n\r]+/).map(s => s.replace(/[^a-zA-Z0-9_-]/g, '').trim()).filter(Boolean);
+    const adminIds = AdminIdService.list();
     if (adminIds.length === 0) return;
 
     const statusTitle = summary.isInterrupted ? '⚠️ 批次處理部分完成 (超時中斷)' : '🎉 職缺文案批次生成完成';

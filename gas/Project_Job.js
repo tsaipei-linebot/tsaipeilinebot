@@ -369,8 +369,7 @@ const JobWorkflowService = {
           fields.publisher = originalPublisher;
         } else {
           // 無主職缺：僅限管理主管接管
-          const adminIds = (CONFIG.ADMIN_LINE_USER_ID || '').split(/[,，、\/\\\s\n\r]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-          if (!adminIds.includes(applicant.userId.toUpperCase())) {
+          if (!AdminIdService.isAdmin(applicant.userId)) {
             return {
               status: 'forbidden',
               message: `【權限錯誤】此為無主職缺，僅限系統管理員可進行指派或維護。`
@@ -773,8 +772,7 @@ const NotionService = {
     let nextCursor = null;
     const validSubordinates = Array.isArray(subordinates) ? subordinates : [];
 
-    const adminIds = (CONFIG.ADMIN_LINE_USER_ID || '').split(/[,，、\/\\\s\n\r]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-    const isAdmin = adminIds.includes(String(userId).trim().toUpperCase());
+    const isAdmin = AdminIdService.isAdmin(userId);
 
     let filterParams = undefined;
     if (userName) {

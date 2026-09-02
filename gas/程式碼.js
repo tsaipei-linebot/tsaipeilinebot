@@ -35,6 +35,30 @@ function sha256Hash(text) {
   return signature.map(byte => (byte < 0 ? byte + 256 : byte).toString(16).padStart(2, '0')).join('');
 }
 
+// ==============================================================================
+// 管理員 LINE ID 共用工具 (AdminIdService)
+// 統一 ADMIN_LINE_USER_ID 的拆分/清理邏輯，取代原本散落在各檔案的重複解析程式碼
+// ==============================================================================
+const AdminIdService = {
+  _splitPattern: /[,，、\/\\\s\n\r]+/,
+
+  // 回傳保留原始大小寫、僅去除非法字元的清單，供實際發送 LINE 訊息等需要真實 ID 的場合使用
+  list: function() {
+    const raw = (CONFIG.ADMIN_LINE_USER_ID || '').trim();
+    if (!raw) return [];
+    return raw.split(this._splitPattern)
+      .map(s => s.replace(/[^a-zA-Z0-9_-]/g, '').trim())
+      .filter(Boolean);
+  },
+
+  // 判斷指定 LINE ID 是否為系統管理員（不分大小寫比對）
+  isAdmin: function(candidateId) {
+    const clean = String(candidateId || '').trim().toUpperCase();
+    if (!clean) return false;
+    return this.list().some(id => id.toUpperCase() === clean);
+  }
+};
+
 // 動態取得目標推播群組 ID
 function getTargetLineGroupId() {
   const dynamicId = (PropertiesService.getScriptProperties().getProperty('TARGET_LINE_GROUP_ID') || '').trim();
@@ -388,8 +412,7 @@ const LineWebhookService = {
 
     // 群組綁定指令
     if (/^[#＃]?(綁定群組|群組綁定|bindgroup|groupid)/i.test(text)) {
-      const adminIds = (CONFIG.ADMIN_LINE_USER_ID || '').split(/[,，、\/\\\s\n\r]+/).map(s => s.replace(/[^a-zA-Z0-9_-]/g, '').trim()).filter(Boolean);
-      if (adminIds.length > 0 && !adminIds.includes(userId)) {
+      if (AdminIdService.list().length > 0 && !AdminIdService.isAdmin(userId)) {
         LineService.replyTextMessage(replyToken, `❌ 權限不足：僅系統管理員可設定自動推播群組。`);
         return;
       }
@@ -443,14 +466,10 @@ const LineWebhookService = {
     // 嚴格簽核權限驗證
     if (action === 'review_job' || action === 'review_salary') {
       const allSupervisors = OrgService.getSupervisorsByApplicantUserId(applicantId, '');
-      let authorizedIds = allSupervisors.map(s => String(s.lineUserId || '').trim().toUpperCase());
-      
-      const adminIds = (CONFIG.ADMIN_LINE_USER_ID || '').split(/[,，、\/\\\s\n\r]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-      authorizedIds = authorizedIds.concat(adminIds);
-      
+      const authorizedIds = allSupervisors.map(s => String(s.lineUserId || '').trim().toUpperCase());
       const currentUserId = String(operatorSupervisorId || '').trim().toUpperCase();
 
-      if (authorizedIds.length === 0 || !authorizedIds.includes(currentUserId)) {
+      if (!authorizedIds.includes(currentUserId) && !AdminIdService.isAdmin(currentUserId)) {
         LineService.replyTextMessage(event.replyToken, `❌ 操作失敗：您非此申請單之授權審核主管，無權限執行簽核。`);
         return;
       }
@@ -676,8 +695,7 @@ const OrgService = {
 
             const subordinates = this.getSubordinatesBySupervisorName(empName);
             
-            const adminIds = (CONFIG.ADMIN_LINE_USER_ID || '').split(/[,，、\/\\\s\n\r]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-            const isAdmin = adminIds.includes(lineId.toUpperCase());
+            const isAdmin = AdminIdService.isAdmin(lineId);
             
             return {
               status: 'success',
@@ -811,14 +829,13 @@ const OrgService = {
   },
   
   getDefaultSupervisors: function() {
-    const adminLineId = (PropertiesService.getScriptProperties().getProperty('ADMIN_LINE_USER_ID') || '').trim();
     const adminEmail = PropertiesService.getScriptProperties().getProperty('ADMIN_EMAIL') || '';
-    
-    if (!adminLineId) {
+    const lineIds = AdminIdService.list();
+
+    if (lineIds.length === 0) {
       return [];
     }
 
-    const lineIds = adminLineId.split(/[,，、\/\\\s\n\r]+/).map(s => s.replace(/[^a-zA-Z0-9_-]/g, '').trim()).filter(Boolean);
     const emails = adminEmail.split(/[,，、\/\\\s\n\r]+/).map(s => s.trim()).filter(Boolean);
 
     return lineIds.map((lid, idx) => ({
