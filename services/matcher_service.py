@@ -25,17 +25,46 @@ def has_negative_intent(text: str) -> bool:
     negative_words = ["除了", "不要", "不想", "排除", "不考慮", "不想要", "除了這個", "除了這些", "換別的", "非"]
     return any(w in clean for w in negative_words)
 
+
+# ==========================================
+# 否定詞位置感知：判斷某個關鍵字是不是「緊接在否定詞之後」出現
+# 用來區分「不要新莊了改看桃園」裡的「新莊」（被排除）跟「桃園」（正向意圖）
+# ==========================================
+NEGATION_TRIGGERS = ["不要", "不想要", "不想", "除了", "排除", "不考慮", "非"]
+
+
+def _keyword_is_negated(text: str, keyword: str) -> bool:
+    """檢查 keyword 在 text 中的出現位置，往前 6 個字內有沒有出現否定詞。
+    有的話代表使用者是在講「不要/除了 這個關鍵字」，屬於被排除的意圖，不應該當成正向需求採用。
+    """
+    idx = text.find(keyword)
+    if idx == -1:
+        return False
+    window_start = max(0, idx - 6)
+    window = text[window_start:idx]
+    return any(trigger in window for trigger in NEGATION_TRIGGERS)
+
+LOCATION_CANDIDATES = [
+    "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
+    "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
+    "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆"
+]
+
+
 def extract_current_target_location(raw_msg: str, history_text: str = "") -> str:
-    """從使用者最新訊息擷取鎖定地區（避免被對話歷史中的範例字詞干擾）[cite: 1]"""
-    locs = [
-        "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
-        "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
-        "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆"
-    ]
-    for loc in locs:
-        if loc in raw_msg:
+    """從使用者最新訊息擷取鎖定地區（避免被對話歷史中的範例字詞干擾，並跳過被否定的地名）[cite: 1]"""
+    for loc in LOCATION_CANDIDATES:
+        if loc in raw_msg and not _keyword_is_negated(raw_msg, loc):
             return loc.replace("臺", "台")
-            
+
+    return ""
+
+
+def detect_negated_location(raw_msg: str) -> str:
+    """偵測使用者是否明確表示排除某個地區（例如「不要新莊了」），回傳被排除的地名，沒有則回傳空字串"""
+    for loc in LOCATION_CANDIDATES:
+        if loc in raw_msg and _keyword_is_negated(raw_msg, loc):
+            return loc.replace("臺", "台")
     return ""
 
 def extract_shift_preference(text: str) -> str:
@@ -92,18 +121,30 @@ def extract_salary_preference(text: str) -> bool:
     clean = clean_text_for_search(text)
     return any(k in clean for k in ["高時薪", "時薪高", "高薪", "時薪最高", "薪水高", "時薪多少", "200以上", "時薪破百"])
 
+CATEGORY_KEYWORDS = {
+    "外送": ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作", "司機", "隨車"],
+    "門市": ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店", "櫃檯"],
+    "製造/作業員": ["製造", "製造業", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技廠", "電子廠", "品管", "包裝員"],
+    "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "物流", "堆高機", "貼標"],
+    "餐飲/服務": ["餐飲", "服務", "廚房", "內場", "外場", "專櫃", "服飾", "洗碗", "助手"],
+}
+
+
 def detect_category_label(clean_input: str) -> str:
-    """從文字中判斷求職者偏好的工作類別（完整支援製造業與多元工種）[cite: 1]"""
-    if any(k in clean_input for k in ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作", "司機", "隨車"]):
-        return "外送"
-    if any(k in clean_input for k in ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店", "櫃檯"]):
-        return "門市"
-    if any(k in clean_input for k in ["製造", "製造業", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技廠", "電子廠", "品管", "包裝員"]):
-        return "製造/作業員"
-    if any(k in clean_input for k in ["理貨", "揀貨", "倉管", "包裝", "倉儲", "物流", "堆高機", "貼標"]):
-        return "理貨/倉儲"
-    if any(k in clean_input for k in ["餐飲", "服務", "廚房", "內場", "外場", "專櫃", "服飾", "洗碗", "助手"]):
-        return "餐飲/服務"
+    """從文字中判斷求職者偏好的工作類別（完整支援製造業與多元工種，並跳過被否定的類別）[cite: 1]"""
+    for label, keywords in CATEGORY_KEYWORDS.items():
+        matched_kw = next((k for k in keywords if k in clean_input), None)
+        if matched_kw and not _keyword_is_negated(clean_input, matched_kw):
+            return label
+    return ""
+
+
+def detect_negated_category(clean_input: str) -> str:
+    """偵測使用者是否明確表示排除某個工作類別（例如「除了外送」），回傳被排除的類別標籤，沒有則回傳空字串"""
+    for label, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw in clean_input and _keyword_is_negated(clean_input, kw):
+                return label
     return ""
 
 def category_search_keywords(category_label: str) -> list:
