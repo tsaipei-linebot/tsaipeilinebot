@@ -444,7 +444,50 @@ const LineWebhookService = {
 };
 
 // ==============================================================================
-// 6. 組織架構與主管從屬服務 (OrgService)
+// 6. PIN 登入嘗試鎖定服務 (LoginAttemptGuard)
+// 防止 VERIFY_LOGIN 端點被暴力窮舉 4 位數 PIN 碼：
+// 同一姓名連續錯誤達上限後，短時間內鎖定該姓名的登入嘗試。
+// ==============================================================================
+const LoginAttemptGuard = {
+  MAX_ATTEMPTS: 5,
+  LOCKOUT_SEC: 900, // 15 分鐘
+
+  _cacheKey: function(name) {
+    return 'LOGIN_FAIL_' + Utilities.base64EncodeWebSafe(String(name || '').trim());
+  },
+
+  isLocked: function(name) {
+    try {
+      const raw = CacheService.getScriptCache().get(this._cacheKey(name));
+      const count = raw ? parseInt(raw, 10) : 0;
+      return count >= this.MAX_ATTEMPTS;
+    } catch (e) {
+      console.warn('讀取登入鎖定狀態失敗 (視為未鎖定):', e);
+      return false;
+    }
+  },
+
+  recordFailure: function(name) {
+    try {
+      const cache = CacheService.getScriptCache();
+      const key = this._cacheKey(name);
+      const raw = cache.get(key);
+      const count = (raw ? parseInt(raw, 10) : 0) + 1;
+      cache.put(key, String(count), this.LOCKOUT_SEC);
+    } catch (e) {
+      console.warn('記錄登入失敗次數失敗:', e);
+    }
+  },
+
+  clear: function(name) {
+    try {
+      CacheService.getScriptCache().remove(this._cacheKey(name));
+    } catch (e) {}
+  }
+};
+
+// ==============================================================================
+// 7. 組織架構與主管從屬服務 (OrgService)
 // ==============================================================================
 const OrgService = {
   CACHE_KEY: 'ORG_TABLE_CACHE_DATA_2026',
@@ -562,14 +605,22 @@ const OrgService = {
 
   verifyEmployeePin: function(name, pin) {
     try {
-      const data = this.getOrgData();
       const cleanName = String(name || '').trim();
       const cleanPin = String(pin || '').trim();
 
       if (!cleanName || !cleanPin || !/^\d{4}$/.test(cleanPin)) {
         return { status: 'error', message: '請輸入姓名與 4 位數 PIN 碼' };
       }
-      
+
+      if (LoginAttemptGuard.isLocked(cleanName)) {
+        console.warn(`⚠️ 【${cleanName}】登入嘗試已達失敗上限，暫時鎖定中`);
+        return {
+          status: 'locked',
+          message: `登入失敗次數過多，帳號已暫時鎖定，請 15 分鐘後再試，或聯繫系統管理員協助處理。`
+        };
+      }
+
+      const data = this.getOrgData();
       const inputHashedPin = sha256Hash(cleanPin);
 
       for (let i = 1; i < data.length; i++) {
@@ -586,6 +637,7 @@ const OrgService = {
             };
           }
           if (empPin === inputHashedPin || empPin === cleanPin) {
+            LoginAttemptGuard.clear(cleanName);
             const subordinates = this.getSubordinatesBySupervisorName(empName);
             
             const adminIds = (CONFIG.ADMIN_LINE_USER_ID || '').split(/[,，、\/\\\s\n\r]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
@@ -608,6 +660,7 @@ const OrgService = {
               }
             };
           } else {
+            LoginAttemptGuard.recordFailure(cleanName);
             return { status: 'error', message: 'PIN 碼錯誤，請重新輸入！' };
           }
         }
@@ -741,7 +794,7 @@ const OrgService = {
 };
 
 // ==============================================================================
-// 7. Google Sheets 儲存服務 (SpreadsheetService)
+// 8. Google Sheets 儲存服務 (SpreadsheetService)
 // ==============================================================================
 const SpreadsheetService = {
   getOrCreateSheet: function(sheetName) {
@@ -778,7 +831,7 @@ const SpreadsheetService = {
 };
 
 // ==============================================================================
-// 8. LINE Messaging API 通訊服務 (LineService)
+// 9. LINE Messaging API 通訊服務 (LineService)
 // ==============================================================================
 const LineService = {
   getUserProfile: function(userId) {
@@ -892,7 +945,7 @@ const LineService = {
 };
 
 // ==============================================================================
-// 9. 基礎共用 Flex 與字串工具
+// 10. 基礎共用 Flex 與字串工具
 // ==============================================================================
 const SharedFlexBuilder = {
   createRow: function(label, value, valueColor, weight) {
