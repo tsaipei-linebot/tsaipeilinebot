@@ -565,7 +565,7 @@ const SalaryFlexMessageBuilder = {
     
     const contents = [
       SharedFlexBuilder.createRow('申請同仁', info.applicant_name || applicant.displayName || '未提供', '#0284c7', 'bold'),
-      SharedFlexBuilder.createRow('身分證字號', info.id_card || '-'),
+      SharedFlexBuilder.createRow('身分證字號', maskIdCard(info.id_card)),
       SharedFlexBuilder.createRow('補請月份', info.compensate_month || '-'),
       SharedFlexBuilder.createRow('補款方式', info.pay_type || '-'),
       SharedFlexBuilder.createRow('備註說明', info.notes || '-', '#b91c1c', 'bold'),

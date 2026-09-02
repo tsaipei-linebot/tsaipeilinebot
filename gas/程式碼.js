@@ -1172,6 +1172,18 @@ const SharedFlexBuilder = {
   }
 };
 
+// 遮蔽身分證字號等敏感個資，僅保留頭尾各 3 碼供核對，中間以 * 取代
+// 用於推播管道（如 LINE Flex 卡片）等曝光面較廣的場合；正式報表 Email 仍保留完整號碼
+function maskIdCard(idCard) {
+  const clean = String(idCard || '').trim();
+  if (!clean) return '-';
+  if (clean.length <= 6) return clean.slice(0, 1) + '*'.repeat(Math.max(clean.length - 1, 0));
+  const visibleHead = clean.slice(0, 3);
+  const visibleTail = clean.slice(-3);
+  const maskedLen = clean.length - visibleHead.length - visibleTail.length;
+  return visibleHead + '*'.repeat(maskedLen) + visibleTail;
+}
+
 function parseQueryString(queryString) {
   const params = {};
   if (!queryString) return params;
