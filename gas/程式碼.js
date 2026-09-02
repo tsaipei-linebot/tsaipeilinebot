@@ -657,6 +657,20 @@ const OrgService = {
           }
           if (empPin === inputHashedPin || empPin === cleanPin) {
             LoginAttemptGuard.clear(cleanName);
+
+            // 若比對命中的是明文 PIN（尚未雜湊的舊資料），登入成功時順便升級寫回雜湊值，
+            // 之後就只會用雜湊比對，逐步清除表格中的明文 PIN
+            if (empPin !== inputHashedPin) {
+              try {
+                const orgSheet = SpreadsheetService.getOrCreateSheet(CONFIG.SHEET_NAME_ORG);
+                orgSheet.getRange(i + 1, 9).setValue(inputHashedPin);
+                SpreadsheetApp.flush();
+                console.log(`🔐 已將【${cleanName}】的明文 PIN 自動升級為雜湊值`);
+              } catch (upgradeErr) {
+                console.warn('自動升級 PIN 雜湊失敗 (不影響本次登入):', upgradeErr);
+              }
+            }
+
             const subordinates = this.getSubordinatesBySupervisorName(empName);
             
             const adminIds = (CONFIG.ADMIN_LINE_USER_ID || '').split(/[,，、\/\\\s\n\r]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
