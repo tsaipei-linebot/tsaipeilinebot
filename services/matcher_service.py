@@ -484,6 +484,35 @@ def build_ai_faq_candidates(faq_list: list, query_text: str, limit: int = 20) ->
     selected = positive[:limit] if positive else scored[:limit]
     return [item[2] for item in selected]
 
+
+def find_high_confidence_faq_match(faq_list: list, query_text: str, min_question_length: int = 4) -> dict:
+    """在送 AI 前先判斷這句話是不是已經完整、明確地命中某一筆 FAQ 的問題本文
+    （雙向包含比對：求職者問句包住整個 FAQ 問題，或 FAQ 問題包住整個求職者問句）。
+
+    命中的話代表這題有明確、已審核過的官方答案，上層應該直接回傳 Notion 原文，
+    不要再送給 AI 改寫：一來 AI 意譯規章/福利類文字可能產生合規風險（用詞跑掉、
+    語意跑掉），二來省下一次 Gemini 呼叫。只做雙向完整包含比對（而非任意關鍵字
+    命中），並要求命中的問題本文長度至少 min_question_length 個字，避免像「薪水」
+    這種短詞被子字串比對誤判成明確命中。命中多筆時取問題本文最長（比對特徵最完整）
+    的那一筆。"""
+    if not faq_list or not query_text:
+        return None
+
+    query_clean = clean_text_for_search(query_text)
+    if not query_clean:
+        return None
+
+    best_match, best_len = None, 0
+    for faq in faq_list:
+        q_clean = clean_text_for_search(faq.get("question", ""))
+        if not q_clean or len(q_clean) < min_question_length:
+            continue
+        if q_clean in query_clean or query_clean in q_clean:
+            if len(q_clean) > best_len:
+                best_match, best_len = faq, len(q_clean)
+
+    return best_match
+
 def build_progressive_question(user_id: str, current_location: str) -> tuple:
     """單一焦點循序引導（地區 -> 班別 -> 工作類型）[cite: 1]"""
     slots = get_user_slots(user_id)

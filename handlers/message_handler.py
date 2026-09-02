@@ -20,7 +20,7 @@ from services.matcher_service import (
     build_progressive_question, build_ai_job_candidates, build_ai_faq_candidates,
     job_matches_category_filter, has_negative_intent, extract_numeric_salary_preference,
     detect_negated_location, detect_negated_category, has_recognizable_category_or_brand_keyword,
-    CATEGORY_KEYWORDS, KNOWN_BRANDS
+    CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 
@@ -317,6 +317,24 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             append_user_history(user_id, "招募顧問沛沛", reply_text)
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:4], user_id, current_location)])
             return
+
+        # ---------------- 步驟 1-5：FAQ 高信心比對，直接回傳 Notion 原文（不經 AI 改寫）----------------
+        # 求職者問句完整命中某一筆 FAQ 問題本文時，代表這題有明確、已審核過的官方答案，
+        # 直接回傳 Notion 原文即可：避免 AI 意譯規章/福利類文字造成合規風險，同時省下一次
+        # Gemini 呼叫。命中不到才繼續往下走 AI 決策流程（FAQ 分數較低的候選仍會送給 AI 判斷）。
+        high_confidence_faq = find_high_confidence_faq_match(faq_list, raw_msg)
+        if high_confidence_faq:
+            faq_reply_text = str(high_confidence_faq.get("answer", "")).strip()
+            if faq_reply_text:
+                append_user_history(user_id, "求職者", raw_msg)
+                append_user_history(user_id, "招募顧問沛沛", faq_reply_text)
+                quick_reply = QuickReply(items=[
+                    QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+                    QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
+                    QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+                ])
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=faq_reply_text, quick_reply=quick_reply))
+                return
 
         # ---------------- 步驟 2：Vertex AI 顧問推理 (FAQ 優先 + 未收錄捕獲 + 條件退讓)[cite: 6] ----------------
         _current_slots_for_candidates = get_user_slots(user_id)

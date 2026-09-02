@@ -215,9 +215,44 @@ def fetch_faqs_data() -> list:
         return _cached_faqs or []
 
 
+def _fetch_all_faq_question_titles() -> list:
+    """取得 FAQ 資料庫中所有頁面的『問題/關鍵字』標題文字，不篩選狀態或是否已有解答，
+    供未收錄問題寫入前的去重比對使用（已寫入但尚未補答的問題，狀態/解答通常是空的，
+    不會出現在 fetch_faqs_data() 篩選過的結果裡，所以這裡另外直接查一次原始資料）。"""
+    results = query_notion_database_direct(NOTION_FAQ_DB_ID)
+    titles = []
+    for page in results:
+        title_prop = page.get("properties", {}).get("問題/關鍵字")
+        if title_prop:
+            title_text = parse_notion_property(title_prop)
+            if title_text:
+                titles.append(title_text)
+    return titles
+
+
+def _is_duplicate_faq_question(question_text: str, existing_titles: list, min_match_length: int = 4) -> bool:
+    """雙向包含比對：只要新問題跟資料庫裡任一筆既有問題互相包含（且比對長度
+    達 min_match_length），就視為重複，避免同一個/相似問題被反覆寫入待補答清單。"""
+    question_clean = clean_text_for_search(question_text)
+    if not question_clean:
+        return False
+    for existing in existing_titles:
+        existing_clean = clean_text_for_search(existing)
+        if not existing_clean or len(existing_clean) < min_match_length:
+            continue
+        if existing_clean in question_clean or question_clean in existing_clean:
+            return True
+    return False
+
+
 def append_unresolved_faq_to_notion(question_text: str) -> bool:
-    """將未收錄問題寫入 Notion FAQ 資料庫的『問題/關鍵字』欄位"""
+    """將未收錄問題寫入 Notion FAQ 資料庫的『問題/關鍵字』欄位（寫入前先去重）"""
     if not NOTION_API_KEY or not NOTION_FAQ_DB_ID or not question_text:
+        return False
+
+    existing_titles = _fetch_all_faq_question_titles()
+    if _is_duplicate_faq_question(question_text, existing_titles):
+        print(f"[Notion FAQ 去重跳過] 「{question_text}」已有相似問題記錄在案，不重複寫入")
         return False
 
     url = "https://api.notion.com/v1/pages"
