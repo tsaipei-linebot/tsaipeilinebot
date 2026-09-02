@@ -198,7 +198,14 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
             "台北", "新北", "桃園", "新竹", "台中", "台南", "高雄", "基隆", "宜蘭", "苗栗", "彰化", "嘉義", "屏東",
             "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "中壢", "龜山"
         ]
-        if extracted and not any(token in extracted for token in invalid_tokens):
+        # 額外跟 CATEGORY_KEYWORDS 交叉比對：抓到的詞如果「完全等於」某個已知工作類別關鍵字，
+        # 一律不當成廠商名稱（例如「外送」本身不在上面的 invalid_tokens 手動清單裡，
+        # 但它是 CATEGORY_KEYWORDS 裡「外送」類別的關鍵字，交叉比對能自動擋下來）。
+        # 這裡刻意只做完全比對、不做子字串比對，避免誤傷「蝦皮」這種剛好是
+        # 「蝦皮門市」子字串、但本身是真實廠商名稱的詞。
+        all_category_keywords = {kw for keywords in CATEGORY_KEYWORDS.values() for kw in keywords}
+        is_category_word = extracted in all_category_keywords
+        if extracted and not is_category_word and not any(token in extracted for token in invalid_tokens):
             return extracted
 
     return ""
