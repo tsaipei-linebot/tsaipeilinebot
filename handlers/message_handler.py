@@ -174,7 +174,16 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             category_slot_update = ""
             detected_category_from_text = user_slots.get("category", "")
 
-        detected_brand = detect_brand_label(raw_msg, active_jobs) or user_slots.get("brand", "")
+        # 廠商（brand）跟地點/類別的行為不同：地點/類別是持續性偏好，沿用到被明確取消為止；
+        # 廠商比較像單次詢問，這句話沒有再提到某個廠商，就視為使用者已經看過、
+        # 不應該讓候選集合被舊的廠商鎖住，所以每輪都重新判斷，沒偵測到就明確清空。
+        detected_brand_this_turn = detect_brand_label(raw_msg, active_jobs)
+        if detected_brand_this_turn:
+            detected_brand = detected_brand_this_turn
+            brand_slot_update = detected_brand_this_turn
+        else:
+            detected_brand = ""
+            brand_slot_update = CLEAR_SLOT if user_slots.get("brand", "") else ""
 
         update_user_slots(
             user_id, 
@@ -182,7 +191,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             category=category_slot_update, 
             shift=detected_shift, 
             leave=detected_leave, 
-            brand=detected_brand
+            brand=brand_slot_update
         )
 
         # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截[cite: 6] ----------------
