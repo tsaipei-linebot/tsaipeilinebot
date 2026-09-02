@@ -309,13 +309,16 @@ const EmployeeRegistrationService = {
       const sheet = SpreadsheetService.getOrCreateSheet(CONFIG.SHEET_NAME_ORG);
       
       if (sheet.getLastRow() === 0) {
-        sheet.appendRow(['員工姓名', '員工 LINE ID', '主管姓名', '主管 LINE ID', '主管 Email', '員工工號', 'LINE暱稱', '綁定時間', 'PIN碼']);
+        sheet.appendRow(['員工姓名', '員工 LINE ID', '主管姓名', '主管 LINE ID', '主管 Email', '員工工號', 'LINE暱稱', '綁定時間', 'PIN碼', '員工Email']);
         SpreadsheetApp.flush();
       }
 
-      const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 9)).getValues()[0];
+      const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 10)).getValues()[0];
       if (!headers[8] || headers[8].toString().trim() === '') {
         sheet.getRange(1, 9).setValue('PIN碼');
+      }
+      if (!headers[9] || headers[9].toString().trim() === '') {
+        sheet.getRange(1, 10).setValue('員工Email');
       }
 
       const data = sheet.getDataRange().getValues();

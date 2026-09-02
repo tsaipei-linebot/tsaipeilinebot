@@ -189,7 +189,9 @@ const SalaryWorkflowService = {
     } catch (shareErr) {
       console.warn('設定檔案公開檢視失敗:', shareErr);
     }
-    return file.getUrl();
+    // 使用可直接內嵌顯示的圖片網址（跟職缺圖檔上傳一致），而非 Drive 檢視頁網址，
+    // 這樣才能實際嵌入 LINE Flex 卡片的 image 區塊讓主管直接看到圖片
+    return `https://lh3.googleusercontent.com/d/${file.getId()}`;
   },
 
   handleSalaryPostback: function(event, postbackData, operatorSupervisorId) {
@@ -231,6 +233,22 @@ const SalaryWorkflowService = {
         ? `🎉 您提交的薪資補款申請單 [${salaryId}] 已通過主管核准！\n詳細補款報表與附件已同步發信通知。`
         : `⚠️ 您提交的薪資補款申請單 [${salaryId}] 已被主管退回，請確認資料後重新提出。`;
       LineService.pushMessage(applicantId, [{ type: 'text', text: notifyText }]);
+    }
+
+    // 同步通知其他主管（同仁若設定多位主管，除了實際點擊審核的操作者，其餘主管也要收到結果通知）
+    try {
+      const allSupervisors = OrgService.getSupervisorsByApplicantUserId(applicantId, '');
+      const syncText = isApproved
+        ? `✅ 【審核同步】薪資補款單 [${salaryId}] 已由其他主管核准！\n系統已自動寄出正式 HTML 薪資補款報表與佐證圖檔至財會、主管與同仁信箱。`
+        : `⚠️ 【審核同步】薪資補款單 [${salaryId}] 已由其他主管退回。`;
+      allSupervisors.forEach(sup => {
+        const cleanLineId = String(sup.lineUserId || '').replace(/[^a-zA-Z0-9_-]/g, '').trim();
+        if (LINE_ID_REGEX.test(cleanLineId) && cleanLineId !== operatorSupervisorId) {
+          LineService.pushMessage(cleanLineId, [{ type: 'text', text: syncText }]);
+        }
+      });
+    } catch (supSyncErr) {
+      console.warn('同步通知其他主管審核結果失敗:', supSyncErr);
     }
   }
 };
@@ -319,7 +337,20 @@ const SalarySheetService = {
       const cleanName = String(applicantName || '').trim();
       const cleanUserId = String(applicantUserId || '').trim().toUpperCase();
 
-      // 1. 若申請人在組織表中曾列為主管，直接讀取其主管 Email (第 5 欄)
+      // 1. 優先讀取「員工Email」欄位 (第 10 欄, index 9)，這是申請人本人 Email 的正式來源
+      for (let i = 1; i < data.length; i++) {
+        const empName = String(data[i][0] || '').trim();
+        const empLineId = String(data[i][1] || '').trim().toUpperCase();
+        if ((cleanName && empName === cleanName) || (cleanUserId && empLineId === cleanUserId)) {
+          const ownEmail = String(data[i][9] || '').trim();
+          if (ownEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownEmail)) {
+            return ownEmail;
+          }
+          break;
+        }
+      }
+
+      // 2. 若「員工Email」欄位未填，退而求其次：若申請人在組織表中曾列為主管，讀取其主管 Email (第 5 欄)
       for (let i = 1; i < data.length; i++) {
         const rowSupNames = String(data[i][2] || '').trim();
         const rowSupEmails = String(data[i][4] || '').trim();
@@ -334,13 +365,13 @@ const SalarySheetService = {
         }
       }
 
-      // 2. 搜尋同仁所屬列中是否有符合 Email 格式之欄位
+      // 3. 最後備援：搜尋同仁所屬列中是否有符合 Email 格式之欄位
       for (let i = 1; i < data.length; i++) {
         const empName = String(data[i][0] || '').trim();
         const empLineId = String(data[i][1] || '').trim().toUpperCase();
         if ((cleanName && empName === cleanName) || (cleanUserId && empLineId === cleanUserId)) {
           for (let c = 0; c < data[i].length; c++) {
-            if (c !== 4) { // 避開主管 Email 欄
+            if (c !== 4 && c !== 9) { // 避開主管 Email 欄與員工 Email 欄（已在步驟 1 處理過）
               const cellVal = String(data[i][c] || '').trim();
               if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cellVal)) {
                 return cellVal;
@@ -582,7 +613,46 @@ const SalaryFlexMessageBuilder = {
     ];
 
     if (data.imageUrl) {
-      contents.push(SharedFlexBuilder.createRow('補款佐證', '已附圖檔', '#0284c7', 'bold'));
+      contents.push(SharedFlexBuilder.createRow('補款佐證', '已附圖檔(如下)', '#0284c7', 'bold'));
+    }
+
+    const bodyContents = [
+      {
+        type: 'text',
+        text: `補款員工：${info.name || '-'}`,
+        weight: 'bold',
+        size: 'lg',
+        wrap: true
+      },
+      {
+        type: 'text',
+        text: `廠商：${info.vendor || '-'} | 付款日：${info.pay_date || '未指定'}`,
+        size: 'xs',
+        color: '#64748b',
+        margin: 'xs'
+      },
+      {
+        type: 'separator',
+        margin: 'md'
+      },
+      {
+        type: 'box',
+        layout: 'vertical',
+        margin: 'md',
+        spacing: 'sm',
+        contents: contents
+      }
+    ];
+
+    if (data.imageUrl && typeof data.imageUrl === 'string' && data.imageUrl.startsWith('https://')) {
+      bodyContents.push({
+        type: 'image',
+        url: data.imageUrl,
+        size: 'full',
+        aspectRatio: '16:9',
+        aspectMode: 'cover',
+        margin: 'md'
+      });
     }
 
     return {
@@ -607,33 +677,7 @@ const SalaryFlexMessageBuilder = {
         body: {
           type: 'box',
           layout: 'vertical',
-          contents: [
-            {
-              type: 'text',
-              text: `補款員工：${info.name || '-'}`,
-              weight: 'bold',
-              size: 'lg',
-              wrap: true
-            },
-            {
-              type: 'text',
-              text: `廠商：${info.vendor || '-'} | 付款日：${info.pay_date || '未指定'}`,
-              size: 'xs',
-              color: '#64748b',
-              margin: 'xs'
-            },
-            {
-              type: 'separator',
-              margin: 'md'
-            },
-            {
-              type: 'box',
-              layout: 'vertical',
-              margin: 'md',
-              spacing: 'sm',
-              contents: contents
-            }
-          ]
+          contents: bodyContents
         },
         footer: {
           type: 'box',
