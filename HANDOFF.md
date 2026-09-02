@@ -1,6 +1,6 @@
 # 招募機器人（沛沛）專案交接筆記
 
-給 Claude Code 接續使用。這份文件整理目前為止跟 Claude（web/mobile 對話介面）討論並已完成的工作、正在進行中的項目，以及還沒開始的部分。
+給 Claude Code 接續使用。這份文件整理目前為止已完成的工作，以及還沒開始、需要接續處理的待辦事項。
 
 ## 專案基本資訊
 
@@ -9,7 +9,14 @@
 - GCP 專案 ID：`tsaipei-505807`
 - 部署方式：接 GitHub，push 後由 Cloud Build 自動建置、部署到 Cloud Run（服務名稱 `recruitment-bot`，地區 `asia-east1`）
 - Cloud Run 服務有 `/callback`（正式環境）與 `/test-callback`（測試環境）兩條 webhook 路由
-- 檔案結構：`main.py`、`config.py`、`handlers/message_handler.py`、`services/session_service.py`、`services/matcher_service.py`、`services/notion_service.py`、`services/flex_service.py`、`services/ai_service.py`
+- 檔案結構：`main.py`、`config.py`、`handlers/message_handler.py`、`services/session_service.py`、`services/matcher_service.py`、`services/notion_service.py`、`services/flex_service.py`、`services/ai_service.py`、`tests/`
+
+## 待辦事項（下一步優先處理）
+
+- **【需與外部工程師協調】線上履歷填完後自動跳轉回官方 LINE 帳號**：求職者點擊「填寫線上履歷」會被導去外部履歷系統（`resume.tsaipei.com.tw`，網址設定在 `config.py` 的 `DEFAULT_RESUME_URLS`），但填完表單後目前不會自動導回 LINE 官方帳號對話。這個機制牽涉到外部履歷系統那端的表單送出後導轉邏輯（例如導回 LINE 的 `line://` deep link 或加上完成頁），不是這個 repo 這邊能單方面決定/實作的，需要先跟負責 `resume.tsaipei.com.tw` 的外部工程師討論介接方式，確認後才回來這裡實作對應的程式（例如可能要在 `flex_service.py` 的履歷網址加上 redirect 參數，或是新增一個 webhook/callback 端點接收「已完成填寫」通知）。
+- **帳單帳戶升級**：目前仍是「免費試用帳戶」，正式頻道流量上量後（估計約 4 萬則/月，群發尖峰每分鐘數百則）容易撞到 Vertex AI 配額上限。建議**在正式切換頻道前**先升級成正式付費帳戶。
+- **觀察 Vertex AI 回應延遲 vs LINE 30 秒 reply token 時限**：測試環境曾測到單輪決策約 11.7 秒，正式頻道併發量提高後延遲可能惡化，有機會撞到 LINE 30 秒逾時。目前只能先觀察，建議正式上線後密切看 Cloud Run/Vertex AI 的延遲指標，有異常再回來處理（例如考慮加上逾時保護或非同步通知使用者「處理中」）。
+- **考慮加上錯誤告警機制**：目前所有例外只靠 `print()` 寫進 Cloud Run log，沒有主動通知。量小時人工看 log 還行，正式頻道建議至少設一個 Cloud Monitoring alert（例如 5xx 或例外次數異常）。
 
 ## 已完成並部署驗證過的項目
 
@@ -18,60 +25,43 @@
 1. **Session/槽位狀態外部化**：`session_service.py` 從行程記憶體字典改成讀寫 Firestore（database ID 用預設的 `(default)`，Standard edition）。函式簽名維持不變（`get_user_history`、`get_user_slots`、`update_user_slots`、`clear_user_slots`、`append_user_history`），呼叫端不用改。
 2. **修正同步阻塞問題**：`main.py` 把 `webhook_handler.handle(...)` 用 `starlette.concurrency.run_in_threadpool` 包起來，避免同步的 Notion/Firestore/Gemini 呼叫卡住 FastAPI event loop。順便把 `/callback`、`/test-callback` 重複邏輯抽成共用的 `_handle_webhook()`。
 3. **統一 GCP 設定來源**：`ai_service.py` 不再自己 `os.getenv` 定義 `GCP_PROJECT_ID`/`GCP_LOCATION`，改成 `from config import GCP_PROJECT_ID, GCP_LOCATION`。
-4. **整理 `notion_service.py` 檔案結構**：拿掉 `fetch_faqs_data()` 裡的死碼（`return` 之後執行不到的 `import requests`）與 `append_unresolved_faq_to_notion()` 內重複的 import。
+4. **整理 `notion_service.py` 檔案結構**：拿掉 `fetch_faqs_data()` 裡的死碼與重複 import。
 
 ### 額外處理（第一組期間發現、非原訂項目）
 
-5. **`ai_service.py` 加上 429 重試機制**：新增 `_generate_with_retry()`，只針對 429 RESOURCE_EXHAUSTED（Vertex AI Dynamic Shared Quota 暫時滿載）重試（最多 2 次、遞增等待時間），其他錯誤直接拋出換下一個 fallback 模型。`MODEL_FALLBACK_LIST` 統一成兩處共用。
-6. **修正 Vertex AI 地區與模型名稱問題（關鍵 bug）**：
-   - 發現 `gemini-3.5-flash` 在 Vertex AI 上**根本不存在**（不是地區問題，是模型名稱本身無效），已從 `MODEL_FALLBACK_LIST` 移除，目前只剩 `gemini-2.5-flash`、`gemini-2.5-flash-lite`。
-   - `config.py` 的 `GCP_LOCATION` 預設值從 `asia-east1` 改成 `global`（Google 官方建議的全域端點，可用性更高、也能降低 429 機率）。Cloud Run 環境變數本身沒有手動設定 `GCP_LOCATION`，所以改程式碼預設值即可生效，不用動 Cloud Run 設定。
-   - **注意**：Cloud Run 服務本身跑在 `asia-east1`（這個不用改，是容器實際運行地區，跟 Vertex AI 呼叫地區是兩回事，不要搞混）。
+5. **`ai_service.py` 加上 429 重試機制**：`_generate_with_retry()` 只針對 429 RESOURCE_EXHAUSTED 重試（最多 2 次、遞增等待時間），其他錯誤直接換下一個 fallback 模型。
+6. **修正 Vertex AI 地區與模型名稱問題（關鍵 bug）**：`gemini-3.5-flash` 在 Vertex AI 上根本不存在，已從 `MODEL_FALLBACK_LIST` 移除。`GCP_LOCATION` 預設值改成 `global`。Cloud Run 服務本身仍跑在 `asia-east1`（容器運行地區，跟 Vertex AI 呼叫地區是兩回事）。
 
-### 第二組：對話邏輯核心（進行中）
+### 第二組：對話邏輯核心（全部完成）
 
-7. **槽位三態機制**（`session_service.py`）：新增 `CLEAR_SLOT = "__CLEAR__"` 常數。`update_user_slots` 改成三態：空字串/不傳＝維持原值、`CLEAR_SLOT`＝明確清空、其他值＝設定。
-8. **否定詞感知的地點/類別抽取**（`matcher_service.py`）：
-   - 新增 `_keyword_is_negated(text, keyword)`：檢查關鍵字前 6 個字內有沒有否定詞（`不要`、`不想要`、`不想`、`除了`、`排除`、`不考慮`、`非`）。
-   - `extract_current_target_location` 改用 `LOCATION_CANDIDATES` 清單，跳過被否定的地名；新增 `detect_negated_location`。
-   - `detect_category_label` 改用 `CATEGORY_KEYWORDS` 字典（原本是 if-elif 串），跳過被否定的類別；新增 `detect_negated_category`。
-   - `message_handler.py` 步驟 0-3 接上：地點/類別如果被偵測為「明確排除且排除的剛好是目前鎖定的舊值」，傳 `CLEAR_SLOT` 真正清空槽位（而不是像原本那樣只在當輪暫時忽略、下一輪又跑回來——這其實修掉了原本「不限地區」也有的潛在 bug）。
-9. **修正 `detect_brand_label` 的多個誤判問題**（這是這幾輪測試花最多時間抓出來的部分）：
-   - 正則表達式備援抽取（「有 XX 的工作嗎」句型）容易誤抓非廠商詞（例如「外送」「其他的」）當廠商名稱。修法：抓到的詞**必須真的比對到 `active_jobs` 裡某筆職缺的 `_vendor_name_clean`** 才採信，否則不設定 brand。同時新增跟 `CATEGORY_KEYWORDS` 的完全比對（避免「外送」被當廠商），刻意用完全比對而非子字串比對（避免「蝦皮」因為是「蝦皮門市」的子字串而被誤傷）。
-   - 新增 `_vendor_core_name(vendor_name)`：處理同仁會在正式廠商名稱後面加內部識別後綴的情況（例如「錢都(代招)」→「錢都」、「美光(桃園)」→「美光」、「石二鍋+12mini(代招)」→「石二鍋」），切分符號涵蓋 `（`、`(`、`_`、`-`、`+`。
-   - **關鍵修正**：`detect_brand_label` 步驟 1 原本核心名稱比對命中後，回傳的是**那一筆職缺的完整廠商名稱**（例如「美光(桃園)」），而不是核心名稱「美光」。這導致 Notion 裡同一品牌但不同地區各自登記一筆的情況（美光(桃園)/美光(台中)/美光(台南)），brand 槽位會被鎖在某一個特定地區的寫法，後續 `build_ai_job_candidates`／`_score_job_for_ai` 拿這個帶括號的字串去比對已清理過的 `_search_text`，格式對不上導致品牌篩選/加分形同虛設。已修正成統一回傳核心名稱。
-   - `brand` 槽位行為調整成**每輪重新判斷、不沿用舊值**（跟地點/類別不同——地點/類別是持續性偏好會沿用，但 brand 比較像單次詢問，這輪沒提到就該自動清空，避免候選集合被舊品牌一直鎖住）。這是使用者明確決定的產品邏輯，已跟人資確認過。
+7. **槽位三態機制**（`session_service.py`）：`CLEAR_SLOT` 常數，`update_user_slots` 支援「維持原值／明確清空／設定新值」三態。
+8. **否定詞感知的地點/類別抽取**（`matcher_service.py`）：`_keyword_is_negated`、`detect_negated_location`、`detect_negated_category`，能區分「不要 A」跟「想要 B」。
+9. **`detect_brand_label` 多項誤判修正**：正則備援抽取必須真的比對到 Notion 廠商名稱才採信；`_vendor_core_name` 處理內部後綴（如「美光(桃園)」→「美光」）；brand 槽位每輪重新判斷、不沿用舊值。
+10. **候選集合硬篩→加權排序**：`build_ai_job_candidates` 不再對地區/品牌/休假制度做 hard filter，改成全部職缺加減分後取分數前 70 筆，修掉「地區查無職缺時候選集合直接變空」的 bug（PR #1）。
+11. **拆分「全域重置」與「單一維度調整」**：`重新找`/`重來` 才整組清空，`換個條件` 只詢問要換哪一項、其他槽位保留（PR #1）。
+12. **收緊禮貌收尾判斷**：加入轉折詞白名單，「謝謝，不過還想問⋯」不會再被誤判成單純道謝（PR #1）。
+13. **統一意圖分類來源**：`matcher_service.KNOWN_BRANDS` + `has_recognizable_category_or_brand_keyword()`，取代 `message_handler.py` 原本覆蓋不完整的手動關鍵字清單（PR #1）。
+14. **「有美光的工作嗎？」退讓推薦品質**：已用真實對話驗證，AI 會誠實列出美光在其他地區（新北/桃園/台中/台南等）有職缺並推薦，不會誤判成 `NO_MATCH`。
 
-## 目前正在驗證中、還沒有結論的部分
+### 第三組：FAQ/職缺分工調整（全部完成，PR #2）
 
-- **「有美光的工作嗎？」在新莊沒有美光職缺時的回覆品質**：候選集合已經修好（品牌保底機制現在能正確抓到桃園/台中/台南三筆美光職缺送給 AI），但還沒確認 AI 實際判斷出來的 `ACTION` 和措辭是否正確（是否會用 `ACTION:RECOMMEND` 並在回覆裡誠實說明「美光在其他地區有職缺」，還是依然誤判成 `ACTION:NO_MATCH`）。**下一步待辦**：如果 AI 這次自己處理得當就不用再動；如果還是判斷錯誤，需要調整 `ai_prompt` 的條件退讓範例（目前只教過「同地區、制度不同」的退讓話術，格式 C 那段，沒教過「品牌符合但地區不符」也該退讓推薦）。
+15. **FAQ 高信心比對直接回傳原文**：`find_high_confidence_faq_match()` 雙向完整包含比對命中時，直接回傳 Notion 原文，不經 AI 改寫，避免合規風險並省一次 Gemini 呼叫。
+16. **未收錄問題寫入 FAQ 前先去重**：`append_unresolved_faq_to_notion()` 寫入前先查現有問題標題，相似問題不重複寫入。
 
-## 第二組還沒開始的項目
+### 第四組：程式碼品質（全部完成，PR #3、#4）
 
-- **核心問題 3：候選集合建構從硬篩改成加權排序**——`build_ai_job_candidates` 目前地點/品牌仍是先做 hard filter 縮小 `target_pool`，理論上應該改成只做加減分、放寬候選池（例如取分數前 60-80 筆），讓 AI 在更完整的資訊下判斷退讓推薦。這次修的品牌保底 bug 只是讓「找不到才 fallback 到全品牌」這條路徑本身能正常運作，並沒有把整體篩選機制從硬篩改成加權——如果之後還有類似「候選集合太窄」的症狀，這項要優先做。
-- **拆分「全域重置」與「單一維度調整」**（`message_handler.py` 的 `reset_keywords` 攔截）：目前命中就整組槽位清空，該分開成「真的想全部重來」跟「只想換一個條件」兩種情境，後者只更新對應槽位。
-- **收緊禮貌收尾判斷**：目前「謝謝，不過還想問⋯」這類帶轉折詞但沒問號的句子會被誤判成單純道謝、整句被忽略。
-- **統一意圖分類來源**：reset / 禮貌收尾 / show_all / 直接命中（外送/門市/momo）目前各自維護一份關鍵字白名單，覆蓋範圍不一致（例如 `has_specific_intent` 白名單缺「理貨」「餐飲」）。
+17. **地區/班別/廠商關鍵字集中化**：新增 `SHIFT_SYNONYMS` 模組常數，`_tokenize_search_terms` 改引用 `LOCATION_CANDIDATES`/`SHIFT_SYNONYMS`/`KNOWN_BRANDS` 單一來源。
+18. **`DEFAULT_RESUME_URLS` 環境變數化**：`config.py` 改用 `os.getenv()`，可透過 `RESUME_URL_SPX`/`RESUME_URL_SERVICE`/`RESUME_URL_MANUFACTURE` 覆蓋，未設定時沿用原本網址。
+19. **補單元測試**：新增 `tests/` 目錄（標準庫 `unittest`），涵蓋 `matcher_service.py`/`notion_service.py`/`ai_service.py`/`message_handler.py` 的純邏輯函式。
+20. **Python 版本升級**：`Dockerfile` base image 從 `python:3.10-slim` 升級到 `python:3.12-slim`（PR #4）。
 
-## 第三組（FAQ/職缺分工調整）跟第四組（程式碼品質）都還沒開始
+### 額外發現並修正的問題（不在原訂範圍內）
 
-詳見對話歷程中「彙整這幾輪討論」那則列出的完整清單，這裡不重複貼。重點：
-- FAQ 高信心比對時應直接回傳 Notion 原文，不經 AI 改寫（合規風險 + 省呼叫）
-- 未收錄問題寫入 FAQ 前先去重
-- 地區/班別/廠商關鍵字清單集中化、`main.py` webhook 共用 helper（已完成）、`DEFAULT_RESUME_URLS` 搬到環境變數、補單元測試
+21. **AI 回覆解析 bug（PR #6）**：實測「有理貨的工作嗎」時發現，Gemini 若沒有照 prompt 範例在 `REPLY:`/`BUTTONS:` 之間換行，`BUTTONS:` 原始文字會被當成訊息內容顯示給使用者。
+22. **AI 決策改用結構化 JSON 輸出（PR #7、#8，徹底解決 #21 這類問題的根源）**：`ai_service.py` 新增 `response_schema` 支援 Gemini 原生結構化輸出模式（`response_mime_type="application/json"`）；`message_handler.py` 的 `ai_prompt` 跟解析邏輯改成 `AI_DECISION_SCHEMA` + `json.loads`，取代原本的 `ACTION:`/`REPLY:`/`BUTTONS:`/`IDS:` 文字格式 + 正則表達式解析，格式錯誤在 API 層級就不可能發生。已用真實對話驗證按鈕正確渲染、無格式外洩、跨地區退讓推薦語氣自然。
 
-## 其他待確認/待辦的小事項
+## 目前所有檔案的狀態
 
-- **Python 版本**：`Dockerfile.txt` 用 `python:3.10-slim`，Python 3.10 的 `google-api-core` 支援將於 2026-10-04 到期，建議找時間升級到 3.11+。
-- Vertex AI 回應速度：測試中觀察過一次單輪決策耗時約 11.7 秒，量大時要留意 LINE reply token 30 秒逾時風險，目前先觀察、還沒需要處理。
-- 帳單帳戶目前仍是「免費試用帳戶」，若要申請配額調高（一般 Vertex AI Gemini 新模型走 Dynamic Shared Quota，通常不需要），必須先升級成正式付費帳戶才能申請。
-- 月流量預估：正式頻道約 4 萬則/月，群發尖峰可能到每分鐘幾百則。
+所有檔案都已經在 GitHub `main` 分支上，跟目前 Cloud Run 上手動部署的版本一致（PR #1～#8 均已合併）。接手時建議先 `git log --oneline -10` 確認本地/部署版本沒有落後 main。
 
-## 目前所有檔案的最新版本
-
-以下檔案已經在對話中修改並下載確認過，都是目前的最新版本（相對於最一開始上傳的原始檔案）：
-`main.py`、`config.py`、`session_service.py`、`ai_service.py`、`matcher_service.py`、`message_handler.py`、`notion_service.py`
-
-尚未修改過的原始檔案：`flex_service.py`、`requirements.txt`（已加 `google-cloud-firestore`）、`Dockerfile.txt`
-
-建議接手時先用 `git diff` 或直接讀取 repo 目前狀態確認這些檔案是否都已經是最新版本再繼續往下做。
+`tests/` 目錄有 43 個單元測試，改動前後都建議跑 `python3 -m unittest discover -s tests` 確認沒有回歸。
