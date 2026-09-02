@@ -171,7 +171,9 @@ const AiJobDescriptionService = {
       external_title: titleForFallback,
       external_desc: `🎯【工作內容】\n・${sanitizedDesc.replace(/\n+/g, '\n・')}\n\n⏰【時間與休假】\n・工作班別：${shift}\n\n💰【薪資待遇】\n・薪資待遇：${salary}\n\n📍【地點資訊】\n・工作地點：${smartLocation}`,
       highlight: `開放應徵${titleForFallback}！工作地點：${smartLocation}，班別：${shift}，薪資：${salary}，歡迎立即應徵！`,
-      formatted_detail: `📋【職缺名稱：${sanitizedTitle}】\n\n🎯【主要工作內容】\n・${sanitizedDesc.replace(/\n+/g, '\n・')}\n\n⏰【工作時間與休假】\n・工作班別：${shift}\n\n💰【薪資與福利待遇】\n・薪資待遇：${salary}\n\n📍【工作地點與交通】\n・工作地點：${smartLocation}\n\n💡 依《就業服務法》規定，本公司所有職缺皆無性別、年齡限制，歡迎所有朋友應徵！`
+      formatted_detail: `📋【職缺名稱：${sanitizedTitle}】\n\n🎯【主要工作內容】\n・${sanitizedDesc.replace(/\n+/g, '\n・')}\n\n⏰【工作時間與休假】\n・工作班別：${shift}\n\n💰【薪資與福利待遇】\n・薪資待遇：${salary}\n\n📍【工作地點與交通】\n・工作地點：${smartLocation}\n\n💡 依《就業服務法》規定，本公司所有職缺皆無性別、年齡限制，歡迎所有朋友應徵！`,
+      // 標記這是本地規則保底文案，不是真正的 AI 生成，讓呼叫端可以在審核卡片上提示人工複查
+      isFallback: true
     };
 
     if (!apiKey) {
@@ -312,7 +314,8 @@ ${sanitizedDesc}
                 external_title: polishedTitle,
                 external_desc: polishedDesc,
                 highlight: highlight,
-                formatted_detail: formattedDetail
+                formatted_detail: formattedDetail,
+                isFallback: false
               };
 
               try {
@@ -446,6 +449,7 @@ const JobWorkflowService = {
     fields.external_desc = aiArtifacts.external_desc;
     fields.highlight = aiArtifacts.highlight;
     fields.formatted_detail = aiArtifacts.formatted_detail;
+    const aiFallbackUsed = aiArtifacts.isFallback === true;
 
     // 比對異動欄位 (僅在 update 模式且有舊資料時進行比對)
     const diffs = (mode === 'update' && oldJobData) ? getJobFieldsDiff(oldJobData, fields) : {};
@@ -498,7 +502,8 @@ const JobWorkflowService = {
       applicant: applicant,
       fields: fields,
       imageUrl: imageUrl,
-      diffs: diffs
+      diffs: diffs,
+      aiFallbackUsed: aiFallbackUsed
     });
 
     const commonJobPlainText = buildJobPlainTextContent(
@@ -553,7 +558,8 @@ const JobWorkflowService = {
           imageUrl: imageUrl,
           targetStatus: targetStatusText,
           supervisorName: supervisorNames,
-          diffs: diffs
+          diffs: diffs,
+          aiFallbackUsed: aiFallbackUsed
         });
         LineService.pushMessage(applicant.userId, [applicantCard]);
         LineService.pushMessage(applicant.userId, [{ type: 'text', text: commonJobPlainText }]);
@@ -1303,6 +1309,24 @@ const JobFlexMessageBuilder = {
         margin: 'xs',
         wrap: true
       },
+      ...(data.aiFallbackUsed ? [{
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#fff7ed',
+        paddingAll: 'sm',
+        cornerRadius: 'md',
+        margin: 'sm',
+        contents: [
+          {
+            type: 'text',
+            text: '⚠️ AI 文案生成失敗，以下精華亮點/工作內容為系統保底文案，建議核准前人工複查內容',
+            size: 'xxs',
+            color: '#c2410c',
+            weight: 'bold',
+            wrap: true
+          }
+        ]
+      }] : []),
       {
         type: 'box',
         layout: 'vertical',
@@ -1583,6 +1607,24 @@ const JobFlexMessageBuilder = {
         weight: 'bold',
         margin: 'xs'
       },
+      ...(data.aiFallbackUsed ? [{
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: '#fff7ed',
+        paddingAll: 'sm',
+        cornerRadius: 'md',
+        margin: 'sm',
+        contents: [
+          {
+            type: 'text',
+            text: '⚠️ AI 文案生成失敗，以下精華亮點/工作內容為系統保底文案，主管審核時會一併收到提醒',
+            size: 'xxs',
+            color: '#c2410c',
+            weight: 'bold',
+            wrap: true
+          }
+        ]
+      }] : []),
       {
         type: 'separator',
         margin: 'md'
