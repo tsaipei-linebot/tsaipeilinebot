@@ -1,3 +1,5 @@
+import hmac
+
 from fastapi import FastAPI, Request, Header, HTTPException
 from starlette.concurrency import run_in_threadpool
 from linebot import LineBotApi, WebhookHandler
@@ -6,9 +8,11 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage
 
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
-    TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET
+    TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
+    FACTORY_WATCH_TRIGGER_SECRET
 )
 from handlers.message_handler import process_user_message, process_image_message
+from services.factory_watch_service import run_weekly_scan
 
 app = FastAPI(
     title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine - V12 (Modular)",
@@ -78,3 +82,17 @@ def handle_message(event):
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     process_image_message(event, line_bot_api)
+
+# ==========================================
+# 每週新工廠登記監控：由 Cloud Scheduler 定期呼叫觸發，
+# 不對外公開，用共用密鑰驗證避免被任意觸發。
+# ==========================================
+@app.post("/internal/factory-watch/run")
+async def trigger_factory_watch(x_factory_watch_secret: str = Header(None)):
+    if not FACTORY_WATCH_TRIGGER_SECRET or not x_factory_watch_secret or not hmac.compare_digest(
+        x_factory_watch_secret, FACTORY_WATCH_TRIGGER_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    summary = await run_in_threadpool(run_weekly_scan, line_bot_api)
+    return summary

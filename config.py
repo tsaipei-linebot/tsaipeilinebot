@@ -60,3 +60,16 @@ DEFAULT_RESUME_URLS = {
 # ==========================================
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "tsaipei-505807")
 GCP_LOCATION = os.getenv("GCP_LOCATION", "global")
+
+# ==========================================
+# 7. 每週新工廠登記監控設定
+# 資料源：政府資料開放平台《登記工廠名錄》(經濟部產業發展署，dataset id 6569)
+# ==========================================
+FACTORY_OPENDATA_DATASET_ID = os.getenv("FACTORY_OPENDATA_DATASET_ID", "6569")
+FACTORY_WATCH_LOOKBACK_DAYS = int(os.getenv("FACTORY_WATCH_LOOKBACK_DAYS", "10"))
+FACTORY_WATCH_SHEET_ID = os.getenv("FACTORY_WATCH_SHEET_ID", "")
+FACTORY_WATCH_SHEET_NAME = os.getenv("FACTORY_WATCH_SHEET_NAME", "新登記工廠")
+# 目前尚未決定要推播給哪個 LINE 帳號/群組，先留空；設定後即可自動開始推播
+FACTORY_WATCH_LINE_TARGET_ID = os.getenv("FACTORY_WATCH_LINE_TARGET_ID", "")
+# Cloud Scheduler 呼叫 /internal/factory-watch/run 時要帶的共用密鑰，避免端點被任意觸發
+FACTORY_WATCH_TRIGGER_SECRET = os.getenv("FACTORY_WATCH_TRIGGER_SECRET", "")

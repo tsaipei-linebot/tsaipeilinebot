@@ -13,6 +13,12 @@
 
 ## 待辦事項（下一步優先處理）
 
+- **【新功能，需完成 GCP 設定才會實際運作】每週新工廠登記監控**：`services/factory_watch_service.py` + `main.py` 的 `POST /internal/factory-watch/run` 端點已完成，邏輯是每次執行去抓政府資料開放平台《[登記工廠名錄](https://data.gov.tw/dataset/6569)》（經濟部產業發展署），篩出近期新登記、且 Firestore 裡沒推播過的工廠，寫入 Google Sheet 明細，並視情況推播 LINE 摘要通知業務。要正式上線還缺以下設定（環境變數留空時，程式仍會安全跳過對應步驟並印出提示，不會噴錯）：
+  1. 建一個 Google Sheet 當明細清單，分享編輯權限給 Cloud Run 服務帳戶（`tsaipei-505807` 專案的預設運算服務帳戶，或另外指定的服務帳戶信箱），把試算表 ID 設進 `FACTORY_WATCH_SHEET_ID`
+  2. 決定 LINE 推播對象（業務同仁個人帳號或內部群組），取得 LINE user ID / group ID 後設進 `FACTORY_WATCH_LINE_TARGET_ID`（沒設定時只會更新 Sheet，不會推播）
+  3. 設一個隨機字串當 `FACTORY_WATCH_TRIGGER_SECRET`，並在 GCP Cloud Scheduler 建一個每週五下午的排程 job，用 HTTP POST 呼叫 Cloud Run 的 `/internal/factory-watch/run`，帶上 header `X-Factory-Watch-Secret: <同一組密鑰>`
+  4. 資料源的實際 CSV 下載連結是執行時動態去 data.gov.tw 資料集 API 探測的，欄位名稱也是用關鍵字比對（`services/factory_watch_service.py` 的 `COLUMN_KEYWORDS`），第一次正式跑之後建議看一次 Cloud Run log，確認欄位有抓對、筆數合理（開發環境的網路權限擋掉了 data.gov.tw，這部分沒辦法在開發階段實際跑一次驗證，只做過 CSV 解析/去重/訊息組裝等純邏輯的單元測試）
+
 - **【需與外部工程師協調】線上履歷填完後自動跳轉回官方 LINE 帳號**：求職者點擊「填寫線上履歷」會被導去外部履歷系統（`resume.tsaipei.com.tw`，網址設定在 `config.py` 的 `DEFAULT_RESUME_URLS`），但填完表單後目前不會自動導回 LINE 官方帳號對話。這個機制牽涉到外部履歷系統那端的表單送出後導轉邏輯（例如導回 LINE 的 `line://` deep link 或加上完成頁），不是這個 repo 這邊能單方面決定/實作的，需要先跟負責 `resume.tsaipei.com.tw` 的外部工程師討論介接方式，確認後才回來這裡實作對應的程式（例如可能要在 `flex_service.py` 的履歷網址加上 redirect 參數，或是新增一個 webhook/callback 端點接收「已完成填寫」通知）。
 - **帳單帳戶升級**：目前仍是「免費試用帳戶」，正式頻道流量上量後（估計約 4 萬則/月，群發尖峰每分鐘數百則）容易撞到 Vertex AI 配額上限。建議**在正式切換頻道前**先升級成正式付費帳戶。
 - **觀察 Vertex AI 回應延遲 vs LINE 30 秒 reply token 時限**：測試環境曾測到單輪決策約 11.7 秒，正式頻道併發量提高後延遲可能惡化，有機會撞到 LINE 30 秒逾時。目前只能先觀察，建議正式上線後密切看 Cloud Run/Vertex AI 的延遲指標，有異常再回來處理（例如考慮加上逾時保護或非同步通知使用者「處理中」）。
