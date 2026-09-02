@@ -167,10 +167,33 @@ def _vendor_core_name(vendor_name: str) -> str:
     return core or vendor_name
 
 
+# 常見知名廠商白名單：獨立成模組常數，讓 detect_brand_label 跟其他需要判斷
+# 「這句話有沒有提到已知品牌」的地方（例如統一意圖判斷）共用同一份清單，
+# 避免各處各自維護、覆蓋範圍不一致。
+KNOWN_BRANDS = {
+    "蝦皮": ["蝦皮", "spx"],
+    "momo": ["momo", "富邦", "富昇"],
+    "Coupang": ["coupang", "酷澎"],
+    "美光": ["美光", "micron"],
+    "欣興": ["欣興"],
+    "台積電": ["台積電", "tsmc"],
+    "宏達電": ["宏達電", "htc"]
+}
+
+
+def has_recognizable_category_or_brand_keyword(clean_input: str) -> bool:
+    """統一意圖判斷來源：檢查文字是否包含任何已知工作類別（CATEGORY_KEYWORDS）
+    或廠商（KNOWN_BRANDS）關鍵字。取代原本在 message_handler.py 另外維護、
+    覆蓋範圍不完整的手動白名單（例如漏掉「理貨」「餐飲」）。"""
+    all_category_keywords = {kw for keywords in CATEGORY_KEYWORDS.values() for kw in keywords}
+    all_brand_keywords = {kw for keywords in KNOWN_BRANDS.values() for kw in keywords}
+    return any(k in clean_input for k in all_category_keywords) or any(k in clean_input for k in all_brand_keywords)
+
+
 def detect_brand_label(text: str, active_jobs: list = None) -> str:
     """動態從訊息辨識求職者詢問之特定廠商或品牌（嚴格排除行業別與疑問詞）[cite: 1]"""
     normalized = clean_text_for_search(text)
-    
+
     # 1. 優先精準比對 Notion 資料庫中現有的所有系統廠商名稱（含核心名稱比對，
     #    避免同仁加註的內部後綴導致完整名稱永遠比對不到）[cite: 1]
     #    無論哪種比對方式命中，一律回傳「核心名稱」而不是那一筆職缺的完整廠商名稱：
@@ -194,16 +217,7 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
                     return v_core_name
 
     # 2. 常見知名廠商白名單[cite: 1]
-    known_brands = {
-        "蝦皮": ["蝦皮", "spx"],
-        "momo": ["momo", "富邦", "富昇"],
-        "Coupang": ["coupang", "酷澎"],
-        "美光": ["美光", "micron"],
-        "欣興": ["欣興"],
-        "台積電": ["台積電", "tsmc"],
-        "宏達電": ["宏達電", "htc"]
-    }
-    for brand_key, synonyms in known_brands.items():
+    for brand_key, synonyms in KNOWN_BRANDS.items():
         if any(syn in normalized for syn in synonyms):
             return brand_key
 
@@ -424,37 +438,20 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
 
     return score
 
-def build_ai_job_candidates(active_jobs: list, query_text: str, current_location: str = "", slots: dict = None, limit: int = 40) -> list:
-    """在送 Gemini 前縮小候選集合（具備品牌跨區保底、週休隔離與零結果條件退讓機制）[cite: 1]"""
+def build_ai_job_candidates(active_jobs: list, query_text: str, current_location: str = "", slots: dict = None, limit: int = 70) -> list:
+    """在送 Gemini 前建立候選集合（全部改成加減分排序，不再做地區/品牌/休假制度的硬篩選）[cite: 1]
+
+    原本地區、品牌、週休制度都是先 hard filter 縮小 target_pool，篩不到才逐層放寬。
+    這個做法會讓 AI 在「指定條件完全沒有職缺」時，候選清單裡可能只剩下極少數（甚至零筆）
+    職缺，資訊不足以判斷該怎麼退讓推薦。現在全部職缺一律先送進 _score_job_for_ai 依地區、
+    品牌、班別、休假、薪資等條件加減分，再取分數最高的前 limit 筆，讓 AI 在更完整的候選
+    資訊下自行判斷是否要退讓推薦（例如同品牌但不同地區、同地區但休假制度不同）。
+    """
     if not active_jobs:
         return []
 
     slots = slots or {}
-    brand_slot = slots.get("brand", "")
-    target_pool = active_jobs
-
-    # 1. 廠商優先保底：若指定品牌在指定地區查無缺額，自動放寬至全體職缺庫尋找該廠商[cite: 1]
-    if brand_slot:
-        brand_pool = [j for j in active_jobs if brand_slot.lower() in j.get("_search_text", "")]
-        if brand_pool:
-            target_pool = brand_pool
-        elif current_location:
-            loc_clean = current_location.replace("台", "臺")
-            target_pool = [j for j in active_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
-    elif current_location:
-        loc_clean = current_location.replace("台", "臺")
-        location_pool = [j for j in active_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
-        target_pool = location_pool
-
-    # 2. 週休制度隔離與條件退讓機制[cite: 1]
-    leave_slot = slots.get("leave", "")
-    query_clean = clean_text_for_search(query_text)
-    if leave_slot == "週休二日" or "週休" in query_clean or "周休" in query_clean:
-        weekend_pool = [j for j in target_pool if any(k in str(j.get("休假方式") or "") for k in ["週休", "周休", "見紅", "六日"])]
-        if weekend_pool:
-            target_pool = weekend_pool
-
-    scored = [(_score_job_for_ai(job, query_text, current_location, slots), idx, job) for idx, job in enumerate(target_pool)]
+    scored = [(_score_job_for_ai(job, query_text, current_location, slots), idx, job) for idx, job in enumerate(active_jobs)]
     scored.sort(key=lambda x: (-x[0], x[1]))
     positive = [item for item in scored if item[0] > 0]
     selected = positive[:limit] if positive else scored[:limit]
