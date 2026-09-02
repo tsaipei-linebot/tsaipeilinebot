@@ -5,7 +5,7 @@ from linebot.models import (
     TextSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
 from services.session_service import (
-    get_user_history, append_user_history, get_user_slots, update_user_slots, clear_user_slots
+    get_user_history, append_user_history, get_user_slots, update_user_slots, clear_user_slots, CLEAR_SLOT
 )
 from services.notion_service import (
     fetch_jobs_data, fetch_faqs_data, clean_text_for_search, sanitize_uri,
@@ -18,7 +18,8 @@ from services.matcher_service import (
     extract_current_target_location, extract_shift_preference, extract_leave_preference,
     extract_salary_preference, detect_category_label, detect_brand_label, filter_jobs_by_category_tiered,
     build_progressive_question, build_ai_job_candidates, build_ai_faq_candidates,
-    job_matches_category_filter, has_negative_intent, extract_numeric_salary_preference
+    job_matches_category_filter, has_negative_intent, extract_numeric_salary_preference,
+    detect_negated_location, detect_negated_category
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 
@@ -135,7 +136,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
             return
 
-        # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋[cite: 6] ----------------
+        # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋（含否定詞感知：能區分「不要 A」跟「想要 B」）[cite: 6] ----------------
         history = get_user_history(user_id)
         history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history[-6:]])
         user_slots = get_user_slots(user_id)
@@ -144,22 +145,41 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         explicit_any_location = any(k in clean_input for k in ["都可以", "不限地區", "隨便", "哪裡都", "不限地點", "全台", "全區"])
 
         extracted_loc = extract_current_target_location(raw_msg, "")
+        negated_loc = detect_negated_location(raw_msg)
+
         if extracted_loc:
             current_location = extracted_loc
-        elif explicit_any_location:
+            location_slot_update = extracted_loc
+        elif explicit_any_location or (negated_loc and negated_loc == user_slots.get("location", "")):
+            # 使用者明確表示不限地區，或否定了目前鎖定的那個地區 → 真正清空槽位，而不是只在本輪暫時忽略
             current_location = ""
+            location_slot_update = CLEAR_SLOT
         else:
             current_location = user_slots.get("location", "")
+            location_slot_update = ""
 
         detected_shift = extract_shift_preference(raw_msg) or user_slots.get("shift", "")
         detected_leave = extract_leave_preference(raw_msg) or user_slots.get("leave", "")
-        detected_category_from_text = detect_category_label(clean_input) or user_slots.get("category", "")
+
+        detected_category_from_text = detect_category_label(clean_input)
+        negated_category = detect_negated_category(clean_input)
+
+        if detected_category_from_text:
+            category_slot_update = detected_category_from_text
+        elif negated_category and negated_category == user_slots.get("category", ""):
+            # 使用者明確排除掉目前鎖定的類別（例如「除了外送」）→ 清空，這輪查詢也不再沿用被排除的舊類別
+            category_slot_update = CLEAR_SLOT
+            detected_category_from_text = ""
+        else:
+            category_slot_update = ""
+            detected_category_from_text = user_slots.get("category", "")
+
         detected_brand = detect_brand_label(raw_msg, active_jobs) or user_slots.get("brand", "")
 
         update_user_slots(
             user_id, 
-            location=current_location, 
-            category=detected_category_from_text, 
+            location=location_slot_update, 
+            category=category_slot_update, 
             shift=detected_shift, 
             leave=detected_leave, 
             brand=detected_brand
