@@ -9,6 +9,9 @@
 // ==============================================================================
 const CONFIG = {
   LINE_CHANNEL_ACCESS_TOKEN: (PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN') || '').trim(),
+  // GAS 的 Web App 無法讀取 HTTP Header（拿不到 X-Line-Signature），
+  // 改用只有本系統與 LINE Webhook 設定網址知道的隨機密鑰，作為 Webhook 來源驗證。
+  LINE_WEBHOOK_SECRET: (PropertiesService.getScriptProperties().getProperty('LINE_WEBHOOK_SECRET') || '').trim(),
   NOTION_API_KEY: (PropertiesService.getScriptProperties().getProperty('NOTION_API_KEY') || '').trim(),
   NOTION_DATABASE_ID: (PropertiesService.getScriptProperties().getProperty('NOTION_DATABASE_ID') || '').replace(/-/g, '').trim(),
   NOTION_VERSION: '2022-06-28',
@@ -118,6 +121,29 @@ function doGet(e) {
   });
 }
 
+// 常數時間字串比對，避免密鑰比對時因提早比對失敗而洩漏時序資訊
+function constantTimeEquals(a, b) {
+  const strA = String(a || '');
+  const strB = String(b || '');
+  if (strA.length !== strB.length || strA.length === 0) return false;
+  let diff = 0;
+  for (let i = 0; i < strA.length; i++) {
+    diff |= strA.charCodeAt(i) ^ strB.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+// 驗證 LINE Webhook 請求是否帶有正確的共用密鑰（因 GAS 無法讀取 X-Line-Signature header 改採此方案）
+function isValidWebhookSecret(e) {
+  const expected = CONFIG.LINE_WEBHOOK_SECRET;
+  if (!expected) {
+    console.error('❌ 尚未設定 LINE_WEBHOOK_SECRET，為安全起見一律拒絕 Webhook 請求！請至指令碼屬性設定後再啟用。');
+    return false;
+  }
+  const provided = (e && e.parameter && e.parameter.webhook_secret) || '';
+  return constantTimeEquals(provided, expected);
+}
+
 function doPost(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) {
@@ -133,6 +159,10 @@ function doPost(e) {
     }
     
     if (requestData.events && Array.isArray(requestData.events)) {
+      if (!isValidWebhookSecret(e)) {
+        console.warn('❌ LINE Webhook 驗證失敗：webhook_secret 遺失或不相符，拒絕處理（可能為偽造請求）');
+        return createJsonResponse({ status: 'error', message: 'unauthorized' });
+      }
       LineWebhookService.handleEvents(requestData.events);
       return createJsonResponse({ status: 'success', message: 'LINE Webhook 已處理' });
     }
