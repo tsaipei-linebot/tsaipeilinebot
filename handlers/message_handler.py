@@ -549,3 +549,28 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 ])
             )
         )
+
+
+def process_image_message(event, target_line_bot_api: LineBotApi):
+    """求職者傳送圖片（例如截圖）時的保底回覆。目前沒有解析圖片內容的能力，
+    若完全不回應，使用者會誤以為機器人已讀不回或故障，所以主動引導改用文字描述需求。"""
+    reply_token = event.reply_token
+    if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
+        return
+
+    user_id = getattr(event.source, 'user_id', 'USER')
+    reply_text = "您好呀！我是招募顧問沛沛 😊\n\n沛沛目前還看不懂圖片內容喔，麻煩您用文字告訴我想找的地區、班別，或直接打字描述您的問題，我會盡快為您查詢喔！"
+
+    try:
+        append_user_history(user_id, "求職者", "[傳送了一張圖片]")
+        append_user_history(user_id, "招募顧問沛沛", reply_text)
+    except Exception:
+        print(f"[圖片訊息保底回覆 - 寫入對話歷史失敗 Traceback]: {traceback.format_exc()}")
+
+    quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+        QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
+        QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
+        QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+    ])
+    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))

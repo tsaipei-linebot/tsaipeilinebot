@@ -2,13 +2,13 @@ from fastapi import FastAPI, Request, Header, HTTPException
 from starlette.concurrency import run_in_threadpool
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage
+from linebot.models import MessageEvent, TextMessage, ImageMessage
 
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET
 )
-from handlers.message_handler import process_user_message
+from handlers.message_handler import process_user_message, process_image_message
 
 app = FastAPI(
     title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine - V12 (Modular)",
@@ -60,6 +60,10 @@ async def test_callback(request: Request, x_line_signature: str = Header(None)):
 def handle_test_message(event):
     process_user_message(event, test_line_bot_api)
 
+@test_handler.add(MessageEvent, message=ImageMessage)
+def handle_test_image_message(event):
+    process_image_message(event, test_line_bot_api)
+
 # ==========================================
 # 正式環境 Webhook 路由[cite: 2]
 # ==========================================
@@ -70,3 +74,7 @@ async def callback(request: Request, x_line_signature: str = Header(None)):
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     process_user_message(event, line_bot_api)
+
+@handler.add(MessageEvent, message=ImageMessage)
+def handle_image_message(event):
+    process_image_message(event, line_bot_api)
