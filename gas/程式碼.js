@@ -12,6 +12,8 @@ const CONFIG = {
   // GAS 的 Web App 無法讀取 HTTP Header（拿不到 X-Line-Signature），
   // 改用只有本系統與 LINE Webhook 設定網址知道的隨機密鑰，作為 Webhook 來源驗證。
   LINE_WEBHOOK_SECRET: (PropertiesService.getScriptProperties().getProperty('LINE_WEBHOOK_SECRET') || '').trim(),
+  // 管理端查詢用密鑰：保護會回傳同仁名單等內部資料的 doGet 端點，避免公開洩漏
+  ADMIN_API_SECRET: (PropertiesService.getScriptProperties().getProperty('ADMIN_API_SECRET') || '').trim(),
   NOTION_API_KEY: (PropertiesService.getScriptProperties().getProperty('NOTION_API_KEY') || '').trim(),
   NOTION_DATABASE_ID: (PropertiesService.getScriptProperties().getProperty('NOTION_DATABASE_ID') || '').replace(/-/g, '').trim(),
   NOTION_VERSION: '2022-06-28',
@@ -78,6 +80,9 @@ function doGet(e) {
   const action = (e.parameter && e.parameter.action) ? e.parameter.action : '';
   
   if (action === 'get_employees') {
+    if (!isValidAdminApiSecret(e)) {
+      return createJsonResponse({ status: 'error', message: 'unauthorized' });
+    }
     try {
       const employees = OrgService.getBoundEmployeesList();
       return createJsonResponse({
@@ -141,6 +146,17 @@ function isValidWebhookSecret(e) {
     return false;
   }
   const provided = (e && e.parameter && e.parameter.webhook_secret) || '';
+  return constantTimeEquals(provided, expected);
+}
+
+// 驗證管理端查詢請求是否帶有正確的 admin_secret，避免同仁名單等內部資料被公開查詢
+function isValidAdminApiSecret(e) {
+  const expected = CONFIG.ADMIN_API_SECRET;
+  if (!expected) {
+    console.error('❌ 尚未設定 ADMIN_API_SECRET，為安全起見一律拒絕此管理端查詢！請至指令碼屬性設定後再啟用。');
+    return false;
+  }
+  const provided = (e && e.parameter && e.parameter.admin_secret) || '';
   return constantTimeEquals(provided, expected);
 }
 
