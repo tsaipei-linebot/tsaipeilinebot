@@ -4,19 +4,28 @@ from services.session_service import get_user_slots
 from services.notion_service import clean_text_for_search
 
 def _tokenize_search_terms(text: str) -> list:
-    """將自然語言拆成可用於本地候選職缺/FAQ 篩選的詞彙[cite: 1]"""
+    """將自然語言拆成可用於本地候選職缺/FAQ 篩選的詞彙[cite: 1]
+
+    地區、班別、廠商三類關鍵字改成直接引用模組層級的單一清單來源
+    （LOCATION_CANDIDATES / SHIFT_SYNONYMS / KNOWN_BRANDS，定義在本檔案下方，
+    Python 只在函式「呼叫時」才查找全域名稱，所以先在這裡引用、稍後才定義沒有問題），
+    避免跟 extract_current_target_location、extract_shift_preference、detect_brand_label
+    各自維護一份導致覆蓋範圍兜不起來。休假制度、薪資、工作類別不在這次「地區/班別/廠商」
+    集中化範圍內，維持原本各自的關鍵字。用 dict.fromkeys 去重，避免清單合併後出現重複詞
+    導致同一個詞被算兩次分數。
+    """
     normalized = clean_text_for_search(text)
-    candidates = [
-        "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
-        "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
-        "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆",
-        "早班", "早上", "白班", "日班", "常日班", "晚班", "小夜", "中班", "大夜", "夜班", "假日", "彈性", "輪班",
+    candidates = list(dict.fromkeys([
+        *LOCATION_CANDIDATES,
+        *[syn for syns in SHIFT_SYNONYMS.values() for syn in syns],
+        "早上",  # SHIFT_SYNONYMS 只收「早上班」，這裡額外保留原本就有涵蓋的單獨「早上」寫法
         "週休", "周休", "見紅休", "休六日", "四休二", "4休2", "做四休二", "作四休二", "做二休二", "四班二輪", "排休", "輪休",
-        "高時薪", "高薪", "時薪高", "日領", "週領", "兼職", "工讀", "打工", "pt", "PT", "短期", "學生工讀",
-        "外送", "司機", "配送", "送貨", "門市", "店員", "店到店", "智取店", "蝦皮", "momo", "富邦", "富昇", "美光", "欣興", "宏達電", "coupang", "酷澎",
+        "高時薪", "高薪", "時薪高", "日領", "週領", "短期",
+        *[syn for syns in KNOWN_BRANDS.values() for syn in syns],
+        "外送", "司機", "配送", "送貨", "門市", "店員", "店到店", "智取店",
         "製造", "製造業", "科技", "科技廠", "作業員", "技術員", "產線", "組裝", "包裝", "機台", "半導體", "工廠", "電子廠",
         "理貨", "揀貨", "倉管", "倉儲", "物流", "餐飲", "服飾", "服務",
-    ]
+    ]))
     return [k for k in candidates if clean_text_for_search(k) in normalized]
 
 def has_negative_intent(text: str) -> bool:
@@ -67,19 +76,23 @@ def detect_negated_location(raw_msg: str) -> str:
             return loc.replace("臺", "台")
     return ""
 
+# 班別同義詞清單：獨立成模組常數，讓 extract_shift_preference 跟 _tokenize_search_terms
+# 共用同一份來源，避免兩處各自維護、覆蓋範圍不一致。
+SHIFT_SYNONYMS = {
+    "早班": ["早班", "早上班", "白班", "日班", "常日班", "正常班"],
+    "晚班": ["晚班", "小夜", "中班", "下午班"],
+    "大夜班": ["大夜", "夜班", "大夜班", "深夜班", "通宵"],
+    "假日班": ["假日班", "假日", "週末班", "周休兼職", "假日兼職"],
+    "兼職/工讀": ["兼職", "打工", "工讀", "pt", "短期工讀", "學生工讀", "兼差"],
+    "輪班": ["輪班", "四班二輪", "二班二輪", "輪三班"],
+    "彈性排班": ["彈性排班", "自由排班", "排班彈性", "時段彈性", "不限時段"]
+}
+
+
 def extract_shift_preference(text: str) -> str:
     """從文字中判斷求職者偏好的時段/班別（支援同義詞與工時縮寫）[cite: 1]"""
     clean = clean_text_for_search(text).lower()
-    shift_map = {
-        "早班": ["早班", "早上班", "白班", "日班", "常日班", "正常班"],
-        "晚班": ["晚班", "小夜", "中班", "下午班"],
-        "大夜班": ["大夜", "夜班", "大夜班", "深夜班", "通宵"],
-        "假日班": ["假日班", "假日", "週末班", "周休兼職", "假日兼職"],
-        "兼職/工讀": ["兼職", "打工", "工讀", "pt", "短期工讀", "學生工讀", "兼差"],
-        "輪班": ["輪班", "四班二輪", "二班二輪", "輪三班"],
-        "彈性排班": ["彈性排班", "自由排班", "排班彈性", "時段彈性", "不限時段"]
-    }
-    for label, keys in shift_map.items():
+    for label, keys in SHIFT_SYNONYMS.items():
         if any(k.lower() in clean for k in keys):
             return label
     return ""
