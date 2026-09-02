@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request, Header, HTTPException
+from starlette.concurrency import run_in_threadpool
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage
@@ -29,18 +30,31 @@ def health_check():
     }
 
 # ==========================================
+# 共用 Webhook 處理邏輯
+# 讀取 body / 驗證 header 維持輕量的 async 寫法；
+# 真正耗時的 webhook_handler.handle()（內部會觸發 Notion / Firestore / Gemini
+# 等同步網路 I/O）改用 run_in_threadpool 丟進獨立執行緒執行，
+# 避免卡住 FastAPI 的 event loop，讓多個使用者的請求可以平行處理。
+# ==========================================
+async def _handle_webhook(request: Request, x_line_signature: str, webhook_handler: WebhookHandler) -> str:
+    if not x_line_signature:
+        raise HTTPException(status_code=400, detail="Missing X-Line-Signature header")
+
+    body = await request.body()
+
+    try:
+        await run_in_threadpool(webhook_handler.handle, body.decode("utf-8"), x_line_signature)
+    except InvalidSignatureError:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    return "OK"
+
+# ==========================================
 # 測試環境 Webhook 路由[cite: 2]
 # ==========================================
 @app.post("/test-callback")
 async def test_callback(request: Request, x_line_signature: str = Header(None)):
-    if not x_line_signature:
-        raise HTTPException(status_code=400, detail="Missing X-Line-Signature header")
-    body = await request.body()
-    try:
-        test_handler.handle(body.decode("utf-8"), x_line_signature)
-    except InvalidSignatureError:
-        raise HTTPException(status_code=400, detail="Invalid signature")
-    return "OK"
+    return await _handle_webhook(request, x_line_signature, test_handler)
 
 @test_handler.add(MessageEvent, message=TextMessage)
 def handle_test_message(event):
@@ -51,14 +65,7 @@ def handle_test_message(event):
 # ==========================================
 @app.post("/callback")
 async def callback(request: Request, x_line_signature: str = Header(None)):
-    if not x_line_signature:
-        raise HTTPException(status_code=400, detail="Missing X-Line-Signature header")
-    body = await request.body()
-    try:
-        handler.handle(body.decode("utf-8"), x_line_signature)
-    except InvalidSignatureError:
-        raise HTTPException(status_code=400, detail="Invalid signature")
-    return "OK"
+    return await _handle_webhook(request, x_line_signature, handler)
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
