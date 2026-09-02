@@ -158,17 +158,31 @@ def category_search_keywords(category_label: str) -> list:
     }
     return mapping.get(category_label, [])
 
+def _vendor_core_name(vendor_name: str) -> str:
+    """從系統廠商名稱裡取出核心可辨識名稱，去掉同仁為了內部辨識加註的後綴
+    （例如「錢都(代招)」→「錢都」、「美光(台中)-台南廠」→「美光」）。同仁常會在
+    正式名稱後面用括號、連字號、加號加註分店/職務/代招等備註方便管理，
+    但求職者不會把這些內部備註打進訊息裡，只比對完整名稱會永遠對不上。"""
+    core = re.split(r'[（(_\-+]', vendor_name)[0].strip()
+    return core or vendor_name
+
+
 def detect_brand_label(text: str, active_jobs: list = None) -> str:
     """動態從訊息辨識求職者詢問之特定廠商或品牌（嚴格排除行業別與疑問詞）[cite: 1]"""
     normalized = clean_text_for_search(text)
     
-    # 1. 優先精準比對 Notion 資料庫中現有的所有系統廠商名稱[cite: 1]
+    # 1. 優先精準比對 Notion 資料庫中現有的所有系統廠商名稱（含核心名稱比對，
+    #    避免同仁加註的內部後綴導致完整名稱永遠比對不到）[cite: 1]
     if active_jobs:
         for j in active_jobs:
             v_name = str(j.get("系統廠商名稱") or "").strip()
             if v_name and len(v_name) >= 2:
                 v_clean = clean_text_for_search(v_name)
                 if v_clean and v_clean in normalized:
+                    return v_name
+
+                v_core_clean = clean_text_for_search(_vendor_core_name(v_name))
+                if v_core_clean and len(v_core_clean) >= 2 and v_core_clean in normalized:
                     return v_name
 
     # 2. 常見知名廠商白名單[cite: 1]
