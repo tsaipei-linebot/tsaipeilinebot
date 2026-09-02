@@ -1,3 +1,4 @@
+import json
 import re
 import traceback
 from linebot import LineBotApi
@@ -23,6 +24,48 @@ from services.matcher_service import (
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
+
+
+# ==========================================
+# Gemini 決策輸出的結構化 JSON schema
+# 開啟 response_schema 後，Gemini 回傳的內容在 API 層級就保證是符合這個結構的合法
+# JSON，取代原本用 ACTION:/REPLY:/BUTTONS:/IDS: 文字格式 + 正則表達式手動解析的做法
+# ——那種做法只要 Gemini 沒有完全照 prompt 範例排版（例如兩個欄位黏在同一行）就會
+# 解析出錯，且無法窮舉所有可能出錯的排版方式。
+# ==========================================
+AI_DECISION_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "action": {
+            "type": "STRING",
+            "enum": ["ASK", "UNKNOWN_FAQ", "RECOMMEND", "NO_MATCH"],
+        },
+        "reply": {"type": "STRING"},
+        "buttons": {
+            "type": "ARRAY",
+            "items": {"type": "STRING"},
+        },
+        "ids": {
+            "type": "ARRAY",
+            "items": {"type": "INTEGER"},
+        },
+    },
+    "required": ["action", "reply"],
+}
+
+
+def _build_quick_reply_buttons(labels: list, fallback: list) -> list:
+    """把 AI 回傳的按鈕文字陣列轉成 LINE QuickReplyButton：最多取前 5 個、每個標籤截斷
+    20 字、並去掉開頭殘留的 emoji（Gemini 有時會自己在文字前面加 emoji）。沒有任何有效
+    標籤時退回呼叫端提供的預設按鈕組合，避免使用者收到沒有任何快速回覆按鈕的訊息。"""
+    buttons = []
+    for label in (labels or [])[:5]:
+        label = str(label or "").strip()
+        if not label:
+            continue
+        clean_txt = re.sub(r'^[📍☀️🌙📦🏭🏬🍽️🔄🛵\s]+', '', label)
+        buttons.append(QuickReplyButton(action=MessageAction(label=label[:20], text=clean_txt)))
+    return buttons or fallback
 
 
 def process_user_message(event, target_line_bot_api: LineBotApi):
@@ -370,11 +413,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 【極重要原則（嚴格遵守）】：
 1. 自稱一律為「沛沛」。遵守就業服務法（無年齡性別限制）。
 2. 【FAQ 絕對依據】：凡詢問公司規章、福利、發薪日、勞健保、投保、體檢、面試文件、休假規範等問題：
-   - 若【常見問題庫 (FAQ)】中有收錄，必須輸出 ACTION:ASK，並嚴格依據該內容回答！
-   - 若【常見問題庫 (FAQ)】中完全沒有收錄且非詢問職缺，必須輸出 ACTION:UNKNOWN_FAQ！
+   - 若【常見問題庫 (FAQ)】中有收錄，action 必須是 "ASK"，並嚴格依據該內容回答！
+   - 若【常見問題庫 (FAQ)】中完全沒有收錄且非詢問職缺，action 必須是 "UNKNOWN_FAQ"！
 3. 【條件退讓與職缺推薦原則】：
-   - 若求職者指定條件在清單中有完全相符的職缺，輸出 ACTION:RECOMMEND 推薦該職缺。
-   - 若求職者的複合條件（例如：特定地區+班別+週休）無完全吻合項目，但有次要吻合（如：同地區但為排休制），請輸出 ACTION:RECOMMEND，並在 REPLY 誠懇說明（例如：「目前新莊暫無固定週休的夜班，但有排休制的優質夜班大廠職缺，為您推薦參考喔！」）。
+   - 若求職者指定條件在清單中有完全相符的職缺，action 為 "RECOMMEND" 推薦該職缺。
+   - 若求職者的複合條件（例如：特定地區+班別+週休）無完全吻合項目，但有次要吻合（如：同地區但為排休制），action 仍為 "RECOMMEND"，並在 reply 誠懇說明（例如：「目前新莊暫無固定週休的夜班，但有排休制的優質夜班大廠職缺，為您推薦參考喔！」）。
 4. 【單一焦點追問】：若需引導求職者補充條件，每次僅拋出單一缺漏問題（優先順序：地區 -> 班別 -> 工作類型），避免一次詢問多個問題。
 
 【常見問題庫 (FAQ)】：
@@ -389,78 +432,65 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 【求職者最新輸入】：
 「{raw_msg}」
 
-請輸出以下四種格式之一：
-格式 A（命中 FAQ、日常問候或單一焦點引導）：
-ACTION:ASK
-REPLY:（嚴格依 FAQ 內容或以沛沛口吻親切回覆，約 35-70 字）
-BUTTONS:（相關快速按鈕 3-5 個，逗號分隔）
-
-格式 B（未收錄於 FAQ 的規章/制度/福利問題）：
-ACTION:UNKNOWN_FAQ
-REPLY:（親切說明已為求職者記錄此問題，會由招募專員確認，並主動詢問目前想看哪裡的工作，約 40-70 字）
-BUTTONS:（找工作的推薦按鈕，如：新莊工作,桃園工作,早班工作,夜班工作）
-
-格式 C（有符合或退讓推薦之職缺）：
-ACTION:RECOMMEND
-IDS:（符合或退讓推薦的職缺數字 ID，例如 0 或 0,1）
-REPLY:（推薦語或退讓說明，約 25-60 字）
-
-格式 D（指定廠商/地區完全無任何相近職缺）：
-ACTION:NO_MATCH
-REPLY:（親切說明暫無缺額並主動推薦其他熱門方向）
-BUTTONS:（相關地區或工種按鈕，逗號分隔）
+請輸出一個 JSON 物件，欄位定義如下：
+- action：以下四選一
+  - "ASK"：命中 FAQ、日常問候或單一焦點引導
+  - "UNKNOWN_FAQ"：未收錄於 FAQ 的規章/制度/福利問題
+  - "RECOMMEND"：有符合或退讓推薦的職缺
+  - "NO_MATCH"：指定廠商/地區完全無任何相近職缺
+- reply：依 action 對應的回覆文字
+  - action 為 "ASK" 時：嚴格依 FAQ 內容或以沛沛口吻親切回覆，約 35-70 字
+  - action 為 "UNKNOWN_FAQ" 時：親切說明已為求職者記錄此問題，會由招募專員確認，並主動詢問目前想看哪裡的工作，約 40-70 字
+  - action 為 "RECOMMEND" 時：推薦語或退讓說明，約 25-60 字
+  - action 為 "NO_MATCH" 時：親切說明暫無缺額並主動推薦其他熱門方向
+- buttons：字串陣列，3-5 個相關快速回覆按鈕文字（action 為 "ASK"/"UNKNOWN_FAQ"/"NO_MATCH" 時才需要，"RECOMMEND" 給空陣列即可）
+- ids：整數陣列，符合或退讓推薦的職缺數字 ID（只有 action 為 "RECOMMEND" 時才需要，例如 [0] 或 [0, 1]，其他 action 給空陣列即可）
 """
 
-        ai_output = query_gemini_ai(ai_prompt)
+        ai_output = query_gemini_ai(ai_prompt, response_schema=AI_DECISION_SCHEMA)
         print(f"[Gemini 決策輸出]:\n{ai_output}\n")
 
         append_user_history(user_id, "求職者", raw_msg)
 
-        # ---------------- 步驟 3：解析 AI 輸出[cite: 6] ----------------
-        if "ACTION:UNKNOWN_FAQ" in ai_output:
-            # 自動將未收錄問題寫入 Notion FAQ 資料庫[cite: 6]
+        # ---------------- 步驟 3：解析 AI 輸出（結構化 JSON）[cite: 6] ----------------
+        # 開啟結構化輸出模式後 ai_output 保證是合法 JSON（或空字串，代表 AI 呼叫失敗）；
+        # 這裡仍保留 try/except 當最後一道防線，任何非預期情況都會落到 action="" 走
+        # 步驟 4 保底引導，不會讓例外往外拋出中斷整個對話。
+        try:
+            decision = json.loads(ai_output) if ai_output else {}
+        except (json.JSONDecodeError, TypeError):
+            print(f"[Gemini 決策輸出非合法 JSON，改走保底引導]: {ai_output!r}")
+            decision = {}
+
+        action = str(decision.get("action") or "").strip().upper()
+        ai_reply_text = str(decision.get("reply") or "").strip()
+        ai_buttons = decision.get("buttons") if isinstance(decision.get("buttons"), list) else []
+        ai_ids = decision.get("ids") if isinstance(decision.get("ids"), list) else []
+
+        if action == "UNKNOWN_FAQ":
+            # 自動將未收錄問題寫入 Notion FAQ 資料庫（寫入前已在 notion_service 做過去重）[cite: 6]
             append_unresolved_faq_to_notion(raw_msg)
 
-            reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
-            buttons_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
-
-            # Gemini 不一定會照格式範例在 REPLY 跟 BUTTONS 之間換行（有時兩者黏在同一行），
-            # 原本用 (?=\nBUTTONS:|$) 這種要求「一定要有換行」的寫法在這種情況下會找不到
-            # 停止點，導致整段 BUTTONS:... 原始文字被當成 REPLY 內容一起顯示給使用者。
-            # 改成先抓到 REPLY: 後面的全部文字，再用字串切割去掉 BUTTONS: 之後的部分，
-            # 不管兩者中間有沒有換行都能正確切開。
-            reply_text = reply_match.group(1).split("BUTTONS:")[0].strip() if reply_match else "謝謝您的提問！沛沛已先幫您把這個問題記錄下來回報給招募專員囉 😊 請問您目前想先看看哪個地區或班別的工作呢？"
+            reply_text = ai_reply_text or "謝謝您的提問！沛沛已先幫您把這個問題記錄下來回報給招募專員囉 😊 請問您目前想先看看哪個地區或班別的工作呢？"
             append_user_history(user_id, "招募顧問沛沛", reply_text)
 
-            buttons = []
-            if buttons_match:
-                raw_buttons = [b.strip() for b in buttons_match.group(1).split(",") if b.strip()]
-                for b_label in raw_buttons[:5]:
-                    clean_txt = re.sub(r'^[📍☀️🌙📦🏭🏬🍽️🔄🛵\s]+', '', b_label)
-                    buttons.append(QuickReplyButton(action=MessageAction(label=b_label[:20], text=clean_txt)))
-
-            if not buttons:
-                buttons = [
-                    QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
-                    QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
-                    QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
-                    QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
-                ]
-
+            buttons = _build_quick_reply_buttons(ai_buttons, [
+                QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+                QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
+                QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
+                QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+            ])
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons)))
             return
 
-        elif "ACTION:RECOMMEND" in ai_output:
-            ids_match = re.search(r'IDS:\s*([0-9,\s]+)', ai_output)
-            reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
-            reply_text = reply_match.group(1).strip() if reply_match else "太棒了！沛沛為您推薦以下符合需求的職缺："
+        elif action == "RECOMMEND":
+            reply_text = ai_reply_text or "太棒了！沛沛為您推薦以下符合需求的職缺："
             append_user_history(user_id, "招募顧問沛沛", reply_text)
 
-            matched_jobs = []
-            if ids_match:
-                indices = [int(n.strip()) for n in ids_match.group(1).split(",") if n.strip().isdigit() and int(n.strip()) < len(ai_job_candidates)]
-                matched_jobs = [ai_job_candidates[i] for i in indices]
-
+            matched_jobs = [
+                ai_job_candidates[i] for i in ai_ids
+                if isinstance(i, int) and 0 <= i < len(ai_job_candidates)
+            ]
             if not matched_jobs:
                 matched_jobs = ai_job_candidates[:4]
 
@@ -468,32 +498,17 @@ BUTTONS:（相關地區或工種按鈕，逗號分隔）
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), flex_card])
             return
 
-        elif "ACTION:ASK" in ai_output or "ACTION:NO_MATCH" in ai_output:
-            reply_match = re.search(r'REPLY:\s*(.+)', ai_output, re.DOTALL)
-            buttons_match = re.search(r'BUTTONS:\s*(.+)', ai_output)
-
-            # 同上：不依賴「REPLY 跟 BUTTONS 之間一定有換行」的假設，改用字串切割去掉
-            # BUTTONS: 之後的部分，避免 Gemini 把兩個欄位黏在同一行時，BUTTONS: 原始文字
-            # 被當成 REPLY 內容一起顯示出來（例如「有理貨的工作嗎」這類查詢實際出現過）。
-            reply_text = reply_match.group(1).split("BUTTONS:")[0].strip() if reply_match else f"您好呀！沛沛隨時為您服務，想請問您偏好哪個地區或工作班別呢？"
+        elif action in ("ASK", "NO_MATCH"):
+            reply_text = ai_reply_text or "您好呀！沛沛隨時為您服務，想請問您偏好哪個地區或工作班別呢？"
             append_user_history(user_id, "招募顧問沛沛", reply_text)
 
-            buttons = []
-            if buttons_match:
-                raw_buttons = [b.strip() for b in buttons_match.group(1).split(",") if b.strip()]
-                for b_label in raw_buttons[:5]:
-                    clean_txt = re.sub(r'^[📍☀️🌙📦🏭🏬🍽️🔄🛵\s]+', '', b_label)
-                    buttons.append(QuickReplyButton(action=MessageAction(label=b_label[:20], text=clean_txt)))
-
-            if not buttons:
-                buttons = [
-                    QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
-                    QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
-                    QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
-                    QuickReplyButton(action=MessageAction(label="🌙 固定夜班", text="夜班工作")),
-                    QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
-                ]
-
+            buttons = _build_quick_reply_buttons(ai_buttons, [
+                QuickReplyButton(action=MessageAction(label="📍 新莊工作", text="新莊工作")),
+                QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
+                QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
+                QuickReplyButton(action=MessageAction(label="🌙 固定夜班", text="夜班工作")),
+                QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+            ])
             quick_reply = QuickReply(items=buttons)
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
             return
