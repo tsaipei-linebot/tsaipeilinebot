@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import unittest
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("GEMINI_API_KEY", "dummy")
@@ -73,6 +74,46 @@ class AiDecisionSchemaTests(unittest.TestCase):
             except (json.JSONDecodeError, TypeError):
                 decision = {}
             self.assertEqual(decision, {})
+
+
+class ProcessImageMessageTests(unittest.TestCase):
+    """求職者傳圖片（例如截圖）時的保底回覆：目前沒有解析圖片內容的能力，
+    但一定要回覆使用者、引導改用文字，不能已讀不回。"""
+
+    def _make_event(self, reply_token="valid-token"):
+        event = MagicMock()
+        event.reply_token = reply_token
+        event.source.user_id = "test-user"
+        return event
+
+    def test_replies_with_guidance_text(self):
+        event = self._make_event()
+        line_bot_api = MagicMock()
+        h.process_image_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[0], "valid-token")
+        reply_message = args[1]
+        self.assertIn("圖片", reply_message.text)
+        self.assertIsNotNone(reply_message.quick_reply)
+
+    def test_skips_verify_webhook_reply_token(self):
+        # LINE 平台驗證 webhook 用的假 reply_token，不該真的嘗試回覆
+        for fake_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
+            event = self._make_event(reply_token=fake_token)
+            line_bot_api = MagicMock()
+            h.process_image_message(event, line_bot_api)
+            line_bot_api.reply_message.assert_not_called()
+
+    def test_still_replies_even_if_session_history_write_fails(self):
+        # append_user_history 內部會連 Firestore（測試環境沒有真的 GCP 憑證，
+        # session_service 的 db 是 stub 出來的 None），這裡驗證即使寫入對話歷史
+        # 失敗，仍然要回覆使用者，不能因為 Firestore 出問題就整個沒有回應
+        event = self._make_event()
+        line_bot_api = MagicMock()
+        h.process_image_message(event, line_bot_api)
+        line_bot_api.reply_message.assert_called_once()
 
 
 if __name__ == "__main__":
