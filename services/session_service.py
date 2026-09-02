@@ -13,6 +13,14 @@ SESSIONS_COLLECTION = "user_sessions"
 
 DEFAULT_SLOTS = {"location": "", "category": "", "shift": "", "leave": "", "brand": ""}
 
+# ==========================================
+# 槽位三態機制的「清除」訊號
+# 呼叫端傳這個常數，代表使用者明確表示「不限/取消」該維度，
+# 跟「這句話沒提到、維持原值」（傳 "" 或不傳）要區分開來，
+# 否則像「品牌不限都可以」這種話，slots 會因為抽不到具體品牌名稱而永遠卡在舊值。
+# ==========================================
+CLEAR_SLOT = "__CLEAR__"
+
 
 def _session_ref(user_id: str):
     return db.collection(SESSIONS_COLLECTION).document(user_id)
@@ -60,19 +68,27 @@ def get_user_slots(user_id: str) -> dict:
 
 
 def update_user_slots(user_id: str, location: str = "", category: str = "", shift: str = "", leave: str = "", brand: str = "") -> dict:
-    """更新使用者的已知需求條件"""
+    """更新使用者的已知需求條件（三態機制）：
+    - 傳入空字串或不傳：這句話沒提到這個維度，維持原值
+    - 傳入 CLEAR_SLOT：使用者明確表示不限/取消，清空該維度
+    - 傳入其他非空字串：設定為該值
+    """
     session = _get_or_create_session(user_id)
     slots = session["slots"]
-    if location:
-        slots["location"] = location
-    if category:
-        slots["category"] = category
-    if shift:
-        slots["shift"] = shift
-    if leave:
-        slots["leave"] = leave
-    if brand is not None and brand != "":
-        slots["brand"] = brand
+
+    for key, value in [
+        ("location", location),
+        ("category", category),
+        ("shift", shift),
+        ("leave", leave),
+        ("brand", brand),
+    ]:
+        if not value:
+            continue
+        elif value == CLEAR_SLOT:
+            slots[key] = ""
+        else:
+            slots[key] = value
 
     _session_ref(user_id).update({"slots": slots})
     return slots
