@@ -1781,3 +1781,47 @@ function testGeminiAiService() {
   console.log('【排版工作說明】:\n', result.formatted_detail);
   console.log('============================================');
 }
+
+/**
+ * 診斷工具：列出目前這組 GEMINI_API_KEY 實際可用的模型清單，
+ * 只挑出支援 generateContent（也就是我們用得到）的模型名稱。
+ * 用途：targetModels 裡的模型名稱被 Google 汰換掉時，用這個確認新的正確代號。
+ */
+function listAvailableGeminiModels() {
+  const apiKey = AiJobDescriptionService.getApiKey();
+  if (!apiKey) {
+    console.error('❌ 未設定 GEMINI_API_KEY，無法查詢');
+    return;
+  }
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' + encodeURIComponent(apiKey);
+  const response = UrlFetchApp.fetch(url, { method: 'get', muteHttpExceptions: true });
+  const resCode = response.getResponseCode();
+
+  if (resCode !== 200) {
+    console.error('❌ 查詢模型清單失敗 (HTTP ' + resCode + '): ' + response.getContentText());
+    return;
+  }
+
+  const json = JSON.parse(response.getContentText());
+  const models = json.models || [];
+
+  console.log('🔍 ========== 可用模型清單 (共 ' + models.length + ' 個) ==========');
+
+  const supportGenerateContent = models.filter(m =>
+    Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.indexOf('generateContent') !== -1
+  );
+
+  console.log('✅ 支援 generateContent 的模型（可用於本系統，共 ' + supportGenerateContent.length + ' 個）：');
+  supportGenerateContent.forEach(m => {
+    console.log('   - ' + m.name.replace('models/', '') + '（顯示名稱：' + (m.displayName || '') + '）');
+  });
+
+  console.log('--------------------------------------------');
+  console.log('（以下為完整清單，含不支援 generateContent 的模型，僅供參考）');
+  models.forEach(m => {
+    console.log('   - ' + m.name.replace('models/', '') + ' | 支援方法: ' + (m.supportedGenerationMethods || []).join('、'));
+  });
+
+  console.log('============================================');
+}
