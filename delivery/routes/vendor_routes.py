@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 
 from delivery import repository
@@ -6,10 +6,11 @@ from delivery.auth import current_user, login_required
 from delivery.config import (
     ALLOWED_UPLOAD_CONTENT_TYPES,
     CLIENT_MAP,
+    CLIENT_VENDORS,
     CLIENTS,
     COOPERATION_TYPE_MAP,
+    COOPERATION_TYPE_VENDORS,
     COOPERATION_TYPES,
-    DOC_TYPE_MAP,
     MAX_UPLOAD_BYTES,
     VENDOR_MAP,
 )
@@ -72,6 +73,8 @@ def new_personnel_form(vendor_code: str, request: Request, redirect=Depends(logi
             "vendor_name": VENDOR_MAP[vendor_code],
             "cooperation_types": COOPERATION_TYPES,
             "clients": CLIENTS,
+            "show_cooperation_type": vendor_code in COOPERATION_TYPE_VENDORS,
+            "show_client": vendor_code in CLIENT_VENDORS,
         },
     )
 
@@ -109,17 +112,18 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
     person = repository.get_personnel(personnel_id)
     if not person:
         return RedirectResponse(url="/delivery/", status_code=303)
+    vendor_code = person.get("vendor")
     return templates.TemplateResponse(
         request,
         "personnel_detail.html",
         {
             "user": current_user(request),
             "person": person,
-            "vendor_name": VENDOR_MAP.get(person.get("vendor"), person.get("vendor")),
+            "vendor_name": VENDOR_MAP.get(vendor_code, vendor_code),
             "cooperation_types": COOPERATION_TYPES,
-            "cooperation_type_name": COOPERATION_TYPE_MAP.get(person.get("cooperation_type"), ""),
             "clients": CLIENTS,
-            "client_name": CLIENT_MAP.get(person.get("client"), ""),
+            "show_cooperation_type": vendor_code in COOPERATION_TYPE_VENDORS,
+            "show_client": vendor_code in CLIENT_VENDORS,
             "doc_statuses": repository.all_document_statuses(person),
             "storage_configured": is_configured(),
             "error": error,
@@ -127,102 +131,77 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
     )
 
 
-@router.post("/personnel/{personnel_id}/cooperation-type")
-def update_cooperation_type(
-    personnel_id: str,
-    cooperation_type: str = Form(""),
-    redirect=Depends(login_required),
-):
-    if redirect:
-        return redirect
-    if cooperation_type not in COOPERATION_TYPE_MAP:
-        cooperation_type = ""
-    repository.update_personnel_cooperation_type(personnel_id, cooperation_type)
-    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
-
-
-@router.post("/personnel/{personnel_id}/client")
-def update_client(
-    personnel_id: str,
-    client: str = Form(""),
-    redirect=Depends(login_required),
-):
-    if redirect:
-        return redirect
-    if client not in CLIENT_MAP:
-        client = ""
-    repository.update_personnel_client(personnel_id, client)
-    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
-
-
-@router.post("/personnel/{personnel_id}/id-number")
-def update_id_number(
-    personnel_id: str,
-    id_number: str = Form(""),
-    redirect=Depends(login_required),
-):
-    if redirect:
-        return redirect
-    id_number = id_number.strip().upper()
-    if id_number and not is_valid_taiwan_id(id_number):
-        return RedirectResponse(url=f"/delivery/personnel/{personnel_id}?error=id_number", status_code=303)
-    repository.update_personnel_id_number(personnel_id, id_number)
-    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
-
-
-@router.post("/personnel/{personnel_id}/document/{doc_code}/checkbox")
-def update_checkbox(
-    personnel_id: str,
-    doc_code: str,
-    checked: str = Form(None),
-    redirect=Depends(login_required),
-):
-    if redirect:
-        return redirect
-    doc_type = DOC_TYPE_MAP.get(doc_code)
-    if not doc_type or doc_type["kind"] != "checkbox":
-        return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
-    repository.update_personnel_checkbox(personnel_id, doc_code, checked=bool(checked))
-    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
-
-
-@router.post("/personnel/{personnel_id}/document/{doc_code}")
-async def upload_document(
-    personnel_id: str,
-    doc_code: str,
-    request: Request,
-    expiry_date: str = Form(""),
-    file: UploadFile = File(None),
-    redirect=Depends(login_required),
-):
+@router.post("/personnel/{personnel_id}/bulk-update")
+async def bulk_update_personnel(personnel_id: str, request: Request, redirect=Depends(login_required)):
+    """人員詳細頁改成一個大表單，所有應備項目（合作方式/負責客戶、身分證、
+    email、勾選類、上傳類）一次送出、一鍵更新，取代原本每一列各自一個小
+    表單、要分開送出很多次的做法。"""
     if redirect:
         return redirect
     person = repository.get_personnel(personnel_id)
-    doc_type = DOC_TYPE_MAP.get(doc_code)
-    if not person or not doc_type or doc_type["kind"] not in ("file_expiry", "file"):
+    if not person:
         return RedirectResponse(url="/delivery/", status_code=303)
 
-    file_path = None
-    resolved_expiry_date = expiry_date.strip() or None
-    if file is not None and file.filename:
-        content = await file.read()
-        content_type = file.content_type or "application/octet-stream"
-        if len(content) <= MAX_UPLOAD_BYTES and content_type in ALLOWED_UPLOAD_CONTENT_TYPES:
-            try:
-                file_path = upload_file("personnel-docs", personnel_id, file.filename, content, content_type)
-            except StorageNotConfigured:
-                file_path = None
+    form = await request.form()
 
-            # 同仁沒有手動填到期日時，交給 OCR 從剛上傳的檔案辨識；辨識不出來
-            # 就維持空白，之後同仁還是可以用同一個表單手動補到期日。純上傳型
-            # （例如自拍照）沒有到期日這回事，不用跑 OCR。
-            if file_path and not resolved_expiry_date and doc_type["kind"] == "file_expiry":
-                resolved_expiry_date = extract_expiry_date(content, content_type) or None
+    if "cooperation_type" in form:
+        cooperation_type = form.get("cooperation_type", "")
+        repository.update_personnel_cooperation_type(
+            personnel_id, cooperation_type if cooperation_type in COOPERATION_TYPE_MAP else ""
+        )
 
-    if doc_type["kind"] == "file":
-        resolved_expiry_date = None
+    if "client" in form:
+        client = form.get("client", "")
+        repository.update_personnel_client(personnel_id, client if client in CLIENT_MAP else "")
 
-    repository.update_personnel_document(
-        personnel_id, doc_code, file_path=file_path, expiry_date=resolved_expiry_date
+    id_number_error = False
+    if "id_number" in form:
+        id_number = (form.get("id_number") or "").strip().upper()
+        if id_number and not is_valid_taiwan_id(id_number):
+            id_number_error = True
+        else:
+            repository.update_personnel_id_number(personnel_id, id_number)
+
+    if "email" in form:
+        repository.update_personnel_email(personnel_id, (form.get("email") or "").strip())
+
+    doc_types = repository.applicable_doc_types(
+        person.get("vendor"), person.get("cooperation_type"), person.get("client")
     )
-    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
+    for doc_type in doc_types:
+        code = doc_type["code"]
+        kind = doc_type["kind"]
+
+        if kind == "checkbox":
+            repository.update_personnel_checkbox(personnel_id, code, checked=form.get(f"checked_{code}") is not None)
+            continue
+
+        if kind not in ("file", "file_expiry"):
+            continue
+
+        file = form.get(f"file_{code}")
+        file_path = None
+        resolved_expiry_date = None
+        if kind == "file_expiry":
+            resolved_expiry_date = (form.get(f"expiry_date_{code}") or "").strip() or None
+
+        if file is not None and getattr(file, "filename", None):
+            content = await file.read()
+            content_type = file.content_type or "application/octet-stream"
+            if len(content) <= MAX_UPLOAD_BYTES and content_type in ALLOWED_UPLOAD_CONTENT_TYPES:
+                try:
+                    file_path = upload_file("personnel-docs", personnel_id, file.filename, content, content_type)
+                except StorageNotConfigured:
+                    file_path = None
+                # 沒手動填到期日時交給 OCR 辨識；辨識不出來就維持空白，之後同仁
+                # 還是可以再送一次表單手動補到期日。
+                if kind == "file_expiry" and file_path and not resolved_expiry_date:
+                    resolved_expiry_date = extract_expiry_date(content, content_type) or None
+
+        if file_path is not None or resolved_expiry_date is not None:
+            repository.update_personnel_document(personnel_id, code, file_path=file_path, expiry_date=resolved_expiry_date)
+
+    redirect_url = f"/delivery/personnel/{personnel_id}"
+    if id_number_error:
+        redirect_url += "?error=id_number"
+    return RedirectResponse(url=redirect_url, status_code=303)

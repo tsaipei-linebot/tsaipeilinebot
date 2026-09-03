@@ -12,6 +12,7 @@
     <label>聯絡電話
         <input type="text" name="phone">
     </label>
+    {% if show_cooperation_type %}
     <label>合作方式（可之後在人員詳細頁再設定）
         <select name="cooperation_type">
             <option value="">尚未決定</option>
@@ -20,6 +21,8 @@
             {% endfor %}
         </select>
     </label>
+    {% endif %}
+    {% if show_client %}
     <label>負責客戶（可之後在人員詳細頁再設定）
         <select name="client">
             <option value="">尚未決定</option>
@@ -28,6 +31,7 @@
             {% endfor %}
         </select>
     </label>
+    {% endif %}
     <button type="submit" class="btn btn-primary">建立人員資料</button>
 </form>
 <p class="back-link"><a href="/delivery/vendor/{{ vendor_code }}">&larr; 回 {{ vendor_name }} 人員清單</a></p>

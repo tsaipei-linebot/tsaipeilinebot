@@ -3,12 +3,15 @@
 缺件判斷刻意寫成不依賴 Firestore 的純函式（missing_documents / doc_status），
 方便直接寫單元測試，不需要真的連線 GCP。
 """
+import re
 import time
 from datetime import date, datetime, timedelta
 
 from delivery.config import DOC_TYPES, SELECTABLE_APPLICANT_STATUSES
 from delivery.db import applicants_ref, get_db, personnel_ref, repayments_ref, sick_leaves_ref
 from delivery.validators import is_valid_taiwan_id
+
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 TODAY_ISO = lambda: date.today().isoformat()  # noqa: E731
 
@@ -65,6 +68,16 @@ def doc_status(doc_type: dict, personnel: dict) -> dict:
             "missing": not is_valid_taiwan_id(id_number),
         }
 
+    if kind == "email":
+        email = (personnel.get("email") or "").strip()
+        return {
+            "code": code,
+            "name": doc_type["name"],
+            "kind": kind,
+            "value": email,
+            "missing": not bool(_EMAIL_PATTERN.match(email)),
+        }
+
     if kind == "checkbox":
         checked = bool(entry.get("checked"))
         return {
@@ -92,6 +105,7 @@ def doc_status(doc_type: dict, personnel: dict) -> dict:
     expiry = _parse_date(entry.get("expiry_date"))
     if expiry is not None and expiry < date.today():
         expired = True
+    required = doc_type.get("required", True)
     return {
         "code": code,
         "name": doc_type["name"],
@@ -99,7 +113,9 @@ def doc_status(doc_type: dict, personnel: dict) -> dict:
         "has_file": has_file,
         "expiry_date": entry.get("expiry_date") or "",
         "expired": expired,
-        "missing": (not has_file) or expired,
+        "required": required,
+        # 非必填的項目沒交不算缺件，但只要交了、過期了一樣算缺件要處理。
+        "missing": expired or (required and not has_file),
         "file_path": entry.get("file_path") or "",
     }
 
@@ -255,6 +271,11 @@ def update_personnel_id_number(personnel_id: str, id_number: str):
     """用於 kind="id_number" 的項目（身分證）。格式驗證交給呼叫端
     （validators.is_valid_taiwan_id）先擋一次，這裡單純負責寫入。"""
     personnel_ref().document(personnel_id).update({"id_number": id_number, "updated_at": time.time()})
+
+
+def update_personnel_email(personnel_id: str, email: str):
+    """用於 kind="email" 的項目。格式檢查交給呼叫端／doc_status，這裡單純負責寫入。"""
+    personnel_ref().document(personnel_id).update({"email": email, "updated_at": time.time()})
 
 
 def update_personnel_cooperation_type(personnel_id: str, cooperation_type: str):

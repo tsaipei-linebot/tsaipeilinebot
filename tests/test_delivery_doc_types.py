@@ -60,10 +60,37 @@ class ApplicableDocTypesTests(unittest.TestCase):
         ud_codes = {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract")}
         shopee_codes = {d["code"] for d in applicable_doc_types("shopee", "two_wheel_contract")}
         uc_codes = {d["code"] for d in applicable_doc_types("uc", "two_wheel_contract")}
-        for code in ("uber_system", "selfie_photo"):
-            self.assertIn(code, ud_codes)
-            self.assertNotIn(code, shopee_codes)
-            self.assertNotIn(code, uc_codes)
+        # selfie_photo 只有 UD 專屬
+        self.assertIn("selfie_photo", ud_codes)
+        self.assertNotIn("selfie_photo", shopee_codes)
+        self.assertNotIn("selfie_photo", uc_codes)
+        # uber_system 是 UD/UC 共用，蝦皮不會出現
+        self.assertIn("uber_system", ud_codes)
+        self.assertIn("uber_system", uc_codes)
+        self.assertNotIn("uber_system", shopee_codes)
+
+    def test_uc_photo_and_email_only_for_ud_and_uc(self):
+        ud_codes = {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract")}
+        uc_codes = {d["code"] for d in applicable_doc_types("uc", "two_wheel_contract")}
+        shopee_codes = {d["code"] for d in applicable_doc_types("shopee", "two_wheel_contract")}
+        sf_codes = {d["code"] for d in applicable_doc_types("sf", "two_wheel_contract")}
+        self.assertIn("uc_photo", uc_codes)
+        self.assertNotIn("uc_photo", ud_codes)
+        self.assertNotIn("uc_photo", shopee_codes)
+        self.assertIn("email", ud_codes)
+        self.assertIn("email", uc_codes)
+        self.assertNotIn("email", shopee_codes)
+        self.assertNotIn("email", sf_codes)
+
+    def test_sf_insurance_and_guild_insurance_only_for_sf_and_not_gated_by_cooperation_type(self):
+        # 順豐沒有「合作方式」欄位（不在 COOPERATION_TYPE_VENDORS 裡），所以人員的
+        # cooperation_type 一律是空字串，這裡就用空字串驗證這兩項還是會出現。
+        sf_codes = {d["code"] for d in applicable_doc_types("sf", "")}
+        ud_codes = {d["code"] for d in applicable_doc_types("ud", "")}
+        self.assertIn("sf_insurance", sf_codes)
+        self.assertIn("sf_guild_insurance", sf_codes)
+        self.assertNotIn("sf_insurance", ud_codes)
+        self.assertNotIn("sf_guild_insurance", ud_codes)
 
     def test_momo_test_requires_ud_and_momo_client(self):
         self.assertIn("momo_test", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "momo")})
@@ -128,6 +155,49 @@ class DocStatusTests(unittest.TestCase):
         self.assertNotIn("expiry_date", status)
         self.assertNotIn("expired", status)
 
+    def test_email_kind_missing_when_blank(self):
+        status = doc_status({"code": "email", "name": "EMAIL", "kind": "email"}, {"email": ""})
+        self.assertTrue(status["missing"])
+
+    def test_email_kind_missing_when_invalid_format(self):
+        status = doc_status({"code": "email", "name": "EMAIL", "kind": "email"}, {"email": "not-an-email"})
+        self.assertTrue(status["missing"])
+
+    def test_email_kind_not_missing_when_valid(self):
+        status = doc_status({"code": "email", "name": "EMAIL", "kind": "email"}, {"email": "a@example.com"})
+        self.assertFalse(status["missing"])
+
+    def test_file_expiry_kind_optional_not_missing_when_never_uploaded(self):
+        status = doc_status(
+            {"code": "guild_insurance", "name": "公會加保證明", "kind": "file_expiry", "required": False},
+            {"documents": {}},
+        )
+        self.assertFalse(status["missing"])
+        self.assertFalse(status["required"])
+
+    def test_file_expiry_kind_optional_still_missing_when_expired(self):
+        past = (date.today() - timedelta(days=1)).isoformat()
+        personnel = {"documents": {"guild_insurance": {"file_path": "x.jpg", "expiry_date": past}}}
+        status = doc_status(
+            {"code": "guild_insurance", "name": "公會加保證明", "kind": "file_expiry", "required": False},
+            personnel,
+        )
+        self.assertTrue(status["missing"])
+        self.assertTrue(status["expired"])
+
+    def test_file_expiry_kind_optional_not_missing_when_uploaded_and_valid(self):
+        future = (date.today() + timedelta(days=30)).isoformat()
+        personnel = {"documents": {"guild_insurance": {"file_path": "x.jpg", "expiry_date": future}}}
+        status = doc_status(
+            {"code": "guild_insurance", "name": "公會加保證明", "kind": "file_expiry", "required": False},
+            personnel,
+        )
+        self.assertFalse(status["missing"])
+
+    def test_file_expiry_kind_required_defaults_true(self):
+        status = doc_status({"code": "insurance", "name": "強制險", "kind": "file_expiry"}, {"documents": {}})
+        self.assertTrue(status["required"])
+
 
 class MissingDocumentsIntegrationTests(unittest.TestCase):
     def test_shopee_two_wheel_contract_missing_list_excludes_police_clearance_and_liability(self):
@@ -141,7 +211,8 @@ class MissingDocumentsIntegrationTests(unittest.TestCase):
         self.assertNotIn("police_clearance", missing_codes)
         self.assertNotIn("liability_insurance", missing_codes)
         self.assertIn("insurance", missing_codes)
-        self.assertIn("guild_insurance", missing_codes)
+        # guild_insurance 現在是非必填，沒交不算缺件
+        self.assertNotIn("guild_insurance", missing_codes)
 
     def test_fully_complete_two_wheel_contract_at_shopee_has_no_missing(self):
         future = (date.today() + timedelta(days=30)).isoformat()
