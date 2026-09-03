@@ -400,3 +400,51 @@ UC/順豐新項目都只有單元測試 + mock 過的 TestClient 手動測試，
 Firestore/GCS/Vertex AI 跑過；上線後建議挑一個 UC 跟一個順豐的測試人員，
 實際跑一次「一鍵全部更新」（含上傳強制險/公會加保證明照片）確認 OCR 辨識
 跟到期提醒排程都正常。
+
+### 後續新增：人員狀態（待報到/在職/離職/放棄報到）+ 廠商清單頁篩選
+
+蝦皮、順豐、UD、UC 四個廠商的人員新增一個「人員狀態」欄位，跟原本 CSV 匯入
+時就會寫死的內部欄位 `personnel.status`（一律 `"active"`，判斷資料存不存在
+用的隱藏欄位，不開放編輯）是兩回事：
+
+- **`config.py`**：新增 `PERSONNEL_STATUSES`（`pending_onboard` 待報到 /
+  `employed` 在職 / `resigned` 離職 / `onboard_withdrawn` 放棄報到）、
+  `PERSONNEL_STATUS_MAP`、`PERSONNEL_STATUS_BADGE_CLASS`（畫面上狀態徽章要
+  用哪個 CSS class）、`DEFAULT_PERSONNEL_STATUS`（`pending_onboard`）、
+  `LEGACY_PERSONNEL_STATUS`（`employed`）、`HIDDEN_PERSONNEL_STATUSES`
+  （`{resigned, onboard_withdrawn}`）。
+- **新建人員預設狀態**：手動新增表單、CSV 批次匯入、應徵名單錄取建立人員這
+  三個管道，統一透過 `create_personnel()` 的 `employment_status` 參數預設值
+  （沒傳就用 `DEFAULT_PERSONNEL_STATUS`），一律先是「待報到」，之後同仁自己
+  到人員詳細頁改成「在職」等其他狀態。
+- **舊資料相容**：這個功能上線前就存在的人員資料沒有 `employment_status`
+  欄位。`repository.personnel_employment_status(personnel)` 這個 helper 讀
+  取時，欄位不存在就當作「在職」（`LEGACY_PERSONNEL_STATUS`），而不是「待
+  報到」——避免舊資料被誤判成剛建立、還沒報到。所有需要讀狀態的地方（清單頁
+  篩選、詳細頁顯示、徽章）都要透過這個 helper 讀，不要直接 `personnel.get
+  ("employment_status")`。
+- **人員詳細頁**：`personnel_detail.html` 的一鍵全部更新表單最上面（原本
+  合作方式/負責客戶選單那個 filter-bar，這次改成一定會顯示，不再只有
+  `show_cooperation_type`/`show_client` 為真才顯示這個區塊）新增「人員狀態」
+  下拉選單，欄位名稱 `employment_status`，後端 `bulk_update_personnel()`
+  比照合作方式/負責客戶的處理方式：值合法（在 `PERSONNEL_STATUS_MAP` 裡）
+  才寫入。
+- **廠商人員清單頁篩選**（`vendor_list.html` / `vendor_routes.py`）：
+  - 新增「狀態」下拉（`status` 查詢參數）：預設（沒選）不顯示「離職」
+    「放棄報到」的人，跟應徵名單「放棄」預設隱藏是同一套邏輯——主動搜尋
+    姓名、或直接篩選狀態為這兩項才會列出來。
+  - 新增「缺件狀態」下拉（`missing_status` 查詢參數，選項：全部/缺件/
+    無缺件）：**保留原本「已備齊的人預設不顯示，搜尋姓名才顯示」這個隱性
+    規則不變**（下拉選單留在「全部」不選時就是這個行為），選「缺件」會
+    強制只顯示缺件（即使有搜尋姓名也一樣濾掉已備齊的）、選「無缺件」會
+    強制顯示已備齊的人（即使沒搜尋姓名也會顯示），純粹是這個規則之外
+    多一個可以明確切換的輔助控制項。
+  - `repository.personnel_matches_filters()` 因此多兩個參數
+    `status_filter`、`missing_filter`，兩個篩選彼此獨立判斷，互不影響。
+  - 清單表格新增「狀態」欄（原本紅框那個空欄位），用
+    `PERSONNEL_STATUS_BADGE_CLASS` 對應的徽章顏色顯示（待報到＝黃、在職＝
+    綠、離職＝灰、放棄報到＝紅），這幾個 class 定義在 `style.css`。
+
+**已知限制**：`employment_status` 的篩選/預設隱藏邏輯只有單元測試 +
+mock 過的 TestClient 手動測試；上線後建議實際把某個人的狀態改成「離職」，
+確認清單頁真的會把他藏起來，而搜尋姓名／篩選狀態都還是找得到。

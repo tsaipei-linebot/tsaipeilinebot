@@ -121,6 +121,32 @@ DOC_TYPES = [
 ]
 DOC_TYPE_MAP = {d["code"]: d for d in DOC_TYPES}
 
+# 人員狀態（報到/在職狀態）。跟 create_personnel 內部寫死的 status="active" 是
+# 兩回事——那個是判斷資料還存不存在的隱藏欄位，一律是 "active"、不開放編輯；
+# 這裡才是同仁自己會維護、畫面上看得到、可以篩選的報到狀態。
+PERSONNEL_STATUSES = [
+    {"code": "pending_onboard", "name": "待報到"},
+    {"code": "employed", "name": "在職"},
+    {"code": "resigned", "name": "離職"},
+    {"code": "onboard_withdrawn", "name": "放棄報到"},
+]
+PERSONNEL_STATUS_MAP = {s["code"]: s["name"] for s in PERSONNEL_STATUSES}
+PERSONNEL_STATUS_BADGE_CLASS = {
+    "pending_onboard": "badge-pending",
+    "employed": "badge-employed",
+    "resigned": "badge-resigned",
+    "onboard_withdrawn": "badge-withdrawn",
+}
+# 新建人員（手動新增表單、CSV 批次匯入、應徵名單錄取）一律先預設這個，
+# 之後同仁自己到人員詳細頁改成「在職」等其他狀態。
+DEFAULT_PERSONNEL_STATUS = "pending_onboard"
+# 這個功能上線前就已經存在的人員資料沒有 employment_status 欄位，讀取時當作
+# 「在職」——這些人本來就已經在系統裡，不該被當成剛建立、還沒報到。
+LEGACY_PERSONNEL_STATUS = "employed"
+# 「離職」「放棄報到」預設不顯示在廠商人員清單，跟應徵名單「放棄」預設隱藏是
+# 一樣的邏輯：同仁主動搜尋姓名、或直接篩選狀態為這兩項才會列出來。
+HIDDEN_PERSONNEL_STATUSES = {"resigned", "onboard_withdrawn"}
+
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB，單一檔案上傳上限
 ALLOWED_UPLOAD_CONTENT_TYPES = {"image/jpeg", "image/png", "image/heic", "application/pdf"}
 

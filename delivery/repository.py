@@ -7,7 +7,13 @@ import re
 import time
 from datetime import date, datetime, timedelta
 
-from delivery.config import DOC_TYPES, SELECTABLE_APPLICANT_STATUSES
+from delivery.config import (
+    DEFAULT_PERSONNEL_STATUS,
+    DOC_TYPES,
+    HIDDEN_PERSONNEL_STATUSES,
+    LEGACY_PERSONNEL_STATUS,
+    SELECTABLE_APPLICANT_STATUSES,
+)
 from delivery.db import applicants_ref, get_db, personnel_ref, repayments_ref, sick_leaves_ref
 from delivery.validators import is_valid_taiwan_id
 
@@ -144,6 +150,7 @@ def create_personnel(
     created_by: str,
     cooperation_type: str = "",
     client: str = "",
+    employment_status: str = "",
 ) -> str:
     now = time.time()
     doc_ref = personnel_ref().document()
@@ -155,6 +162,7 @@ def create_personnel(
             "vendor": vendor,
             "cooperation_type": cooperation_type or "",
             "client": client or "",
+            "employment_status": employment_status or DEFAULT_PERSONNEL_STATUS,
             "status": "active",
             "documents": {},
             "created_at": now,
@@ -163,6 +171,18 @@ def create_personnel(
         }
     )
     return doc_ref.id
+
+
+def personnel_employment_status(personnel: dict) -> str:
+    """回傳人員的報到/在職狀態代碼。這個功能上線前就存在的舊資料沒有
+    employment_status 欄位，當作「在職」，不會被誤判成剛建立、還沒報到。"""
+    return personnel.get("employment_status") or LEGACY_PERSONNEL_STATUS
+
+
+def update_personnel_employment_status(personnel_id: str, employment_status: str):
+    personnel_ref().document(personnel_id).update(
+        {"employment_status": employment_status, "updated_at": time.time()}
+    )
 
 
 def get_personnel(personnel_id: str):
@@ -185,16 +205,42 @@ def list_personnel_by_vendor(vendor: str) -> list:
     return result
 
 
-def personnel_matches_filters(personnel: dict, missing: list, name_keyword: str = "", phone_keyword: str = "") -> bool:
+def personnel_matches_filters(
+    personnel: dict,
+    missing: list,
+    name_keyword: str = "",
+    phone_keyword: str = "",
+    status_filter: str = "",
+    missing_filter: str = "",
+) -> bool:
     """判斷這個人要不要出現在廠商人員清單裡（純函式，missing 需已經算好傳入）。
-    預設（沒有搜尋姓名）不顯示缺件狀況「齊全」的人，避免洗版；主動搜尋姓名，
-    齊全的人才會被列出來。"""
+
+    人員狀態：預設（沒有明確篩選狀態）不顯示「離職」「放棄報到」的人，跟應徵
+    名單「放棄」預設隱藏一樣；主動搜尋姓名、或直接篩選狀態為這兩項才會顯示。
+    缺件狀態：預設（沒有明確篩選、也沒搜尋姓名）不顯示缺件狀況「齊全」的人，
+    避免洗版；主動搜尋姓名，或直接篩選「缺件」「無缺件」都可以覆蓋這個預設。
+    """
     if name_keyword and name_keyword not in (personnel.get("name") or ""):
         return False
     if phone_keyword and phone_keyword not in (personnel.get("phone") or ""):
         return False
-    if not missing and not name_keyword:
+
+    employment_status = personnel_employment_status(personnel)
+    if status_filter:
+        if employment_status != status_filter:
+            return False
+    elif employment_status in HIDDEN_PERSONNEL_STATUSES and not name_keyword:
         return False
+
+    if missing_filter == "missing":
+        if not missing:
+            return False
+    elif missing_filter == "complete":
+        if missing:
+            return False
+    elif not missing and not name_keyword:
+        return False
+
     return True
 
 
