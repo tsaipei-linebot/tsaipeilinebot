@@ -108,6 +108,19 @@ def search_personnel(keyword: str) -> list:
     return result
 
 
+def find_active_personnel_by_id_number(id_number: str):
+    """批次匯入用：同一個身分證字號已經有在職人員資料時回傳該筆，讓呼叫端可以
+    跳過重複匯入，而不是每次匯入都建出重複的人員記錄。"""
+    if not id_number:
+        return None
+    query = personnel_ref().where("id_number", "==", id_number).where("status", "==", "active").limit(1)
+    for snapshot in query.stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        return data
+    return None
+
+
 def update_personnel_document(personnel_id: str, doc_type_code: str, file_path: str = None, expiry_date: str = None):
     ref = personnel_ref().document(personnel_id)
     snapshot = ref.get()

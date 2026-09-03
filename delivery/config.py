@@ -23,6 +23,12 @@ VENDORS = [
 ]
 VENDOR_MAP = {v["code"]: v["name"] for v in VENDORS}
 
+# 批次匯入 CSV 時，「廠商」欄位允許填代號或中文名稱，一律轉成小寫比對。
+VENDOR_LOOKUP = {}
+for _v in VENDORS:
+    VENDOR_LOOKUP[_v["code"].lower()] = _v["code"]
+    VENDOR_LOOKUP[_v["name"].lower()] = _v["code"]
+
 # 報到前應備文件（人員缺件狀況即依此清單逐項檢查）
 DOC_TYPES = [
     {"code": "id_card", "name": "身分證", "has_expiry": False},

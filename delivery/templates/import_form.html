@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}批次匯入人員 - 配送部系統{% endblock %}
+{% block content %}
+<h1 class="page-title">批次匯入人員</h1>
+<p class="hint">
+    上傳 CSV 檔案（UTF-8 或 Big5 皆可），欄位需包含「廠商」「姓名」（身分證字號、電話為選填）。
+    廠商欄位可以填代號（shopee/ud/uc/sf）或中文名稱（蝦皮/UD/UC/順豐）。
+    已存在相同身分證字號的在職人員會自動略過，不會重複建立。
+</p>
+<p><a href="/delivery/import/template.csv">下載範例 CSV 範本</a></p>
+
+<form method="post" action="/delivery/import" enctype="multipart/form-data" class="inline-form">
+    <input type="file" name="file" accept=".csv,text/csv" required>
+    <button type="submit" class="btn btn-primary">上傳並匯入</button>
+</form>
+
+{% if result %}
+    {% if result.header_error %}
+    <p class="error">檔案格式錯誤：{{ result.header_error }}</p>
+    {% else %}
+    <p class="meta">
+        成功建立 {{ result.created|length }} 筆，
+        略過（身分證字號已存在）{{ result.skipped|length }} 筆，
+        失敗 {{ result.failed|length }} 筆。
+    </p>
+
+    {% if result.created %}
+    <h2 class="section-title">已建立</h2>
+    <table class="data-table">
+        <thead><tr><th>列</th><th>廠商</th><th>姓名</th></tr></thead>
+        <tbody>
+            {% for r in result.created %}
+            <tr><td>{{ r.row }}</td><td>{{ r.vendor_name }}</td><td>{{ r.name }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if result.skipped %}
+    <h2 class="section-title">略過</h2>
+    <table class="data-table">
+        <thead><tr><th>列</th><th>姓名</th><th>原因</th></tr></thead>
+        <tbody>
+            {% for r in result.skipped %}
+            <tr><td>{{ r.row }}</td><td>{{ r.name }}</td><td>{{ r.reason }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if result.failed %}
+    <h2 class="section-title">失敗</h2>
+    <table class="data-table">
+        <thead><tr><th>列</th><th>姓名</th><th>錯誤原因</th></tr></thead>
+        <tbody>
+            {% for r in result.failed %}
+            <tr><td>{{ r.row }}</td><td>{{ r.name }}</td><td>{{ r.error }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}
