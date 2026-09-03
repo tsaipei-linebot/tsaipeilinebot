@@ -174,10 +174,14 @@ python -m delivery.seed_admin <帳號> <密碼> <顯示名稱> [role，預設 ad
 
 1. Cloud Run 設定環境變數 `DELIVERY_FORM_WEBHOOK_SECRET`（隨機字串，例如
    `openssl rand -hex 32`），跟下面 Apps Script 裡貼的密鑰要一致。
-2. 打開表單的回覆試算表 → 擴充功能 → Apps Script，貼上（`vendor`/
-   `cooperation_type` 是這個表單自己固定要標記的來源，不是題目答案——每個
-   廠商各自的表單都要貼這段、只改這兩個值，詳見下面「應徵者廠商/合作方式/
-   試駕」那節）：
+2. **打開「表單本身」（不是回覆試算表）** → 擴充功能 → Apps Script，貼上
+   （`vendor`/`cooperation_type` 是這個表單自己固定要標記的來源，不是題目
+   答案——每個廠商各自的表單都要貼這段、只改這兩個值，詳見下面「應徵者
+   廠商/合作方式/試駕」那節）。**注意**：一個試算表只能綁一個 Apps Script
+   專案，如果好幾份不同廠商的表單都指定回覆寫到同一份試算表（各自佔一個
+   分頁），程式碼不能綁在那份共用的試算表上，一定要各自打開「表單」本身
+   （表單編輯畫面 → 擴充功能 → Apps Script）分別貼、分別設定觸發條件，
+   這樣每份表單才有各自獨立的專案，互不干擾：
    ```javascript
    function onFormSubmit(e) {
      var answers = {};
