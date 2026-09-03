@@ -327,11 +327,6 @@ body {
 /* ==========================================
    表格
    ========================================== */
-.table-scroll {
-    overflow-x: auto;
-    border-radius: 10px;
-}
-
 .data-table {
     width: 100%;
     border-collapse: collapse;
@@ -360,9 +355,26 @@ body {
 .data-table tbody tr:hover { background: var(--bg); }
 .data-table tr:last-child td { border-bottom: none; }
 
+/* 表頭凍結：把捲動範圍收在這個容器本身（而不是整個頁面），sticky 用容器內的
+   top:0 就好，不用去猜導覽列高度；順便解決很寬的表格在小螢幕上需要左右捲動
+   的問題（overflow-x 和 overflow-y 都交給同一個容器處理，不會互相干擾）。 */
+.table-scroll {
+    max-height: 70vh;
+    overflow: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+}
+
+.table-scroll .data-table {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
 .sticky-head thead th {
     position: sticky;
-    top: 57px; /* 貼著上方導覽列下緣，避免捲動時被蓋住 */
+    top: 0;
     z-index: 5;
 }
 
