@@ -60,3 +60,10 @@ DEFAULT_RESUME_URLS = {
 # ==========================================
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "tsaipei-505807")
 GCP_LOCATION = os.getenv("GCP_LOCATION", "global")
+
+# ==========================================
+# 7. 壓力測試專用（僅供內部壓力測試腳本使用，預設關閉）
+# main.py 的 /internal/load-test-message 端點需要這組密鑰才會受理請求；
+# 沒有設定（空字串）時該端點一律回傳 403，等同完全關閉。
+# ==========================================
+LOAD_TEST_SECRET = os.getenv("LOAD_TEST_SECRET", "")
