@@ -72,6 +72,53 @@ const ProjectWorkflowService = {
       }
 
       const submitTime = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
+      const projectId = 'PRJ-' + Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyyMMddHHmmss');
+
+      // 合約檔案另存 Google Drive，取得可長期查詢的連結（不主動開放「知道連結的人皆可檢視」，
+      // 合約內容較敏感，沿用 GOOGLE_DRIVE_FOLDER_ID 資料夾既有的共用權限即可，不額外對外開放）
+      let contractFileUrl = '';
+      try {
+        let folder;
+        if (CONFIG.GOOGLE_DRIVE_FOLDER_ID) {
+          try {
+            folder = DriveApp.getFolderById(CONFIG.GOOGLE_DRIVE_FOLDER_ID);
+          } catch (fErr) {
+            console.warn('無法開啟指定資料夾，改存入雲端根目錄:', fErr);
+            folder = DriveApp.getRootFolder();
+          }
+        } else {
+          folder = DriveApp.getRootFolder();
+        }
+        const driveFile = folder.createFile(attachments[0]);
+        contractFileUrl = driveFile.getUrl();
+      } catch (driveErr) {
+        console.warn('合約檔案存入 Drive 失敗 (不影響 Email 發送):', driveErr);
+      }
+
+      // 寫入「專案合約紀錄」分頁，供內部管理與後續同步給會計
+      try {
+        const sheet = SpreadsheetService.getOrCreateSheet(CONFIG.SHEET_NAME_PROJECT);
+        if (sheet.getLastRow() === 0) {
+          sheet.appendRow(['專案編號', '申請時間', '申請人姓名', '廠商名稱', '合作類別', '簽約模式', '約訪專員', '拜訪主管', '收件信箱', '合約檔案連結']);
+          SpreadsheetApp.flush();
+        }
+        sheet.appendRow([
+          projectId,
+          submitTime,
+          applicantName,
+          vendor,
+          coopCategory,
+          contractMode,
+          interviewSpecialist,
+          visitSupervisor,
+          toAddresses,
+          contractFileUrl
+        ]);
+        SpreadsheetApp.flush();
+      } catch (sheetErr) {
+        console.warn('寫入專案合約紀錄分頁失敗 (不影響 Email 發送):', sheetErr);
+      }
+
       const subject = `【新專案合約通知】${vendor} - ${coopCategory} (${applicantName} 提交)`;
 
       const htmlBody = `

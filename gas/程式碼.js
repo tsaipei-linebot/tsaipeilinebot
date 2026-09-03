@@ -21,6 +21,7 @@ const CONFIG = {
   SPREADSHEET_ID: (PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || '').trim(),
   SHEET_NAME_ORG: '員工主管組織表',
   SHEET_NAME_SALARY: '薪資補款紀錄',
+  SHEET_NAME_PROJECT: '專案合約紀錄',
   HR_ACCOUNTING_EMAILS: PropertiesService.getScriptProperties().getProperty('HR_ACCOUNTING_EMAILS') || 'finance@tsaipei.com.tw',
   DEFAULT_LINE_GROUP_ID: 'C0fd6d96dc33202b3c636c5f3b62a5250',
   ADMIN_LINE_USER_ID: (PropertiesService.getScriptProperties().getProperty('ADMIN_LINE_USER_ID') || '').trim()
