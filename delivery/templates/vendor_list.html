@@ -12,12 +12,26 @@
 <form method="get" action="/delivery/vendor/{{ vendor_code }}" class="filter-bar">
     <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
     <input type="text" name="phone" value="{{ filter_phone }}" placeholder="搜尋電話">
+    <select name="status">
+        <option value="">全部狀態</option>
+        {% for s in personnel_statuses %}
+        <option value="{{ s.code }}" {% if filter_status == s.code %}selected{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="missing_status">
+        <option value="">全部</option>
+        <option value="missing" {% if filter_missing_status == "missing" %}selected{% endif %}>缺件</option>
+        <option value="complete" {% if filter_missing_status == "complete" %}selected{% endif %}>無缺件</option>
+    </select>
     <button type="submit" class="btn">搜尋</button>
-    {% if filter_name or filter_phone %}
+    {% if filter_name or filter_phone or filter_status or filter_missing_status %}
     <a class="btn" href="/delivery/vendor/{{ vendor_code }}">清除篩選</a>
     {% endif %}
 </form>
-<p class="hint">預設只顯示有缺件的人員；已備齊的人要主動搜尋姓名才會列出來。</p>
+<p class="hint">
+    預設只顯示有缺件、且狀態不是「離職」「放棄報到」的人員；主動搜尋姓名，或用上面的下拉選單
+    篩選狀態／缺件狀態，都可以看到被預設隱藏的人。
+</p>
 
 {% if rows %}
 <table class="data-table">
@@ -26,6 +40,7 @@
             <th>姓名</th>
             <th>電話</th>
             <th>缺件狀況</th>
+            <th>狀態</th>
             <th></th>
         </tr>
     </thead>
@@ -43,6 +58,7 @@
                     <span class="badge badge-ok">齊全</span>
                 {% endif %}
             </td>
+            <td><span class="badge {{ row.employment_status_badge_class }}">{{ row.employment_status_name }}</span></td>
             <td><a href="/delivery/personnel/{{ row.person.id }}">查看詳細</a></td>
         </tr>
         {% endfor %}

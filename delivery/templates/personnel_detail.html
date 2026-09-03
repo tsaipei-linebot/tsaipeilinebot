@@ -13,8 +13,15 @@
 {% endif %}
 
 <form method="post" action="/delivery/personnel/{{ person.id }}/bulk-update" enctype="multipart/form-data">
-    {% if show_cooperation_type or show_client %}
     <div class="filter-bar">
+        <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+            人員狀態
+            <select name="employment_status">
+                {% for s in personnel_statuses %}
+                <option value="{{ s.code }}" {% if current_employment_status == s.code %}selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
         {% if show_cooperation_type %}
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
             合作方式
@@ -38,7 +45,6 @@
         </label>
         {% endif %}
     </div>
-    {% endif %}
 
     <button type="submit" class="btn btn-primary btn-bulk-update">一鍵全部更新</button>
 

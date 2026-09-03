@@ -12,6 +12,9 @@ from delivery.config import (
     COOPERATION_TYPE_VENDORS,
     COOPERATION_TYPES,
     MAX_UPLOAD_BYTES,
+    PERSONNEL_STATUS_BADGE_CLASS,
+    PERSONNEL_STATUS_MAP,
+    PERSONNEL_STATUSES,
     VENDOR_MAP,
 )
 from delivery.ocr import extract_expiry_date
@@ -28,6 +31,8 @@ def vendor_list(
     request: Request,
     name: str = "",
     phone: str = "",
+    status: str = "",
+    missing_status: str = "",
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -37,12 +42,27 @@ def vendor_list(
 
     name_keyword = (name or "").strip()
     phone_keyword = (phone or "").strip()
+    status_filter = (status or "").strip()
+    missing_filter = (missing_status or "").strip()
 
     rows = []
     for p in repository.list_personnel_by_vendor(vendor_code):
         missing = repository.missing_documents(p)
-        if repository.personnel_matches_filters(p, missing, name_keyword, phone_keyword):
-            rows.append({"person": p, "missing": missing})
+        if repository.personnel_matches_filters(
+            p, missing, name_keyword, phone_keyword, status_filter, missing_filter
+        ):
+            employment_status = repository.personnel_employment_status(p)
+            rows.append(
+                {
+                    "person": p,
+                    "missing": missing,
+                    "employment_status": employment_status,
+                    "employment_status_name": PERSONNEL_STATUS_MAP.get(employment_status, employment_status),
+                    "employment_status_badge_class": PERSONNEL_STATUS_BADGE_CLASS.get(
+                        employment_status, "badge-pending"
+                    ),
+                }
+            )
 
     return templates.TemplateResponse(
         request,
@@ -54,6 +74,9 @@ def vendor_list(
             "rows": rows,
             "filter_name": name,
             "filter_phone": phone,
+            "filter_status": status,
+            "filter_missing_status": missing_status,
+            "personnel_statuses": PERSONNEL_STATUSES,
         },
     )
 
@@ -122,6 +145,8 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
             "vendor_name": VENDOR_MAP.get(vendor_code, vendor_code),
             "cooperation_types": COOPERATION_TYPES,
             "clients": CLIENTS,
+            "personnel_statuses": PERSONNEL_STATUSES,
+            "current_employment_status": repository.personnel_employment_status(person),
             "show_cooperation_type": vendor_code in COOPERATION_TYPE_VENDORS,
             "show_client": vendor_code in CLIENT_VENDORS,
             "doc_statuses": repository.all_document_statuses(person),
@@ -153,6 +178,11 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
     if "client" in form:
         client = form.get("client", "")
         repository.update_personnel_client(personnel_id, client if client in CLIENT_MAP else "")
+
+    if "employment_status" in form:
+        employment_status = form.get("employment_status", "")
+        if employment_status in PERSONNEL_STATUS_MAP:
+            repository.update_personnel_employment_status(personnel_id, employment_status)
 
     id_number_error = False
     if "id_number" in form:

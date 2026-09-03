@@ -14,6 +14,7 @@ from delivery.repository import (
     applicable_doc_types,
     doc_status,
     missing_documents,
+    personnel_employment_status,
     personnel_matches_filters,
 )
 
@@ -256,6 +257,50 @@ class PersonnelMatchesFiltersTests(unittest.TestCase):
     def test_phone_keyword_excludes_non_matching(self):
         self.assertFalse(
             personnel_matches_filters({"name": "王小明", "phone": "0912345678"}, missing=[{"code": "x"}], phone_keyword="0900000000")
+        )
+
+    def test_resigned_hidden_by_default(self):
+        person = {"name": "王小明", "phone": "0912345678", "employment_status": "resigned"}
+        self.assertFalse(personnel_matches_filters(person, missing=[{"code": "x"}]))
+
+    def test_onboard_withdrawn_hidden_by_default(self):
+        person = {"name": "王小明", "phone": "0912345678", "employment_status": "onboard_withdrawn"}
+        self.assertFalse(personnel_matches_filters(person, missing=[{"code": "x"}]))
+
+    def test_resigned_shown_when_name_searched(self):
+        person = {"name": "王小明", "phone": "0912345678", "employment_status": "resigned"}
+        self.assertTrue(personnel_matches_filters(person, missing=[{"code": "x"}], name_keyword="王小明"))
+
+    def test_resigned_shown_when_status_filter_matches(self):
+        # 狀態篩選命中時會蓋掉「離職/放棄報到預設隱藏」的規則，但缺件狀態這個
+        # 獨立的隱藏規則不受影響，所以這裡要傳有缺件的資料才會顯示。
+        person = {"name": "王小明", "phone": "0912345678", "employment_status": "resigned"}
+        self.assertTrue(personnel_matches_filters(person, missing=[{"code": "x"}], status_filter="resigned"))
+
+    def test_status_filter_excludes_non_matching_status(self):
+        person = {"name": "王小明", "phone": "0912345678", "employment_status": "employed"}
+        self.assertFalse(personnel_matches_filters(person, missing=[{"code": "x"}], status_filter="pending_onboard"))
+
+    def test_legacy_personnel_without_employment_status_treated_as_employed(self):
+        # 上線前既有的舊資料沒有 employment_status 欄位，不該被當成「待報到」而
+        # 被隱藏規則影響（待報到不在隱藏清單裡，但語意上舊資料本來就已經在職）。
+        person = {"name": "王小明", "phone": "0912345678"}
+        self.assertEqual(personnel_employment_status(person), "employed")
+
+    def test_missing_filter_missing_forces_hide_complete_even_with_name_search(self):
+        person = {"name": "王小明", "phone": "0912345678", "employment_status": "employed"}
+        self.assertFalse(
+            personnel_matches_filters(person, missing=[], name_keyword="王小明", missing_filter="missing")
+        )
+
+    def test_missing_filter_complete_shows_complete_without_name_search(self):
+        person = {"name": "王小明", "phone": "0912345678", "employment_status": "employed"}
+        self.assertTrue(personnel_matches_filters(person, missing=[], missing_filter="complete"))
+
+    def test_missing_filter_complete_hides_incomplete(self):
+        person = {"name": "王小明", "phone": "0912345678", "employment_status": "employed"}
+        self.assertFalse(
+            personnel_matches_filters(person, missing=[{"code": "x"}], missing_filter="complete")
         )
 
 
