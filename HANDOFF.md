@@ -337,3 +337,66 @@ Firestore 跑過整合測試（測試都是 mock 掉外部服務），上線後�
     到期日、不會跑 OCR（純粹「有沒有交」，跟強制險那種 `file_expiry` 不同）。
 - 身分證字號驗證、駕照/合約簽定勾選、良民證上傳辨識到期日，這幾項 UD 直接
   沿用上一輪已經全廠商通用的功能，這次沒有額外改動。
+
+### 後續新增：UC/順豐專屬項目 + 人員詳細頁改成一鍵全部更新
+
+**新的篩選/欄位機制：**
+
+- **`required` 旗標**（`DOC_TYPES` 裡 `file_expiry` 類項目專用，預設 `True`）：
+  設成 `False` 代表這項不是必填——沒交不算缺件，但只要有交、有到期日，
+  一樣會被到期提醒排程掃到、一樣會被記錄過期。目前設成 `False` 的是
+  `guild_insurance`（蝦皮的公會加保證明）跟新增的 `sf_guild_insurance`
+  （順豐的公會加保證明）。`doc_status()` 回傳的 dict 現在多一個 `required`
+  欄位，判斷公式是 `missing = expired or (required and not has_file)`。
+- **新的 `kind: "email"`**：同仁直接填 email，`doc_status()` 用簡單的 regex
+  （`_EMAIL_PATTERN`）檢查格式，跟身分證字號那類「不是文件、检查欄位本身」
+  的做法一樣。對應寫入函式 `repository.update_personnel_email()`。
+- **`COOPERATION_TYPE_VENDORS` / `CLIENT_VENDORS`**（`config.py` 新增兩個
+  清單）：控制「合作方式」「負責客戶」這兩個下拉選單**只在**列在清單裡的
+  廠商頁面上顯示（欄位本身還是全域欄位，只是畫面上非相關廠商不顯示、也不
+  會送出這兩個值）。目前 `COOPERATION_TYPE_VENDORS = ["shopee"]`（只有蝦皮
+  看得到合作方式選單，UC/UD/順豐都不看合作方式決定應備項目）、
+  `CLIENT_VENDORS = ["ud"]`（只有 UD 看得到負責客戶選單）。
+- 新增/調整的 `DOC_TYPES`：
+  - `uber_system`（UBER系統，checkbox）：`include_vendors` 從只有 `["ud"]`
+    擴大成 `["ud", "uc"]`，UC 現在也會要求勾選。
+  - `uc_photo`（拍照，`kind: "file"`，`include_vendors: ["uc"]`）：跟自拍照
+    一樣純粹「有沒有交」，不記錄到期日。
+  - `email`（EMAIL，`kind: "email"`，`include_vendors: ["ud", "uc"]`）：UD/UC
+    都要填。
+  - `sf_insurance`（強制險，`kind: "file_expiry"`，`include_vendors: ["sf"]`）
+    跟 `sf_guild_insurance`（公會加保證明，同上、外加 `required: False`）：
+    順豐專屬，**不看合作方式**（直接綁廠商，因為順豐頁面沒有合作方式選單，
+    人員的 `cooperation_type` 一律是空字串，用既有的 `cooperation_types`
+    篩選方式抓不到，所以另外開兩個獨立項目而不是共用蝦皮/UD 那組
+    `insurance`/`guild_insurance`）。
+
+**人員詳細頁改版（`personnel_detail.html` + `vendor_routes.py`）：**
+
+- 原本每一列應備項目各自一個小 `<form>`、要分開送出很多次，改成**整頁一個
+  `<form enctype="multipart/form-data">`**，所有欄位（合作方式/負責客戶、
+  身分證字號、email、各項勾選、各項檔案上傳、各項到期日）一次送出。
+- 對應後端從原本五支個別的更新路由（`update_cooperation_type` /
+  `update_client` / `update_id_number` / `update_checkbox` /
+  `upload_document`，**已整個移除**）合併成**一支** `POST
+  /delivery/personnel/{id}/bulk-update`，用表單欄位名稱規則對應：
+  `id_number`、`email`、`cooperation_type`、`client`、
+  `checked_{doc.code}`、`file_{doc.code}`、`expiry_date_{doc.code}`。
+  合作方式/負責客戶這兩個欄位只有畫面上真的有顯示（`show_cooperation_type`
+  / `show_client`）時表單才會帶到，路由用 `"cooperation_type" in form` /
+  `"client" in form` 判斷要不要更新，避免沒顯示的廠商頁面誤把值清空。
+- 頁面最上方（表格前）跟最下方（表格後）都放了大顆的「一鍵全部更新」按鈕
+  （`.btn-bulk-update`），對應原本「蝦皮、順豐、UD、UC 的頁面上方都放大的
+  一鍵全部更新按鈕」的需求。
+- 身分證字號格式錯誤時（沒通過檢查碼驗證）整份表單一樣會照送，只有身分證
+  字號這欄不寫入，並在網址帶 `?error=id_number` 導回同一頁顯示錯誤訊息；
+  其他欄位（勾選、上傳、email 等）不受影響照常更新，避免因為一個欄位打錯
+  就整份都不儲存。
+- `personnel_form.html`（新增人員表單）的合作方式/負責客戶選單也一併改成
+  依 `show_cooperation_type` / `show_client` 條件顯示，跟詳細頁行為一致。
+
+**已知限制**：這次新增的 `email` 格式檢查、`required=False` 缺件判斷、
+UC/順豐新項目都只有單元測試 + mock 過的 TestClient 手動測試，沒有實際連
+Firestore/GCS/Vertex AI 跑過；上線後建議挑一個 UC 跟一個順豐的測試人員，
+實際跑一次「一鍵全部更新」（含上傳強制險/公會加保證明照片）確認 OCR 辨識
+跟到期提醒排程都正常。

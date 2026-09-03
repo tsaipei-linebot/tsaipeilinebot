@@ -50,13 +50,22 @@ CLIENTS = [
 ]
 CLIENT_MAP = {c["code"]: c["name"] for c in CLIENTS}
 
+# 哪些廠商的人員詳細頁要顯示「合作方式」「負責客戶」這兩個選單。這兩個欄位
+# 本身是全域欄位（值不因廠商而異），但畫面上只有真的會用到的廠商才顯示，
+# 避免同仁在用不到的廠商頁面上看到無意義的選單。
+COOPERATION_TYPE_VENDORS = ["shopee"]
+CLIENT_VENDORS = ["ud"]
+
 # 報到前應備文件（人員缺件狀況即依此清單逐項檢查）。每一項的 kind 決定要怎麼
 # 判斷「缺不缺」、頁面上要顯示什麼樣的輸入元件：
 #   - "id_number"：不是文件，是檢查 personnel.id_number 這個欄位本身格式合不合法
 #     （身分證字號檢查碼），同仁直接填字號、不用上傳檔案。
+#   - "email"：不是文件，同仁直接填 email，簡單檢查格式。
 #   - "checkbox"：同仁勾選「有」就算備齊，不用上傳檔案、沒有到期日。
 #   - "file"：要上傳檔案，但不用記錄到期日（例如自拍照，純粹「有沒有交」）。
 #   - "file_expiry"：要上傳檔案，並且（透過 OCR 或人工）記錄到期日，過期也算缺件。
+#     多一個 required（預設 True）：False 代表這項不是必填，沒交不算缺件，但只要
+#     有交、有到期日，一樣會被到期提醒掃到。
 # 篩選條件（都不設代表不限）：
 #   - exclude_vendors：這幾個廠商的人員不會被要求這一項。
 #   - include_vendors：只有這幾個廠商的人員才會被要求這一項（白名單，跟
@@ -79,6 +88,7 @@ DOC_TYPES = [
         "name": "公會加保證明",
         "kind": "file_expiry",
         "cooperation_types": ["two_wheel_contract"],
+        "required": False,
     },
     {
         "code": "liability_insurance",
@@ -86,7 +96,8 @@ DOC_TYPES = [
         "kind": "file_expiry",
         "cooperation_types": ["two_wheel_employed"],
     },
-    {"code": "uber_system", "name": "UBER系統", "kind": "checkbox", "include_vendors": ["ud"]},
+    # UD/UC 專屬（不用合作方式判斷，直接綁廠商）
+    {"code": "uber_system", "name": "UBER系統", "kind": "checkbox", "include_vendors": ["ud", "uc"]},
     {
         "code": "momo_test",
         "name": "MOMO測驗",
@@ -95,6 +106,18 @@ DOC_TYPES = [
         "clients": ["momo"],
     },
     {"code": "selfie_photo", "name": "自拍照", "kind": "file", "include_vendors": ["ud"]},
+    {"code": "uc_photo", "name": "拍照", "kind": "file", "include_vendors": ["uc"]},
+    {"code": "email", "name": "EMAIL", "kind": "email", "include_vendors": ["ud", "uc"]},
+    # 順豐專屬：強制險/公會加保證明不看合作方式，直接綁廠商、無條件要求
+    # （公會加保證明比照蝦皮設為非必填，但一樣有到期提醒）。
+    {"code": "sf_insurance", "name": "強制險", "kind": "file_expiry", "include_vendors": ["sf"]},
+    {
+        "code": "sf_guild_insurance",
+        "name": "公會加保證明",
+        "kind": "file_expiry",
+        "include_vendors": ["sf"],
+        "required": False,
+    },
 ]
 DOC_TYPE_MAP = {d["code"]: d for d in DOC_TYPES}
 
