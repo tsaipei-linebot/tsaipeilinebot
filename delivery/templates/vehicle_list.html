@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}車輛管理 - 材霈有限公司-配送部系統{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">車輛管理</h1>
+    <a class="btn btn-primary" href="/delivery/vehicles/new">新增車輛</a>
+</div>
+
+<form method="get" action="/delivery/vehicles" class="filter-bar">
+    <input type="text" name="vehicle_no" value="{{ filter_vehicle_no }}" placeholder="搜尋車號">
+    <select name="vendor">
+        <option value="">全部廠商</option>
+        {% for v in vendors %}
+        <option value="{{ v.code }}" {% if filter_vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="status">
+        <option value="">全部狀態</option>
+        {% for s in vehicle_statuses %}
+        <option value="{{ s.code }}" {% if filter_status == s.code %}selected{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_vehicle_no or filter_vendor or filter_status %}
+    <a class="btn" href="/delivery/vehicles">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if vehicles %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>車號</th>
+            <th>廠商</th>
+            <th>狀態</th>
+            <th>目前使用人</th>
+            <th>目前地點</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for v in vehicles %}
+        <tr>
+            <td>{{ v.vehicle_no }}</td>
+            <td>{{ vendor_map.get(v.vendor, v.vendor) }}</td>
+            <td>
+                <span class="badge {{ 'badge-ok' if v.status == 'available' else ('badge-missing' if v.status == 'maintenance' else 'badge-pending') }}">
+                    {{ vehicle_status_map.get(v.status, v.status) }}
+                </span>
+            </td>
+            <td>{{ v.current_holder or "-" }}</td>
+            <td>{{ v.current_location or "-" }}</td>
+            <td><a href="/delivery/vehicles/{{ v.vehicle_no }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有符合條件的車輛。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

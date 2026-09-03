@@ -24,6 +24,8 @@ from services.matcher_service import (
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
+from config import DELIVERY_VEHICLE_REPORT_GROUP_ID
+from delivery.vehicle_report import handle_vehicle_report
 
 
 # ==========================================
@@ -82,6 +84,18 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
     # （例如要幫配送部系統的到期提醒設定要推播的 LINE 群組時查 ID 用），
     # 不影響任何既有的回覆邏輯。
     print(f"\n[收到使用者訊息]: 「{raw_msg}」 (User: {user_id}, Source: {source_type}{f', Group: {group_id}' if group_id else ''})")
+
+    # 配送部車輛回報：只認這個綁定的群組傳來的訊息，其他來源（含私訊、
+    # 其他群組）一律當作一般訊息、繼續往下走原本的招募對話邏輯，兩邊完全
+    # 隔開，不會互相干擾。
+    if (
+        DELIVERY_VEHICLE_REPORT_GROUP_ID
+        and source_type == "group"
+        and group_id == DELIVERY_VEHICLE_REPORT_GROUP_ID
+    ):
+        reply_text = handle_vehicle_report(raw_msg)
+        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
+        return
 
     try:
         active_jobs = fetch_jobs_data()

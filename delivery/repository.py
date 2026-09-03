@@ -11,6 +11,7 @@ from delivery.config import (
     COOPERATION_TYPE_MAP,
     DEFAULT_PERSONNEL_STATUS,
     DEFAULT_TEST_DRIVE_STATUS,
+    DEFAULT_VEHICLE_STATUS,
     DOC_TYPES,
     HIDDEN_PERSONNEL_STATUSES,
     LEGACY_PERSONNEL_STATUS,
@@ -18,9 +19,18 @@ from delivery.config import (
     TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
     TEST_DRIVE_REQUIRED_VENDORS,
     TEST_DRIVE_STATUS_MAP,
+    VEHICLE_STATUS_MAP,
     VENDOR_MAP,
 )
-from delivery.db import applicants_ref, get_db, personnel_ref, repayments_ref, sick_leaves_ref
+from delivery.db import (
+    applicants_ref,
+    get_db,
+    personnel_ref,
+    repayments_ref,
+    sick_leaves_ref,
+    vehicle_events_ref,
+    vehicles_ref,
+)
 from delivery.validators import is_valid_taiwan_id
 
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -709,3 +719,154 @@ def bulk_update_applicants(updates: dict) -> None:
 
 def mark_applicant_hired(applicant_id: str, personnel_id: str):
     applicants_ref().document(applicant_id).update({"status": "hired", "converted_personnel_id": personnel_id})
+
+
+# ==========================================
+# 車輛管理（LINE 群組回報領車/還車 + 網頁手動管理）
+# ==========================================
+def create_vehicle(vehicle_no: str, vendor: str, created_by: str) -> bool:
+    """新增車輛，車號當文件 ID、全公司唯一。已經存在就回傳 False、不會覆蓋
+    既有資料；成功新增回傳 True。"""
+    ref = vehicles_ref().document(vehicle_no)
+    if ref.get().exists:
+        return False
+    ref.set(
+        {
+            "vehicle_no": vehicle_no,
+            "vendor": vendor,
+            "status": DEFAULT_VEHICLE_STATUS,
+            "current_holder": "",
+            "current_location": "",
+            "last_event_at": None,
+            "created_by": created_by,
+            "created_at": time.time(),
+        }
+    )
+    return True
+
+
+def get_vehicle(vehicle_no: str):
+    snapshot = vehicles_ref().document(vehicle_no).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["vehicle_no"] = snapshot.id
+    return data
+
+
+def vehicle_matches_filters(
+    vehicle: dict, vendor_filter: str = "", status_filter: str = "", vehicle_no_filter: str = ""
+) -> bool:
+    """判斷這台車要不要出現在車輛清單裡（純函式）。"""
+    if vendor_filter and vehicle.get("vendor") != vendor_filter:
+        return False
+    if status_filter and vehicle.get("status") != status_filter:
+        return False
+    if vehicle_no_filter and vehicle_no_filter not in (vehicle.get("vehicle_no") or ""):
+        return False
+    return True
+
+
+def list_vehicles(vendor_filter: str = "", status_filter: str = "", vehicle_no_filter: str = "") -> list:
+    vendor_filter = (vendor_filter or "").strip()
+    status_filter = (status_filter or "").strip()
+    vehicle_no_filter = (vehicle_no_filter or "").strip()
+
+    result = []
+    for snapshot in vehicles_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["vehicle_no"] = snapshot.id
+        if vehicle_matches_filters(data, vendor_filter, status_filter, vehicle_no_filter):
+            result.append(data)
+    result.sort(key=lambda v: v.get("vehicle_no", ""))
+    return result
+
+
+def list_vehicle_events(vehicle_no: str) -> list:
+    result = []
+    for snapshot in vehicle_events_ref().where("vehicle_no", "==", vehicle_no).stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda e: e.get("created_at", 0), reverse=True)
+    return result
+
+
+def set_vehicle_status(vehicle_no: str, status: str) -> bool:
+    """網頁上手動調整車輛狀態用（例如標記/解除待維修）。只接受合法的狀態
+    代碼，車輛不存在或狀態不合法都回傳 False、不會寫入。"""
+    if status not in VEHICLE_STATUS_MAP:
+        return False
+    ref = vehicles_ref().document(vehicle_no)
+    if not ref.get().exists:
+        return False
+    ref.update({"status": status})
+    return True
+
+
+def vehicle_event_error(vehicle, vendor: str, event_type: str) -> str:
+    """判斷一筆領車/還車事件套用到這台車目前的狀態合不合理（純函式，vehicle
+    需已經查好、找不到就傳 None）。回傳空字串代表可以記錄；非空字串是擋下的
+    錯誤代碼：
+    - "vehicle_not_found"：車號不存在，要先在網頁新增這台車。
+    - "vendor_mismatch"：回報的廠商跟這台車登記的廠商不一樣。
+    - "not_available"：領車時車輛目前是使用中或待維修，不能再派車。
+    - "not_in_use"：還車時車輛目前不是使用中，沒有領用中的紀錄可以還。
+    """
+    if vehicle is None:
+        return "vehicle_not_found"
+    if vehicle.get("vendor") != vendor:
+        return "vendor_mismatch"
+    status = vehicle.get("status", DEFAULT_VEHICLE_STATUS)
+    if event_type == "checkout" and status in ("in_use", "maintenance"):
+        return "not_available"
+    if event_type == "return" and status != "in_use":
+        return "not_in_use"
+    return ""
+
+
+def record_vehicle_event(
+    vehicle_no: str,
+    vendor: str,
+    personnel_name: str,
+    event_type: str,
+    event_date: str,
+    location: str,
+    source: str,
+    reported_by: str = "",
+) -> tuple:
+    """驗證通過（見 vehicle_event_error）才會真的寫入事件紀錄、同步更新車輛
+    主檔的狀態/使用人/地點。回傳 (True, "") 代表成功；(False, 錯誤代碼) 代表
+    被擋下，呼叫端可以把錯誤代碼轉成對應的訊息（LINE 回覆或網頁錯誤提示）。
+    source 是 "line" 或 "manual"，用來區分這筆事件是 LINE 群組回報還是網頁
+    手動補登的。"""
+    vehicle = get_vehicle(vehicle_no)
+    error = vehicle_event_error(vehicle, vendor, event_type)
+    if error:
+        return False, error
+
+    now = time.time()
+    vehicle_events_ref().document().set(
+        {
+            "vehicle_no": vehicle_no,
+            "vendor": vendor,
+            "personnel_name": personnel_name,
+            "event_type": event_type,
+            "event_date": event_date,
+            "location": location,
+            "source": source,
+            "reported_by": reported_by,
+            "created_at": now,
+        }
+    )
+
+    new_status = "in_use" if event_type == "checkout" else "available"
+    vehicles_ref().document(vehicle_no).update(
+        {
+            "status": new_status,
+            "current_holder": personnel_name if event_type == "checkout" else "",
+            "current_location": location,
+            "last_event_at": now,
+        }
+    )
+    return True, ""

@@ -201,3 +201,21 @@ DEFAULT_TEST_DRIVE_STATUS = "not_tested"
 # repository.applicant_needs_test_drive()，這裡只放組成判斷用的資料。
 TEST_DRIVE_REQUIRED_VENDORS = ["ud", "uc"]
 TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES = ["three_wheel_employed"]
+
+# ==========================================
+# 車輛管理
+# 車號全公司唯一（車輛主檔用車號當文件 ID）；廠商是車輛本身固定的屬性，跟
+# LINE 群組回報／網頁登記事件時填的廠商要一致，見 repository.vehicle_event_error()。
+# ==========================================
+VEHICLE_STATUSES = [
+    {"code": "available", "name": "待領用"},
+    {"code": "in_use", "name": "使用中"},
+    {"code": "maintenance", "name": "待維修"},
+]
+VEHICLE_STATUS_MAP = {s["code"]: s["name"] for s in VEHICLE_STATUSES}
+VEHICLE_STATUS_BADGE_CLASS = {
+    "available": "badge-ok",
+    "in_use": "badge-pending",
+    "maintenance": "badge-missing",
+}
+DEFAULT_VEHICLE_STATUS = "available"

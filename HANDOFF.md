@@ -599,3 +599,89 @@ TestClient 手動測試；上線後除了要記得去改每份表單各自的 Ap
 連線查詢）只有 mock 過的 TestClient 手動測試，上線後建議實際登記幾筆補款/
 假別資料，跑一次「用姓名/廠商/月份篩選」「管理員核准、核准後檢查一般同仁
 看到的畫面」「下載 EXCEL 打開確認欄位跟篩選範圍正確」這幾個情境。
+
+### 後續新增：車輛管理（LINE 群組回報領車/還車 + 網頁管理）
+
+背景：同仁在一個綁定的 LINE 群組裡用固定格式回報領車/還車，這一輪讓這個
+回報自動寫進配送部系統，另外補上網頁端的車輛清單/新增/歷史/手動修正。
+
+**這是跨兩個子系統的整合**：LINE 官方帳號的訊息 webhook（`main.py` /
+`handlers/message_handler.py`）跟配送部系統（`delivery/` 底下）雖然平常
+完全獨立、資料表也分開，但兩者其實跑在同一個 Cloud Run 服務裡，所以這次
+不是另外開一支對外 webhook 讓兩邊互打，而是直接在
+`handlers/message_handler.py` 的 `process_user_message()` 最前面（原本就有
+在 log 裡印 `source_type`/`group_id` 的那段之後）加一段判斷：
+
+```python
+if (
+    DELIVERY_VEHICLE_REPORT_GROUP_ID
+    and source_type == "group"
+    and group_id == DELIVERY_VEHICLE_REPORT_GROUP_ID
+):
+    reply_text = handle_vehicle_report(raw_msg)
+    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
+    return
+```
+
+**只認這個綁定群組的訊息**：`source_type` 要是 `"group"`、`group_id` 要
+剛好等於 `DELIVERY_VEHICLE_REPORT_GROUP_ID`（新的環境變數，根目錄
+`config.py` 第 8 節）才會被攔截；其他來源（私訊、其他群組）完全不受影響，
+照舊走原本的招募對話邏輯——這樣同一個官方帳號可以同時服務應徵者對話跟
+同仁的車輛回報，兩邊不會互相干擾，也不用維護一份「誰是同仁」的白名單。
+
+**訊息解析**（`delivery/vehicle_report.py`，`parse_vehicle_report()` 是純
+函式，`handle_vehicle_report()` 才會真的查/寫資料庫）：逐行找「廠商：」
+「姓名：」「開始日期：」「結束日期：」「車號：」「服務門市：/還車地點：」
+這幾個關鍵字開頭的行抓值，同仁把公司內部的範本說明文字一起複製貼過來也
+不影響解析（不符合這幾個關鍵字的行直接忽略）。用「開始日期」還是「結束
+日期」有填來判斷是領車還是還車，不是看最後一行的欄位名稱寫「服務門市」
+還是「還車地點」——不管寫哪個都當作「地點」存。日期用寬鬆的
+`_normalize_date()` 解析（「2026-8-25」這種沒補零的也接受），轉成系統
+統一的 YYYY-MM-DD。廠商透過既有的 `VENDOR_LOOKUP` 比對（可以填代號或中文
+名稱）。缺欄位/兩個日期都填/日期格式錯/廠商打錯字，都會直接回覆對應的
+錯誤訊息到群組，不會靜默失敗或寫入垃圾資料。
+
+**資料模型**（`db.py` 新增兩個 collection）：
+- `delivery_vehicles`（車輛主檔，車號當文件 ID，車號全公司唯一，廠商是
+  車輛固定屬性）：`vendor`、`status`（`available` 待領用／`in_use` 使用
+  中／`maintenance` 待維修，見 `config.py` 的 `VEHICLE_STATUSES`）、
+  `current_holder`、`current_location`、`last_event_at`。
+- `delivery_vehicle_events`（事件紀錄，只增不改）：每筆領車/還車（不管是
+  LINE 回報還是網頁手動補登）存一筆，含 `source`（`"line"`/`"manual"`）
+  方便之後追查來源。
+
+**擋止邏輯**（`repository.vehicle_event_error()`，純函式）：
+- 車號不存在 → `vehicle_not_found`（回報前要先在網頁「車輛管理」新增這
+  台車）。
+- 回報的廠商跟車輛登記的廠商不一樣 → `vendor_mismatch`。
+- 領車時車輛目前是「使用中」或「待維修」→ `not_available`（同一台車在
+  被還車之前不能再被派出去）。
+- 還車時車輛目前不是「使用中」→ `not_in_use`。
+這組驗證邏輯被 `repository.record_vehicle_event()` 統一使用，LINE 回報跟
+網頁上「手動補登事件」共用同一套規則，不會有兩條路徑各自的例外狀況。
+
+**「待維修」是網頁手動切換的**：兩種 LINE 訊息格式都只有領車/還車，沒有
+送修情境，所以待維修狀態是同仁在車輛詳細頁手動標記/解除的
+（`repository.set_vehicle_status()`），跟 LINE 回報的事件紀錄是分開的兩條
+路徑。
+
+**網頁**（`delivery/routes/vehicle_routes.py` + 對應樣板，主頁新增「車輛
+管理」面板）：
+- `/vehicles`：車輛清單，可依車號/廠商/狀態篩選。
+- `/vehicles/new`：新增車輛（車號不能重複）。
+- `/vehicles/{車號}`：詳細頁——目前狀態/使用人/地點、標記待維修/解除、
+  手動補登一筆事件（表單），跟這台車完整的歷史紀錄。
+
+**上線前要做的事**：Cloud Run 設定環境變數 `DELIVERY_VEHICLE_REPORT_GROUP_ID`
+（那個綁定群組的 LINE group ID；拿法比照到期提醒那節「群組 groupId 拿法」
+的說明——把官方帳號拉進群組、群組裡發一則訊息、去 Cloud Logging 或這次
+新加的 log 行找 `Group: ...`）。沒設定這個環境變數時，這個攔截機制完全
+關閉（等同這個功能不存在），不影響任何既有流程。
+
+**已知限制**：`parse_vehicle_report()`、`vehicle_event_error()`、
+`vehicle_matches_filters()` 這些純函式都有單元測試；跟 Firestore 真的
+互動的部分（`record_vehicle_event`、`create_vehicle` 等）跟 LINE 訊息路由
+的攔截邏輯只有 mock 過的手動測試。上線後建議：先在網頁新增一台測試車輛，
+到綁定群組實際傳一則領車格式的訊息確認寫入成功、狀態變成使用中，再傳一次
+還車格式確認狀態變回待領用；也建議傳一則故意漏欄位或廠商打錯字的訊息，
+確認機器人有回覆正確的錯誤說明而不是沒反應。
