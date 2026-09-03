@@ -190,6 +190,15 @@ body {
 
 .btn-primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
 
+.btn-danger {
+    background: var(--danger-bg);
+    border-color: var(--danger-bg);
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.btn-danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+
 .btn-small { padding: 6px 10px; font-size: 13px; }
 
 .btn-bulk-update {

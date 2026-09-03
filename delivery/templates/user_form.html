@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}新增帳號 - 配送部系統{% endblock %}
+{% block content %}
+<h1 class="page-title">新增帳號</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/delivery/users/new" class="form-stack form-narrow">
+    <label>帳號
+        <input type="text" name="username" required>
+    </label>
+    <label>密碼
+        <input type="password" name="password" required>
+    </label>
+    <label>姓名
+        <input type="text" name="name" required>
+    </label>
+    <label>權限
+        <select name="role">
+            {% for r in roles %}
+            <option value="{{ r.code }}" {% if r.code == "staff" %}selected{% endif %}>{{ r.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <button type="submit" class="btn btn-primary">建立帳號</button>
+</form>
+<p class="back-link"><a href="/delivery/users">&larr; 回帳號管理</a></p>
+{% endblock %}

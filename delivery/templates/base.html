@@ -21,6 +21,9 @@
         {% if user %}
         <nav class="topnav">
             <span class="topnav-user">{{ user.name }}</span>
+            {% if user.role == "admin" %}
+            <a href="/delivery/users">帳號管理</a>
+            {% endif %}
             <a href="/delivery/logout">登出</a>
         </nav>
         {% endif %}

@@ -513,3 +513,36 @@ mock 過的 TestClient 手動測試；上線後建議實際把某個人的狀態
 TestClient 手動測試；上線後除了要記得去改每份表單各自的 Apps Script（貼上
 新的 `vendor`/`cooperation_type` 值），也建議實際跑一次「試駕沒通過擋錄取」
 跟「試駕通過才能錄取」這兩個情境確認行為正確。
+
+### 後續新增：網頁上直接管理同仁帳號（新增/刪除）
+
+背景：帳號原本只能透過 `python -m delivery.seed_admin` 這支命令列工具建立
+（見前面「基本架構」那節），每次都要有 GCP 存取權限的人代為執行。這一輪讓
+管理員角色可以直接在網頁上新增/刪除帳號，不用再麻煩人跑指令。
+
+- `delivery/auth.py` 新增 `admin_required`：跟 `login_required` 一樣是路由
+  依賴，但多檢查 `role == "admin"`；不是管理員一律導回主頁（不是丟 403，
+  避免一般同仁看到陌生的錯誤頁）。另外新增 `list_users()`／`get_user()`／
+  `user_exists()`／`delete_user()`／`count_admins()`（純 Firestore 存取）
+  跟 `validate_user_deletion()`（純函式，判斷能不能刪除：不能刪自己、
+  不能刪到剩 0 個管理員，這兩個規則都有寫單元測試）。
+- `delivery/routes/user_routes.py`（新檔案）：`GET /users` 帳號清單、
+  `GET /users/new` + `POST /users/new` 新增帳號（帳號重複或欄位缺漏會擋
+  下並顯示錯誤，不會真的送出）、`POST /users/{username}/delete` 刪除帳號
+  （刪除前會先查 `validate_user_deletion`，擋下的話導回清單頁顯示對應
+  錯誤訊息：`self` 不能刪自己 / `last_admin` 至少留一個管理員 /
+  `not_found` 帳號已經不存在）。這三支路由都掛 `admin_required`。
+  這個功能刻意沒有「編輯帳號/改密碼」，只有新增/刪除（照需求範圍做，如果
+  之後要補密碼重設，同仁現在還是只能請有 GCP 權限的人跑
+  `python -m delivery.seed_admin` 覆寫）。
+- `templates/users_list.html`／`user_form.html`：新增的兩個頁面，跟其他
+  頁面風格一致。刪除按鈕有 `onsubmit="return confirm(...)"` 的瀏覽器內建
+  確認對話框，避免手滑點到。
+- `base.html` 的頂部導覽列，`user.role == "admin"` 時才會多顯示一個「帳號
+  管理」連結，一般同仁看不到、也進不去（就算直接打網址也會被 `admin_required`
+  導回主頁）。
+
+**已知限制**：這一輪只有單元測試（`validate_user_deletion` 的邏輯）+ mock
+過的 TestClient 手動測試（權限導向、新增/刪除各種擋下情境）；上線後建議
+用你現有的兩個 ADMIN 帳號實際測一次「新增一個 staff 帳號」「刪除它」「試著
+刪除自己」「如果只剩一個管理員，試著刪除它」這幾個情境確認行為符合預期。

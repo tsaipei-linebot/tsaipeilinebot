@@ -57,6 +57,48 @@ def create_user(username: str, password: str, name: str, role: str = "staff"):
     )
 
 
+def get_user(username: str):
+    snapshot = users_ref().document(username).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    return {"username": username, "name": data.get("name", username), "role": data.get("role", "staff")}
+
+
+def user_exists(username: str) -> bool:
+    return users_ref().document(username).get().exists
+
+
+def list_users() -> list:
+    result = []
+    for snapshot in users_ref().stream():
+        data = snapshot.to_dict() or {}
+        result.append({"username": snapshot.id, "name": data.get("name", snapshot.id), "role": data.get("role", "staff")})
+    result.sort(key=lambda u: u["username"])
+    return result
+
+
+def count_admins() -> int:
+    return sum(1 for _ in users_ref().where("role", "==", "admin").stream())
+
+
+def delete_user(username: str):
+    users_ref().document(username).delete()
+
+
+def validate_user_deletion(username: str, current_username: str, target_role: str, admin_count: int) -> str:
+    """回傳空字串代表可以刪除；非空字串是不能刪除的原因代碼，給路由轉成對應
+    的錯誤訊息用：
+    - "self"：不能刪除自己的帳號，避免刪完自己被鎖在外面。
+    - "last_admin"：至少要保留一組管理員帳號，不然沒有人可以再管理帳號了。
+    """
+    if username == current_username:
+        return "self"
+    if target_role == "admin" and admin_count <= 1:
+        return "last_admin"
+    return ""
+
+
 def current_user(request: Request):
     return request.session.get("user")
 
@@ -69,4 +111,16 @@ def login_required(request: Request):
     """
     if not current_user(request):
         return RedirectResponse(url="/delivery/login", status_code=303)
+    return None
+
+
+def admin_required(request: Request):
+    """FastAPI 路由依賴：帳號管理只開放給 role=="admin" 的人。未登入導去登入
+    頁；已登入但不是管理員一律導回主頁（不是丟 403），避免一般同仁看到陌生的
+    錯誤頁。"""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse(url="/delivery/login", status_code=303)
+    if user.get("role") != "admin":
+        return RedirectResponse(url="/delivery/", status_code=303)
     return None
