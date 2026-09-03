@@ -45,3 +45,14 @@ DOC_TYPE_MAP = {d["code"]: d for d in DOC_TYPES}
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB，單一檔案上傳上限
 ALLOWED_UPLOAD_CONTENT_TYPES = {"image/jpeg", "image/png", "image/heic", "application/pdf"}
+
+# 應徵名單處理狀態。「已錄取」不開放在應徵名單頁面手動勾選，只能透過
+# 「錄取並建立人員」那個流程設定（因為需要同時指派廠商、建立正式人員資料）。
+APPLICANT_STATUSES = [
+    {"code": "not_interviewed", "name": "未面試"},
+    {"code": "interviewed", "name": "已面試"},
+    {"code": "withdrawn", "name": "放棄"},
+    {"code": "hired", "name": "已錄取"},
+]
+APPLICANT_STATUS_MAP = {s["code"]: s["name"] for s in APPLICANT_STATUSES}
+SELECTABLE_APPLICANT_STATUSES = [s for s in APPLICANT_STATUSES if s["code"] != "hired"]

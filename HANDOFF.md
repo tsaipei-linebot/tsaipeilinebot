@@ -203,7 +203,34 @@ python -m delivery.seed_admin <帳號> <密碼> <顯示名稱> [role，預設 ad
 
 **應徵名單查重**（`repository.upsert_applicant` / `find_applicant_by_name_and_phone`）：
 姓名+電話都相同視為同一人重複投遞表單，會直接覆蓋既有那筆應徵紀錄的回覆內容，
-並把「已面試」「錄取」「放棄」等處理狀態清空回到「尚未處理」（`converted_personnel_id`
-也會被清掉），不會疊加成新的一筆。如果錄取後又重複投遞導致狀態被清空，正式
-人員資料本身不受影響（已經轉正的 `delivery_personnel` 紀錄不會被刪除或改動，
-只是應徵名單那一筆看起來要重新處理）。
+並把處理狀態清空回到「未面試」（`converted_personnel_id` 也會被清掉），不會疊加
+成新的一筆。如果錄取後又重複投遞導致狀態被清空，正式人員資料本身不受影響
+（已經轉正的 `delivery_personnel` 紀錄不會被刪除或改動，只是應徵名單那一筆看起來
+要重新處理）。
+
+### 後續調整：應徵名單狀態改成單一欄位 + 搜尋/批次更新 + 版面美化
+
+依實際使用回饋做的調整：
+
+- **狀態模型改成單一 `status` 欄位**（`not_interviewed`/`interviewed`/`withdrawn`/`hired`，
+  對應「未面試」「已面試」「放棄」「已錄取」），取代原本 `interviewed`/`hired`/`withdrawn`
+  三個獨立布林欄位。`repository.normalize_applicant_status()` 會相容改版前的舊資料
+  （沒有 `status` 欄位時，從三個布林欄位推回對應狀態），舊測試資料不用手動搬移。
+  「已錄取」不開放手動勾選，只能透過「錄取並建立人員」設定。
+- **搜尋/篩選**：`/delivery/applicants` 支援 `?name=&phone=&status=` 這三個 query
+  string 篩選；預設（沒有任何篩選條件）不顯示「放棄」的紀錄，避免洗版——主動
+  搜尋姓名、或直接篩選狀態為「放棄」才會顯示（`repository.applicant_matches_filters`，
+  純函式、有單元測試）。
+- **批次更新**：整個表格包在同一個 `<form>` 裡（每列一組 `status_{id}` 單選鈕），
+  上下各放一個放大的「已勾選狀態 → 一鍵更新」按鈕，一次送出 POST
+  `/delivery/applicants/bulk-status`，後端用 Firestore `batch()` 一次寫入多筆。
+  「錄取並建立人員」這個動作因為需要選廠商、跟批次更新是不同的目的地，用
+  HTML5 `formaction` 屬性讓同一個按鈕改送到 `/delivery/applicants/{id}/accept`
+  （而不是巢狀 `<form>`——瀏覽器不允許 form 裡面再放 form）。
+- **凍結表頭**：`.sticky-head thead th { position: sticky; }`，資料多時往下捲動
+  表頭仍固定在頂端導覽列下方。
+- **整體視覺**：`delivery/static/style.css` 全面重寫，改用橘色系品牌色
+  （呼應機車宅配「速度感」）+ 深色標題文字的專業質感配色，主頁與導覽列加上
+  手繪 inline SVG 圖示，卡片加陰影、表格/表單加焦點樣式，套用到所有頁面
+  （其他頁面本來就共用 `.btn`/`.data-table`/`.home-panel` 等既有 class，
+  不需要逐一改 HTML 結構）。

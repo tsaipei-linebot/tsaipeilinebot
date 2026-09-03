@@ -3,62 +3,97 @@
 {% block content %}
 <h1 class="page-title">應徵名單</h1>
 <p class="hint">
-    Google 表單送出後會自動出現在這裡。勾選「已面試」「放棄」會直接更新狀態；
-    「錄取」需要先選擇要分派的廠商（表單本身沒收廠商欄位），送出後會自動建立
-    正式人員資料，之後再到人員詳細頁補身分證字號、上傳報到文件即可。
+    Google 表單送出後會自動出現在這裡，新資料預設為「未面試」。「放棄」的人預設不會顯示，
+    主動搜尋姓名、或直接篩選狀態為「放棄」才會列出來。「錄取」需要先選擇要分派的廠商
+    （表單本身沒收廠商欄位），送出後會自動建立正式人員資料，之後再到人員詳細頁補身分證
+    字號、上傳報到文件即可。
 </p>
 
-{% if applicants %}
-<table class="data-table">
-    <thead>
-        <tr>
-            <th>姓名</th>
-            <th>電話</th>
-            <th>提交時間</th>
-            <th>其他回覆</th>
-            <th>狀態</th>
-            <th>錄取</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for a in applicants %}
-        <tr>
-            <td>{{ a.name }}</td>
-            <td>{{ a.phone or "-" }}</td>
-            <td>{{ a.submitted_at }}</td>
-            <td>
-                {% for k, v in a.other_answers.items() %}
-                <div class="meta">{{ k }}：{{ v }}</div>
-                {% endfor %}
-            </td>
-            <td>
-                <form method="post" action="/delivery/applicants/{{ a.id }}/status" class="inline-form">
-                    <label><input type="checkbox" name="interviewed" {% if a.interviewed %}checked{% endif %}> 已面試</label>
-                    <label><input type="checkbox" name="withdrawn" {% if a.withdrawn %}checked{% endif %}> 放棄</label>
-                    <button type="submit" class="btn btn-small">更新</button>
-                </form>
-            </td>
-            <td>
-                {% if a.converted_personnel_id %}
-                <a href="/delivery/personnel/{{ a.converted_personnel_id }}">已建立正式人員</a>
-                {% else %}
-                <form method="post" action="/delivery/applicants/{{ a.id }}/accept" class="inline-form">
-                    <select name="vendor" required>
-                        <option value="">選擇廠商</option>
-                        {% for v in vendors %}
-                        <option value="{{ v.code }}">{{ v.name }}</option>
-                        {% endfor %}
-                    </select>
-                    <button type="submit" class="btn btn-primary btn-small">錄取並建立人員</button>
-                </form>
-                {% endif %}
-            </td>
-        </tr>
+<form method="get" action="/delivery/applicants" class="filter-bar">
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
+    <input type="text" name="phone" value="{{ filter_phone }}" placeholder="搜尋電話">
+    <select name="status">
+        <option value="">全部狀態</option>
+        {% for s in all_statuses %}
+        <option value="{{ s.code }}" {% if filter_status == s.code %}selected{% endif %}>{{ s.name }}</option>
         {% endfor %}
-    </tbody>
-</table>
+    </select>
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_name or filter_phone or filter_status %}
+    <a class="btn" href="/delivery/applicants">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if applicants %}
+<form method="post" action="/delivery/applicants/bulk-status">
+    <input type="hidden" name="filter_name" value="{{ filter_name }}">
+    <input type="hidden" name="filter_phone" value="{{ filter_phone }}">
+    <input type="hidden" name="filter_status" value="{{ filter_status }}">
+
+    <button type="submit" class="btn btn-primary btn-bulk-update">已勾選狀態 → 一鍵更新</button>
+
+    <div class="table-scroll">
+    <table class="data-table sticky-head">
+        <thead>
+            <tr>
+                <th>姓名</th>
+                <th>電話</th>
+                <th>提交時間</th>
+                <th>其他回覆</th>
+                <th>狀態</th>
+                <th>錄取</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in applicants %}
+            <tr>
+                <td>{{ a.name }}</td>
+                <td>{{ a.phone or "-" }}</td>
+                <td>{{ a.submitted_at }}</td>
+                <td class="answers-cell">
+                    {% for k, v in a.other_answers.items() %}
+                    <div class="meta">{{ k }}：{{ v }}</div>
+                    {% endfor %}
+                </td>
+                <td>
+                    {% if a.converted_personnel_id %}
+                    <span class="badge badge-ok">已錄取</span>
+                    {% else %}
+                    <div class="status-radios">
+                        {% for s in selectable_statuses %}
+                        <label>
+                            <input type="radio" name="status_{{ a.id }}" value="{{ s.code }}" {% if a.status == s.code %}checked{% endif %}>
+                            {{ s.name }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if a.converted_personnel_id %}
+                    <a href="/delivery/personnel/{{ a.converted_personnel_id }}">查看人員</a>
+                    {% else %}
+                    <div class="accept-row">
+                        <select name="vendor_{{ a.id }}">
+                            <option value="">選擇廠商</option>
+                            {% for v in vendors %}
+                            <option value="{{ v.code }}">{{ v.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" formaction="/delivery/applicants/{{ a.id }}/accept" class="btn btn-primary btn-small">錄取並建立人員</button>
+                    </div>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-bulk-update">已勾選狀態 → 一鍵更新</button>
+</form>
 {% else %}
-<p class="empty">目前還沒有應徵資料。</p>
+<p class="empty">目前沒有符合條件的應徵資料。</p>
 {% endif %}
 
 <p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
