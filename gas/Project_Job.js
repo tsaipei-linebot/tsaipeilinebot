@@ -651,11 +651,20 @@ const JobWorkflowService = {
             console.warn('推播核准通知給其他主管失敗:', supSyncErr);
           }
 
-          // 3. 綁定群組收到：【只發送職缺核准純文字文案】
+          // 3. 綁定群組收到：職缺核准純文字文案，若有附圖一併推播圖片
           const targetGroupId = getTargetLineGroupId();
           if (targetGroupId) {
             console.log(`📢 正在自動發送核准職缺純文字文案至綁定群組 [${targetGroupId}]...`);
-            LineService.pushMessage(targetGroupId, [{ type: 'text', text: plainTextMessage }]);
+            const groupMessages = [{ type: 'text', text: plainTextMessage }];
+            const jobImageUrl = currentJobDetail.image_url;
+            if (jobImageUrl && typeof jobImageUrl === 'string' && jobImageUrl.startsWith('https://')) {
+              groupMessages.push({
+                type: 'image',
+                originalContentUrl: jobImageUrl,
+                previewImageUrl: jobImageUrl
+              });
+            }
+            LineService.pushMessage(targetGroupId, groupMessages);
           } else {
             console.warn('⚠️ 尚未設定任何群組 ID，略過群組推播。');
           }
