@@ -208,20 +208,39 @@ def list_recent_sick_leaves(limit: int = 20) -> list:
 # ==========================================
 # 應徵名單（Google 表單 webhook 寫入，錄取後轉正式人員）
 # ==========================================
-def create_applicant(name: str, phone: str, answers: dict) -> str:
+def find_applicant_by_name_and_phone(name: str, phone: str):
+    """兩者都要有值才會查（單靠姓名或單靠電話都不足以判定是同一人）。"""
+    if not name or not phone:
+        return None
+    query = applicants_ref().where("name", "==", name).where("phone", "==", phone).limit(1)
+    for snapshot in query.stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        return data
+    return None
+
+
+def upsert_applicant(name: str, phone: str, answers: dict) -> str:
+    """姓名+電話相同視為同一人重複投遞表單：覆蓋既有應徵紀錄的回覆內容，
+    並把已面試/錄取/放棄等處理狀態清空回到「尚未處理」，不會疊加成新的一筆。
+    姓名+電話對不到既有紀錄（含兩者缺一的情況）時直接新增一筆。"""
+    payload = {
+        "name": name,
+        "phone": phone,
+        "answers": answers or {},
+        "interviewed": False,
+        "hired": False,
+        "withdrawn": False,
+        "converted_personnel_id": None,
+        "created_at": time.time(),
+    }
+    existing = find_applicant_by_name_and_phone(name, phone)
+    if existing:
+        applicants_ref().document(existing["id"]).set(payload)
+        return existing["id"]
+
     doc_ref = applicants_ref().document()
-    doc_ref.set(
-        {
-            "name": name,
-            "phone": phone,
-            "answers": answers or {},
-            "interviewed": False,
-            "hired": False,
-            "withdrawn": False,
-            "converted_personnel_id": None,
-            "created_at": time.time(),
-        }
-    )
+    doc_ref.set(payload)
     return doc_ref.id
 
 
