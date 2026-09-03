@@ -13,11 +13,16 @@ from config import (
     LOAD_TEST_SECRET
 )
 from handlers.message_handler import process_user_message, process_image_message
+from delivery.app import delivery_app
 
 app = FastAPI(
     title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine - V12 (Modular)",
     version="12.0.0"
 )
+
+# 配送部系統：獨立子系統（自己的登入/session/資料表），掛載在 /delivery 底下，
+# 跟上面 LINE 招募機器人的 webhook 路由完全分開，互不影響。
+app.mount("/delivery", delivery_app)
 
 # LINE 官方帳號客戶端實例化[cite: 2]
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN) if LINE_CHANNEL_ACCESS_TOKEN else None

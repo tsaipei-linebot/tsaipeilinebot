@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}新增人員 - {{ vendor_name }}{% endblock %}
+{% block content %}
+<h1 class="page-title">新增人員 - {{ vendor_name }}</h1>
+<form method="post" action="/delivery/vendor/{{ vendor_code }}/new" class="form-stack form-narrow">
+    <label>姓名
+        <input type="text" name="name" required>
+    </label>
+    <label>身分證字號
+        <input type="text" name="id_number">
+    </label>
+    <label>聯絡電話
+        <input type="text" name="phone">
+    </label>
+    <button type="submit" class="btn btn-primary">建立人員資料</button>
+</form>
+<p class="back-link"><a href="/delivery/vendor/{{ vendor_code }}">&larr; 回 {{ vendor_name }} 人員清單</a></p>
+{% endblock %}

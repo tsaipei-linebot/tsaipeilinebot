@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}查詢人員 - 配送部系統{% endblock %}
+{% block content %}
+<h1 class="page-title">查詢人員</h1>
+<form method="get" action="/delivery/search" class="inline-form">
+    <input type="text" name="keyword" value="{{ keyword }}" placeholder="輸入姓名或身分證字號" autofocus>
+    <button type="submit" class="btn">查詢</button>
+</form>
+
+{% if keyword %}
+    {% if results %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>姓名</th>
+                <th>廠商</th>
+                <th>缺件狀況</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in results %}
+            <tr>
+                <td>{{ row.person.name }}</td>
+                <td>{{ row.vendor_name }}</td>
+                <td>
+                    {% if row.missing %}
+                        {% for m in row.missing %}
+                        <span class="badge badge-missing">{{ m.name }}{% if m.expired %}（已過期）{% endif %}</span>
+                        {% endfor %}
+                    {% else %}
+                        <span class="badge badge-ok">齊全</span>
+                    {% endif %}
+                </td>
+                <td><a href="/delivery/personnel/{{ row.person.id }}">查看詳細</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty">查無符合「{{ keyword }}」的人員。</p>
+    {% endif %}
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}
