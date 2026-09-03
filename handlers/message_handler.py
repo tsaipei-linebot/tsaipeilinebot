@@ -76,7 +76,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
 
     raw_msg = event.message.text.strip()
     user_id = getattr(event.source, 'user_id', 'USER')
-    print(f"\n[收到使用者訊息]: 「{raw_msg}」 (User: {user_id})")
+    source_type = getattr(event.source, 'type', 'unknown')
+    group_id = getattr(event.source, 'group_id', None)
+    # source_type/group_id 只用來在 log 裡看得到來源是誰、群組 ID 是多少
+    # （例如要幫配送部系統的到期提醒設定要推播的 LINE 群組時查 ID 用），
+    # 不影響任何既有的回覆邏輯。
+    print(f"\n[收到使用者訊息]: 「{raw_msg}」 (User: {user_id}, Source: {source_type}{f', Group: {group_id}' if group_id else ''})")
 
     try:
         active_jobs = fetch_jobs_data()
