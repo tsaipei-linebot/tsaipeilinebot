@@ -12,6 +12,14 @@
     <label>聯絡電話
         <input type="text" name="phone">
     </label>
+    <label>合作方式（可之後在人員詳細頁再設定）
+        <select name="cooperation_type">
+            <option value="">尚未決定</option>
+            {% for c in cooperation_types %}
+            <option value="{{ c.code }}">{{ c.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
     <button type="submit" class="btn btn-primary">建立人員資料</button>
 </form>
 <p class="back-link"><a href="/delivery/vendor/{{ vendor_code }}">&larr; 回 {{ vendor_name }} 人員清單</a></p>

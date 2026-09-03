@@ -234,3 +234,86 @@ python -m delivery.seed_admin <帳號> <密碼> <顯示名稱> [role，預設 ad
   手繪 inline SVG 圖示，卡片加陰影、表格/表單加焦點樣式，套用到所有頁面
   （其他頁面本來就共用 `.btn`/`.data-table`/`.home-panel` 等既有 class，
   不需要逐一改 HTML 結構）。
+
+### 後續大改：應備文件依廠商/合作方式動態決定 + OCR 辨識到期日 + LINE 到期提醒
+
+依需求把「應備文件」從一份固定的四項清單，改成依**廠商**與新增的**合作方式**
+（二輪承攬/二輪雇傭/三輪雇傭）動態決定，每一項還多了「怎麼算缺件」的類型
+（`delivery/config.py` 的 `DOC_TYPES`，每項有 `kind`）：
+
+- `kind: "id_number"`（身分證）：不再上傳檔案，同仁直接填 `personnel.id_number`
+  欄位，用中華民國身分證字號檢查碼演算法驗證格式（`delivery/validators.py`
+  的 `is_valid_taiwan_id`，純函式、有單元測試）。所有廠商都適用。
+- `kind: "checkbox"`（駕照、合約簽定）：同仁勾選「有」就算備齊，不用上傳、
+  沒有到期日。所有廠商都適用。
+- `kind: "file_expiry"`（強制險、公會加保證明、營業用第三責任險、良民證）：
+  要上傳檔案 + 記錄到期日，過期也算缺件。
+  - `exclude_vendors`：良民證設了 `["shopee"]`，蝦皮的人不會被要求（其他
+    廠商不受影響，DOC_TYPES 裡良民證本身沒有刪除，只是套用時被篩掉）。
+  - `cooperation_types`：強制險是二輪承攬/二輪雇傭才需要，公會加保證明只有
+    二輪承攬才需要，營業用第三責任險只有二輪雇傭才需要，三輪雇傭三項都不用。
+    人員還沒設定合作方式時，這三項不會出現在缺件清單裡（等設定好才開始追蹤，
+    不是變相视為「不用交」）。
+  - 篩選邏輯在 `repository.applicable_doc_types(vendor, cooperation_type)`，
+    `doc_status()` / `missing_documents()` / `all_document_statuses()` 都改成
+    吃完整的 `personnel` dict（不是只吃 `documents` 子物件），因為身分證那項
+    要讀 `personnel.id_number`。**這是 breaking change**：舊的呼叫方式
+    `missing_documents(person.get("documents"))` 全部要改成
+    `missing_documents(person)`，各 routes 已經同步更新。
+  - 合作方式在人員詳細頁最上方（應備文件表格「上面」）用下拉選單設定/修改，
+    也可以在「新增人員」表單就先選（非必填）。CSV 批次匯入、應徵名單錄取
+    這兩個建立人員的管道目前**沒有**收合作方式，新建的人一律留空，要到
+    詳細頁補設定才會開始出現強制險等三項的缺件提示。
+
+- **OCR 自動辨識到期日**：`delivery/ocr.py` 用 Vertex AI Gemini 的多模態能力
+  （跟 LINE 招募機器人共用同一個專案設定，不用另外申請）直接讀上傳的保險/
+  證明文件圖片或 PDF，辨識「到期日」。上傳表單的到期日欄位改成非必填——
+  同仁留空的話由系統辨識，辨識不出來就維持空白，同仁還是可以自己手動填
+  同一個表單再送一次做修正；同仁自己有填的話就直接用同仁填的，不會被 OCR
+  覆蓋。辨識失敗（例如額度用盡、模型出錯）一律回傳空字串，不會讓上傳這個
+  動作失敗或報錯。
+
+- **LINE 到期提醒**：`delivery/routes/reminder_routes.py` 新增
+  `POST /delivery/api/expiry-reminder-check`，設計給 Cloud Scheduler 每天呼叫
+  一次，掃過所有在職人員的 `file_expiry` 類項目，「到期日在今天起
+  `DELIVERY_REMINDER_DAYS_AHEAD`（預設 30）天內」或「已過期」的，整理成一則
+  訊息，用公司現有的 LINE 官方帳號（`delivery/line_notify.py`，沿用
+  `LINE_CHANNEL_ACCESS_TOKEN`）推播給指定的同仁或群組
+  （`DELIVERY_LINE_REMINDER_TARGET`）。同一份文件最多每 7 天提醒一次
+  （`repository.list_expiring_documents` / `mark_documents_reminded`，用
+  `documents[code].last_reminded_at` 記錄，避免每天洗版；同仁重新上傳/更新
+  到期日時這個記錄會自動清掉，重新進入提醒週期）。跟 Google 表單那支 webhook
+  一樣用共用密鑰驗證（`X-Delivery-Reminder-Secret` header），不經過同仁登入
+  session，因為呼叫端是 Cloud Scheduler。
+
+**上線前要做的事**：
+
+1. Cloud Run 設定環境變數：
+   - `DELIVERY_REMINDER_SECRET`：隨機字串（`openssl rand -hex 32`），Cloud
+     Scheduler 呼叫時要帶同一組在 header 裡。
+   - `DELIVERY_LINE_REMINDER_TARGET`：要收到提醒的 LINE userId 或 groupId。
+     **同仁自己的 userId 拿法**：讓對方傳一則訊息給公司的 LINE 官方帳號，
+     然後到 Cloud Run 的 Cloud Logging 找同一時間的 log（`handlers/message_handler.py`
+     處理訊息時會經手 `event.source.user_id`，可以暫時加一行 log 印出來，
+     或直接查 Firestore `user_sessions` collection 的文件 ID，那個 ID 就是
+     userId）。**群組 groupId 拿法**：把官方帳號拉進一個 LINE 群組，在群組
+     裡發一則訊息，一樣去 log／Firestore 對應時間找 `event.source.group_id`。
+   - `DELIVERY_REMINDER_DAYS_AHEAD`（選填，預設 30）：提前幾天算「即將到期」。
+2. 設定 Cloud Scheduler 每天觸發一次（例如每天早上 9 點）：
+   ```bash
+   gcloud scheduler jobs create http delivery-expiry-reminder \
+     --project=tsaipei-505807 \
+     --location=asia-east1 \
+     --schedule="0 9 * * *" \
+     --time-zone="Asia/Taipei" \
+     --uri="https://recruitment-bot-412901869672.asia-east1.run.app/delivery/api/expiry-reminder-check" \
+     --http-method=POST \
+     --headers="X-Delivery-Reminder-Secret=跟 Cloud Run 上設定的同一組密鑰"
+   ```
+   （第一次執行 `gcloud scheduler` 系列指令，專案如果還沒啟用過 Cloud Scheduler
+   API，會提示要不要啟用，選是即可。）
+
+**已知限制**：OCR 辨識到期日、合作方式篩選這些邏輯都沒有真的連 Vertex AI /
+Firestore 跑過整合測試（測試都是 mock 掉外部服務），上線後建議實際上傳一張
+強制險保單照片測試一次辨識結果對不對，抓錯格式或看不懂的圖再回頭調整
+`delivery/ocr.py` 的 prompt。

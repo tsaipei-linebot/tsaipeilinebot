@@ -34,17 +34,60 @@ for _v in VENDORS:
     VENDOR_LOOKUP[_v["code"].lower()] = _v["code"]
     VENDOR_LOOKUP[_v["name"].lower()] = _v["code"]
 
-# 報到前應備文件（人員缺件狀況即依此清單逐項檢查）
+# 合作方式：決定這個人除了基本四項之外還要備哪些保險/證明文件。
+COOPERATION_TYPES = [
+    {"code": "two_wheel_contract", "name": "二輪承攬"},
+    {"code": "two_wheel_employed", "name": "二輪雇傭"},
+    {"code": "three_wheel_employed", "name": "三輪雇傭"},
+]
+COOPERATION_TYPE_MAP = {c["code"]: c["name"] for c in COOPERATION_TYPES}
+
+# 報到前應備文件（人員缺件狀況即依此清單逐項檢查）。每一項的 kind 決定要怎麼
+# 判斷「缺不缺」、頁面上要顯示什麼樣的輸入元件：
+#   - "id_number"：不是文件，是檢查 personnel.id_number 這個欄位本身格式合不合法
+#     （身分證字號檢查碼），同仁直接填字號、不用上傳檔案。
+#   - "checkbox"：同仁勾選「有」就算備齊，不用上傳檔案、沒有到期日。
+#   - "file_expiry"：要上傳檔案，並且（透過 OCR 或人工）記錄到期日，過期也算缺件。
+# exclude_vendors 存在時，該廠商的人員不會被要求這一項；cooperation_types 存在時，
+# 只有合作方式在清單裡的人才會被要求這一項（不設代表所有合作方式都需要）。
 DOC_TYPES = [
-    {"code": "id_card", "name": "身分證", "has_expiry": False},
-    {"code": "driver_license", "name": "駕照", "has_expiry": False},
-    {"code": "insurance", "name": "強制險", "has_expiry": True},
-    {"code": "police_clearance", "name": "良民證", "has_expiry": True},
+    {"code": "id_card", "name": "身分證", "kind": "id_number"},
+    {"code": "driver_license", "name": "駕照", "kind": "checkbox"},
+    {"code": "contract", "name": "合約簽定", "kind": "checkbox"},
+    {"code": "police_clearance", "name": "良民證", "kind": "file_expiry", "exclude_vendors": ["shopee"]},
+    {
+        "code": "insurance",
+        "name": "強制險",
+        "kind": "file_expiry",
+        "cooperation_types": ["two_wheel_contract", "two_wheel_employed"],
+    },
+    {
+        "code": "guild_insurance",
+        "name": "公會加保證明",
+        "kind": "file_expiry",
+        "cooperation_types": ["two_wheel_contract"],
+    },
+    {
+        "code": "liability_insurance",
+        "name": "營業用第三責任險",
+        "kind": "file_expiry",
+        "cooperation_types": ["two_wheel_employed"],
+    },
 ]
 DOC_TYPE_MAP = {d["code"]: d for d in DOC_TYPES}
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB，單一檔案上傳上限
 ALLOWED_UPLOAD_CONTENT_TYPES = {"image/jpeg", "image/png", "image/heic", "application/pdf"}
+
+# ==========================================
+# 文件到期提醒（強制險/公會加保證明/營業用第三責任險/良民證）
+# 用公司現有的 LINE 官方帳號主動推播，Cloud Scheduler 每天呼叫
+# /delivery/api/expiry-reminder-check 觸發檢查（見 routes/reminder_routes.py）。
+# ==========================================
+REMINDER_TRIGGER_SECRET = os.getenv("DELIVERY_REMINDER_SECRET", "")
+LINE_REMINDER_TARGET_ID = os.getenv("DELIVERY_LINE_REMINDER_TARGET", "")
+REMINDER_DAYS_AHEAD = int(os.getenv("DELIVERY_REMINDER_DAYS_AHEAD", "30"))
+REMINDER_RESEND_INTERVAL_DAYS = 7  # 同一份文件最多幾天才重新提醒一次，避免每天洗版
 
 # 應徵名單處理狀態。「已錄取」不開放在應徵名單頁面手動勾選，只能透過
 # 「錄取並建立人員」那個流程設定（因為需要同時指派廠商、建立正式人員資料）。
