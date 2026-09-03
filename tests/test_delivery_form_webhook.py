@@ -48,6 +48,16 @@ class OtherAnswersTests(unittest.TestCase):
         self.assertEqual(other_answers({}), {})
         self.assertEqual(other_answers(None), {})
 
+    def test_excludes_blank_or_whitespace_only_values(self):
+        answers = {
+            "姓名": "王小明",
+            "行政區熟悉度 [南屯區]": "",
+            "行政區熟悉度 [板橋]": "普通",
+            "行政區熟悉度 [竹北]": "   ",
+        }
+        result = other_answers(answers)
+        self.assertEqual(result, {"行政區熟悉度 [板橋]": "普通"})
+
 
 if __name__ == "__main__":
     unittest.main()
