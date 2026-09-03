@@ -24,7 +24,11 @@ const CONFIG = {
   SHEET_NAME_PROJECT: '專案合約紀錄',
   HR_ACCOUNTING_EMAILS: PropertiesService.getScriptProperties().getProperty('HR_ACCOUNTING_EMAILS') || 'finance@tsaipei.com.tw',
   DEFAULT_LINE_GROUP_ID: 'C0fd6d96dc33202b3c636c5f3b62a5250',
-  ADMIN_LINE_USER_ID: (PropertiesService.getScriptProperties().getProperty('ADMIN_LINE_USER_ID') || '').trim()
+  ADMIN_LINE_USER_ID: (PropertiesService.getScriptProperties().getProperty('ADMIN_LINE_USER_ID') || '').trim(),
+  // Vertex AI（跟招募聊天機器人共用同一個 GCP 專案），取代原本 Gemini Developer API Key 的方式，
+  // 避免卡在 AI Studio 免費層級極低的配額限制
+  GCP_PROJECT_ID: (PropertiesService.getScriptProperties().getProperty('GCP_PROJECT_ID') || 'tsaipei-505807').trim(),
+  GCP_LOCATION: (PropertiesService.getScriptProperties().getProperty('GCP_LOCATION') || 'global').trim()
 };
 
 // 正確 LINE ID 驗證正則
@@ -59,6 +63,99 @@ const AdminIdService = {
     return this.list().some(id => id.toUpperCase() === clean);
   }
 };
+
+// ==============================================================================
+// Vertex AI 驗證服務 (VertexAiAuthService)
+// 用專用服務帳戶（Service Account）的 JSON 金鑰簽署 JWT、換取存取權杖，
+// 完全不動 appsscript.json 既有的授權範圍設定，不影響 Gmail/Drive/Sheets 等既有功能。
+// 金鑰存在指令碼屬性 VERTEX_SA_KEY_JSON（服務帳戶 JSON 金鑰的完整內容）。
+// ==============================================================================
+const VertexAiAuthService = {
+  CACHE_KEY: 'VERTEX_AI_ACCESS_TOKEN',
+
+  _base64UrlEncode: function(value) {
+    const base64 = (typeof value === 'string')
+      ? Utilities.base64Encode(value, Utilities.Charset.UTF_8)
+      : Utilities.base64Encode(value);
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  },
+
+  _getServiceAccountKey: function() {
+    const raw = (PropertiesService.getScriptProperties().getProperty('VERTEX_SA_KEY_JSON') || '').trim();
+    if (!raw) {
+      throw new Error('尚未設定 VERTEX_SA_KEY_JSON（Vertex AI 服務帳戶金鑰），請至指令碼屬性設定');
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      throw new Error('VERTEX_SA_KEY_JSON 不是合法 JSON 格式: ' + e.toString());
+    }
+  },
+
+  isConfigured: function() {
+    return !!(PropertiesService.getScriptProperties().getProperty('VERTEX_SA_KEY_JSON') || '').trim();
+  },
+
+  // 取得存取權杖（快取到接近過期前，避免每次呼叫都重新簽署 JWT）
+  getAccessToken: function() {
+    try {
+      const cached = CacheService.getScriptCache().get(this.CACHE_KEY);
+      if (cached) return cached;
+    } catch (cacheReadErr) {
+      console.warn('讀取 Vertex AI 權杖快取失敗 (略過快取，重新取得):', cacheReadErr);
+    }
+
+    const keyInfo = this._getServiceAccountKey();
+    const tokenUrl = keyInfo.token_uri || 'https://oauth2.googleapis.com/token';
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    const header = { alg: 'RS256', typ: 'JWT' };
+    const claimSet = {
+      iss: keyInfo.client_email,
+      scope: 'https://www.googleapis.com/auth/cloud-platform',
+      aud: tokenUrl,
+      iat: nowSec,
+      exp: nowSec + 3600
+    };
+
+    const signatureInput = this._base64UrlEncode(JSON.stringify(header)) + '.' + this._base64UrlEncode(JSON.stringify(claimSet));
+    const signatureBytes = Utilities.computeRsaSha256Signature(signatureInput, keyInfo.private_key);
+    const jwt = signatureInput + '.' + this._base64UrlEncode(signatureBytes);
+
+    const response = UrlFetchApp.fetch(tokenUrl, {
+      method: 'post',
+      contentType: 'application/x-www-form-urlencoded',
+      payload: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion: jwt
+      },
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() !== 200) {
+      throw new Error('取得 Vertex AI 存取權杖失敗 (HTTP ' + response.getResponseCode() + '): ' + response.getContentText());
+    }
+
+    const json = JSON.parse(response.getContentText());
+    const accessToken = json.access_token;
+    const expiresIn = json.expires_in || 3600;
+
+    try {
+      CacheService.getScriptCache().put(this.CACHE_KEY, accessToken, Math.max(expiresIn - 120, 60));
+    } catch (cacheWriteErr) {
+      console.warn('寫入 Vertex AI 權杖快取失敗 (不影響本次使用):', cacheWriteErr);
+    }
+
+    return accessToken;
+  }
+};
+
+// 組出 Vertex AI generateContent 的完整請求網址
+function buildVertexAiGenerateContentUrl(model) {
+  const location = (CONFIG.GCP_LOCATION || 'global').trim();
+  const host = (location === 'global') ? 'aiplatform.googleapis.com' : `${location}-aiplatform.googleapis.com`;
+  return `https://${host}/v1/projects/${encodeURIComponent(CONFIG.GCP_PROJECT_ID)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+}
 
 // 動態取得目標推播群組 ID
 function getTargetLineGroupId() {

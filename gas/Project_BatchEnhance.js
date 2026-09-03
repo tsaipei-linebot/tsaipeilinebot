@@ -156,9 +156,16 @@ const BatchEnhanceJobService = {
    * 呼叫 Gemini 進行雙欄位結構化生成 (保證語句完整不切字 + 地點智慧聚合)
    */
   generateEnhancementWithGemini: function(job, smartLocation) {
-    const apiKey = AiJobDescriptionService.getApiKey();
-    if (!apiKey) {
-      console.error('❌ 未找到 GEMINI_API_KEY，請確認 Script Properties 設定！');
+    if (!VertexAiAuthService.isConfigured()) {
+      console.error('❌ 未設定 VERTEX_SA_KEY_JSON，請確認指令碼屬性設定！');
+      return null;
+    }
+
+    let accessToken;
+    try {
+      accessToken = VertexAiAuthService.getAccessToken();
+    } catch (authErr) {
+      console.error('❌ 取得 Vertex AI 存取權杖失敗:', authErr);
       return null;
     }
 
@@ -198,18 +205,18 @@ const BatchEnhanceJobService = {
       '  "formatted_detail": "條列式排版說明完整文字"\n' +
       '}';
 
-    // gemini-2.5-flash/flash-lite、gemini-1.5-flash 已被 Google 排除在此 API Key 的可用範圍外（HTTP 404）。
-    // 改用 3.5 系列（用 listAvailableGeminiModels() 確認過確實可用），並加上 gemini-flash-latest 別名當最後一層保險。
-    const targetModels = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+    // 改用 Vertex AI（跟招募聊天機器人共用同一個 GCP 專案），這份模型清單已在該專案的
+    // 招募機器人 (services/ai_service.py) 正式環境驗證可用，不是憑猜測填入。
+    const targetModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
     const MAX_RETRY_PER_MODEL = 2; // 同一模型遇到 429 額度限制時的重試次數上限
     const RETRY_BASE_DELAY_MS = 1000; // 重試遞增等待時間基準
 
     for (let i = 0; i < targetModels.length; i++) {
       const model = targetModels[i];
-      const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
+      const url = buildVertexAiGenerateContentUrl(model);
 
       const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.1,
           responseMimeType: 'application/json'
@@ -219,7 +226,7 @@ const BatchEnhanceJobService = {
       const options = {
         method: 'post',
         contentType: 'application/json',
-        headers: { 'x-goog-api-key': apiKey },
+        headers: { 'Authorization': 'Bearer ' + accessToken },
         payload: JSON.stringify(payload),
         muteHttpExceptions: true
       };
