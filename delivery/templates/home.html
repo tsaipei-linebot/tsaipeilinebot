@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}主頁 - 配送部系統{% endblock %}
+{% block title %}主頁 - 材霈有限公司-配送部系統{% endblock %}
 {% block content %}
 <h1 class="page-title">主頁</h1>
 <div class="home-grid">
@@ -18,7 +18,6 @@
             <a class="btn btn-block" href="/delivery/vendor/{{ v.code }}">{{ v.name }}</a>
             {% endfor %}
         </div>
-        <p class="hint" style="margin-top:12px;"><a href="/delivery/import">批次匯入人員（CSV）</a></p>
     </section>
 
     <section class="home-panel">
@@ -30,10 +29,12 @@
             </svg>
         </span>
         <h2>選擇功能</h2>
-        <p class="hint">補款登記、病假登記，送出後直接寫入資料庫</p>
+        <p class="hint">補款、假別登記送出後直接寫入資料庫；記錄/查詢頁可搜尋、核准、下載 Excel</p>
         <div class="btn-list">
             <a class="btn btn-block" href="/delivery/function/repayment">補款登記</a>
-            <a class="btn btn-block" href="/delivery/function/sick-leave">病假登記（可上傳收據）</a>
+            <a class="btn btn-block" href="/delivery/function/repayment/records">補款記錄</a>
+            <a class="btn btn-block" href="/delivery/function/sick-leave">假別登記</a>
+            <a class="btn btn-block" href="/delivery/function/sick-leave/records">假別查詢</a>
         </div>
     </section>
 

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}假別查詢 - 材霈有限公司-配送部系統{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">假別查詢</h1>
+    <a class="btn"
+       href="/delivery/function/sick-leave/records/export?name={{ filter_name }}&vendor={{ filter_vendor }}&month={{ filter_month }}&leave_type={{ filter_leave_type }}">
+        一鍵下載 EXCEL
+    </a>
+</div>
+
+<form method="get" action="/delivery/function/sick-leave/records" class="filter-bar">
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋人員姓名">
+    <select name="vendor">
+        <option value="">全部廠商</option>
+        {% for v in vendors %}
+        <option value="{{ v.code }}" {% if filter_vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="leave_type">
+        <option value="">全部假別</option>
+        {% for t in leave_types %}
+        <option value="{{ t.code }}" {% if filter_leave_type == t.code %}selected{% endif %}>{{ t.name }}</option>
+        {% endfor %}
+    </select>
+    <input type="month" name="month" value="{{ filter_month }}">
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_name or filter_vendor or filter_month or filter_leave_type %}
+    <a class="btn" href="/delivery/function/sick-leave/records">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if records %}
+<form method="post" action="/delivery/function/sick-leave/records/approve">
+    <input type="hidden" name="filter_name" value="{{ filter_name }}">
+    <input type="hidden" name="filter_vendor" value="{{ filter_vendor }}">
+    <input type="hidden" name="filter_month" value="{{ filter_month }}">
+    <input type="hidden" name="filter_leave_type" value="{{ filter_leave_type }}">
+
+    {% if user.role == "admin" %}
+    <button type="submit" class="btn btn-primary btn-bulk-update">核准所選</button>
+    {% endif %}
+
+    <div class="table-scroll">
+    <table class="data-table sticky-head">
+        <thead>
+            <tr>
+                <th>期間</th>
+                <th>假別</th>
+                <th>廠商</th>
+                <th>人員</th>
+                <th>原因</th>
+                <th>收據</th>
+                <th>核准</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in records %}
+            <tr>
+                <td>{{ r.start_date }} ~ {{ r.end_date }}</td>
+                <td>{{ leave_type_map.get(r.leave_type, r.leave_type or "-") }}</td>
+                <td>{{ r.vendor }}</td>
+                <td>{{ r.personnel_name }}</td>
+                <td>{{ r.reason or "-" }}</td>
+                <td>
+                    {% if r.receipt_file_path %}
+                    <a href="/delivery/files/{{ r.receipt_file_path }}" target="_blank" rel="noopener">查看</a>
+                    {% else %}-{% endif %}
+                </td>
+                <td>
+                    {% if r.approved %}
+                    <span class="badge badge-ok">已核准</span>
+                    {% elif user.role == "admin" %}
+                    <label><input type="checkbox" name="approve_{{ r.id }}"> 核准</label>
+                    {% else %}
+                    <span class="badge badge-pending">未核准</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+
+    {% if user.role == "admin" %}
+    <button type="submit" class="btn btn-primary btn-bulk-update">核准所選</button>
+    {% endif %}
+</form>
+{% else %}
+<p class="empty">目前沒有符合條件的假別登記紀錄。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/function/sick-leave">回假別登記</a></p>
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

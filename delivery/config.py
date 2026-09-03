@@ -171,6 +171,15 @@ APPLICANT_STATUSES = [
 APPLICANT_STATUS_MAP = {s["code"]: s["name"] for s in APPLICANT_STATUSES}
 SELECTABLE_APPLICANT_STATUSES = [s for s in APPLICANT_STATUSES if s["code"] != "hired"]
 
+# 假別登記的假別種類。
+LEAVE_TYPES = [
+    {"code": "sick", "name": "病假"},
+    {"code": "personal", "name": "事假"},
+    {"code": "annual", "name": "特休"},
+    {"code": "other", "name": "其他"},
+]
+LEAVE_TYPE_MAP = {t["code"]: t["name"] for t in LEAVE_TYPES}
+
 # 應徵名單的廠商/合作方式：跟人員的 vendor/cooperation_type 是同一套代碼，
 # 沿用 VENDOR_MAP / COOPERATION_TYPE_MAP。應徵階段沒表單欄位可以填廠商，
 # 是由送出 webhook 的 Apps Script 各自帶固定的廠商代碼過來（見
