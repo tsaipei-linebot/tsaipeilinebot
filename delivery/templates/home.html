@@ -11,6 +11,7 @@
             <a class="btn btn-block" href="/delivery/vendor/{{ v.code }}">{{ v.name }}</a>
             {% endfor %}
         </div>
+        <p class="hint" style="margin-top:12px;"><a href="/delivery/import">批次匯入人員（CSV）</a></p>
     </section>
 
     <section class="home-panel">
@@ -29,6 +30,12 @@
             <input type="text" name="keyword" placeholder="輸入姓名或身分證字號">
             <button type="submit" class="btn">查詢</button>
         </form>
+    </section>
+
+    <section class="home-panel">
+        <h2>應徵名單</h2>
+        <p class="hint">Google 表單應徵回覆會自動進來這裡，可標記已面試/放棄，錄取後自動建立正式人員資料</p>
+        <a class="btn btn-block" href="/delivery/applicants">查看應徵名單</a>
     </section>
 </div>
 {% endblock %}

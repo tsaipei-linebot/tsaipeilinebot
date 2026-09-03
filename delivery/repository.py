@@ -7,7 +7,7 @@ import time
 from datetime import date, datetime
 
 from delivery.config import DOC_TYPES
-from delivery.db import personnel_ref, repayments_ref, sick_leaves_ref
+from delivery.db import applicants_ref, personnel_ref, repayments_ref, sick_leaves_ref
 
 TODAY_ISO = lambda: date.today().isoformat()  # noqa: E731
 
@@ -108,6 +108,26 @@ def search_personnel(keyword: str) -> list:
     return result
 
 
+def find_active_personnel_by_name_and_phone(name: str, phone: str):
+    """批次匯入用：同一個「姓名+手機號碼」組合已經有在職人員資料時回傳該筆，
+    讓呼叫端可以跳過重複匯入，而不是每次匯入都建出重複的人員記錄。
+    兩個欄位都要有值才會查（單靠姓名或單靠電話都不足以判定是同一人）。"""
+    if not name or not phone:
+        return None
+    query = (
+        personnel_ref()
+        .where("name", "==", name)
+        .where("phone", "==", phone)
+        .where("status", "==", "active")
+        .limit(1)
+    )
+    for snapshot in query.stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        return data
+    return None
+
+
 def update_personnel_document(personnel_id: str, doc_type_code: str, file_path: str = None, expiry_date: str = None):
     ref = personnel_ref().document(personnel_id)
     snapshot = ref.get()
@@ -183,3 +203,50 @@ def list_recent_sick_leaves(limit: int = 20) -> list:
         data["id"] = snapshot.id
         result.append(data)
     return result
+
+
+# ==========================================
+# 應徵名單（Google 表單 webhook 寫入，錄取後轉正式人員）
+# ==========================================
+def create_applicant(name: str, phone: str, answers: dict) -> str:
+    doc_ref = applicants_ref().document()
+    doc_ref.set(
+        {
+            "name": name,
+            "phone": phone,
+            "answers": answers or {},
+            "interviewed": False,
+            "hired": False,
+            "withdrawn": False,
+            "converted_personnel_id": None,
+            "created_at": time.time(),
+        }
+    )
+    return doc_ref.id
+
+
+def list_applicants() -> list:
+    query = applicants_ref().order_by("created_at", direction="DESCENDING")
+    result = []
+    for snapshot in query.stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        result.append(data)
+    return result
+
+
+def get_applicant(applicant_id: str):
+    snapshot = applicants_ref().document(applicant_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def update_applicant_status(applicant_id: str, interviewed: bool, withdrawn: bool):
+    applicants_ref().document(applicant_id).update({"interviewed": interviewed, "withdrawn": withdrawn})
+
+
+def mark_applicant_hired(applicant_id: str, personnel_id: str):
+    applicants_ref().document(applicant_id).update({"hired": True, "converted_personnel_id": personnel_id})

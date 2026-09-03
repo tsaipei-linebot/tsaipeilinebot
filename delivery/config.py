@@ -14,6 +14,11 @@ SESSION_SECRET_KEY = os.getenv("DELIVERY_SESSION_SECRET_KEY", "dev-only-insecure
 # 未設定時，檔案上傳功能會回傳明確錯誤，不會嘗試寫入任何地方。
 GCS_BUCKET_NAME = os.getenv("DELIVERY_GCS_BUCKET", "")
 
+# Google 表單送出時，Apps Script 呼叫 /delivery/api/form-submission 這支 webhook
+# 要帶的共用密鑰（見 X-Delivery-Form-Secret header）。未設定時該端點一律回傳 403，
+# 等同這個 webhook 不存在（跟 main.py 的 LOAD_TEST_SECRET 是一樣的作法）。
+FORM_WEBHOOK_SECRET = os.getenv("DELIVERY_FORM_WEBHOOK_SECRET", "")
+
 # 廠商清單（選擇廠商 / 人員所屬廠商）
 VENDORS = [
     {"code": "shopee", "name": "蝦皮"},
@@ -22,6 +27,12 @@ VENDORS = [
     {"code": "sf", "name": "順豐"},
 ]
 VENDOR_MAP = {v["code"]: v["name"] for v in VENDORS}
+
+# 批次匯入 CSV 時，「廠商」欄位允許填代號或中文名稱，一律轉成小寫比對。
+VENDOR_LOOKUP = {}
+for _v in VENDORS:
+    VENDOR_LOOKUP[_v["code"].lower()] = _v["code"]
+    VENDOR_LOOKUP[_v["name"].lower()] = _v["code"]
 
 # 報到前應備文件（人員缺件狀況即依此清單逐項檢查）
 DOC_TYPES = [
