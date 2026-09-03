@@ -1225,11 +1225,61 @@ function maskIdCard(idCard) {
 function parseQueryString(queryString) {
   const params = {};
   if (!queryString) return params;
-  
+
   const pairs = queryString.split('&');
   for (let i = 0; i < pairs.length; i++) {
     const pair = pairs[i].split('=');
     params[decodeURIComponent(pair[0])] = decodeURIComponent(pair[1] || '');
   }
   return params;
+}
+
+// ==============================================================================
+// 11. 一次性設定工具：建立會計專用對帳試算表 (與「薪資補款紀錄」「專案合約紀錄」即時同步)
+// ==============================================================================
+/**
+ * 建立一份獨立的「材霈會計對帳表」，透過 QUERY + IMPORTRANGE 與員工主管組織表
+ * 底下的「薪資補款紀錄」「專案合約紀錄」兩個分頁即時同步（含日後審核狀態更新）。
+ * 薪資補款紀錄的「申請人 LINE ID」欄位刻意排除，不同步給會計看到內部系統識別碼。
+ *
+ * 使用方式：在 Apps Script 編輯器選取這個函式、按「執行」，
+ * 完成後到「執行項目」記錄或彈出視窗查看新試算表網址。
+ * 只需要執行這一次；之後兩邊資料會自動同步，不用再跑第二次。
+ *
+ * 執行完成後，第一次打開新試算表時，Google 會跳出「授權存取」提示，
+ * 需要手動點一次「允許存取」，之後才會開始正常同步顯示資料。
+ */
+function setupAccountingSyncSpreadsheet() {
+  const salarySheet = SpreadsheetService.getOrCreateSheet(CONFIG.SHEET_NAME_SALARY);
+  const projectSheet = SpreadsheetService.getOrCreateSheet(CONFIG.SHEET_NAME_PROJECT);
+  const sourceSpreadsheetId = salarySheet.getParent().getId();
+
+  const newSs = SpreadsheetApp.create('材霈會計對帳表（薪資補款/專案合約）');
+  const defaultSheet = newSs.getSheets()[0];
+
+  // 薪資補款紀錄：A~U 共 21 欄，排除 D 欄「申請人 LINE ID」(Col4)，其餘 20 欄原樣同步
+  const salaryTab = newSs.insertSheet(CONFIG.SHEET_NAME_SALARY);
+  const salaryCols = ['Col1', 'Col2', 'Col3', 'Col5', 'Col6', 'Col7', 'Col8', 'Col9', 'Col10',
+    'Col11', 'Col12', 'Col13', 'Col14', 'Col15', 'Col16', 'Col17', 'Col18', 'Col19', 'Col20', 'Col21'].join(', ');
+  salaryTab.getRange('A1').setFormula(
+    `=QUERY(IMPORTRANGE("${sourceSpreadsheetId}", "${CONFIG.SHEET_NAME_SALARY}!A:U"), "select ${salaryCols}", 1)`
+  );
+
+  // 專案合約紀錄：A~J 共 10 欄，沒有敏感的內部識別碼欄位，全部同步
+  const projectTab = newSs.insertSheet(CONFIG.SHEET_NAME_PROJECT);
+  projectTab.getRange('A1').setFormula(
+    `=IMPORTRANGE("${sourceSpreadsheetId}", "${CONFIG.SHEET_NAME_PROJECT}!A:J")`
+  );
+
+  newSs.deleteSheet(defaultSheet);
+
+  const resultMsg = '✅ 會計對帳表建立完成！\n網址：' + newSs.getUrl() +
+    '\n\n請先自己打開這個網址一次，Google 會跳出「授權存取來源試算表」的提示，點選「允許存取」後才會開始正常同步。\n完成後再把這份試算表分享給會計（建議只給「檢視者」權限）。';
+  console.log(resultMsg);
+  try {
+    SpreadsheetApp.getUi().alert(resultMsg);
+  } catch (uiErr) {
+    // 若非在試算表容器內執行（例如直接在 Apps Script 編輯器執行），沒有 UI 可彈窗，僅記錄在執行項目 log 即可
+  }
+  return resultMsg;
 }
