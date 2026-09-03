@@ -5,7 +5,8 @@
 <p class="hint">
     上傳 CSV 檔案（UTF-8 或 Big5 皆可），欄位需包含「廠商」「姓名」（身分證字號、電話為選填）。
     廠商欄位可以填代號（shopee/ud/uc/sf）或中文名稱（蝦皮/UD/UC/順豐）。
-    已存在相同身分證字號的在職人員會自動略過，不會重複建立。
+    已存在相同「姓名+電話」的在職人員會自動略過，不會重複建立（兩者都要有值才會比對，
+    電話留空的話無法判斷重複，會直接新增）。
 </p>
 <p><a href="/delivery/import/template.csv">下載範例 CSV 範本</a></p>
 
@@ -20,7 +21,7 @@
     {% else %}
     <p class="meta">
         成功建立 {{ result.created|length }} 筆，
-        略過（身分證字號已存在）{{ result.skipped|length }} 筆，
+        略過（姓名+電話已存在）{{ result.skipped|length }} 筆，
         失敗 {{ result.failed|length }} 筆。
     </p>
 

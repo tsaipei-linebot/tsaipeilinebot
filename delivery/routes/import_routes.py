@@ -50,11 +50,11 @@ async def import_submit(request: Request, file: UploadFile = File(...), redirect
                 result["failed"].append(row)
                 continue
 
-            existing = repository.find_active_personnel_by_id_number(row["id_number"]) if row["id_number"] else None
+            existing = repository.find_active_personnel_by_name_and_phone(row["name"], row["phone"])
             if existing:
                 existing_vendor = VENDOR_MAP.get(existing.get("vendor"), existing.get("vendor"))
                 result["skipped"].append(
-                    {**row, "reason": f"身分證字號已存在（{existing_vendor} - {existing.get('name')}）"}
+                    {**row, "reason": f"姓名+手機號碼已存在（{existing_vendor} - {existing.get('name')}）"}
                 )
                 continue
 

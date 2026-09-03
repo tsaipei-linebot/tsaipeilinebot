@@ -108,12 +108,19 @@ def search_personnel(keyword: str) -> list:
     return result
 
 
-def find_active_personnel_by_id_number(id_number: str):
-    """批次匯入用：同一個身分證字號已經有在職人員資料時回傳該筆，讓呼叫端可以
-    跳過重複匯入，而不是每次匯入都建出重複的人員記錄。"""
-    if not id_number:
+def find_active_personnel_by_name_and_phone(name: str, phone: str):
+    """批次匯入用：同一個「姓名+手機號碼」組合已經有在職人員資料時回傳該筆，
+    讓呼叫端可以跳過重複匯入，而不是每次匯入都建出重複的人員記錄。
+    兩個欄位都要有值才會查（單靠姓名或單靠電話都不足以判定是同一人）。"""
+    if not name or not phone:
         return None
-    query = personnel_ref().where("id_number", "==", id_number).where("status", "==", "active").limit(1)
+    query = (
+        personnel_ref()
+        .where("name", "==", name)
+        .where("phone", "==", phone)
+        .where("status", "==", "active")
+        .limit(1)
+    )
     for snapshot in query.stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
