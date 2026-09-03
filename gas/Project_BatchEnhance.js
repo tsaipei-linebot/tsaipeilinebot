@@ -198,7 +198,9 @@ const BatchEnhanceJobService = {
       '  "formatted_detail": "條列式排版說明完整文字"\n' +
       '}';
 
-    const targetModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'];
+    // gemini-2.5-flash/flash-lite、gemini-1.5-flash 已被 Google 排除在此 API Key 的可用範圍外（HTTP 404）。
+    // 改用 3.5 系列（用 listAvailableGeminiModels() 確認過確實可用），並加上 gemini-flash-latest 別名當最後一層保險。
+    const targetModels = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
     const MAX_RETRY_PER_MODEL = 2; // 同一模型遇到 429 額度限制時的重試次數上限
     const RETRY_BASE_DELAY_MS = 1000; // 重試遞增等待時間基準
 
