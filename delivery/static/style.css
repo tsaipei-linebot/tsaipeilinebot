@@ -1,15 +1,21 @@
 :root {
-    --bg: #f4f6f8;
+    --bg: #f7f6f3;
     --panel: #ffffff;
+    --ink: #16181d;
     --text: #1f2937;
     --muted: #6b7280;
-    --primary: #2563eb;
-    --primary-dark: #1d4ed8;
-    --border: #e5e7eb;
+    --border: #e7e4df;
+    --brand: #ea580c;
+    --brand-dark: #c2410c;
+    --brand-bg: #fff1e8;
     --danger: #dc2626;
     --danger-bg: #fee2e2;
     --ok: #16a34a;
     --ok-bg: #dcfce7;
+    --warn: #92400e;
+    --warn-bg: #fef3c7;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+    --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.07);
 }
 
 * { box-sizing: border-box; }
@@ -19,54 +25,101 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
     background: var(--bg);
     color: var(--text);
+    -webkit-font-smoothing: antialiased;
 }
 
+/* ==========================================
+   頂部導覽列
+   ========================================== */
 .topbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 24px;
+    padding: 12px 24px;
     background: var(--panel);
     border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    position: sticky;
+    top: 0;
+    z-index: 20;
 }
 
 .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
     font-weight: 700;
-    font-size: 18px;
-    color: var(--text);
+    font-size: 17px;
+    color: var(--ink);
     text-decoration: none;
+    letter-spacing: 0.2px;
 }
+
+.brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, var(--brand), var(--brand-dark));
+    color: #fff;
+    flex-shrink: 0;
+}
+
+.brand-mark svg { width: 18px; height: 18px; }
 
 .topnav {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 18px;
     font-size: 14px;
 }
 
-.topnav a { color: var(--primary); text-decoration: none; }
-.topnav-user { color: var(--muted); }
-
-.container {
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 24px 16px 64px;
+.topnav a {
+    color: var(--brand-dark);
+    text-decoration: none;
+    font-weight: 600;
 }
 
-.page-title { font-size: 22px; margin: 0 0 16px; }
-.section-title { font-size: 18px; margin: 32px 0 12px; }
+.topnav a:hover { text-decoration: underline; }
+.topnav-user { color: var(--muted); }
+
+/* ==========================================
+   版面容器
+   ========================================== */
+.container {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 28px 20px 72px;
+}
+
+.page-title {
+    font-size: 23px;
+    margin: 0 0 16px;
+    color: var(--ink);
+    font-weight: 700;
+    letter-spacing: 0.2px;
+}
+
+.section-title { font-size: 18px; margin: 32px 0 12px; color: var(--ink); }
 
 .page-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     margin-bottom: 16px;
+    flex-wrap: wrap;
 }
 
+/* ==========================================
+   主頁卡片
+   ========================================== */
 .home-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 18px;
 }
 
 @media (max-width: 720px) {
@@ -76,15 +129,39 @@ body {
 .home-panel {
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 20px;
+    border-radius: 14px;
+    padding: 22px;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 
-.home-panel h2 { margin: 0 0 8px; font-size: 17px; }
-.hint { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+.home-panel:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+}
+
+.home-panel-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--brand-bg);
+    color: var(--brand-dark);
+    margin-bottom: 12px;
+}
+
+.home-panel-icon svg { width: 22px; height: 22px; }
+
+.home-panel h2 { margin: 0 0 8px; font-size: 17px; color: var(--ink); }
+.hint { color: var(--muted); font-size: 13px; margin: 0 0 16px; line-height: 1.6; }
 
 .btn-list { display: flex; flex-direction: column; gap: 8px; }
 
+/* ==========================================
+   按鈕
+   ========================================== */
 .btn {
     display: inline-block;
     padding: 10px 16px;
@@ -94,8 +171,10 @@ body {
     color: var(--text);
     text-decoration: none;
     font-size: 14px;
+    font-weight: 500;
     cursor: pointer;
     text-align: center;
+    transition: background 0.12s ease, border-color 0.12s ease;
 }
 
 .btn:hover { background: var(--bg); }
@@ -103,28 +182,49 @@ body {
 .btn-block { width: 100%; }
 
 .btn-primary {
-    background: var(--primary);
-    border-color: var(--primary);
+    background: var(--brand);
+    border-color: var(--brand);
     color: #fff;
+    font-weight: 600;
 }
 
-.btn-primary:hover { background: var(--primary-dark); }
+.btn-primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
 
 .btn-small { padding: 6px 10px; font-size: 13px; }
 
-.login-box {
-    max-width: 360px;
-    margin: 60px auto;
-    background: var(--panel);
-    border: 1px solid var(--border);
+.btn-bulk-update {
+    display: block;
+    width: 100%;
+    padding: 14px 20px;
+    font-size: 16px;
+    font-weight: 700;
     border-radius: 10px;
-    padding: 32px;
-    text-align: center;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow-sm);
 }
 
-.login-box h1 { margin: 0 0 4px; font-size: 20px; }
-.subtitle { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+.btn-bulk-update:last-child { margin-top: 16px; margin-bottom: 0; }
 
+/* ==========================================
+   登入頁
+   ========================================== */
+.login-box {
+    max-width: 380px;
+    margin: 72px auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 36px 32px;
+    text-align: center;
+    box-shadow: var(--shadow-md);
+}
+
+.login-box h1 { margin: 0 0 4px; font-size: 21px; color: var(--ink); }
+.subtitle { color: var(--muted); font-size: 13px; margin: 0 0 22px; }
+
+/* ==========================================
+   表單
+   ========================================== */
 .form-stack {
     display: flex;
     flex-direction: column;
@@ -144,13 +244,29 @@ body {
 
 .form-stack input,
 .form-stack select,
-.form-stack textarea {
+.form-stack textarea,
+.filter-bar input,
+.filter-bar select {
     font-size: 14px;
     padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 6px;
     font-family: inherit;
     color: var(--text);
+    background: var(--panel);
+}
+
+.form-stack input:focus,
+.form-stack select:focus,
+.form-stack textarea:focus,
+.filter-bar input:focus,
+.filter-bar select:focus,
+.inline-form input:focus,
+.inline-form select:focus,
+.accept-row select:focus {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px var(--brand-bg);
 }
 
 .inline-form {
@@ -170,30 +286,111 @@ body {
     font-size: 13px;
 }
 
+.filter-bar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    box-shadow: var(--shadow-sm);
+}
+
+.filter-bar input { min-width: 160px; }
+
+.accept-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.accept-row select {
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.status-radios {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 13px;
+}
+
+.status-radios label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+/* ==========================================
+   表格
+   ========================================== */
 .data-table {
     width: 100%;
     border-collapse: collapse;
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     overflow: hidden;
+    box-shadow: var(--shadow-sm);
 }
 
 .data-table th, .data-table td {
-    padding: 10px 12px;
+    padding: 12px 14px;
     border-bottom: 1px solid var(--border);
     text-align: left;
     font-size: 14px;
+    vertical-align: top;
 }
 
-.data-table th { background: var(--bg); color: var(--muted); font-weight: 600; }
+.data-table th {
+    background: var(--brand-bg);
+    color: var(--brand-dark);
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.data-table tbody tr:hover { background: var(--bg); }
 .data-table tr:last-child td { border-bottom: none; }
 
+/* 表頭凍結：把捲動範圍收在這個容器本身（而不是整個頁面），sticky 用容器內的
+   top:0 就好，不用去猜導覽列高度；順便解決很寬的表格在小螢幕上需要左右捲動
+   的問題（overflow-x 和 overflow-y 都交給同一個容器處理，不會互相干擾）。 */
+.table-scroll {
+    max-height: 70vh;
+    overflow: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+}
+
+.table-scroll .data-table {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.sticky-head thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+
+.answers-cell { max-width: 320px; }
+.answers-cell .meta { margin: 0 0 4px; }
+.answers-cell .meta:last-child { margin-bottom: 0; }
+
+/* ==========================================
+   徽章 / 提示訊息
+   ========================================== */
 .badge {
     display: inline-block;
-    padding: 2px 8px;
+    padding: 2px 9px;
     border-radius: 999px;
     font-size: 12px;
+    font-weight: 600;
     margin-right: 4px;
 }
 
@@ -213,8 +410,8 @@ body {
 }
 
 .warning {
-    background: #fef3c7;
-    color: #92400e;
+    background: var(--warn-bg);
+    color: var(--warn);
     padding: 8px 12px;
     border-radius: 6px;
     font-size: 13px;
@@ -223,4 +420,5 @@ body {
 .empty { color: var(--muted); font-size: 14px; }
 
 .back-link { margin-top: 24px; }
-.back-link a { color: var(--primary); text-decoration: none; font-size: 14px; }
+.back-link a { color: var(--brand-dark); text-decoration: none; font-size: 14px; font-weight: 600; }
+.back-link a:hover { text-decoration: underline; }

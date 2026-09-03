@@ -6,8 +6,8 @@
 import time
 from datetime import date, datetime
 
-from delivery.config import DOC_TYPES
-from delivery.db import applicants_ref, personnel_ref, repayments_ref, sick_leaves_ref
+from delivery.config import DOC_TYPES, SELECTABLE_APPLICANT_STATUSES
+from delivery.db import applicants_ref, get_db, personnel_ref, repayments_ref, sick_leaves_ref
 
 TODAY_ISO = lambda: date.today().isoformat()  # noqa: E731
 
@@ -208,6 +208,44 @@ def list_recent_sick_leaves(limit: int = 20) -> list:
 # ==========================================
 # 應徵名單（Google 表單 webhook 寫入，錄取後轉正式人員）
 # ==========================================
+_SELECTABLE_STATUS_CODES = {s["code"] for s in SELECTABLE_APPLICANT_STATUSES}
+
+
+def normalize_applicant_status(data: dict) -> str:
+    """新資料一律直接存 status 欄位；這裡額外相容改版前只有
+    interviewed/hired/withdrawn 三個布林欄位的舊資料，讓舊紀錄不用手動搬移
+    也能正確顯示狀態。"""
+    status = data.get("status")
+    if status:
+        return status
+    if data.get("hired"):
+        return "hired"
+    if data.get("withdrawn"):
+        return "withdrawn"
+    if data.get("interviewed"):
+        return "interviewed"
+    return "not_interviewed"
+
+
+def applicant_matches_filters(data: dict, name_keyword: str = "", phone_keyword: str = "", status_filter: str = "") -> bool:
+    """判斷這筆應徵資料要不要出現在清單裡（純函式，data 需已經算好 status）。
+
+    預設（沒指定狀態篩選、也沒搜尋姓名）不顯示「放棄」的紀錄，避免洗版；
+    只要主動搜尋姓名、或直接篩選狀態為「放棄」，就會顯示，方便事後回頭查。
+    """
+    if name_keyword and name_keyword not in (data.get("name") or ""):
+        return False
+    if phone_keyword and phone_keyword not in (data.get("phone") or ""):
+        return False
+
+    status = data.get("status") or normalize_applicant_status(data)
+    if status_filter:
+        return status == status_filter
+    if status == "withdrawn" and not name_keyword:
+        return False
+    return True
+
+
 def find_applicant_by_name_and_phone(name: str, phone: str):
     """兩者都要有值才會查（單靠姓名或單靠電話都不足以判定是同一人）。"""
     if not name or not phone:
@@ -222,15 +260,13 @@ def find_applicant_by_name_and_phone(name: str, phone: str):
 
 def upsert_applicant(name: str, phone: str, answers: dict) -> str:
     """姓名+電話相同視為同一人重複投遞表單：覆蓋既有應徵紀錄的回覆內容，
-    並把已面試/錄取/放棄等處理狀態清空回到「尚未處理」，不會疊加成新的一筆。
-    姓名+電話對不到既有紀錄（含兩者缺一的情況）時直接新增一筆。"""
+    並把處理狀態清空回到「未面試」，不會疊加成新的一筆。姓名+電話對不到
+    既有紀錄（含兩者缺一的情況）時直接新增一筆。"""
     payload = {
         "name": name,
         "phone": phone,
         "answers": answers or {},
-        "interviewed": False,
-        "hired": False,
-        "withdrawn": False,
+        "status": "not_interviewed",
         "converted_personnel_id": None,
         "created_at": time.time(),
     }
@@ -244,13 +280,19 @@ def upsert_applicant(name: str, phone: str, answers: dict) -> str:
     return doc_ref.id
 
 
-def list_applicants() -> list:
-    query = applicants_ref().order_by("created_at", direction="DESCENDING")
+def list_applicants(name_keyword: str = "", phone_keyword: str = "", status_filter: str = "") -> list:
+    name_keyword = (name_keyword or "").strip()
+    phone_keyword = (phone_keyword or "").strip()
+    status_filter = (status_filter or "").strip()
+
     result = []
+    query = applicants_ref().order_by("created_at", direction="DESCENDING")
     for snapshot in query.stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
-        result.append(data)
+        data["status"] = normalize_applicant_status(data)
+        if applicant_matches_filters(data, name_keyword, phone_keyword, status_filter):
+            result.append(data)
     return result
 
 
@@ -260,12 +302,24 @@ def get_applicant(applicant_id: str):
         return None
     data = snapshot.to_dict() or {}
     data["id"] = snapshot.id
+    data["status"] = normalize_applicant_status(data)
     return data
 
 
-def update_applicant_status(applicant_id: str, interviewed: bool, withdrawn: bool):
-    applicants_ref().document(applicant_id).update({"interviewed": interviewed, "withdrawn": withdrawn})
+def bulk_set_applicant_status(status_by_id: dict) -> None:
+    """一次更新多筆應徵紀錄的狀態，配合前端「一鍵更新所選狀態」。只接受
+    未面試/已面試/放棄這三種可以手動勾選的狀態——「已錄取」只能透過
+    「錄取並建立人員」那個流程設定，不能用這個批次更新繞過去。"""
+    batch = get_db().batch()
+    has_writes = False
+    for applicant_id, status in status_by_id.items():
+        if status not in _SELECTABLE_STATUS_CODES:
+            continue
+        batch.update(applicants_ref().document(applicant_id), {"status": status})
+        has_writes = True
+    if has_writes:
+        batch.commit()
 
 
 def mark_applicant_hired(applicant_id: str, personnel_id: str):
-    applicants_ref().document(applicant_id).update({"hired": True, "converted_personnel_id": personnel_id})
+    applicants_ref().document(applicant_id).update({"status": "hired", "converted_personnel_id": personnel_id})
