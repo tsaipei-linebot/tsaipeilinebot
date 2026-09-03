@@ -65,3 +65,74 @@
 所有檔案都已經在 GitHub `main` 分支上，跟目前 Cloud Run 上手動部署的版本一致（PR #1～#8 均已合併）。接手時建議先 `git log --oneline -10` 確認本地/部署版本沒有落後 main。
 
 `tests/` 目錄有 43 個單元測試，改動前後都建議跑 `python3 -m unittest discover -s tests` 確認沒有回歸。
+
+## 新增子系統：配送部系統（`delivery/`）
+
+同一個 repo 底下新增的**獨立子系統**（同仁登入用的內部管理網頁），跟上面的 LINE
+招募機器人完全分開（不同的 FastAPI sub-app、不同的 Firestore collection 前綴、
+不同的登入機制），只是暫時共用同一個 GCP 專案與同一個 Cloud Run 服務部署。
+
+### 需求來源
+
+同仁提供的手繪畫面草圖，主頁分三塊：
+- **選擇廠商**（蝦皮／UD／UC／順豐）→ 點選後列出該廠商配送人員的「缺件狀況」
+- **選擇功能**：補款登記、病假登記（病假可上傳收據）→ 輸入後寫入資料庫
+- **查詢人員** → 依姓名/身分證字號查詢，一樣顯示缺件狀況
+
+追問後確認「缺件狀況」是指**報到前應備文件**是否齊全：身分證、駕照、強制險、
+良民證（後兩者有到期日，過期也算缺件）。
+
+### 架構
+
+- `delivery/app.py`：獨立的 `FastAPI()` sub-app，掛了自己的
+  `SessionMiddleware`（cookie session，帳號密碼登入），用
+  `app.mount("/delivery", delivery_app)`（見 `main.py`）掛到主服務底下，
+  跟 LINE webhook 的路由完全不共用 middleware。
+- `delivery/config.py`：廠商清單、應備文件清單、上傳限制、env var 名稱。
+- `delivery/db.py`：Firestore collection 存取（`delivery_users`、
+  `delivery_personnel`、`delivery_repayments`、`delivery_sick_leaves`），
+  **延遲建立 client**（跟 `services/session_service.py` 模組層級直接連線的
+  作法不同），單純 import 這個模組不需要 GCP 憑證。
+- `delivery/storage.py`：身分證/駕照/強制險/良民證/病假收據等檔案存放到
+  Google Cloud Storage（一樣延遲 import/連線）。檔案一律不公開、不用簽名
+  網址，只能透過 `delivery/routes/file_routes.py`（需要登入 session）下載，
+  因為這些檔案多半是個資。
+- `delivery/auth.py`：帳號密碼登入。密碼雜湊用標準函式庫
+  `hashlib.pbkdf2_hmac`（200,000 次疊代 + 隨機 salt），沒有另外引入
+  passlib/bcrypt。
+- `delivery/repository.py`：人員/補款/病假的 CRUD，以及「缺件狀況」判斷邏輯
+  （`doc_status` / `missing_documents`，純函式、有單元測試）。
+- `delivery/routes/*.py` + `delivery/templates/*.html`：登入、主頁、廠商人員
+  清單、人員詳細（上傳/更新文件）、查詢人員、補款登記、病假登記。
+
+### 部署前需要準備的環境變數（目前都還沒設定，正式上線前必須處理）
+
+- `DELIVERY_SESSION_SECRET_KEY`：登入 session cookie 簽章密鑰，**務必**設成
+  隨機字串（沒設定時用一個不安全的預設值，只能本機開發用）。
+- `DELIVERY_GCS_BUCKET`：存放身分證/駕照/強制險/良民證/病假收據的 GCS
+  bucket 名稱。**這個 bucket 需要先手動建立**（這裡沒有權限自動建立），
+  Cloud Run 的服務帳號要有這個 bucket 的讀寫權限。沒設定時，檔案上傳/下載
+  功能會被擋下來（不會報錯到整個系統掛掉，但無法真的存檔案）。
+
+### 建立第一組登入帳號
+
+系統沒有開放自行註冊，帳號一律用 CLI 腳本建立（需要在有 Firestore 寫入權限
+的環境執行，例如透過 Cloud Run 的一次性 job，或本機用有權限的 ADC）：
+
+```
+python -m delivery.seed_admin <帳號> <密碼> <顯示名稱> [role，預設 admin]
+```
+
+### 目前已知的待辦/簡化事項（下一輪可以接續處理）
+
+- 補款登記／病假登記目前是「輸入人員姓名的文字欄位」，不是從人員清單挑選
+  （沒有連到 `delivery_personnel` 的 `personnel_id`）。畫草圖時的描述是
+  「輸入後寫入資料庫」，先照字面做成最簡單的表單；如果之後想要補款/病假
+  紀錄能直接連回某個人員的完整資料，需要加一個人員選擇/搜尋的 UI（例如
+  下拉選單 + AJAX 搜尋），並把 `personnel_id` 一併存進去。
+- 目前只有「同仁登入」，沒有角色權限差異（`role` 欄位有存但没有實際用在
+  任何權限檢查上）；如果未來需要區分一般同仁跟管理者能做的事情不同，要
+  補上權限檢查。
+- 測試涵蓋密碼雜湊、缺件邏輯、路由掛載/導向等不需要真的連線 GCP 的部分；
+  真正會讀寫 Firestore/GCS 的路徑（新增人員、上傳文件、補款/病假送出）
+  還沒有整合測試，建議在有 GCP 憑證的環境手動測過一輪再正式上線。

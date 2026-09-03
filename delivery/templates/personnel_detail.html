@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ person.name }} - 缺件狀況{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ person.name }}</h1>
+<p class="meta">廠商：{{ vendor_name }}　電話：{{ person.phone or "-" }}　身分證字號：{{ person.id_number or "-" }}</p>
+
+{% if not storage_configured %}
+<p class="warning">尚未設定檔案儲存空間（DELIVERY_GCS_BUCKET），目前只能記錄到期日，無法上傳檔案。</p>
+{% endif %}
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>應備文件</th>
+            <th>狀態</th>
+            <th>到期日</th>
+            <th>更新</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for doc in doc_statuses %}
+        <tr>
+            <td>{{ doc.name }}</td>
+            <td>
+                {% if doc.missing %}
+                    <span class="badge badge-missing">{% if doc.expired %}已過期{% else %}缺件{% endif %}</span>
+                {% else %}
+                    <span class="badge badge-ok">已備齊</span>
+                {% endif %}
+                {% if doc.has_file %}
+                <a class="file-link" href="/delivery/files/{{ doc.file_path }}" target="_blank" rel="noopener">查看檔案</a>
+                {% endif %}
+            </td>
+            <td>{{ doc.expiry_date or "-" }}</td>
+            <td>
+                <form method="post" action="/delivery/personnel/{{ person.id }}/document/{{ doc.code }}" enctype="multipart/form-data" class="inline-form">
+                    <input type="file" name="file" accept="image/*,application/pdf">
+                    <input type="date" name="expiry_date" value="{{ doc.expiry_date }}" placeholder="到期日">
+                    <button type="submit" class="btn btn-small">更新</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<p class="back-link"><a href="/delivery/vendor/{{ person.vendor }}">&larr; 回 {{ vendor_name }} 人員清單</a></p>
+{% endblock %}

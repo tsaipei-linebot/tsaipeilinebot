@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ vendor_name }} - 人員缺件狀況{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">{{ vendor_name }} - 人員缺件狀況</h1>
+    <a class="btn btn-primary" href="/delivery/vendor/{{ vendor_code }}/new">新增人員</a>
+</div>
+
+{% if rows %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>姓名</th>
+            <th>電話</th>
+            <th>缺件狀況</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>{{ row.person.name }}</td>
+            <td>{{ row.person.phone or "-" }}</td>
+            <td>
+                {% if row.missing %}
+                    {% for m in row.missing %}
+                    <span class="badge badge-missing">{{ m.name }}{% if m.expired %}（已過期）{% endif %}</span>
+                    {% endfor %}
+                {% else %}
+                    <span class="badge badge-ok">齊全</span>
+                {% endif %}
+            </td>
+            <td><a href="/delivery/personnel/{{ row.person.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前此廠商尚無人員資料。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}主頁 - 配送部系統{% endblock %}
+{% block content %}
+<h1 class="page-title">主頁</h1>
+<div class="home-grid">
+    <section class="home-panel">
+        <h2>選擇廠商</h2>
+        <p class="hint">點選廠商查看該廠商配送人員的缺件狀況</p>
+        <div class="btn-list">
+            {% for v in vendors %}
+            <a class="btn btn-block" href="/delivery/vendor/{{ v.code }}">{{ v.name }}</a>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="home-panel">
+        <h2>選擇功能</h2>
+        <p class="hint">補款登記、病假登記，送出後直接寫入資料庫</p>
+        <div class="btn-list">
+            <a class="btn btn-block" href="/delivery/function/repayment">補款登記</a>
+            <a class="btn btn-block" href="/delivery/function/sick-leave">病假登記（可上傳收據）</a>
+        </div>
+    </section>
+
+    <section class="home-panel">
+        <h2>查詢人員</h2>
+        <p class="hint">依姓名或身分證字號查詢人員缺件狀況</p>
+        <form method="get" action="/delivery/search" class="inline-form">
+            <input type="text" name="keyword" placeholder="輸入姓名或身分證字號">
+            <button type="submit" class="btn">查詢</button>
+        </form>
+    </section>
+</div>
+{% endblock %}

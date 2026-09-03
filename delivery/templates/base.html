@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}配送部系統{% endblock %}</title>
+    <link rel="stylesheet" href="/delivery/static/style.css">
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/delivery/">配送部系統</a>
+        {% if user %}
+        <nav class="topnav">
+            <span class="topnav-user">{{ user.name }}</span>
+            <a href="/delivery/logout">登出</a>
+        </nav>
+        {% endif %}
+    </header>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
