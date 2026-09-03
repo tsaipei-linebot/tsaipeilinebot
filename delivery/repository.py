@@ -8,11 +8,17 @@ import time
 from datetime import date, datetime, timedelta
 
 from delivery.config import (
+    COOPERATION_TYPE_MAP,
     DEFAULT_PERSONNEL_STATUS,
+    DEFAULT_TEST_DRIVE_STATUS,
     DOC_TYPES,
     HIDDEN_PERSONNEL_STATUSES,
     LEGACY_PERSONNEL_STATUS,
     SELECTABLE_APPLICANT_STATUSES,
+    TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
+    TEST_DRIVE_REQUIRED_VENDORS,
+    TEST_DRIVE_STATUS_MAP,
+    VENDOR_MAP,
 )
 from delivery.db import applicants_ref, get_db, personnel_ref, repayments_ref, sick_leaves_ref
 from delivery.validators import is_valid_taiwan_id
@@ -476,15 +482,24 @@ def normalize_applicant_status(data: dict) -> str:
     return "not_interviewed"
 
 
-def applicant_matches_filters(data: dict, name_keyword: str = "", phone_keyword: str = "", status_filter: str = "") -> bool:
+def applicant_matches_filters(
+    data: dict,
+    name_keyword: str = "",
+    phone_keyword: str = "",
+    status_filter: str = "",
+    vendor_filter: str = "",
+) -> bool:
     """判斷這筆應徵資料要不要出現在清單裡（純函式，data 需已經算好 status）。
 
     預設（沒指定狀態篩選、也沒搜尋姓名）不顯示「放棄」的紀錄，避免洗版；
     只要主動搜尋姓名、或直接篩選狀態為「放棄」，就會顯示，方便事後回頭查。
+    廠商正常顯示，不特別隱藏「未指定廠商」的紀錄。
     """
     if name_keyword and name_keyword not in (data.get("name") or ""):
         return False
     if phone_keyword and phone_keyword not in (data.get("phone") or ""):
+        return False
+    if vendor_filter and (data.get("vendor") or "") != vendor_filter:
         return False
 
     status = data.get("status") or normalize_applicant_status(data)
@@ -493,6 +508,16 @@ def applicant_matches_filters(data: dict, name_keyword: str = "", phone_keyword:
     if status == "withdrawn" and not name_keyword:
         return False
     return True
+
+
+def applicant_needs_test_drive(vendor: str, cooperation_type: str) -> bool:
+    """判斷這個應徵者需不需要試駕：UD、UC 一律需要；蝦皮只有合作方式是
+    「三輪雇傭」才需要（二輪承攬/二輪雇傭不用）；順豐不需要。"""
+    if vendor in TEST_DRIVE_REQUIRED_VENDORS:
+        return True
+    if vendor == "shopee" and cooperation_type in TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES:
+        return True
+    return False
 
 
 def find_applicant_by_name_and_phone(name: str, phone: str):
@@ -507,19 +532,25 @@ def find_applicant_by_name_and_phone(name: str, phone: str):
     return None
 
 
-def upsert_applicant(name: str, phone: str, answers: dict) -> str:
-    """姓名+電話相同視為同一人重複投遞表單：覆蓋既有應徵紀錄的回覆內容，
-    並把處理狀態清空回到「未面試」，不會疊加成新的一筆。姓名+電話對不到
-    既有紀錄（含兩者缺一的情況）時直接新增一筆。"""
+def upsert_applicant(name: str, phone: str, answers: dict, vendor: str = "", cooperation_type: str = "") -> str:
+    """姓名+電話相同視為同一人重複投遞表單：覆蓋既有應徵紀錄的回覆內容（含
+    廠商、合作方式），並把處理狀態清空回到「未面試」，不會疊加成新的一筆。
+    姓名+電話對不到既有紀錄（含兩者缺一的情況）時直接新增一筆。
+
+    試駕狀態刻意不隨表單重投而重置——那是同仁自己操作/記錄的結果，不是表單
+    填寫的內容，重複投遞表單不該把已經記錄的試駕結果洗掉。"""
+    existing = find_applicant_by_name_and_phone(name, phone)
     payload = {
         "name": name,
         "phone": phone,
         "answers": answers or {},
+        "vendor": vendor or "",
+        "cooperation_type": cooperation_type or "",
+        "test_drive": (existing or {}).get("test_drive") or DEFAULT_TEST_DRIVE_STATUS,
         "status": "not_interviewed",
         "converted_personnel_id": None,
         "created_at": time.time(),
     }
-    existing = find_applicant_by_name_and_phone(name, phone)
     if existing:
         applicants_ref().document(existing["id"]).set(payload)
         return existing["id"]
@@ -529,18 +560,29 @@ def upsert_applicant(name: str, phone: str, answers: dict) -> str:
     return doc_ref.id
 
 
-def list_applicants(name_keyword: str = "", phone_keyword: str = "", status_filter: str = "") -> list:
+def _normalize_applicant(data: dict) -> dict:
+    data["status"] = normalize_applicant_status(data)
+    data["vendor"] = data.get("vendor") or ""
+    data["cooperation_type"] = data.get("cooperation_type") or ""
+    data["test_drive"] = data.get("test_drive") or DEFAULT_TEST_DRIVE_STATUS
+    return data
+
+
+def list_applicants(
+    name_keyword: str = "", phone_keyword: str = "", status_filter: str = "", vendor_filter: str = ""
+) -> list:
     name_keyword = (name_keyword or "").strip()
     phone_keyword = (phone_keyword or "").strip()
     status_filter = (status_filter or "").strip()
+    vendor_filter = (vendor_filter or "").strip()
 
     result = []
     query = applicants_ref().order_by("created_at", direction="DESCENDING")
     for snapshot in query.stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
-        data["status"] = normalize_applicant_status(data)
-        if applicant_matches_filters(data, name_keyword, phone_keyword, status_filter):
+        data = _normalize_applicant(data)
+        if applicant_matches_filters(data, name_keyword, phone_keyword, status_filter, vendor_filter):
             result.append(data)
     return result
 
@@ -551,21 +593,35 @@ def get_applicant(applicant_id: str):
         return None
     data = snapshot.to_dict() or {}
     data["id"] = snapshot.id
-    data["status"] = normalize_applicant_status(data)
-    return data
+    return _normalize_applicant(data)
 
 
-def bulk_set_applicant_status(status_by_id: dict) -> None:
-    """一次更新多筆應徵紀錄的狀態，配合前端「一鍵更新所選狀態」。只接受
-    未面試/已面試/放棄這三種可以手動勾選的狀態——「已錄取」只能透過
-    「錄取並建立人員」那個流程設定，不能用這個批次更新繞過去。"""
+def bulk_update_applicants(updates: dict) -> None:
+    """一次更新多筆應徵紀錄的狀態/廠商/合作方式/試駕，配合前端「一鍵全部
+    更新」。每個欄位獨立驗證，只有合法值才會真的寫入；「已錄取」狀態一樣
+    不能透過這裡設定，只能透過「錄取並建立人員」那個流程。
+
+    updates 格式：{applicant_id: {"status": ..., "vendor": ..., "cooperation_type": ..., "test_drive": ...}}，
+    每個 applicant 底下的欄位都可以缺，缺的就不動。"""
     batch = get_db().batch()
     has_writes = False
-    for applicant_id, status in status_by_id.items():
-        if status not in _SELECTABLE_STATUS_CODES:
-            continue
-        batch.update(applicants_ref().document(applicant_id), {"status": status})
-        has_writes = True
+    for applicant_id, fields in updates.items():
+        patch = {}
+        status = fields.get("status")
+        if status is not None and status in _SELECTABLE_STATUS_CODES:
+            patch["status"] = status
+        vendor = fields.get("vendor")
+        if vendor is not None and (vendor == "" or vendor in VENDOR_MAP):
+            patch["vendor"] = vendor
+        cooperation_type = fields.get("cooperation_type")
+        if cooperation_type is not None and (cooperation_type == "" or cooperation_type in COOPERATION_TYPE_MAP):
+            patch["cooperation_type"] = cooperation_type
+        test_drive = fields.get("test_drive")
+        if test_drive is not None and test_drive in TEST_DRIVE_STATUS_MAP:
+            patch["test_drive"] = test_drive
+        if patch:
+            batch.update(applicants_ref().document(applicant_id), patch)
+            has_writes = True
     if has_writes:
         batch.commit()
 

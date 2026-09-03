@@ -8,7 +8,7 @@ from tests import _env  # noqa: F401
 from tests import _stub_gcp
 _stub_gcp.install()
 
-from delivery.repository import applicant_matches_filters, normalize_applicant_status
+from delivery.repository import applicant_matches_filters, applicant_needs_test_drive, normalize_applicant_status
 
 
 class NormalizeApplicantStatusTests(unittest.TestCase):
@@ -67,6 +67,41 @@ class ApplicantMatchesFiltersTests(unittest.TestCase):
     def test_status_filter_matching_status_passes(self):
         applicant = self._applicant(status="interviewed")
         self.assertTrue(applicant_matches_filters(applicant, status_filter="interviewed"))
+
+    def test_unspecified_vendor_shown_by_default(self):
+        # 廠商還沒判斷出來的人正常顯示，不特別隱藏。
+        applicant = self._applicant(vendor="")
+        self.assertTrue(applicant_matches_filters(applicant))
+
+    def test_vendor_filter_excludes_non_matching(self):
+        applicant = self._applicant(vendor="ud")
+        self.assertFalse(applicant_matches_filters(applicant, vendor_filter="shopee"))
+
+    def test_vendor_filter_matching_passes(self):
+        applicant = self._applicant(vendor="ud")
+        self.assertTrue(applicant_matches_filters(applicant, vendor_filter="ud"))
+
+
+class ApplicantNeedsTestDriveTests(unittest.TestCase):
+    def test_ud_always_needs_test_drive(self):
+        self.assertTrue(applicant_needs_test_drive("ud", ""))
+        self.assertTrue(applicant_needs_test_drive("ud", "two_wheel_contract"))
+
+    def test_uc_always_needs_test_drive(self):
+        self.assertTrue(applicant_needs_test_drive("uc", ""))
+
+    def test_sf_never_needs_test_drive(self):
+        self.assertFalse(applicant_needs_test_drive("sf", ""))
+        self.assertFalse(applicant_needs_test_drive("sf", "three_wheel_employed"))
+
+    def test_shopee_needs_test_drive_only_for_three_wheel_employed(self):
+        self.assertTrue(applicant_needs_test_drive("shopee", "three_wheel_employed"))
+        self.assertFalse(applicant_needs_test_drive("shopee", "two_wheel_contract"))
+        self.assertFalse(applicant_needs_test_drive("shopee", "two_wheel_employed"))
+        self.assertFalse(applicant_needs_test_drive("shopee", ""))
+
+    def test_unspecified_vendor_does_not_need_test_drive(self):
+        self.assertFalse(applicant_needs_test_drive("", ""))
 
 
 if __name__ == "__main__":

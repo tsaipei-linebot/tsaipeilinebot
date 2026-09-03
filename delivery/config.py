@@ -170,3 +170,25 @@ APPLICANT_STATUSES = [
 ]
 APPLICANT_STATUS_MAP = {s["code"]: s["name"] for s in APPLICANT_STATUSES}
 SELECTABLE_APPLICANT_STATUSES = [s for s in APPLICANT_STATUSES if s["code"] != "hired"]
+
+# 應徵名單的廠商/合作方式：跟人員的 vendor/cooperation_type 是同一套代碼，
+# 沿用 VENDOR_MAP / COOPERATION_TYPE_MAP。應徵階段沒表單欄位可以填廠商，
+# 是由送出 webhook 的 Apps Script 各自帶固定的廠商代碼過來（見
+# routes/webhook_routes.py），畫面上保留讓同仁手動修改的權限。
+# 合作方式選單只在蝦皮的應徵者顯示，沿用 COOPERATION_TYPE_VENDORS
+# （目前就是 ["shopee"]，跟人員詳細頁那個是同一份設定）。
+
+# 試駕狀態：未試駕（預設）／通過／未通過。
+TEST_DRIVE_STATUSES = [
+    {"code": "not_tested", "name": "未試駕"},
+    {"code": "passed", "name": "通過"},
+    {"code": "failed", "name": "未通過"},
+]
+TEST_DRIVE_STATUS_MAP = {s["code"]: s["name"] for s in TEST_DRIVE_STATUSES}
+DEFAULT_TEST_DRIVE_STATUS = "not_tested"
+
+# 哪些應徵者需要試駕：UD、UC 一律需要；蝦皮只有合作方式是「三輪雇傭」才需要
+# （二輪承攬/二輪雇傭不用）；順豐不需要。判斷邏輯見
+# repository.applicant_needs_test_drive()，這裡只放組成判斷用的資料。
+TEST_DRIVE_REQUIRED_VENDORS = ["ud", "uc"]
+TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES = ["three_wheel_employed"]
