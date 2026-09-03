@@ -317,3 +317,23 @@ python -m delivery.seed_admin <帳號> <密碼> <顯示名稱> [role，預設 ad
 Firestore 跑過整合測試（測試都是 mock 掉外部服務），上線後建議實際上傳一張
 強制險保單照片測試一次辨識結果對不對，抓錯格式或看不懂的圖再回頭調整
 `delivery/ocr.py` 的 prompt。
+
+### 後續新增：UD 專屬項目（負責客戶、UBER系統、MOMO測驗、自拍照）
+
+延續同一套「依廠商/合作方式動態決定應備項目」的架構，多加了兩種篩選維度跟
+一種新的項目類型：
+
+- **負責客戶**（`CLIENTS`：PCHOME/MOMO）：新欄位 `personnel.client`，跟合作
+  方式一樣是全域欄位（不綁死在 UD 上，之後別的廠商要用也不用改架構），在
+  人員詳細頁最上面（合作方式旁邊）用下拉選單設定。
+- `DOC_TYPES` 新增 `include_vendors`（白名單，只有列在裡面的廠商才要求這項，
+  跟既有的 `exclude_vendors` 黑名單相反方向）跟 `clients`（只有負責客戶在
+  清單裡才要求）兩種篩選條件。`applicable_doc_types()` 多一個 `client` 參數。
+- 新增三個 UD 專屬項目（`include_vendors: ["ud"]`）：
+  - `uber_system`（UBER系統）：`kind: "checkbox"`，同仁勾選「已完成」即可。
+  - `momo_test`（MOMO測驗）：`kind: "checkbox"`，另外加 `clients: ["momo"]`，
+    只有負責客戶是 MOMO 的人才會出現這個項目。
+  - `selfie_photo`（自拍照）：**新的 `kind: "file"`**，要上傳檔案但不用記錄
+    到期日、不會跑 OCR（純粹「有沒有交」，跟強制險那種 `file_expiry` 不同）。
+- 身分證字號驗證、駕照/合約簽定勾選、良民證上傳辨識到期日，這幾項 UD 直接
+  沿用上一輪已經全廠商通用的功能，這次沒有額外改動。

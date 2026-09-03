@@ -34,7 +34,7 @@ for _v in VENDORS:
     VENDOR_LOOKUP[_v["code"].lower()] = _v["code"]
     VENDOR_LOOKUP[_v["name"].lower()] = _v["code"]
 
-# 合作方式：決定這個人除了基本四項之外還要備哪些保險/證明文件。
+# 合作方式：決定這個人除了基本項目之外還要備哪些保險/證明文件。
 COOPERATION_TYPES = [
     {"code": "two_wheel_contract", "name": "二輪承攬"},
     {"code": "two_wheel_employed", "name": "二輪雇傭"},
@@ -42,14 +42,27 @@ COOPERATION_TYPES = [
 ]
 COOPERATION_TYPE_MAP = {c["code"]: c["name"] for c in COOPERATION_TYPES}
 
+# 負責客戶：目前只有 UD 的人員會用到（決定要不要多備 MOMO 測驗），但欄位本身
+# 不綁死在特定廠商上，之後其他廠商如果也分客戶，不用改架構。
+CLIENTS = [
+    {"code": "pchome", "name": "PCHOME"},
+    {"code": "momo", "name": "MOMO"},
+]
+CLIENT_MAP = {c["code"]: c["name"] for c in CLIENTS}
+
 # 報到前應備文件（人員缺件狀況即依此清單逐項檢查）。每一項的 kind 決定要怎麼
 # 判斷「缺不缺」、頁面上要顯示什麼樣的輸入元件：
 #   - "id_number"：不是文件，是檢查 personnel.id_number 這個欄位本身格式合不合法
 #     （身分證字號檢查碼），同仁直接填字號、不用上傳檔案。
 #   - "checkbox"：同仁勾選「有」就算備齊，不用上傳檔案、沒有到期日。
+#   - "file"：要上傳檔案，但不用記錄到期日（例如自拍照，純粹「有沒有交」）。
 #   - "file_expiry"：要上傳檔案，並且（透過 OCR 或人工）記錄到期日，過期也算缺件。
-# exclude_vendors 存在時，該廠商的人員不會被要求這一項；cooperation_types 存在時，
-# 只有合作方式在清單裡的人才會被要求這一項（不設代表所有合作方式都需要）。
+# 篩選條件（都不設代表不限）：
+#   - exclude_vendors：這幾個廠商的人員不會被要求這一項。
+#   - include_vendors：只有這幾個廠商的人員才會被要求這一項（白名單，跟
+#     exclude_vendors 是相反方向，依項目本身比較像哪一種寫法決定用哪個）。
+#   - cooperation_types：只有合作方式在清單裡的人才會被要求。
+#   - clients：只有負責客戶在清單裡的人才會被要求。
 DOC_TYPES = [
     {"code": "id_card", "name": "身分證", "kind": "id_number"},
     {"code": "driver_license", "name": "駕照", "kind": "checkbox"},
@@ -73,6 +86,15 @@ DOC_TYPES = [
         "kind": "file_expiry",
         "cooperation_types": ["two_wheel_employed"],
     },
+    {"code": "uber_system", "name": "UBER系統", "kind": "checkbox", "include_vendors": ["ud"]},
+    {
+        "code": "momo_test",
+        "name": "MOMO測驗",
+        "kind": "checkbox",
+        "include_vendors": ["ud"],
+        "clients": ["momo"],
+    },
+    {"code": "selfie_photo", "name": "自拍照", "kind": "file", "include_vendors": ["ud"]},
 ]
 DOC_TYPE_MAP = {d["code"]: d for d in DOC_TYPES}
 

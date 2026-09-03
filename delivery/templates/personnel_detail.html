@@ -25,6 +25,18 @@
         </label>
         <button type="submit" class="btn btn-small">更新</button>
     </form>
+    <form method="post" action="/delivery/personnel/{{ person.id }}/client" class="inline-form" style="margin-bottom:0;">
+        <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+            負責客戶
+            <select name="client">
+                <option value="" {% if not person.client %}selected{% endif %}>尚未決定</option>
+                {% for c in clients %}
+                <option value="{{ c.code }}" {% if person.client == c.code %}selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit" class="btn btn-small">更新</button>
+    </form>
 </div>
 
 <table class="data-table">
@@ -66,7 +78,28 @@
             </td>
             <td>
                 <form method="post" action="/delivery/personnel/{{ person.id }}/document/{{ doc.code }}/checkbox" class="inline-form">
-                    <label><input type="checkbox" name="checked" {% if doc.checked %}checked{% endif %}> 已{{ "繳交" if doc.code == "driver_license" else "簽定" }}</label>
+                    <label>
+                        <input type="checkbox" name="checked" {% if doc.checked %}checked{% endif %}>
+                        {% if doc.code == "driver_license" %}已繳交{% elif doc.code == "contract" %}已簽定{% else %}已完成{% endif %}
+                    </label>
+                    <button type="submit" class="btn btn-small">更新</button>
+                </form>
+            </td>
+
+            {% elif doc.kind == "file" %}
+            <td>
+                {% if doc.missing %}
+                    <span class="badge badge-missing">缺件</span>
+                {% else %}
+                    <span class="badge badge-ok">已備齊</span>
+                {% endif %}
+                {% if doc.has_file %}
+                <a class="file-link" href="/delivery/files/{{ doc.file_path }}" target="_blank" rel="noopener">查看檔案</a>
+                {% endif %}
+            </td>
+            <td>
+                <form method="post" action="/delivery/personnel/{{ person.id }}/document/{{ doc.code }}" enctype="multipart/form-data" class="inline-form">
+                    <input type="file" name="file" accept="image/*,application/pdf">
                     <button type="submit" class="btn btn-small">更新</button>
                 </form>
             </td>

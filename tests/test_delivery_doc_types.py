@@ -56,6 +56,26 @@ class ApplicableDocTypesTests(unittest.TestCase):
         self.assertIn("contract", codes)
         self.assertIn("police_clearance", codes)
 
+    def test_include_vendors_whitelist_only_applies_to_ud(self):
+        ud_codes = {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract")}
+        shopee_codes = {d["code"] for d in applicable_doc_types("shopee", "two_wheel_contract")}
+        uc_codes = {d["code"] for d in applicable_doc_types("uc", "two_wheel_contract")}
+        for code in ("uber_system", "selfie_photo"):
+            self.assertIn(code, ud_codes)
+            self.assertNotIn(code, shopee_codes)
+            self.assertNotIn(code, uc_codes)
+
+    def test_momo_test_requires_ud_and_momo_client(self):
+        self.assertIn("momo_test", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "momo")})
+        self.assertNotIn("momo_test", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "pchome")})
+        self.assertNotIn("momo_test", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "")})
+        # UD 以外的廠商就算 client=momo 也不會出現（clients 限定要先過 include_vendors 那關）
+        self.assertNotIn("momo_test", {d["code"] for d in applicable_doc_types("shopee", "two_wheel_contract", "momo")})
+
+    def test_uber_system_not_gated_by_client(self):
+        self.assertIn("uber_system", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "pchome")})
+        self.assertIn("uber_system", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "")})
+
 
 class DocStatusTests(unittest.TestCase):
     def test_id_number_kind_missing_when_blank(self):
@@ -95,6 +115,18 @@ class DocStatusTests(unittest.TestCase):
         personnel = {"documents": {"insurance": {"file_path": "x.jpg", "expiry_date": future}}}
         status = doc_status({"code": "insurance", "name": "強制險", "kind": "file_expiry"}, personnel)
         self.assertFalse(status["missing"])
+
+    def test_file_kind_missing_when_no_file(self):
+        status = doc_status({"code": "selfie_photo", "name": "自拍照", "kind": "file"}, {"documents": {}})
+        self.assertTrue(status["missing"])
+
+    def test_file_kind_not_missing_when_uploaded(self):
+        personnel = {"documents": {"selfie_photo": {"file_path": "x.jpg"}}}
+        status = doc_status({"code": "selfie_photo", "name": "自拍照", "kind": "file"}, personnel)
+        self.assertFalse(status["missing"])
+        # kind="file" 沒有到期日這個概念，不應該出現在回傳結果裡
+        self.assertNotIn("expiry_date", status)
+        self.assertNotIn("expired", status)
 
 
 class MissingDocumentsIntegrationTests(unittest.TestCase):

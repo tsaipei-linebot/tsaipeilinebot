@@ -5,6 +5,8 @@ from delivery import repository
 from delivery.auth import current_user, login_required
 from delivery.config import (
     ALLOWED_UPLOAD_CONTENT_TYPES,
+    CLIENT_MAP,
+    CLIENTS,
     COOPERATION_TYPE_MAP,
     COOPERATION_TYPES,
     DOC_TYPE_MAP,
@@ -69,6 +71,7 @@ def new_personnel_form(vendor_code: str, request: Request, redirect=Depends(logi
             "vendor_code": vendor_code,
             "vendor_name": VENDOR_MAP[vendor_code],
             "cooperation_types": COOPERATION_TYPES,
+            "clients": CLIENTS,
         },
     )
 
@@ -81,6 +84,7 @@ def create_personnel_submit(
     id_number: str = Form(""),
     phone: str = Form(""),
     cooperation_type: str = Form(""),
+    client: str = Form(""),
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -89,9 +93,11 @@ def create_personnel_submit(
         return RedirectResponse(url="/delivery/", status_code=303)
     if cooperation_type not in COOPERATION_TYPE_MAP:
         cooperation_type = ""
+    if client not in CLIENT_MAP:
+        client = ""
     user = current_user(request)
     personnel_id = repository.create_personnel(
-        name, id_number, phone, vendor_code, user["username"], cooperation_type=cooperation_type
+        name, id_number, phone, vendor_code, user["username"], cooperation_type=cooperation_type, client=client
     )
     return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
 
@@ -112,6 +118,8 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
             "vendor_name": VENDOR_MAP.get(person.get("vendor"), person.get("vendor")),
             "cooperation_types": COOPERATION_TYPES,
             "cooperation_type_name": COOPERATION_TYPE_MAP.get(person.get("cooperation_type"), ""),
+            "clients": CLIENTS,
+            "client_name": CLIENT_MAP.get(person.get("client"), ""),
             "doc_statuses": repository.all_document_statuses(person),
             "storage_configured": is_configured(),
             "error": error,
@@ -130,6 +138,20 @@ def update_cooperation_type(
     if cooperation_type not in COOPERATION_TYPE_MAP:
         cooperation_type = ""
     repository.update_personnel_cooperation_type(personnel_id, cooperation_type)
+    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
+
+
+@router.post("/personnel/{personnel_id}/client")
+def update_client(
+    personnel_id: str,
+    client: str = Form(""),
+    redirect=Depends(login_required),
+):
+    if redirect:
+        return redirect
+    if client not in CLIENT_MAP:
+        client = ""
+    repository.update_personnel_client(personnel_id, client)
     return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
 
 
@@ -177,7 +199,7 @@ async def upload_document(
         return redirect
     person = repository.get_personnel(personnel_id)
     doc_type = DOC_TYPE_MAP.get(doc_code)
-    if not person or not doc_type or doc_type["kind"] != "file_expiry":
+    if not person or not doc_type or doc_type["kind"] not in ("file_expiry", "file"):
         return RedirectResponse(url="/delivery/", status_code=303)
 
     file_path = None
@@ -192,9 +214,13 @@ async def upload_document(
                 file_path = None
 
             # 同仁沒有手動填到期日時，交給 OCR 從剛上傳的檔案辨識；辨識不出來
-            # 就維持空白，之後同仁還是可以用同一個表單手動補到期日。
-            if file_path and not resolved_expiry_date:
+            # 就維持空白，之後同仁還是可以用同一個表單手動補到期日。純上傳型
+            # （例如自拍照）沒有到期日這回事，不用跑 OCR。
+            if file_path and not resolved_expiry_date and doc_type["kind"] == "file_expiry":
                 resolved_expiry_date = extract_expiry_date(content, content_type) or None
+
+    if doc_type["kind"] == "file":
+        resolved_expiry_date = None
 
     repository.update_personnel_document(
         personnel_id, doc_code, file_path=file_path, expiry_date=resolved_expiry_date
