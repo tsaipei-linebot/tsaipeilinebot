@@ -546,3 +546,56 @@ TestClient 手動測試；上線後除了要記得去改每份表單各自的 Ap
 過的 TestClient 手動測試（權限導向、新增/刪除各種擋下情境）；上線後建議
 用你現有的兩個 ADMIN 帳號實際測一次「新增一個 staff 帳號」「刪除它」「試著
 刪除自己」「如果只剩一個管理員，試著刪除它」這幾個情境確認行為符合預期。
+
+### 後續調整：主頁改版、補款/假別各自拆成登記+查詢兩頁、核准機制、EXCEL 匯出
+
+- **品牌名稱**：整個系統的名稱從「配送部系統」改成「材霈有限公司-配送部
+  系統」，`base.html` 的頂部品牌文字跟每一頁的 `<title>` 都改了。
+- **主頁「批次匯入人員」隱藏**：只是把主頁「選擇廠商」面板上的那個連結拿掉，
+  `/delivery/import` 這支路由本身完全沒動、還是可以直接打網址進去（也還留在
+  各廠商人員清單頁上方的「批次匯入」按鈕裡，那個沒有要求隱藏，維持原樣）。
+  之後如果又要在主頁開放，把連結加回 `home.html` 就好。
+- **主頁「選擇功能」改成 4 顆按鈕**：補款登記／補款記錄／假別登記／假別查詢，
+  對應到下面拆開的 4 個路由。
+- **補款/假別（原「病假」，這輪比照需求改叫「假別」並加上假別類型選單）
+  都從「一頁同時有表單+清單」拆成「登記」「記錄/查詢」兩個獨立頁面**：
+  - 登記頁（`/function/repayment`、`/function/sick-leave`）只留表單，不再
+    顯示清單；日期欄位（補款的「日期」、假別的「開始日期」「結束日期」）
+    預設值都是**今天**（後端算好 `date.today().isoformat()` 傳給樣板當
+    `value`，同仁還是可以自己改）。
+  - 記錄/查詢頁（`/function/repayment/records`、`/function/sick-leave/records`）
+    新增可搜尋/篩選：人員姓名（局部比對）、廠商（下拉）、月份
+    （`<input type="month">`，比對日期欄位開頭是不是那個「YYYY-MM」——補款
+    比對 `occurred_date`，假別比對 `start_date`，也就是請假**開始**日期
+    落在那個月就算），假別查詢頁另外多一個假別篩選。這些篩選邏輯都寫成純
+    函式（`repository.repayment_matches_filters()` /
+    `sick_leave_matches_filters()`），有單元測試。
+  - `config.py` 新增 `LEAVE_TYPES`（病假/事假/特休/其他）跟
+    `LEAVE_TYPE_MAP`；`create_sick_leave()` 多一個 `leave_type` 參數。
+- **核准機制**（`approved` 欄位，補款、假別紀錄建立時預設 `False`）：
+  - **單向**：核准只能從「未核准」變成「已核准」，沒有取消核准的路徑——
+    `repository.bulk_approve_repayments()` / `bulk_approve_sick_leaves()`
+    只會把指定的 id 設成 `True`，程式裡完全沒有寫「設回 False」的分支。
+  - **只有管理員能操作**：核准的 POST 路由（`/function/repayment/records/approve`、
+    `/function/sick-leave/records/approve`）都掛 `admin_required`；記錄/
+    查詢頁面本身還是所有登入的同仁都能看，只是**只有管理員的畫面上才會有
+    核准勾選框**，一般同仁看到的是唯讀的「未核准」灰底徽章（跟人員狀態徽章
+    共用 `.badge-pending` 樣式）。已核准的一律顯示綠色「已核准」徽章
+    （`.badge-ok`），不管是誰在看。
+  - 操作方式是「勾選 + 一個『核准所選』按鈕」，一次可以核准多筆（跟應徵
+    名單的批次狀態更新是同一個 UI 模式），而不是每列各自送出。
+- **一鍵下載 EXCEL**（新增 `delivery/excel_export.py`，用 `openpyxl`——
+  純 Python、沒有原生編譯依賴，加進 `requirements.txt`）：記錄/查詢頁上方
+  的「一鍵下載 EXCEL」連結，會把**目前套用的篩選條件**（姓名/廠商/月份/
+  假別）原封不動帶到 `/function/repayment/records/export`、
+  `/function/sick-leave/records/export` 這兩支路由，匯出的內容是套用同一組
+  篩選條件重新查一次的結果（不是只匯出畫面上剛好渲染出來的那一頁），欄位
+  含「核准狀態」欄。`build_repayment_workbook()` / `build_sick_leave_workbook()`
+  是純函式（輸入 records 清單、輸出 `.xlsx` 的 bytes），有單元測試驗證欄位
+  順序跟內容正確。
+
+**已知限制**：篩選/核准/匯出這些邏輯的純函式部分都有單元測試；跟 Firestore
+真的互動的部分（`bulk_approve_*`、`list_repayments`/`list_sick_leaves` 實際
+連線查詢）只有 mock 過的 TestClient 手動測試，上線後建議實際登記幾筆補款/
+假別資料，跑一次「用姓名/廠商/月份篩選」「管理員核准、核准後檢查一般同仁
+看到的畫面」「下載 EXCEL 打開確認欄位跟篩選範圍正確」這幾個情境。

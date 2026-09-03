@@ -412,6 +412,7 @@ def create_repayment(personnel_id: str, personnel_name: str, vendor: str, amount
             "amount": amount,
             "reason": reason,
             "occurred_date": occurred_date,
+            "approved": False,
             "created_by": created_by,
             "created_at": time.time(),
         }
@@ -419,30 +420,71 @@ def create_repayment(personnel_id: str, personnel_name: str, vendor: str, amount
     return doc_ref.id
 
 
-def list_recent_repayments(limit: int = 20) -> list:
-    query = repayments_ref().order_by("created_at", direction="DESCENDING").limit(limit)
+def repayment_matches_filters(record: dict, name_keyword: str = "", vendor_filter: str = "", month_filter: str = "") -> bool:
+    """判斷這筆補款登記要不要出現在「補款記錄」清單裡（純函式）。month_filter
+    是 "YYYY-MM" 格式（對應 <input type="month">），比對 occurred_date 開頭。"""
+    if name_keyword and name_keyword not in (record.get("personnel_name") or ""):
+        return False
+    if vendor_filter and record.get("vendor") != vendor_filter:
+        return False
+    if month_filter and not (record.get("occurred_date") or "").startswith(month_filter):
+        return False
+    return True
+
+
+def list_repayments(name_keyword: str = "", vendor_filter: str = "", month_filter: str = "") -> list:
+    name_keyword = (name_keyword or "").strip()
+    vendor_filter = (vendor_filter or "").strip()
+    month_filter = (month_filter or "").strip()
+
     result = []
-    for snapshot in query.stream():
+    for snapshot in repayments_ref().stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
-        result.append(data)
+        data["approved"] = bool(data.get("approved"))
+        if repayment_matches_filters(data, name_keyword, vendor_filter, month_filter):
+            result.append(data)
+    result.sort(key=lambda r: r.get("occurred_date", ""), reverse=True)
     return result
 
 
+def bulk_approve_repayments(repayment_ids: list) -> None:
+    """把指定的補款登記標記為已核准。核准是單向的——這裡只會把 approved 設成
+    True，沒有讓它變回 False 的路徑；已經核准過的重複送出沒有副作用。"""
+    if not repayment_ids:
+        return
+    batch = get_db().batch()
+    for repayment_id in repayment_ids:
+        batch.update(repayments_ref().document(repayment_id), {"approved": True})
+    batch.commit()
+
+
 # ==========================================
-# 病假登記
+# 假別登記
 # ==========================================
-def create_sick_leave(personnel_id: str, personnel_name: str, vendor: str, start_date: str, end_date: str, reason: str, receipt_file_path: str, created_by: str) -> str:
+def create_sick_leave(
+    personnel_id: str,
+    personnel_name: str,
+    vendor: str,
+    start_date: str,
+    end_date: str,
+    reason: str,
+    receipt_file_path: str,
+    created_by: str,
+    leave_type: str = "",
+) -> str:
     doc_ref = sick_leaves_ref().document()
     doc_ref.set(
         {
             "personnel_id": personnel_id,
             "personnel_name": personnel_name,
             "vendor": vendor,
+            "leave_type": leave_type or "",
             "start_date": start_date,
             "end_date": end_date,
             "reason": reason,
             "receipt_file_path": receipt_file_path,
+            "approved": False,
             "created_by": created_by,
             "created_at": time.time(),
         }
@@ -450,14 +492,53 @@ def create_sick_leave(personnel_id: str, personnel_name: str, vendor: str, start
     return doc_ref.id
 
 
-def list_recent_sick_leaves(limit: int = 20) -> list:
-    query = sick_leaves_ref().order_by("created_at", direction="DESCENDING").limit(limit)
+def sick_leave_matches_filters(
+    record: dict,
+    name_keyword: str = "",
+    vendor_filter: str = "",
+    month_filter: str = "",
+    leave_type_filter: str = "",
+) -> bool:
+    """判斷這筆假別登記要不要出現在「假別查詢」清單裡（純函式）。month_filter
+    是 "YYYY-MM" 格式，比對 start_date（請假開始日期）開頭。"""
+    if name_keyword and name_keyword not in (record.get("personnel_name") or ""):
+        return False
+    if vendor_filter and record.get("vendor") != vendor_filter:
+        return False
+    if month_filter and not (record.get("start_date") or "").startswith(month_filter):
+        return False
+    if leave_type_filter and record.get("leave_type") != leave_type_filter:
+        return False
+    return True
+
+
+def list_sick_leaves(
+    name_keyword: str = "", vendor_filter: str = "", month_filter: str = "", leave_type_filter: str = ""
+) -> list:
+    name_keyword = (name_keyword or "").strip()
+    vendor_filter = (vendor_filter or "").strip()
+    month_filter = (month_filter or "").strip()
+    leave_type_filter = (leave_type_filter or "").strip()
+
     result = []
-    for snapshot in query.stream():
+    for snapshot in sick_leaves_ref().stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
-        result.append(data)
+        data["approved"] = bool(data.get("approved"))
+        if sick_leave_matches_filters(data, name_keyword, vendor_filter, month_filter, leave_type_filter):
+            result.append(data)
+    result.sort(key=lambda r: r.get("start_date", ""), reverse=True)
     return result
+
+
+def bulk_approve_sick_leaves(sick_leave_ids: list) -> None:
+    """把指定的假別登記標記為已核准，一樣是單向的（見 bulk_approve_repayments）。"""
+    if not sick_leave_ids:
+        return
+    batch = get_db().batch()
+    for sick_leave_id in sick_leave_ids:
+        batch.update(sick_leaves_ref().document(sick_leave_id), {"approved": True})
+    batch.commit()
 
 
 # ==========================================

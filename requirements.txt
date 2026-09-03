@@ -11,4 +11,5 @@ google-cloud-storage
 jinja2
 python-multipart
 itsdangerous
+openpyxl
 
