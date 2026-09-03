@@ -3,11 +3,19 @@
 {% block content %}
 <h1 class="page-title">應徵名單</h1>
 <p class="hint">
-    Google 表單送出後會自動出現在這裡，新資料預設為「未面試」。「放棄」的人預設不會顯示，
-    主動搜尋姓名、或直接篩選狀態為「放棄」才會列出來。「錄取」需要先選擇要分派的廠商
-    （表單本身沒收廠商欄位），送出後會自動建立正式人員資料，之後再到人員詳細頁補身分證
-    字號、上傳報到文件即可。
+    Google 表單送出後會自動出現在這裡，新資料預設為「未面試」，廠商（蝦皮的話還有合作方式）
+    會依表單來源自動帶入，同仁可以自己改。「放棄」的人預設不會顯示，主動搜尋姓名、或直接篩選
+    狀態為「放棄」才會列出來。UD、UC 的應徵者、以及蝦皮合作方式為「三輪雇傭」的應徵者需要先
+    通過試駕才能錄取；「錄取」需要先確認廠商，送出後會自動建立正式人員資料，之後再到人員詳細頁
+    補身分證字號、上傳報到文件即可。
 </p>
+
+{% if error == "vendor_required" %}
+<p class="error">請先選擇廠商才能錄取。</p>
+{% endif %}
+{% if error == "test_drive_required" %}
+<p class="error">這個人還沒通過試駕，無法錄取（剛才選的廠商/合作方式/試駕狀態已經先幫你存起來了）。</p>
+{% endif %}
 
 <form method="get" action="/delivery/applicants" class="filter-bar">
     <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
@@ -18,19 +26,26 @@
         <option value="{{ s.code }}" {% if filter_status == s.code %}selected{% endif %}>{{ s.name }}</option>
         {% endfor %}
     </select>
+    <select name="vendor">
+        <option value="">全部廠商</option>
+        {% for v in vendors %}
+        <option value="{{ v.code }}" {% if filter_vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+        {% endfor %}
+    </select>
     <button type="submit" class="btn">搜尋</button>
-    {% if filter_name or filter_phone or filter_status %}
+    {% if filter_name or filter_phone or filter_status or filter_vendor %}
     <a class="btn" href="/delivery/applicants">清除篩選</a>
     {% endif %}
 </form>
 
 {% if applicants %}
-<form method="post" action="/delivery/applicants/bulk-status">
+<form method="post" action="/delivery/applicants/bulk-update">
     <input type="hidden" name="filter_name" value="{{ filter_name }}">
     <input type="hidden" name="filter_phone" value="{{ filter_phone }}">
     <input type="hidden" name="filter_status" value="{{ filter_status }}">
+    <input type="hidden" name="filter_vendor" value="{{ filter_vendor }}">
 
-    <button type="submit" class="btn btn-primary btn-bulk-update">已勾選狀態 → 一鍵更新</button>
+    <button type="submit" class="btn btn-primary btn-bulk-update">一鍵全部更新</button>
 
     <div class="table-scroll">
     <table class="data-table sticky-head">
@@ -40,6 +55,9 @@
                 <th>電話</th>
                 <th>提交時間</th>
                 <th>其他回覆</th>
+                <th>廠商</th>
+                <th>合作方式</th>
+                <th>試駕</th>
                 <th>狀態</th>
                 <th>錄取</th>
             </tr>
@@ -54,6 +72,37 @@
                     {% for k, v in a.other_answers.items() %}
                     <div class="meta">{{ k }}：{{ v }}</div>
                     {% endfor %}
+                </td>
+                <td>
+                    <select name="vendor_{{ a.id }}">
+                        <option value="" {% if not a.vendor %}selected{% endif %}>未指定</option>
+                        {% for v in vendors %}
+                        <option value="{{ v.code }}" {% if a.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td>
+                    {% if a.vendor in cooperation_type_vendors %}
+                    <select name="cooperation_type_{{ a.id }}">
+                        <option value="" {% if not a.cooperation_type %}selected{% endif %}>尚未決定</option>
+                        {% for c in cooperation_types %}
+                        <option value="{{ c.code }}" {% if a.cooperation_type == c.code %}selected{% endif %}>{{ c.name }}</option>
+                        {% endfor %}
+                    </select>
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td>
+                    {% if a.needs_test_drive %}
+                    <select name="test_drive_{{ a.id }}">
+                        {% for t in test_drive_statuses %}
+                        <option value="{{ t.code }}" {% if a.test_drive == t.code %}selected{% endif %}>{{ t.name }}</option>
+                        {% endfor %}
+                    </select>
+                    {% else %}
+                    -
+                    {% endif %}
                 </td>
                 <td>
                     {% if a.converted_personnel_id %}
@@ -73,15 +122,7 @@
                     {% if a.converted_personnel_id %}
                     <a href="/delivery/personnel/{{ a.converted_personnel_id }}">查看人員</a>
                     {% else %}
-                    <div class="accept-row">
-                        <select name="vendor_{{ a.id }}">
-                            <option value="">選擇廠商</option>
-                            {% for v in vendors %}
-                            <option value="{{ v.code }}">{{ v.name }}</option>
-                            {% endfor %}
-                        </select>
-                        <button type="submit" formaction="/delivery/applicants/{{ a.id }}/accept" class="btn btn-primary btn-small">錄取並建立人員</button>
-                    </div>
+                    <button type="submit" formaction="/delivery/applicants/{{ a.id }}/accept" class="btn btn-primary btn-small">錄取並建立人員</button>
                     {% endif %}
                 </td>
             </tr>
@@ -90,7 +131,7 @@
     </table>
     </div>
 
-    <button type="submit" class="btn btn-primary btn-bulk-update">已勾選狀態 → 一鍵更新</button>
+    <button type="submit" class="btn btn-primary btn-bulk-update">一鍵全部更新</button>
 </form>
 {% else %}
 <p class="empty">目前沒有符合條件的應徵資料。</p>

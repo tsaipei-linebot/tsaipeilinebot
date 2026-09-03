@@ -174,7 +174,10 @@ python -m delivery.seed_admin <帳號> <密碼> <顯示名稱> [role，預設 ad
 
 1. Cloud Run 設定環境變數 `DELIVERY_FORM_WEBHOOK_SECRET`（隨機字串，例如
    `openssl rand -hex 32`），跟下面 Apps Script 裡貼的密鑰要一致。
-2. 打開表單的回覆試算表 → 擴充功能 → Apps Script，貼上：
+2. 打開表單的回覆試算表 → 擴充功能 → Apps Script，貼上（`vendor`/
+   `cooperation_type` 是這個表單自己固定要標記的來源，不是題目答案——每個
+   廠商各自的表單都要貼這段、只改這兩個值，詳見下面「應徵者廠商/合作方式/
+   試駕」那節）：
    ```javascript
    function onFormSubmit(e) {
      var answers = {};
@@ -184,7 +187,11 @@ python -m delivery.seed_admin <帳號> <密碼> <顯示名稱> [role，預設 ad
      var options = {
        method: "post",
        contentType: "application/json",
-       payload: JSON.stringify({answers: answers}),
+       payload: JSON.stringify({
+         answers: answers,
+         vendor: "shopee",  // 這份表單是哪個廠商：shopee / ud / uc / sf
+         cooperation_type: ""  // 只有蝦皮的表單才填，例如 "three_wheel_employed"；其他廠商留空字串
+       }),
        headers: {"X-Delivery-Form-Secret": "跟 Cloud Run 上設定的同一組密鑰"},
        muteHttpExceptions: true
      };
@@ -448,3 +455,57 @@ Firestore/GCS/Vertex AI 跑過；上線後建議挑一個 UC 跟一個順豐的�
 **已知限制**：`employment_status` 的篩選/預設隱藏邏輯只有單元測試 +
 mock 過的 TestClient 手動測試；上線後建議實際把某個人的狀態改成「離職」，
 確認清單頁真的會把他藏起來，而搜尋姓名／篩選狀態都還是找得到。
+
+### 後續新增：應徵者廠商/合作方式/試駕（多來源表單）
+
+背景：應徵者其實分蝦皮、UD、UC、順豐四個廠商（蝦皮底下又分二輪承攬/二輪
+雇傭/三輪雇傭），實務上會是好幾份不同的 Google 表單各自對應一個廠商（或
+蝦皮的一個合作方式），不是同一份表單。這一輪讓應徵名單也能反映「這個人是
+從哪裡來的」，並加上試駕流程。
+
+**廠商/合作方式怎麼「自動」判斷**：表單題目不會叫應徵者自己填廠商，是每個
+表單各自的 Apps Script 觸發器，在打 webhook 時**直接夾帶固定的廠商代碼**
+（`vendor`），蝦皮的表單再多帶一個合作方式代碼（`cooperation_type`）——
+不是用題目內容去猜，最穩。看上一節「上線前要做的事」第 2 步的 Apps Script
+範例，每個廠商各自的表單只要改 `vendor`/`cooperation_type` 這兩個值即可，
+如果之後蝦皮真的拆成三份不同表單（二輪承攬/二輪雇傭/三輪雇傭各一份），
+每一份都要各自設定一個 `onFormSubmit` 觸發器、`vendor` 都填 `"shopee"`、
+`cooperation_type` 各自填對應的代碼。
+
+- `delivery/routes/webhook_routes.py`：多讀 `body["vendor"]`／
+  `body["cooperation_type"]`，不合法的值（不在 `VENDOR_MAP`／
+  `COOPERATION_TYPE_MAP` 裡）一律當空字串，不會讓整個請求失敗。
+- `repository.upsert_applicant()` 多兩個參數 `vendor`/`cooperation_type`，
+  寫入應徵紀錄。**姓名+電話重複投遞覆蓋既有紀錄**這個既有規則不變，廠商/
+  合作方式也會跟著這次投遞內容覆蓋；但**試駕狀態不會被覆蓋**——那是同仁
+  操作的結果，不是表單填寫的內容，不該被重投表單洗掉（`upsert_applicant`
+  裡特別把既有紀錄的 `test_drive` 帶過去，其餘欄位才是整包覆蓋）。
+
+**試駕**：`config.py` 新增 `TEST_DRIVE_STATUSES`（`not_tested` 未試駕 /
+`passed` 通過 / `failed` 未通過，預設 `not_tested`）。要不要試駕的判斷是
+`repository.applicant_needs_test_drive(vendor, cooperation_type)`：
+- UD、UC：一律需要。
+- 蝦皮：只有合作方式是「三輪雇傭」才需要（二輪承攬/二輪雇傭不用）。
+- 順豐：不需要。
+
+**應徵名單頁面**（`applicants_list.html` + `applicant_routes.py`）：
+- 新增「廠商」篩選（下拉，正常顯示，不特別隱藏「未指定」的人）跟「廠商」
+  「合作方式」（只有蝦皮的列才顯示這個下拉，沿用 `COOPERATION_TYPE_VENDORS`）
+  「試駕」（只有 `applicant_needs_test_drive()` 判斷為 True 的列才顯示這個
+  下拉）三個可編輯欄位，都併進原本狀態的一鍵全部更新表單（路由從
+  `/applicants/bulk-status` 改名成 `/applicants/bulk-update`，
+  `repository.bulk_set_applicant_status` 改名/擴充成
+  `repository.bulk_update_applicants`，接受 `{applicant_id: {欄位: 值}}`
+  這種巢狀結構，每個欄位各自驗證合不合法）。
+- 「錄取並建立人員」：廠商欄位直接沿用清單上那個下拉（不再是錄取那一列
+  獨立的選單），送出時如果 `applicant_needs_test_drive()` 判斷需要試駕、
+  而試駕狀態不是「通過」，會被擋下來、導回清單頁並顯示錯誤訊息——但擋下
+  之前會先把這次提交當下選的廠商/合作方式/試駕存回應徵紀錄，同仁剛才選的
+  東西不會因為被擋而消失、不用重選一次。蝦皮的應徵者通過檢查、成功錄取時，
+  合作方式會一併帶進新建立的人員資料（`create_personnel(..., cooperation_type=...)`），
+  不用進到人員詳細頁重新選一次。
+
+**已知限制**：這一輪的廠商/合作方式/試駕邏輯只有單元測試 + mock 過的
+TestClient 手動測試；上線後除了要記得去改每份表單各自的 Apps Script（貼上
+新的 `vendor`/`cooperation_type` 值），也建議實際跑一次「試駕沒通過擋錄取」
+跟「試駕通過才能錄取」這兩個情境確認行為正確。
