@@ -28,5 +28,5 @@ async def form_submission(request: Request, x_delivery_form_secret: str = Header
     if not name:
         raise HTTPException(status_code=400, detail="表單回覆裡找不到姓名欄位")
 
-    applicant_id = repository.create_applicant(name, phone, answers)
+    applicant_id = repository.upsert_applicant(name, phone, answers)
     return {"status": "ok", "applicant_id": applicant_id}
