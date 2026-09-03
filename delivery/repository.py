@@ -22,17 +22,25 @@ def _parse_date(value):
         return None
 
 
-def applicable_doc_types(vendor: str, cooperation_type: str) -> list:
-    """依廠商 + 合作方式，篩出這個人實際需要檢查的應備項目清單。
-    exclude_vendors 命中就整個排除；cooperation_types 存在但對不上（含合作方式
-    根本還沒設定的情況）也排除——所以沒設合作方式的人，強制險等三項不會出現在
-    缺件清單裡，等設定好合作方式才會開始追蹤。"""
+def applicable_doc_types(vendor: str, cooperation_type: str, client: str = "") -> list:
+    """依廠商 + 合作方式 + 負責客戶，篩出這個人實際需要檢查的應備項目清單。
+    exclude_vendors 命中就整個排除；include_vendors 存在但對不上就排除（白名單，
+    給只有特定廠商才有的項目用，例如 UD 專屬的 UBER系統/MOMO測驗/自拍照）；
+    cooperation_types、clients 同理——存在但對不上（含這個維度根本還沒設定的
+    情況）也排除，所以沒設合作方式/負責客戶的人，對應的項目不會出現在缺件清單裡，
+    等設定好才開始追蹤。"""
     result = []
     for doc_type in DOC_TYPES:
         if vendor in (doc_type.get("exclude_vendors") or []):
             continue
+        include_vendors = doc_type.get("include_vendors")
+        if include_vendors is not None and vendor not in include_vendors:
+            continue
         required_coop = doc_type.get("cooperation_types")
         if required_coop is not None and cooperation_type not in required_coop:
+            continue
+        required_clients = doc_type.get("clients")
+        if required_clients is not None and client not in required_clients:
             continue
         result.append(doc_type)
     return result
@@ -67,6 +75,17 @@ def doc_status(doc_type: dict, personnel: dict) -> dict:
             "missing": not checked,
         }
 
+    if kind == "file":
+        has_file = bool(entry.get("file_path"))
+        return {
+            "code": code,
+            "name": doc_type["name"],
+            "kind": kind,
+            "has_file": has_file,
+            "missing": not has_file,
+            "file_path": entry.get("file_path") or "",
+        }
+
     # kind == "file_expiry"
     has_file = bool(entry.get("file_path"))
     expired = False
@@ -86,22 +105,30 @@ def doc_status(doc_type: dict, personnel: dict) -> dict:
 
 
 def missing_documents(personnel: dict) -> list:
-    """回傳缺件（依廠商+合作方式篩選過的應備項目裡，沒填/沒勾/沒上傳或已過期的）
-    清單，供列表頁的「缺件狀況」顯示。"""
-    doc_types = applicable_doc_types(personnel.get("vendor"), personnel.get("cooperation_type"))
+    """回傳缺件（依廠商+合作方式+負責客戶篩選過的應備項目裡，沒填/沒勾/沒上傳
+    或已過期的）清單，供列表頁的「缺件狀況」顯示。"""
+    doc_types = applicable_doc_types(personnel.get("vendor"), personnel.get("cooperation_type"), personnel.get("client"))
     statuses = [doc_status(dt, personnel) for dt in doc_types]
     return [s for s in statuses if s["missing"]]
 
 
 def all_document_statuses(personnel: dict) -> list:
-    doc_types = applicable_doc_types(personnel.get("vendor"), personnel.get("cooperation_type"))
+    doc_types = applicable_doc_types(personnel.get("vendor"), personnel.get("cooperation_type"), personnel.get("client"))
     return [doc_status(dt, personnel) for dt in doc_types]
 
 
 # ==========================================
 # 人員 CRUD
 # ==========================================
-def create_personnel(name: str, id_number: str, phone: str, vendor: str, created_by: str, cooperation_type: str = "") -> str:
+def create_personnel(
+    name: str,
+    id_number: str,
+    phone: str,
+    vendor: str,
+    created_by: str,
+    cooperation_type: str = "",
+    client: str = "",
+) -> str:
     now = time.time()
     doc_ref = personnel_ref().document()
     doc_ref.set(
@@ -111,6 +138,7 @@ def create_personnel(name: str, id_number: str, phone: str, vendor: str, created
             "phone": phone,
             "vendor": vendor,
             "cooperation_type": cooperation_type or "",
+            "client": client or "",
             "status": "active",
             "documents": {},
             "created_at": now,
@@ -233,6 +261,10 @@ def update_personnel_cooperation_type(personnel_id: str, cooperation_type: str):
     personnel_ref().document(personnel_id).update({"cooperation_type": cooperation_type, "updated_at": time.time()})
 
 
+def update_personnel_client(personnel_id: str, client: str):
+    personnel_ref().document(personnel_id).update({"client": client, "updated_at": time.time()})
+
+
 def list_expiring_documents(days_ahead: int, resend_interval_days: int) -> list:
     """掃過全部在職人員，回傳需要發到期提醒的 (人員, 文件) 配對：到期日在
     「今天~今天+days_ahead 天」之間、或已經過期，而且沒有在最近
@@ -246,7 +278,7 @@ def list_expiring_documents(days_ahead: int, resend_interval_days: int) -> list:
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
         documents = data.get("documents") or {}
-        doc_types = applicable_doc_types(data.get("vendor"), data.get("cooperation_type"))
+        doc_types = applicable_doc_types(data.get("vendor"), data.get("cooperation_type"), data.get("client"))
         for doc_type in doc_types:
             if doc_type["kind"] != "file_expiry":
                 continue
