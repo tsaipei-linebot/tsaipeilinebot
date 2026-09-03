@@ -9,6 +9,16 @@
     </div>
 </div>
 
+<form method="get" action="/delivery/vendor/{{ vendor_code }}" class="filter-bar">
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
+    <input type="text" name="phone" value="{{ filter_phone }}" placeholder="搜尋電話">
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_name or filter_phone %}
+    <a class="btn" href="/delivery/vendor/{{ vendor_code }}">清除篩選</a>
+    {% endif %}
+</form>
+<p class="hint">預設只顯示有缺件的人員；已備齊的人要主動搜尋姓名才會列出來。</p>
+
 {% if rows %}
 <table class="data-table">
     <thead>
@@ -39,7 +49,13 @@
     </tbody>
 </table>
 {% else %}
-<p class="empty">目前此廠商尚無人員資料。</p>
+<p class="empty">
+    {% if filter_name or filter_phone %}
+    查無符合條件的人員。
+    {% else %}
+    目前沒有缺件的人員（或此廠商尚無人員資料）。
+    {% endif %}
+</p>
 {% endif %}
 
 <p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>

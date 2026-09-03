@@ -17,7 +17,7 @@ def search_page(request: Request, keyword: str = "", redirect=Depends(login_requ
         results = [
             {
                 "person": p,
-                "missing": repository.missing_documents(p.get("documents")),
+                "missing": repository.missing_documents(p),
                 "vendor_name": VENDOR_MAP.get(p.get("vendor"), p.get("vendor")),
             }
             for p in repository.search_personnel(keyword)

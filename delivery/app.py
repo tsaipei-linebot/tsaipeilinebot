@@ -11,6 +11,7 @@ from delivery.routes import (
     file_routes,
     home_routes,
     import_routes,
+    reminder_routes,
     repayment_routes,
     search_routes,
     sick_leave_routes,
@@ -42,3 +43,4 @@ delivery_app.include_router(sick_leave_routes.router)
 delivery_app.include_router(file_routes.router)
 delivery_app.include_router(applicant_routes.router)
 delivery_app.include_router(webhook_routes.router)
+delivery_app.include_router(reminder_routes.router)
