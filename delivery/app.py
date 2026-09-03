@@ -6,6 +6,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from delivery.config import SESSION_SECRET_KEY
 from delivery.routes import (
+    applicant_routes,
     auth_routes,
     file_routes,
     home_routes,
@@ -14,6 +15,7 @@ from delivery.routes import (
     search_routes,
     sick_leave_routes,
     vendor_routes,
+    webhook_routes,
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -38,3 +40,5 @@ delivery_app.include_router(search_routes.router)
 delivery_app.include_router(repayment_routes.router)
 delivery_app.include_router(sick_leave_routes.router)
 delivery_app.include_router(file_routes.router)
+delivery_app.include_router(applicant_routes.router)
+delivery_app.include_router(webhook_routes.router)

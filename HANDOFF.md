@@ -145,3 +145,59 @@ python -m delivery.seed_admin <帳號> <密碼> <顯示名稱> [role，預設 ad
 依需求改成比對「姓名+電話」（`repository.find_active_personnel_by_name_and_phone`，
 兩者都要有值才會比對，不是用身分證字號），已存在相同組合的在職人員會自動略過，
 所以同一份檔案可以重複上傳來修正錯誤，不用擔心建出重複資料。
+
+### 後續新增：應徵名單（接 Google 表單，錄取轉正式人員）
+
+需求來源：現有的「機車外送人員問答」Google 表單（收姓名、聯絡電話、可配合天數、
+配送縣市、行政區熟悉度、防詐騙提醒，**沒有**身分證字號/廠商/文件上傳，因為這是
+應徵前的篩選問卷，跟「已在職、要追蹤報到文件」的正式人員是不同階段的資料）。
+
+**架構**：表單維持現狀繼續寫入它自己的 Google 試算表；額外在該試算表（或表單）
+掛一個 Apps Script「表單提交時」觸發器，送出時打一支新開的 webhook
+`POST /delivery/api/form-submission` 把整包回覆寫進 Firestore 的
+`delivery_applicants`，在「應徵名單」頁面（`/delivery/applicants`）管理：
+
+- `delivery/form_webhook.py`：純函式，從 Apps Script 傳來的 `answers`
+  （題目全名 → 回答）裡用「標題有沒有包含關鍵字」抓姓名/電話（`extract_answer`），
+  其餘題目原樣顯示在清單頁參考（`other_answers`）——這樣之後表單題目文字微調
+  不需要跟著改程式碼。
+- `delivery/routes/webhook_routes.py`：`POST /api/form-submission`，用共用密鑰
+  `X-Delivery-Form-Secret` header 驗證（**不**經過同仁登入 session，因為呼叫端是
+  Google 的伺服器），沒設定 `DELIVERY_FORM_WEBHOOK_SECRET` 時一律 403。
+- `delivery/routes/applicant_routes.py` + `templates/applicants_list.html`：
+  列表可勾選「已面試」「放棄」（純狀態，即時更新），「錄取」需要另外選一個廠商
+  （表單沒收廠商，人員資料表又必須有）送出，會同時建立正式人員資料
+  （`repository.create_personnel`，身分證字號留空，之後到人員詳細頁補齊文件）
+  並標記 `converted_personnel_id`，避免同一個應徵者被重複轉正。
+
+**上線前要做的事**（跟 GCS bucket 一樣是這裡沒有權限自動做的手動步驟）：
+
+1. Cloud Run 設定環境變數 `DELIVERY_FORM_WEBHOOK_SECRET`（隨機字串，例如
+   `openssl rand -hex 32`），跟下面 Apps Script 裡貼的密鑰要一致。
+2. 打開表單的回覆試算表 → 擴充功能 → Apps Script，貼上：
+   ```javascript
+   function onFormSubmit(e) {
+     var answers = {};
+     for (var key in e.namedValues) {
+       answers[key] = e.namedValues[key][0];
+     }
+     var options = {
+       method: "post",
+       contentType: "application/json",
+       payload: JSON.stringify({answers: answers}),
+       headers: {"X-Delivery-Form-Secret": "跟 Cloud Run 上設定的同一組密鑰"},
+       muteHttpExceptions: true
+     };
+     UrlFetchApp.fetch(
+       "https://recruitment-bot-412901869672.asia-east1.run.app/delivery/api/form-submission",
+       options
+     );
+   }
+   ```
+3. 左側「觸發條件」→ 新增觸發條件：執行的函式選 `onFormSubmit`，事件來源選
+   「表單」，事件類型選「提交表單時」，儲存並完成 Google 帳號授權。
+
+**已知簡化**：`extract_answer` 用關鍵字「姓名」「電話」比對題目標題，如果表單
+之後新增別的含「電話」兩字但不是本人聯絡電話的題目（例如緊急聯絡人電話），
+會抓錯欄位，需要屆時調整關鍵字比對邏輯。應徵名單目前沒有查重（同一人重複填
+表單會建立多筆應徵紀錄），刻意先不做，量不大時人工判斷即可。

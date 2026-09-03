@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}應徵名單 - 配送部系統{% endblock %}
+{% block content %}
+<h1 class="page-title">應徵名單</h1>
+<p class="hint">
+    Google 表單送出後會自動出現在這裡。勾選「已面試」「放棄」會直接更新狀態；
+    「錄取」需要先選擇要分派的廠商（表單本身沒收廠商欄位），送出後會自動建立
+    正式人員資料，之後再到人員詳細頁補身分證字號、上傳報到文件即可。
+</p>
+
+{% if applicants %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>姓名</th>
+            <th>電話</th>
+            <th>提交時間</th>
+            <th>其他回覆</th>
+            <th>狀態</th>
+            <th>錄取</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for a in applicants %}
+        <tr>
+            <td>{{ a.name }}</td>
+            <td>{{ a.phone or "-" }}</td>
+            <td>{{ a.submitted_at }}</td>
+            <td>
+                {% for k, v in a.other_answers.items() %}
+                <div class="meta">{{ k }}：{{ v }}</div>
+                {% endfor %}
+            </td>
+            <td>
+                <form method="post" action="/delivery/applicants/{{ a.id }}/status" class="inline-form">
+                    <label><input type="checkbox" name="interviewed" {% if a.interviewed %}checked{% endif %}> 已面試</label>
+                    <label><input type="checkbox" name="withdrawn" {% if a.withdrawn %}checked{% endif %}> 放棄</label>
+                    <button type="submit" class="btn btn-small">更新</button>
+                </form>
+            </td>
+            <td>
+                {% if a.converted_personnel_id %}
+                <a href="/delivery/personnel/{{ a.converted_personnel_id }}">已建立正式人員</a>
+                {% else %}
+                <form method="post" action="/delivery/applicants/{{ a.id }}/accept" class="inline-form">
+                    <select name="vendor" required>
+                        <option value="">選擇廠商</option>
+                        {% for v in vendors %}
+                        <option value="{{ v.code }}">{{ v.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-primary btn-small">錄取並建立人員</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有應徵資料。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}
