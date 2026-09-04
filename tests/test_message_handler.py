@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import unittest
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -90,7 +91,8 @@ class ProcessImageMessageTests(unittest.TestCase):
     def test_replies_with_guidance_text(self):
         event = self._make_event()
         line_bot_api = MagicMock()
-        h.process_image_message(event, line_bot_api)
+        with patch("handlers.message_handler._is_staffed_hours", return_value=False):
+            h.process_image_message(event, line_bot_api)
 
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
@@ -113,7 +115,8 @@ class ProcessImageMessageTests(unittest.TestCase):
         # 失敗，仍然要回覆使用者，不能因為 Firestore 出問題就整個沒有回應
         event = self._make_event()
         line_bot_api = MagicMock()
-        h.process_image_message(event, line_bot_api)
+        with patch("handlers.message_handler._is_staffed_hours", return_value=False):
+            h.process_image_message(event, line_bot_api)
         line_bot_api.reply_message.assert_called_once()
 
 
@@ -145,6 +148,7 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
              patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
              patch("handlers.message_handler.update_user_slots"), \
              patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
              patch("handlers.message_handler._compute_ai_decision_messages", return_value=fast_message):
             h.process_user_message(event, line_bot_api)
 
@@ -173,6 +177,7 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
              patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
              patch("handlers.message_handler.update_user_slots"), \
              patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
              patch("handlers.message_handler.AI_DECISION_SYNC_TIMEOUT_SECONDS", 0.05), \
              patch("handlers.message_handler._compute_ai_decision_messages", side_effect=_slow_compute):
             h.process_user_message(event, line_bot_api)
@@ -239,6 +244,77 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         args, _ = line_bot_api.push_message.call_args
         self.assertEqual(args[0], "test-user")
         self.assertIn("延遲", args[1].text)
+
+
+class StaffedHoursGuardTests(unittest.TestCase):
+    """驗證「日夜接力」的白天守門邏輯：同仁上班時段（10:10–18:50，含 10 分鐘
+    交接緩衝，見 config.py 說明）沛沛完全不主動回覆，交給真人專員在 LINE
+    聊天模式手動處理；這段時間之外才會進到原本的快速路徑／AI 決策邏輯。"""
+
+    def test_is_staffed_hours_boundaries(self):
+        # 邊界採「左閉右開」：10:10 算已經上班、18:50 算已經下班（機器人啟動）
+        self.assertFalse(h._is_staffed_hours(datetime(2026, 9, 4, 10, 9)))
+        self.assertTrue(h._is_staffed_hours(datetime(2026, 9, 4, 10, 10)))
+        self.assertTrue(h._is_staffed_hours(datetime(2026, 9, 4, 14, 0)))
+        self.assertTrue(h._is_staffed_hours(datetime(2026, 9, 4, 18, 49)))
+        self.assertFalse(h._is_staffed_hours(datetime(2026, 9, 4, 18, 50)))
+        self.assertFalse(h._is_staffed_hours(datetime(2026, 9, 4, 3, 0)))
+
+    def test_is_staffed_hours_same_every_day_including_weekend(self):
+        # 同仁週末/假日班表與平日相同，判斷邏輯不看星期幾
+        saturday_daytime = datetime(2026, 9, 5, 12, 0)  # 2026-09-05 是星期六
+        self.assertTrue(h._is_staffed_hours(saturday_daytime))
+
+    def test_process_user_message_skips_entirely_during_staffed_hours(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-day"
+        event.message.text = "有沒有工作"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler._is_staffed_hours", return_value=True), \
+             patch("handlers.message_handler.fetch_jobs_data") as mock_fetch_jobs, \
+             patch("handlers.message_handler.fetch_faqs_data") as mock_fetch_faqs:
+            h.process_user_message(event, line_bot_api)
+
+        # 白天完全靜默：不回覆、也不用去打 Notion 查職缺/FAQ（省成本，交給真人）
+        line_bot_api.reply_message.assert_not_called()
+        line_bot_api.push_message.assert_not_called()
+        mock_fetch_jobs.assert_not_called()
+        mock_fetch_faqs.assert_not_called()
+
+    def test_process_user_message_bypass_flag_ignores_staffed_hours(self):
+        # /internal/load-test-message 端點靠這個旗標，讓壓力測試不管執行時間
+        # 剛好在白天還是晚上，都能真的跑到 AI 決策那段邏輯
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-bypass"
+        event.message.text = "有沒有工作"
+        line_bot_api = MagicMock()
+        fast_message = TextSendMessage(text="壓力測試繞過白天守門")
+
+        with patch("handlers.message_handler._is_staffed_hours", return_value=True), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots"), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=fast_message):
+            h.process_user_message(event, line_bot_api, bypass_staffed_hours_guard=True)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], fast_message)
+
+    def test_process_image_message_skips_entirely_during_staffed_hours(self):
+        event = MagicMock()
+        event.reply_token = "valid-token"
+        event.source.user_id = "test-user-day"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler._is_staffed_hours", return_value=True):
+            h.process_image_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_not_called()
 
 
 if __name__ == "__main__":
