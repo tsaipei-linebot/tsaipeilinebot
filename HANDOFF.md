@@ -17,6 +17,13 @@
 - **帳單帳戶升級**：目前仍是「免費試用帳戶」，正式頻道流量上量後（估計約 4 萬則/月，群發尖峰每分鐘數百則）容易撞到 Vertex AI 配額上限。建議**在正式切換頻道前**先升級成正式付費帳戶。
 - **觀察 Vertex AI 回應延遲 vs LINE 30 秒 reply token 時限**：測試環境曾測到單輪決策約 11.7 秒，正式頻道併發量提高後延遲可能惡化，有機會撞到 LINE 30 秒逾時。目前只能先觀察，建議正式上線後密切看 Cloud Run/Vertex AI 的延遲指標，有異常再回來處理（例如考慮加上逾時保護或非同步通知使用者「處理中」）。
 - **考慮加上錯誤告警機制**：目前所有例外只靠 `print()` 寫進 Cloud Run log，沒有主動通知。量小時人工看 log 還行，正式頻道建議至少設一個 Cloud Monitoring alert（例如 5xx 或例外次數異常）。
+- **服務帳戶權限過寬，需要重新調整（安全性）**：確認過 `recruitment-bot` 服務目前使用的服務帳戶掛的角色是：服務帳戶使用者、記錄寫入者、**編輯者**、Aiplatform 編輯者、Artifact Registry 寫入者、Cloud Run 管理員。「編輯者 (Editor)」範圍過大（幾乎整個專案的資源都能讀寫），而且清單裡**沒有任何 Firestore/Datastore 相關角色**——代表目前機器人能讀寫 Firestore，其實完全是靠「編輯者」在撐著，這代表直接移除「編輯者」會讓機器人立刻壞掉。修正時**順序一定要對**，避免服務中斷：
+  1. 先新增「Cloud Datastore 使用者」（`roles/datastore.user`）角色給同一個服務帳戶
+  2. 找 LINE 測試頻道傳幾句話，確認機器人（尤其是需要 Firestore 讀寫的槽位記憶功能）一切正常
+  3. 確認沒問題後，移除「編輯者」角色
+  4. 再測一次，確認機器人依然正常運作
+  - 其餘角色（服務帳戶使用者、記錄寫入者、Artifact Registry 寫入者、Cloud Run 管理員）研判是 Cloud Build 部署流程需要，可以保留；「Aiplatform 編輯者」可以考慮之後降級成範圍較小的「Aiplatform 使用者」（`roles/aiplatform.user`，因為只是呼叫 Gemini 生成回覆，不需要管理模型/端點的權限），非急迫。
+  - 相關但優先度較低的資料安全項目，之後也可以一併處理：① Firestore 目前沒有資料保留/自動清除機制（`SESSION_TTL` 只是「軟過期」邏輯，使用者如果不再回來，session 文件會永久留在 Firestore，建議設定 Firestore 原生 [TTL 政策](https://cloud.google.com/firestore/docs/ttl) 自動清掉過期文件）；② 各項金鑰（`NOTION_API_KEY`／`GEMINI_API_KEY`／LINE channel secret／`LOAD_TEST_SECRET`）目前是明文 Cloud Run 環境變數，可以考慮搬到 Secret Manager 多一層存取控制與稽核紀錄。
 
 ## 已完成並部署驗證過的項目
 
