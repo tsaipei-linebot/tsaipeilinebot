@@ -8,7 +8,7 @@ from tests import _env  # noqa: F401
 from tests import _stub_gcp
 _stub_gcp.install()
 
-from delivery.repository import vehicle_event_error, vehicle_matches_filters
+from delivery.repository import _normalize_vehicle_no, vehicle_event_error, vehicle_matches_filters
 from delivery.vehicle_report import handle_vehicle_report, parse_vehicle_report
 
 
@@ -142,6 +142,16 @@ class ParseVehicleReportTests(unittest.TestCase):
     def test_handle_vehicle_report_stays_silent_for_unrelated_text(self):
         self.assertEqual(handle_vehicle_report("早安，今天天氣不錯"), "")
 
+    def test_vehicle_no_normalized_to_uppercase(self):
+        # 同仁在群組手打車號時大小寫不一定跟網頁登記的一樣（例如打成小寫的
+        # erv-2360），解析出來要正規化成大寫，才能跟 repository 那邊查詢時
+        # 用的正規化方式（_normalize_vehicle_no）一致，避免明明車輛存在卻
+        # 查不到。
+        text = "車輛管理\n廠商：UD\n姓名：李睿哲\n開始日期：2026-8-26\n結束日期：\n車號：erv-2360\n服務門市：台北市"
+        result = parse_vehicle_report(text)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["vehicle_no"], "ERV-2360")
+
 
 class VehicleEventErrorTests(unittest.TestCase):
     def _vehicle(self, **overrides):
@@ -201,6 +211,22 @@ class VehicleMatchesFiltersTests(unittest.TestCase):
 
     def test_vehicle_no_filter_excludes_non_matching(self):
         self.assertFalse(vehicle_matches_filters(self._vehicle(), vehicle_no_filter="9999"))
+
+    def test_vehicle_no_filter_is_case_insensitive(self):
+        # 網頁上車號一律正規化成大寫存放，但同仁在搜尋框打小寫也應該找得到。
+        self.assertTrue(vehicle_matches_filters(self._vehicle(), vehicle_no_filter="erv"))
+
+
+class NormalizeVehicleNoTests(unittest.TestCase):
+    def test_uppercases_and_strips(self):
+        self.assertEqual(_normalize_vehicle_no("  erv-2360 "), "ERV-2360")
+
+    def test_already_normalized_is_unchanged(self):
+        self.assertEqual(_normalize_vehicle_no("ERV-2360"), "ERV-2360")
+
+    def test_none_and_empty(self):
+        self.assertEqual(_normalize_vehicle_no(""), "")
+        self.assertEqual(_normalize_vehicle_no(None), "")
 
 
 if __name__ == "__main__":

@@ -724,9 +724,17 @@ def mark_applicant_hired(applicant_id: str, personnel_id: str):
 # ==========================================
 # 車輛管理（LINE 群組回報領車/還車 + 網頁手動管理）
 # ==========================================
+def _normalize_vehicle_no(value: str) -> str:
+    """車號統一轉大寫＋去頭尾空白再當 Firestore 文件 ID：LINE 回報時同仁常常
+    不會特別注意大小寫（例如把 ERV-2360 打成 erv-2360），沒有這層正規化的話
+    會查不到明明已經存在的車輛、回覆誤導性的「查不到這台車」。"""
+    return (value or "").strip().upper()
+
+
 def create_vehicle(vehicle_no: str, vendor: str, created_by: str) -> bool:
     """新增車輛，車號當文件 ID、全公司唯一。已經存在就回傳 False、不會覆蓋
     既有資料；成功新增回傳 True。"""
+    vehicle_no = _normalize_vehicle_no(vehicle_no)
     ref = vehicles_ref().document(vehicle_no)
     if ref.get().exists:
         return False
@@ -746,6 +754,7 @@ def create_vehicle(vehicle_no: str, vendor: str, created_by: str) -> bool:
 
 
 def get_vehicle(vehicle_no: str):
+    vehicle_no = _normalize_vehicle_no(vehicle_no)
     snapshot = vehicles_ref().document(vehicle_no).get()
     if not snapshot.exists:
         return None
@@ -762,7 +771,7 @@ def vehicle_matches_filters(
         return False
     if status_filter and vehicle.get("status") != status_filter:
         return False
-    if vehicle_no_filter and vehicle_no_filter not in (vehicle.get("vehicle_no") or ""):
+    if vehicle_no_filter and vehicle_no_filter.upper() not in (vehicle.get("vehicle_no") or "").upper():
         return False
     return True
 
@@ -783,6 +792,7 @@ def list_vehicles(vendor_filter: str = "", status_filter: str = "", vehicle_no_f
 
 
 def list_vehicle_events(vehicle_no: str) -> list:
+    vehicle_no = _normalize_vehicle_no(vehicle_no)
     result = []
     for snapshot in vehicle_events_ref().where("vehicle_no", "==", vehicle_no).stream():
         data = snapshot.to_dict() or {}
@@ -797,6 +807,7 @@ def set_vehicle_status(vehicle_no: str, status: str) -> bool:
     代碼，車輛不存在或狀態不合法都回傳 False、不會寫入。"""
     if status not in VEHICLE_STATUS_MAP:
         return False
+    vehicle_no = _normalize_vehicle_no(vehicle_no)
     ref = vehicles_ref().document(vehicle_no)
     if not ref.get().exists:
         return False
@@ -840,6 +851,7 @@ def record_vehicle_event(
     被擋下，呼叫端可以把錯誤代碼轉成對應的訊息（LINE 回覆或網頁錯誤提示）。
     source 是 "line" 或 "manual"，用來區分這筆事件是 LINE 群組回報還是網頁
     手動補登的。"""
+    vehicle_no = _normalize_vehicle_no(vehicle_no)
     vehicle = get_vehicle(vehicle_no)
     error = vehicle_event_error(vehicle, vendor, event_type)
     if error:
