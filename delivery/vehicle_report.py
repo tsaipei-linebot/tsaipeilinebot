@@ -8,6 +8,9 @@ handle_vehicle_report() 才會真的查/寫資料庫，交給 handlers/message_h
 訊息格式（同仁會照公司內部的範本貼過來，可能連同說明文字一起貼，這裡只挑
 「欄位名：值」這種格式的行來抓資料，其餘文字忽略）：
 
+    車輛管理                   <- 啟動關鍵字，必須單獨一行、一字不差，
+                               不然不管底下欄位填得多完整都不會被當成回報
+                               （見下面 _TRIGGER_LINE 的說明）。
     廠商：UD
     姓名：李睿哲
     開始日期：2026-8-26      <- 領車：開始日期有填、結束日期空白
@@ -20,6 +23,13 @@ handle_vehicle_report() 才會真的查/寫資料庫，交給 handlers/message_h
 import re
 
 from delivery.config import VENDOR_LOOKUP
+
+# 群組裡任何訊息都會被轉發進來解析（見 delivery-gas-project 的
+# Project5_Vehicle.js），單靠欄位關鍵字判斷「是不是在回報」還是有機會誤觸發
+# （例如同仁在群組聊天時剛好提到「車號」兩個字），所以改成要求訊息裡必須
+# 有獨立一行、一字不差的「車輛管理」當作明確的啟動關鍵字；沒有這行的話，
+# 不管底下欄位填得多完整，一律當成不是在回報，不回覆、不解析。
+_TRIGGER_LINE = "車輛管理"
 
 _FIELD_PATTERNS = {
     "vendor": re.compile(r"廠商[：:]\s*(.*)"),
@@ -38,6 +48,11 @@ PARSE_ERROR_MESSAGES = {
     "ambiguous_dates": "❌ 開始日期跟結束日期不能同時填：領車只填開始日期，還車只填結束日期。",
     "invalid_date": "❌ 日期格式看不懂，請用「2026-8-25」這種年-月-日的格式重新回覆。",
 }
+
+# 沒有 _TRIGGER_LINE 那行的訊息（例如同仁在群組裡的日常聊天）一律視為不是
+# 在回報，不當成回報格式錯誤處理——不然像「早安」「謝謝」這種訊息也會被回覆
+# 一堆錯誤說明，很擾民。
+NOT_A_REPORT = "not_a_report"
 
 EVENT_ERROR_MESSAGES = {
     "vehicle_not_found": "❌ 系統裡查不到這台車，請先請管理員到網頁「車輛管理」新增這台車再回報。",
@@ -63,12 +78,19 @@ def parse_vehicle_report(text: str) -> dict:
     - ok=False 時附上 error 代碼（對應 PARSE_ERROR_MESSAGES 的 key）。
     """
     fields = {}
+    has_trigger_line = False
     for line in (text or "").splitlines():
         line = line.strip()
+        if line == _TRIGGER_LINE:
+            has_trigger_line = True
+            continue
         for key, pattern in _FIELD_PATTERNS.items():
             m = pattern.match(line)
             if m:
                 fields[key] = m.group(1).strip()
+
+    if not has_trigger_line:
+        return {"ok": False, "error": NOT_A_REPORT}
 
     vendor_raw = fields.get("vendor", "")
     personnel_name = fields.get("personnel_name", "")
@@ -104,10 +126,14 @@ def parse_vehicle_report(text: str) -> dict:
 
 
 def handle_vehicle_report(text: str) -> str:
-    """解析 + 寫入資料庫，回傳要回覆到 LINE 群組的文字。延後 import
-    delivery.repository，避免這個模組被載入時就需要 Firestore 憑證。"""
+    """解析 + 寫入資料庫，回傳要回覆到 LINE 群組的文字；回傳空字串代表這則
+    訊息看起來不是在嘗試回報（例如同仁的日常聊天），呼叫端應該保持沉默、
+    不要回覆任何東西。延後 import delivery.repository，避免這個模組被載入
+    時就需要 Firestore 憑證。"""
     parsed = parse_vehicle_report(text)
     if not parsed["ok"]:
+        if parsed["error"] == NOT_A_REPORT:
+            return ""
         return PARSE_ERROR_MESSAGES.get(parsed["error"], "❌ 格式有誤，請確認後重新回報。")
 
     from delivery import repository
