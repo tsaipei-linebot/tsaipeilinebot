@@ -2,6 +2,9 @@
 {% block title %}主頁 - 材霈有限公司-配送部系統{% endblock %}
 {% block content %}
 <h1 class="page-title">主頁</h1>
+{% if open_incident_count > 0 %}
+<p class="warning">⚠️ 目前有 {{ open_incident_count }} 筆未結案意外事件，<a href="/delivery/incidents?status=open">點此查看</a></p>
+{% endif %}
 <div class="home-grid">
     <section class="home-panel">
         <span class="home-panel-icon">
@@ -78,6 +81,19 @@
         <h2>車輛管理</h2>
         <p class="hint">同仁在綁定的 LINE 群組回報領車/還車會自動寫進這裡，也可以在網頁上新增車輛、手動補登</p>
         <a class="btn btn-block" href="/delivery/vehicles">查看車輛清單</a>
+    </section>
+
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+        </span>
+        <h2>意外事件</h2>
+        <p class="hint">同仁在綁定的 LINE 群組回報意外事件會自動寫進這裡，管理員可在詳細頁設定風險等級、標記結案</p>
+        <a class="btn btn-block" href="/delivery/incidents">查看意外事件</a>
     </section>
 </div>
 {% endblock %}

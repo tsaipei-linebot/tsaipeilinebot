@@ -26,6 +26,11 @@ FORM_WEBHOOK_SECRET = os.getenv("DELIVERY_FORM_WEBHOOK_SECRET", "")
 # 一律回傳 403，等同這個 webhook 不存在。
 VEHICLE_REPORT_WEBHOOK_SECRET = os.getenv("DELIVERY_VEHICLE_REPORT_SECRET", "")
 
+# 意外事件回報：跟車輛回報同一個 LINE 群組、同一個 GAS 專案轉發過來，共用
+# 一樣的「另一個獨立 LINE 官方帳號」架構，但走獨立的 webhook 端點/密鑰，
+# 避免車輛回報跟意外事件回報這兩個不相干的功能共用同一支端點。
+INCIDENT_REPORT_WEBHOOK_SECRET = os.getenv("DELIVERY_INCIDENT_REPORT_SECRET", "")
+
 # 廠商清單（選擇廠商 / 人員所屬廠商）
 VENDORS = [
     {"code": "shopee", "name": "蝦皮"},
@@ -226,3 +231,23 @@ VEHICLE_STATUS_BADGE_CLASS = {
     "maintenance": "badge-missing",
 }
 DEFAULT_VEHICLE_STATUS = "available"
+
+# ==========================================
+# 意外事件回報
+# 跟車輛回報同一個 LINE 群組回報格式（見 delivery/incident_report.py），
+# 網頁上這幾個固定選項的欄位直接存中文字串本身當值（不像廠商/合作方式那樣
+# 另外配一組英文代碼），因為這幾個欄位純粹是紀錄用途，沒有跟其他業務邏輯
+# 掛勾，不需要多一層代碼轉換。
+# ==========================================
+IDENTITY_TYPES = ["雇傭", "承攬"]
+DUTY_STATUSES = ["執行勤務中", "上下班途中"]
+YES_NO_VALUES = ["有", "無"]
+
+RISK_LEVELS = ["低", "中", "高"]
+
+INCIDENT_STATUSES = [
+    {"code": "open", "name": "未結案"},
+    {"code": "closed", "name": "已結案"},
+]
+INCIDENT_STATUS_MAP = {s["code"]: s["name"] for s in INCIDENT_STATUSES}
+DEFAULT_INCIDENT_STATUS = "open"

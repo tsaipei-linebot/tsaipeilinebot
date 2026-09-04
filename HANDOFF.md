@@ -741,3 +741,77 @@ log 然後不做任何事（不會報錯、也不會誤觸），等同這個功�
 車輛，到綁定群組實際傳一則領車格式的訊息確認寫入成功、狀態變成使用中，
 再傳一次還車格式確認狀態變回待領用；也建議傳一則故意漏欄位或廠商打錯字
 的訊息，確認機器人有回覆正確的錯誤說明而不是沒反應。
+
+### 後續新增：意外事件回報（LINE 群組回報 + 網頁查詢/風險等級/結案）
+
+跟車輛回報**同一個 LINE 群組**（同一個 `VEHICLE_REPORT_GROUP_ID`），同一套
+「GAS 轉發 → Python 解析寫入 → 回傳文字給 GAS 貼回群組」架構，但走獨立的
+webhook 端點/密鑰（`delivery/incident_report.py` + `/delivery/api/incident-report`），
+兩個功能的解析邏輯完全分開。GAS 那邊用訊息裡有沒有「意外事件回傳格式」這個
+啟動關鍵字，判斷這則群組訊息要走意外事件回報還是車輛回報（見
+`程式碼.js` 的 `doPost()` group 分支、`Project6_Incident.js`）。
+
+回報格式是「編號.欄位名：值」（編號可以是「1.」「1、」等寫法，甚至沒有編號
+也可以，只認欄位名稱本身），11 個欄位：廠商名稱／身分類別（雇傭／承攬）／
+人員名稱／發生時間（`9/4 11:00`，月/日 時:分，沒有年份，系統補上目前年份）／
+發生地點／執行勤務中或上下班途中／是否報警（有／無）／受傷情形／是否聯繫
+家屬（有／無）／是否牽扯他人（有／無）／意外事件經過。「★風險等級：(此欄
+不用填寫)」這行系統會忽略——風險等級（低／中／高）跟結案狀態都不是回報時
+填的，是管理員事後在網頁 `/incidents/{id}` 詳細頁設定/操作（單向操作，
+比照補款/假別核准機制，僅限管理員）。
+
+**這次新增了兩件跟車輛回報不一樣的事**：
+1. **同一筆新回報要推播到兩個群組**：GAS 收到 Python 回傳的確認文字後，除了
+   貼回原群組（`replyLineMessage`），還會用同一支 `sendLineMessage()` 推播
+   同一則訊息到另一個群組（`INCIDENT_NOTIFY_GROUP_ID`，例如管理／督導群）。
+2. **每週一未結案案件提醒**：這個不是 Cloud Scheduler 打 Python（那樣
+   Cloud Run 就要另外持有 CHANNEL1 的 Token），而是在 Apps Script 那邊設一個
+   **時間驅動觸發器**（跟 Project1/Project2/Project4 現有排程一樣的做法，
+   人工在 Apps Script 編輯器「觸發條件」畫面新增，指到 `sendIncidentWeeklyReminder`
+   這個函式，設定「星期一」「上午」執行），由 GAS 呼叫 Python 一支唯讀端點
+   （`/delivery/api/incident-weekly-reminder-text`）取得未結案案件的提醒文字，
+   有內容才用 GAS 自己手上的 `CHANNEL1_LINE_TOKEN` 推播回**原群組**（跟車輛
+   回報同一個群組，不是上面那個「第二個群組」）——這樣 CHANNEL1 的 Token
+   全程只存在 GAS 那邊，Python／Cloud Run 完全不需要它。
+
+系統登入時的提醒（首頁看到「⚠️ 目前有 N 筆未結案意外事件」）是純網頁功能，
+`home_routes.py` 讀 `repository.list_open_incident_events()` 的筆數，跟 LINE
+沒有關係。
+
+**上線前要做的事**（一樣兩邊都要動）：
+
+1. Cloud Run 設定環境變數 `DELIVERY_INCIDENT_REPORT_SECRET`（隨機字串）——
+   跟下面 GAS 那邊 `INCIDENT_REPORT_WEBHOOK_SECRET` 要完全一樣。
+2. 到 `delivery-gas-project`，把新增的 `Project6_Incident.js` 跟修改過的
+   `程式碼.js` 用 `clasp push` 同步，**記得重新部署**（編輯現有部署、選
+   「新版本」，網址不變）。
+3. 在「指令碼屬性」新增：
+   - `INCIDENT_REPORT_WEBHOOK_URL`：
+     `https://recruitment-bot-412901869672.asia-east1.run.app/delivery/api/incident-report`
+   - `INCIDENT_WEEKLY_REMINDER_URL`：
+     `https://recruitment-bot-412901869672.asia-east1.run.app/delivery/api/incident-weekly-reminder-text`
+   - `INCIDENT_REPORT_WEBHOOK_SECRET`：跟第 1 步 Cloud Run 設定的
+     `DELIVERY_INCIDENT_REPORT_SECRET` 同一組值（這支跟每週提醒那支端點
+     共用同一組密鑰）。
+   - `INCIDENT_NOTIFY_GROUP_ID`：每一筆新回報都要額外推播過去的第二個
+     LINE 群組 ID（拿法跟 `VEHICLE_REPORT_GROUP_ID` 一樣：把官方帳號拉進
+     那個群組發一則測試訊息，用「抓取群組 ID」那個既有機制拿）。
+   `VEHICLE_REPORT_GROUP_ID` 沿用既有設定，不用重複設。
+4. 在 Apps Script 編輯器「觸發條件」畫面手動新增一個時間驅動觸發器：函式
+   選 `sendIncidentWeeklyReminder`，事件來源選「時間驅動」，類型選「週計時
+   器」，時間選「星期一」+ 上午（例如 8-9 點）。
+
+沒有完成第 3 步指令碼屬性設定時，`handleIncidentReport_()` /
+`sendIncidentWeeklyReminder()` 都只會記一行 log 就結束，不會報錯、也不會
+誤觸。
+
+**已知限制**：跟車輛回報一樣，Python 那邊的解析/驗證純函式
+（`parse_incident_report()`、`incident_matches_filters()`）有完整單元測試，
+`/delivery/api/incident-report`、`/delivery/api/incident-weekly-reminder-text`
+這兩支端點跟 `/incidents` 系列網頁路由都有 TestClient 手動測試（含管理員/
+一般同仁看到不同畫面的驗證）；GAS 那邊的分流/轉發/推播兩個群組/每週提醒邏輯
+一樣用 Node `vm` 模組手動測試過，沒有在真正的 Apps Script 環境跑過。上線後
+建議：先傳一則完整格式的測試意外事件回報，確認原群組跟第二個群組都收到
+確認訊息、網頁 `/incidents` 清單看得到這筆、管理員能設定風險等級跟結案；
+也可以手動執行一次 `sendIncidentWeeklyReminder`（Apps Script 編輯器裡直接
+執行這個函式），確認提醒訊息有正確推播回原群組。
