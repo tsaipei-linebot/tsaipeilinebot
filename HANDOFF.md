@@ -605,29 +605,42 @@ TestClient 手動測試；上線後除了要記得去改每份表單各自的 Ap
 背景：同仁在一個綁定的 LINE 群組裡用固定格式回報領車/還車，這一輪讓這個
 回報自動寫進配送部系統，另外補上網頁端的車輛清單/新增/歷史/手動修正。
 
-**這是跨兩個子系統的整合**：LINE 官方帳號的訊息 webhook（`main.py` /
-`handlers/message_handler.py`）跟配送部系統（`delivery/` 底下）雖然平常
-完全獨立、資料表也分開，但兩者其實跑在同一個 Cloud Run 服務裡，所以這次
-不是另外開一支對外 webhook 讓兩邊互打，而是直接在
-`handlers/message_handler.py` 的 `process_user_message()` 最前面（原本就有
-在 log 裡印 `source_type`/`group_id` 的那段之後）加一段判斷：
+**重要更正（這次改版取代了第一版做法）**：車輛回報綁的是**另一個獨立的
+LINE 官方帳號**，跟這支招募機器人（沛沛）是不同的 LINE Channel，訊息根本
+不會經過 `main.py` 的 `/callback`。第一版把攔截邏輯寫進
+`handlers/message_handler.py` 是錯的位置，訊息永遠不會進來、功能其實沒有
+真的生效；這裡已經整個移除那段程式碼，改成下面這個正確的架構。
 
-```python
-if (
-    DELIVERY_VEHICLE_REPORT_GROUP_ID
-    and source_type == "group"
-    and group_id == DELIVERY_VEHICLE_REPORT_GROUP_ID
-):
-    reply_text = handle_vehicle_report(raw_msg)
-    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
-    return
-```
+**實際架構**：這個另外的官方帳號，訊息是由一個完全獨立的 **Google Apps
+Script 專案 `delivery-gas-project`**（另一個 GitHub repo：
+`tsaipei-linebot/delivery-gas-project`）接收的——那個專案本身已經在跑「貨量
+提醒」「違規騎手通知」「客訴」「排班」四個子功能，`doPost(e)` 是它自己
+部署成 Google Web App 的 webhook，本來就支援兩個不同的 LINE Channel（用
+`?bot=1`/`?bot=2` URL 參數分流各自的 Channel Token）。
 
-**只認這個綁定群組的訊息**：`source_type` 要是 `"group"`、`group_id` 要
-剛好等於 `DELIVERY_VEHICLE_REPORT_GROUP_ID`（新的環境變數，根目錄
-`config.py` 第 8 節）才會被攔截；其他來源（私訊、其他群組）完全不受影響，
-照舊走原本的招募對話邏輯——這樣同一個官方帳號可以同時服務應徵者對話跟
-同仁的車輛回報，兩邊不會互相干擾，也不用維護一份「誰是同仁」的白名單。
+車輛回報這條路徑是：
+1. 同仁在綁定的群組傳訊息 → 進到 `delivery-gas-project` 的 `doPost(e)`。
+2. `doPost(e)` 判斷這則訊息不是「綁定+工號+姓名」、而且來自 Script
+   Properties 設定的 `VEHICLE_REPORT_GROUP_ID` 那個群組時，呼叫新增的
+   `handleVehicleReport_(text, replyToken, lineToken)`（新檔案
+   `Project5_Vehicle.js`），把整段文字用 `UrlFetchApp.fetch()` **轉發**到
+   這支 Python 系統新增的 webhook：`POST /delivery/api/vehicle-report`
+   （帶 `X-Delivery-Vehicle-Secret` header，密鑰即
+   `DELIVERY_VEHICLE_REPORT_SECRET` 環境變數，跟 Google 表單那支
+   `/delivery/api/form-submission` 是同一種「共用密鑰、不經過同仁登入
+   session」的做法）。
+3. Python 這邊呼叫既有的 `delivery.vehicle_report.handle_vehicle_report()`
+   （下面「訊息解析」那段，完全沒有變動，第一版寫的邏輯照樣可用，只是
+   呼叫入口從「直接被 message_handler.py 呼叫」換成「被 HTTP webhook 呼叫」），
+   回傳 `{"reply": "..."}`。
+4. GAS 收到回應後用 `replyLineMessage()` 把 `reply` 文字貼回 LINE 群組。
+
+**群組白名單防呆機制搬到 GAS 那邊做**：`delivery-gas-project` 只有它自己
+Script Properties 設定的 `VEHICLE_REPORT_GROUP_ID` 那個群組的訊息才會被
+轉發過來；Python 這支 `/delivery/api/vehicle-report` 端點本身只驗證共用
+密鑰，不重複判斷群組（沒有必要，因為只有握有密鑰的 GAS 腳本才能呼叫這支
+端點，這正是它跟第一版最大的差別——它不再掛在招募機器人的 webhook 上，
+不會因為判斷條件寫錯就永遠收不到訊息）。
 
 **訊息解析**（`delivery/vehicle_report.py`，`parse_vehicle_report()` 是純
 函式，`handle_vehicle_report()` 才會真的查/寫資料庫）：逐行找「廠商：」

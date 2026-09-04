@@ -67,12 +67,3 @@ GCP_LOCATION = os.getenv("GCP_LOCATION", "global")
 # 沒有設定（空字串）時該端點一律回傳 403，等同完全關閉。
 # ==========================================
 LOAD_TEST_SECRET = os.getenv("LOAD_TEST_SECRET", "")
-
-# ==========================================
-# 8. 配送部車輛回報（LINE 群組專用）
-# 只有這個群組 ID 傳來的文字訊息才會被 handlers/message_handler.py 攔截、
-# 解析成車輛領車/還車回報寫進配送部系統（見 delivery/vehicle_report.py）；
-# 其他來源（含私訊、其他群組）一律當作一般訊息，走原本的招募對話邏輯，不受影響。
-# 沒有設定（空字串）時這個攔截機制完全關閉。
-# ==========================================
-DELIVERY_VEHICLE_REPORT_GROUP_ID = os.getenv("DELIVERY_VEHICLE_REPORT_GROUP_ID", "")
