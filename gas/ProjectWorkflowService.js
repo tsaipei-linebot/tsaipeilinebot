@@ -45,7 +45,7 @@ const ProjectWorkflowService = {
 
       // 取得目標收件信箱清單
       const rawEmails = CONFIG.HR_ACCOUNTING_EMAILS || 'finance@tsaipei.com.tw';
-      const emailList = rawEmails.split(/[,，、\/\\\s\n\r]+/).map(e => e.trim()).filter(Boolean);
+      const emailList = splitMultiValue(rawEmails).filter(Boolean);
       
       if (emailList.length === 0) {
         return { status: 'error', message: '系統未設定 HR_ACCOUNTING_EMAILS 收件人信箱' };

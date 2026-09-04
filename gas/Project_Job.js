@@ -36,7 +36,7 @@ const AiJobDescriptionService = {
     if (Array.isArray(cityVal)) {
       cities = cityVal;
     } else if (typeof cityVal === 'string' && cityVal.trim()) {
-      cities = cityVal.split(/[,，、\s]+/).filter(Boolean);
+      cities = splitMultiValue(cityVal).filter(Boolean);
     }
     const uniqueCities = Array.from(new Set(cities.map(c => String(c || '').trim()).filter(Boolean)));
     const cityStr = uniqueCities.join('、');
@@ -45,7 +45,7 @@ const AiJobDescriptionService = {
     if (Array.isArray(districtVal)) {
       districts = districtVal;
     } else if (typeof districtVal === 'string' && districtVal.trim()) {
-      districts = districtVal.split(/[,，、\s]+/).filter(Boolean);
+      districts = splitMultiValue(districtVal).filter(Boolean);
     }
     const uniqueDistricts = Array.from(new Set(districts.map(d => String(d || '').trim()).filter(Boolean)));
     const distCount = uniqueDistricts.length;
@@ -950,7 +950,7 @@ const NotionService = {
     }
     if (prop.rich_text && Array.isArray(prop.rich_text) && prop.rich_text.length > 0) {
       const txt = prop.rich_text.map(t => t.plain_text || '').join('');
-      return txt.split(/[,，、\s]+/).map(s => s.trim()).filter(Boolean);
+      return splitMultiValue(txt).filter(Boolean);
     }
     return [];
   },
@@ -961,7 +961,7 @@ const NotionService = {
     if (Array.isArray(val)) {
       arr = val;
     } else if (typeof val === 'string') {
-      arr = val.split(/[,，、\s]+/).map(s => s.trim()).filter(Boolean);
+      arr = splitMultiValue(val).filter(Boolean);
     }
     return {
       multi_select: arr.map(name => ({ name: String(name) }))

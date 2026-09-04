@@ -364,8 +364,8 @@ const SalarySheetService = {
         const rowSupNames = String(data[i][2] || '').trim();
         const rowSupEmails = String(data[i][4] || '').trim();
         if (rowSupNames && rowSupEmails) {
-          const names = rowSupNames.split(/[,，、\/\\\s\n\r]+/).map(s => s.trim());
-          const emails = rowSupEmails.split(/[,，、\/\\\s\n\r]+/).map(s => s.trim());
+          const names = splitMultiValue(rowSupNames);
+          const emails = splitMultiValue(rowSupEmails);
           for (let k = 0; k < names.length; k++) {
             if (names[k] === cleanName && emails[k] && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emails[k])) {
               return emails[k];
@@ -405,7 +405,7 @@ const EmailService = {
 
     // 1. 加入專案設定之 HR 與財會信箱
     if (CONFIG.HR_ACCOUNTING_EMAILS) {
-      CONFIG.HR_ACCOUNTING_EMAILS.split(/[,，、\/\\\s\n\r]+/).forEach(em => {
+      splitMultiValue(CONFIG.HR_ACCOUNTING_EMAILS).forEach(em => {
         const clean = String(em || '').trim();
         if (clean && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) recipientSet.add(clean);
       });
@@ -413,7 +413,7 @@ const EmailService = {
     
     // 2. 加入審核主管信箱
     if (record.supervisorEmail) {
-      String(record.supervisorEmail).split(/[,，、\/\\\s\n\r]+/).forEach(em => {
+      splitMultiValue(record.supervisorEmail).forEach(em => {
         const cleanSupEmail = String(em || '').trim();
         if (cleanSupEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanSupEmail)) recipientSet.add(cleanSupEmail);
       });
@@ -421,7 +421,7 @@ const EmailService = {
 
     // 3. 加入申請人本人信箱
     if (record.applicantEmail) {
-      String(record.applicantEmail).split(/[,，、\/\\\s\n\r]+/).forEach(em => {
+      splitMultiValue(record.applicantEmail).forEach(em => {
         const cleanAppEmail = String(em || '').trim();
         if (cleanAppEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanAppEmail)) recipientSet.add(cleanAppEmail);
       });

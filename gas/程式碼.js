@@ -40,19 +40,25 @@ function sha256Hash(text) {
   return signature.map(byte => (byte < 0 ? byte + 256 : byte).toString(16).padStart(2, '0')).join('');
 }
 
+// 常用「多值文字」拆分工具：依逗號、頓號、斜線、反斜線、換行、空白等常見分隔符號拆開並去除頭尾空白，
+// 用於姓名清單、Email 清單、LINE ID 清單、縣市/行政區等多值欄位。取代原本散落在各檔案的重複正則。
+// 刻意不自動過濾空字串（呼叫端如需過濾請自行 .filter(Boolean)），避免影響原本依索引位置對應的邏輯
+// （例如姓名清單與 Email 清單依相同索引配對時，過濾行為需要兩邊一致才不會對錯位置）。
+function splitMultiValue(str) {
+  return String(str || '').split(/[,，、\/\\\s\n\r]+/).map(s => s.trim());
+}
+
 // ==============================================================================
 // 管理員 LINE ID 共用工具 (AdminIdService)
 // 統一 ADMIN_LINE_USER_ID 的拆分/清理邏輯，取代原本散落在各檔案的重複解析程式碼
 // ==============================================================================
 const AdminIdService = {
-  _splitPattern: /[,，、\/\\\s\n\r]+/,
-
   // 回傳保留原始大小寫、僅去除非法字元的清單，供實際發送 LINE 訊息等需要真實 ID 的場合使用
   list: function() {
     const raw = (CONFIG.ADMIN_LINE_USER_ID || '').trim();
     if (!raw) return [];
-    return raw.split(this._splitPattern)
-      .map(s => s.replace(/[^a-zA-Z0-9_-]/g, '').trim())
+    return splitMultiValue(raw)
+      .map(s => s.replace(/[^a-zA-Z0-9_-]/g, ''))
       .filter(Boolean);
   },
 
@@ -788,7 +794,7 @@ const OrgService = {
         const rawSupNames = String(data[i][2] || '').trim();
         
         if (empName && rawSupNames) {
-          const supList = rawSupNames.split(/[,，、\/\\\s\n\r]+/).map(s => s.trim()).filter(Boolean);
+          const supList = splitMultiValue(rawSupNames).filter(Boolean);
           if (supList.includes(cleanSupervisor)) {
             subordinates.push(empName);
           }
@@ -813,7 +819,7 @@ const OrgService = {
         const empName = String(data[i][0] || '').trim();
         if (empName === cleanEmployee) {
           const rawSupNames = String(data[i][2] || '').trim();
-          const supList = rawSupNames.split(/[,，、\/\\\s\n\r]+/).map(s => s.trim()).filter(Boolean);
+          const supList = splitMultiValue(rawSupNames).filter(Boolean);
           return supList.includes(cleanSupervisor);
         }
       }
@@ -857,7 +863,7 @@ const OrgService = {
               message: `同仁【${cleanName}】尚未於 LINE 聊天室完成綁定！\n請先發送「綁定+${cleanName}+4位PIN碼」完成綁定。`
             };
           }
-          if (empPin === inputHashedPin || empPin === cleanPin) {
+          if (constantTimeEquals(empPin, inputHashedPin) || constantTimeEquals(empPin, cleanPin)) {
             LoginAttemptGuard.clear(cleanName);
 
             // 若比對命中的是明文 PIN（尚未雜湊的舊資料），登入成功時順便升級寫回雜湊值，
@@ -964,9 +970,9 @@ const OrgService = {
           const rawSupLineIds = String(row[3] || '').trim();
           const rawSupEmails = String(row[4] || '').trim();
 
-          const names = rawSupNames.split(/[,，、\/\\\s\n\r]+/).map(s => s.trim()).filter(Boolean);
-          const lineIds = rawSupLineIds.split(/[,，、\/\\\s\n\r]+/).map(s => s.trim()).filter(Boolean);
-          const emails = rawSupEmails.split(/[,，、\/\\\s\n\r]+/).map(s => s.trim()).filter(Boolean);
+          const names = splitMultiValue(rawSupNames).filter(Boolean);
+          const lineIds = splitMultiValue(rawSupLineIds).filter(Boolean);
+          const emails = splitMultiValue(rawSupEmails).filter(Boolean);
 
           const result = [];
 
@@ -1016,7 +1022,7 @@ const OrgService = {
       return [];
     }
 
-    const emails = adminEmail.split(/[,，、\/\\\s\n\r]+/).map(s => s.trim()).filter(Boolean);
+    const emails = splitMultiValue(adminEmail).filter(Boolean);
 
     return lineIds.map((lid, idx) => ({
       supervisorName: '管理主管',
