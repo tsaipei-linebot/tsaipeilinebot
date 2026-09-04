@@ -15,6 +15,7 @@ from delivery.vehicle_report import handle_vehicle_report, parse_vehicle_report
 class ParseVehicleReportTests(unittest.TestCase):
     def test_checkout_message_parses(self):
         text = (
+            "車輛管理\n"
             "廠商：UD\n"
             "姓名：李睿哲\n"
             "開始日期：2026-8-26\n"
@@ -33,6 +34,7 @@ class ParseVehicleReportTests(unittest.TestCase):
 
     def test_return_message_parses(self):
         text = (
+            "車輛管理\n"
             "廠商：UD\n"
             "姓名：李睿哲\n"
             "開始日期：\n"
@@ -50,6 +52,7 @@ class ParseVehicleReportTests(unittest.TestCase):
         text = (
             "✅ 回報格式（照填即可）\n"
             "請用以下格式回覆\n"
+            "車輛管理\n"
             "廠商：蝦皮\n"
             "姓名：王小明\n"
             "開始日期：2026-1-2\n"
@@ -62,39 +65,49 @@ class ParseVehicleReportTests(unittest.TestCase):
         self.assertEqual(result["vendor"], "shopee")
 
     def test_both_dates_filled_is_ambiguous(self):
-        text = "廠商：UD\n姓名：李睿哲\n開始日期：2026-1-1\n結束日期：2026-1-2\n車號：ERV-1\n服務門市：x"
+        text = "車輛管理\n廠商：UD\n姓名：李睿哲\n開始日期：2026-1-1\n結束日期：2026-1-2\n車號：ERV-1\n服務門市：x"
         result = parse_vehicle_report(text)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "ambiguous_dates")
 
     def test_neither_date_filled_is_missing_fields(self):
-        text = "廠商：UD\n姓名：李睿哲\n開始日期：\n結束日期：\n車號：ERV-1\n服務門市：x"
+        text = "車輛管理\n廠商：UD\n姓名：李睿哲\n開始日期：\n結束日期：\n車號：ERV-1\n服務門市：x"
         result = parse_vehicle_report(text)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "missing_fields")
 
     def test_missing_vehicle_no_is_missing_fields(self):
-        text = "廠商：UD\n姓名：李睿哲\n開始日期：2026-1-1\n結束日期：\n服務門市：x"
+        text = "車輛管理\n廠商：UD\n姓名：李睿哲\n開始日期：2026-1-1\n結束日期：\n服務門市：x"
         result = parse_vehicle_report(text)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "missing_fields")
 
     def test_invalid_vendor(self):
-        text = "廠商：黑貓\n姓名：李睿哲\n開始日期：2026-1-1\n結束日期：\n車號：ERV-1\n服務門市：x"
+        text = "車輛管理\n廠商：黑貓\n姓名：李睿哲\n開始日期：2026-1-1\n結束日期：\n車號：ERV-1\n服務門市：x"
         result = parse_vehicle_report(text)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "invalid_vendor")
 
     def test_invalid_date_format(self):
-        text = "廠商：UD\n姓名：李睿哲\n開始日期：昨天\n結束日期：\n車號：ERV-1\n服務門市：x"
+        text = "車輛管理\n廠商：UD\n姓名：李睿哲\n開始日期：昨天\n結束日期：\n車號：ERV-1\n服務門市：x"
         result = parse_vehicle_report(text)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "invalid_date")
 
     def test_unrelated_text_is_not_a_report(self):
-        # 群組裡的日常聊天完全不含任何回報欄位關鍵字，不該被當成「格式錯誤」
-        # 對待（那樣同仁在群組裡聊天會一直被機器人回覆格式錯誤訊息）。
+        # 群組裡的日常聊天完全沒有「車輛管理」這個啟動關鍵字，不該被當成
+        # 「格式錯誤」對待（那樣同仁在群組裡聊天會一直被機器人回覆格式錯誤
+        # 訊息）。
         result = parse_vehicle_report("你好，請問明天有班嗎？")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "not_a_report")
+
+    def test_missing_trigger_line_is_not_a_report_even_with_all_fields_filled(self):
+        # 就算欄位全部填對，只要沒有單獨一行的「車輛管理」啟動關鍵字，一律
+        # 當成不是在回報、完全不回覆——這是刻意的嚴格設計，避免同仁在群組
+        # 聊天時剛好提到「車號」之類的字眼被誤判成回報。
+        text = "廠商：UD\n姓名：李睿哲\n開始日期：2026-8-26\n結束日期：\n車號：ERV-2360\n服務門市：台北市"
+        result = parse_vehicle_report(text)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "not_a_report")
 
