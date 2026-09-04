@@ -48,6 +48,34 @@ class ParseVehicleReportTests(unittest.TestCase):
         self.assertEqual(result["event_date"], "2026-08-25")
         self.assertEqual(result["vehicle_no"], "ERV-6956")
 
+    def test_literal_blank_placeholder_in_end_date_is_treated_as_empty(self):
+        # 同仁複製範本時，把說明用的「（空白）」文字也一起貼進「結束日期」
+        # 欄位（範本原本的用意是提醒「這欄不用填」），這應該當成沒填，正常
+        # 判斷成領車，而不是回覆「日期格式看不懂」。
+        text = (
+            "車輛管理\n"
+            "廠商：UD\n"
+            "姓名：李睿哲\n"
+            "開始日期：2026-8-26\n"
+            "結束日期：（空白）\n"
+            "車號：ERV-2360\n"
+            "服務門市：台北市..."
+        )
+        result = parse_vehicle_report(text)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["event_type"], "checkout")
+        self.assertEqual(result["event_date"], "2026-08-26")
+
+    def test_literal_blank_placeholder_variants(self):
+        for placeholder in ["空白", "(空白)", "（空白）", " 空白 "]:
+            text = (
+                "車輛管理\n"
+                f"廠商：UD\n姓名：李睿哲\n開始日期：2026-8-26\n結束日期：{placeholder}\n"
+                "車號：ERV-2360\n服務門市：台北市"
+            )
+            result = parse_vehicle_report(text)
+            self.assertTrue(result["ok"], f"placeholder {placeholder!r} should parse ok, got {result}")
+
     def test_tolerates_template_header_lines(self):
         text = (
             "✅ 回報格式（照填即可）\n"
