@@ -178,7 +178,10 @@ async def load_test_message(payload: LoadTestMessageRequest, x_load_test_secret:
     stub_api = _StubLineBotApi()
 
     start = time.monotonic()
-    await run_in_threadpool(process_user_message, fake_event, stub_api)
+    # bypass_staffed_hours_guard=True：壓力測試本來就是要測 Notion/Firestore/
+    # Gemini 那條路徑撐不撐得住，不該因為剛好在同仁上班時段執行就被日夜接力
+    # 的守門邏輯擋掉（見 handlers/message_handler.py 的 _is_staffed_hours()）。
+    await run_in_threadpool(process_user_message, fake_event, stub_api, True)
     elapsed = time.monotonic() - start
 
     return {

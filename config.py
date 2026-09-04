@@ -1,4 +1,6 @@
 import os
+from datetime import time
+import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -67,3 +69,18 @@ GCP_LOCATION = os.getenv("GCP_LOCATION", "global")
 # 沒有設定（空字串）時該端點一律回傳 403，等同完全關閉。
 # ==========================================
 LOAD_TEST_SECRET = os.getenv("LOAD_TEST_SECRET", "")
+
+# ==========================================
+# 8. 白天／晚間回覆時段（日夜接力，見 HANDOFF.md）
+# 同仁上班時間為每天 10:00–19:00（含週末，班表相同）。這裡刻意抓 10 分鐘
+# 交接緩衝：機器人比同仁實際下班時間（19:00）提早 10 分鐘啟動、比同仁實際
+# 上班時間（10:00）延後 10 分鐘才停止——目的是寧可偶爾跟同仁重複回覆，
+# 也不要讓求職者在交接空檔完全沒有任何一邊回覆。
+#
+# STAFFED_HOURS_START～STAFFED_HOURS_END 這段時間內，沛沛完全不主動回覆，
+# 交給真人專員在 LINE 聊天模式手動處理（見 handlers/message_handler.py
+# 的 _is_staffed_hours()）。
+# ==========================================
+STAFFED_HOURS_START = time(10, 10)
+STAFFED_HOURS_END = time(18, 50)
+TAIPEI_TZ = pytz.timezone("Asia/Taipei")

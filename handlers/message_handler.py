@@ -2,10 +2,12 @@ import concurrent.futures
 import json
 import re
 import traceback
+from datetime import datetime
 from linebot import LineBotApi
 from linebot.models import (
     TextSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
+from config import STAFFED_HOURS_START, STAFFED_HOURS_END, TAIPEI_TZ
 from services.session_service import (
     get_user_history, append_user_history, get_user_slots, update_user_slots, clear_user_slots, CLEAR_SLOT
 )
@@ -25,6 +27,19 @@ from services.matcher_service import (
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
+
+
+def _is_staffed_hours(now: datetime = None) -> bool:
+    """判斷目前是否落在同仁上班時段（含 10 分鐘交接緩衝，設定值見 config.py）。
+    這段時間內沛沛完全不主動回覆，交給真人專員在 LINE 聊天模式手動處理，避免
+    跟同仁的人工回覆互相打架；求職者傳來的訊息會被靜默略過（reply_token 沒
+    用到就自然過期，不會有任何副作用）。"""
+    current = now if now is not None else datetime.now(TAIPEI_TZ)
+    if current.tzinfo is None:
+        current = TAIPEI_TZ.localize(current)
+    else:
+        current = current.astimezone(TAIPEI_TZ)
+    return STAFFED_HOURS_START <= current.time() < STAFFED_HOURS_END
 
 
 # ==========================================
@@ -102,10 +117,22 @@ def _build_quick_reply_buttons(labels: list, fallback: list) -> list:
     return buttons or fallback
 
 
-def process_user_message(event, target_line_bot_api: LineBotApi):
-    """處理求職端所有對話，支援 5 大優化與 4 項防呆精準升級[cite: 3, 6]"""
+def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_hours_guard: bool = False):
+    """處理求職端所有對話，支援 5 大優化與 4 項防呆精準升級[cite: 3, 6]
+
+    bypass_staffed_hours_guard：只給 main.py 的 /internal/load-test-message 內部
+    壓力測試端點使用，讓測試腳本不管實際執行的當下是白天還是晚上都能真的跑到
+    AI 決策那段邏輯（壓力測試本來就是要測 Notion/Firestore/Gemini 這條路徑撐不
+    撐得住，不該因為剛好在上班時間執行就被同仁時段的守門邏輯擋掉）。正式的
+    LINE webhook（/callback、/test-callback）呼叫時一律不帶這個參數，維持預設
+    的 False，同仁上班時段一樣會被擋下。"""
     reply_token = event.reply_token
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
+        return
+
+    if not bypass_staffed_hours_guard and _is_staffed_hours():
+        # 白天交給真人專員在 LINE 聊天模式手動回覆，沛沛不主動介入，避免兩邊
+        # 同時回覆互相打架（詳見 HANDOFF.md「日夜接力」）。
         return
 
     raw_msg = event.message.text.strip()
@@ -678,6 +705,10 @@ def process_image_message(event, target_line_bot_api: LineBotApi):
     若完全不回應，使用者會誤以為機器人已讀不回或故障，所以主動引導改用文字描述需求。"""
     reply_token = event.reply_token
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
+        return
+
+    if _is_staffed_hours():
+        # 白天交給真人專員手動處理，理由同 process_user_message()。
         return
 
     user_id = getattr(event.source, 'user_id', 'USER')
