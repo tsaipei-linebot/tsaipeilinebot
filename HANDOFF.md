@@ -685,16 +685,41 @@ Script Properties 設定的 `VEHICLE_REPORT_GROUP_ID` 那個群組的訊息才�
 - `/vehicles/{車號}`：詳細頁——目前狀態/使用人/地點、標記待維修/解除、
   手動補登一筆事件（表單），跟這台車完整的歷史紀錄。
 
-**上線前要做的事**：Cloud Run 設定環境變數 `DELIVERY_VEHICLE_REPORT_GROUP_ID`
-（那個綁定群組的 LINE group ID；拿法比照到期提醒那節「群組 groupId 拿法」
-的說明——把官方帳號拉進群組、群組裡發一則訊息、去 Cloud Logging 或這次
-新加的 log 行找 `Group: ...`）。沒設定這個環境變數時，這個攔截機制完全
-關閉（等同這個功能不存在），不影響任何既有流程。
+**上線前要做的事**（這次跟 `delivery-gas-project` 那個獨立 repo 一起動，
+兩邊都要處理）：
+
+1. Cloud Run 設定環境變數 `DELIVERY_VEHICLE_REPORT_SECRET`（隨機字串，例如
+   `openssl rand -hex 32`）——這組要跟下面第 3 步在 GAS 那邊設定的
+   `VEHICLE_REPORT_WEBHOOK_SECRET` 完全一樣。
+2. 到 `delivery-gas-project` 那個 repo，把這次新增/修改的 `程式碼.js`、
+   `Project5_Vehicle.js` 用 `clasp push` 同步進 Apps Script 專案，然後
+   **記得重新部署**（Apps Script 編輯畫面「部署」→「管理部署作業」→編輯
+   現有的那個部署（不要新增部署，網址才不會變）→版本選「新版本」→部署）。
+3. 在 Apps Script 編輯畫面「專案設定」→「指令碼屬性」新增三個屬性：
+   - `VEHICLE_REPORT_GROUP_ID`：要回報車輛的那個 LINE 群組 ID（拿法：把
+     `CHANNEL1_LINE_TOKEN` 對應的官方帳號拉進那個群組、群組裡發一則測試
+     訊息，這個 GAS 專案本來就有「訊息來自群組時把群組 ID 寫進表格」的
+     機制——見「專案1功能：抓取群組 ID」那段，`RECORD_SHEET_ID` 指定的
+     試算表 D1/E1 儲存格會出現群組 ID）。
+   - `VEHICLE_REPORT_WEBHOOK_URL`：`https://recruitment-bot-412901869672.asia-east1.run.app/delivery/api/vehicle-report`
+   - `VEHICLE_REPORT_WEBHOOK_SECRET`：跟第 1 步 Cloud Run 設定的
+     `DELIVERY_VEHICLE_REPORT_SECRET` 同一組值。
+4. 這個功能用的是 `CHANNEL1_LINE_TOKEN` 這組官方帳號（跟現有「綁定+工號+
+   姓名」私訊功能同一個 Channel，`doPost()` 沒帶 `?bot=2` 參數時預設就是
+   這組），確認 LINE Developers Console 裡這個 Channel 的 webhook URL
+   設定的就是這次重新部署後（步驟 2）的 Apps Script Web App 網址。
+
+沒有完成第 3 步的指令碼屬性設定時，`handleVehicleReport_()` 會直接記一行
+log 然後不做任何事（不會報錯、也不會誤觸），等同這個功能完全關閉。
 
 **已知限制**：`parse_vehicle_report()`、`vehicle_event_error()`、
-`vehicle_matches_filters()` 這些純函式都有單元測試；跟 Firestore 真的
-互動的部分（`record_vehicle_event`、`create_vehicle` 等）跟 LINE 訊息路由
-的攔截邏輯只有 mock 過的手動測試。上線後建議：先在網頁新增一台測試車輛，
-到綁定群組實際傳一則領車格式的訊息確認寫入成功、狀態變成使用中，再傳一次
-還車格式確認狀態變回待領用；也建議傳一則故意漏欄位或廠商打錯字的訊息，
-確認機器人有回覆正確的錯誤說明而不是沒反應。
+`vehicle_matches_filters()` 這些純函式都有單元測試；`/delivery/api/vehicle-report`
+這支端點的密鑰驗證/呼叫流程有 TestClient 手動測試；GAS 那邊 `doPost()` 的
+群組判斷/轉發/錯誤處理邏輯用 Node `vm` 模組載入實際程式碼、餵假的
+`PropertiesService`/`UrlFetchApp` 手動測試過四種情境（正確群組轉發成功、
+其他群組不轉發、既有「綁定+」流程不受影響、webhook 回傳非 200 時優雅顯示
+錯誤訊息），但沒有在真正的 Apps Script 執行環境（`clasp run`／實際部署）
+跑過，語法只用 `node --check` 驗證過。上線後建議：先在網頁新增一台測試
+車輛，到綁定群組實際傳一則領車格式的訊息確認寫入成功、狀態變成使用中，
+再傳一次還車格式確認狀態變回待領用；也建議傳一則故意漏欄位或廠商打錯字
+的訊息，確認機器人有回覆正確的錯誤說明而不是沒反應。
