@@ -17,6 +17,7 @@ SICK_LEAVES_COLLECTION = "delivery_sick_leaves"
 APPLICANTS_COLLECTION = "delivery_applicants"
 VEHICLES_COLLECTION = "delivery_vehicles"
 VEHICLE_EVENTS_COLLECTION = "delivery_vehicle_events"
+INCIDENT_EVENTS_COLLECTION = "delivery_incident_events"
 
 _client = None
 
@@ -54,3 +55,7 @@ def vehicles_ref():
 
 def vehicle_events_ref():
     return get_db().collection(VEHICLE_EVENTS_COLLECTION)
+
+
+def incident_events_ref():
+    return get_db().collection(INCIDENT_EVENTS_COLLECTION)

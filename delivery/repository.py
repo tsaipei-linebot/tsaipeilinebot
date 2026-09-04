@@ -9,12 +9,14 @@ from datetime import date, datetime, timedelta
 
 from delivery.config import (
     COOPERATION_TYPE_MAP,
+    DEFAULT_INCIDENT_STATUS,
     DEFAULT_PERSONNEL_STATUS,
     DEFAULT_TEST_DRIVE_STATUS,
     DEFAULT_VEHICLE_STATUS,
     DOC_TYPES,
     HIDDEN_PERSONNEL_STATUSES,
     LEGACY_PERSONNEL_STATUS,
+    RISK_LEVELS,
     SELECTABLE_APPLICANT_STATUSES,
     TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
     TEST_DRIVE_REQUIRED_VENDORS,
@@ -25,6 +27,7 @@ from delivery.config import (
 from delivery.db import (
     applicants_ref,
     get_db,
+    incident_events_ref,
     personnel_ref,
     repayments_ref,
     sick_leaves_ref,
@@ -882,3 +885,118 @@ def record_vehicle_event(
         }
     )
     return True, ""
+
+
+# ==========================================
+# 意外事件回報
+# 跟車輛回報同一個 LINE 群組，但資料完全獨立的一份 collection。風險等級
+# （risk_level）跟結案狀態（status）都不是回報當下填的，是管理員事後在
+# 網頁上評估／操作，所以新增時一律是空風險等級 + 未結案。
+# ==========================================
+_INCIDENT_FIELDS = (
+    "vendor",
+    "identity_type",
+    "personnel_name",
+    "occurred_at",
+    "location",
+    "duty_status",
+    "police_called",
+    "injury",
+    "family_contacted",
+    "third_party_involved",
+    "description",
+)
+
+
+def create_incident_event(data: dict) -> str:
+    """新增一筆意外事件回報，回傳新文件 ID。data 需含 _INCIDENT_FIELDS 這
+    11 個欄位（見 delivery.incident_report.parse_incident_report 的回傳
+    值），風險等級／結案狀態一律用預設值，不接受呼叫端指定。"""
+    ref = incident_events_ref().document()
+    payload = {key: data.get(key, "") for key in _INCIDENT_FIELDS}
+    payload["risk_level"] = ""
+    payload["status"] = DEFAULT_INCIDENT_STATUS
+    payload["created_at"] = time.time()
+    ref.set(payload)
+    return ref.id
+
+
+def get_incident_event(incident_id: str):
+    snapshot = incident_events_ref().document(incident_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def incident_matches_filters(
+    incident: dict,
+    vendor_filter: str = "",
+    status_filter: str = "",
+    risk_level_filter: str = "",
+    personnel_name_filter: str = "",
+) -> bool:
+    """判斷這筆意外事件要不要出現在清單裡（純函式）。"""
+    if vendor_filter and incident.get("vendor") != vendor_filter:
+        return False
+    if status_filter and incident.get("status") != status_filter:
+        return False
+    if risk_level_filter and incident.get("risk_level") != risk_level_filter:
+        return False
+    if personnel_name_filter and personnel_name_filter not in (incident.get("personnel_name") or ""):
+        return False
+    return True
+
+
+def list_incident_events(
+    vendor_filter: str = "",
+    status_filter: str = "",
+    risk_level_filter: str = "",
+    personnel_name_filter: str = "",
+) -> list:
+    vendor_filter = (vendor_filter or "").strip()
+    status_filter = (status_filter or "").strip()
+    risk_level_filter = (risk_level_filter or "").strip()
+    personnel_name_filter = (personnel_name_filter or "").strip()
+
+    result = []
+    for snapshot in incident_events_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        if incident_matches_filters(data, vendor_filter, status_filter, risk_level_filter, personnel_name_filter):
+            result.append(data)
+    result.sort(key=lambda i: i.get("created_at", 0), reverse=True)
+    return result
+
+
+def list_open_incident_events() -> list:
+    """未結案案件清單，給每週一群組提醒跟系統登入提醒用。"""
+    result = []
+    for snapshot in incident_events_ref().where("status", "==", "open").stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda i: i.get("created_at", 0), reverse=True)
+    return result
+
+
+def set_incident_risk_level(incident_id: str, risk_level: str) -> bool:
+    """管理員在詳細頁設定風險等級，只接受合法的等級代碼。"""
+    if risk_level not in RISK_LEVELS:
+        return False
+    ref = incident_events_ref().document(incident_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"risk_level": risk_level})
+    return True
+
+
+def close_incident_event(incident_id: str) -> bool:
+    """標記結案，單向操作（跟補款/假別核准一樣，沒有重新打開的路徑，如果
+    真的填錯，可請管理員直接調整資料）。"""
+    ref = incident_events_ref().document(incident_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"status": "closed"})
+    return True

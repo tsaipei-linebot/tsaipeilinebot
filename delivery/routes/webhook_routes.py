@@ -11,10 +11,12 @@ from delivery import repository
 from delivery.config import (
     COOPERATION_TYPE_MAP,
     FORM_WEBHOOK_SECRET,
+    INCIDENT_REPORT_WEBHOOK_SECRET,
     VEHICLE_REPORT_WEBHOOK_SECRET,
     VENDOR_MAP,
 )
 from delivery.form_webhook import extract_answer
+from delivery.incident_report import format_weekly_reminder, handle_incident_report
 from delivery.vehicle_report import handle_vehicle_report
 
 router = APIRouter()
@@ -60,3 +62,31 @@ async def vehicle_report_webhook(request: Request, x_delivery_vehicle_secret: st
     text = body.get("text") or ""
     reply = handle_vehicle_report(text)
     return {"reply": reply}
+
+
+@router.post("/api/incident-report")
+async def incident_report_webhook(request: Request, x_delivery_incident_secret: str = Header(None)):
+    """跟 vehicle_report_webhook 同一個 GAS 專案、同一個 LINE 群組轉發過來，
+    但走獨立的密鑰/端點，解析成意外事件回報寫入資料庫。GAS 那邊收到回覆後
+    除了貼回原群組，還會另外推播同一則訊息到第二個群組（見
+    delivery-gas-project 的 Project6_Incident.js），這裡不需要知道第二個
+    群組是誰。"""
+    if not INCIDENT_REPORT_WEBHOOK_SECRET or x_delivery_incident_secret != INCIDENT_REPORT_WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    body = await request.json()
+    text = body.get("text") or ""
+    reply = handle_incident_report(text)
+    return {"reply": reply}
+
+
+@router.get("/api/incident-weekly-reminder-text")
+def incident_weekly_reminder_text(x_delivery_incident_secret: str = Header(None)):
+    """每週一由 GAS 的時間驅動觸發器呼叫，取得未結案意外事件的提醒文字。
+    這裡只負責「組訊息內容」，實際推播到 LINE 群組是 GAS 那邊用它自己手上
+    的 CHANNEL1 Token 做，Python 這邊不需要、也不會拿到那個 Token。"""
+    if not INCIDENT_REPORT_WEBHOOK_SECRET or x_delivery_incident_secret != INCIDENT_REPORT_WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    items = repository.list_open_incident_events()
+    return {"text": format_weekly_reminder(items)}
