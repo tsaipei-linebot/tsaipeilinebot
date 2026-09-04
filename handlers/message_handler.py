@@ -1,6 +1,6 @@
+import concurrent.futures
 import json
 import re
-import threading
 import traceback
 from linebot import LineBotApi
 from linebot.models import (
@@ -53,6 +53,39 @@ AI_DECISION_SCHEMA = {
     },
     "required": ["action", "reply"],
 }
+
+# ==========================================
+# AI 決策：用「限時同步等待」取代「一律非同步 push」
+#
+# 背景：壓力測試證實 Gemini 決策在中高併發下 p99 延遲會超過 LINE 30 秒
+# reply token 上限（見 HANDOFF.md）。但如果所有 AI 決策都改成「立即 ack
+# + 背景 push_message」，等於把「絕大多數其實幾秒內就能算完」的正常請求
+# 也一起從免費的 reply_message 改成計費、佔用月則數的 push_message
+# ——這是不必要的成本，真正需要 push 的只有真的算比較久的少數請求（長尾）。
+#
+# 改用「限時同步等待」：把 AI 決策丟進執行緒池，主執行緒最多等
+# AI_DECISION_SYNC_TIMEOUT_SECONDS 秒：
+#   - 多數請求會在時限內算完 → 直接用 reply_token 回覆，完全免費、跟原本
+#     行為一致。
+#   - 少數算比較久的請求，時限一到就先用 reply_token 回一句「查詢中」
+#     的 ack（reply_token 才不會逾時浪費掉），背景繼續算，算完後才改用
+#     push_message 補發正式答案——只有這一小部分長尾請求才會用到則數。
+#
+# ThreadPoolExecutor 用固定 max_workers（而不是每個請求各開一條 thread）
+# 除了避免高併發下無限增生執行緒之外，還有個附帶好處：對 Vertex AI 的呼叫
+# 併發數會被自然限流在 max_workers 以內，緩解壓力測試觀察到的「請求併發
+# 越高、429 重試退避疊加、越後面的請求越慢」的雪崩效應。
+#
+# 時限選 8 秒：從壓力測試結果看，多數請求在中低併發下幾秒內就有結果
+# （p50 約 4-6 秒），8 秒足以讓「正常速度」的請求都吃到免費 reply_message；
+# 選太長會讓真正變慢的請求也逼近甚至超過 30 秒 reply token 上限、失去用
+# ack 兜底的意義，選太短則會讓太多本來免費就能處理完的請求也被迫改走
+# 付費的 push_message。
+# ==========================================
+_AI_DECISION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=32, thread_name_prefix="ai-decision"
+)
+AI_DECISION_SYNC_TIMEOUT_SECONDS = 8
 
 
 def _build_quick_reply_buttons(labels: list, fallback: list) -> list:
@@ -385,31 +418,43 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=faq_reply_text, quick_reply=quick_reply))
                 return
 
-        # ---------------- 步驟 2：非同步觸發 AI 決策，避免 Gemini 延遲讓使用者收不到回覆 ----------------
+        # ---------------- 步驟 2：限時同步等待 AI 決策，只有長尾請求才改走背景 push ----------------
         # 壓力測試證實（見 HANDOFF.md）：Gemini 決策在中高併發下 p99 延遲會超過 LINE
-        # 30 秒 reply token 上限（實測併發 15 時 p99/max 達 40 秒），如果繼續同步等
-        # AI 算完才回覆，量大時會有部分使用者完全收不到任何回應、且不會有任何錯誤
-        # 提示。改成「立即用 reply_token 回一句已收到＋背景執行真正的 AI 決策＋算完
-        # 後改用沒有時間限制的 Push Message API 補發正式答案」：reply_token 一定在
-        # 使用者傳訊息後幾秒內就用掉，不會逾時；不管 Gemini 算多久，使用者最終都保證
-        # 會收到正式回覆。
+        # 30 秒 reply token 上限（實測併發 15 時 p99/max 達 40 秒）。但多數請求其實
+        # 幾秒內就能算完，所以不能一律改成「先 ack 再背景 push」——那樣會讓所有 AI
+        # 回覆都變成計費、佔用月則數的 push_message，即使原本用免費的 reply_message
+        # 就能準時回覆。
+        #
+        # 做法：把 AI 決策丟進執行緒池，主執行緒最多同步等
+        # AI_DECISION_SYNC_TIMEOUT_SECONDS 秒。時限內算完 → 直接用 reply_token 回覆
+        # 正式答案，完全免費。時限一到還沒算完 → 才用 reply_token 回一句「查詢中」
+        # 的 ack（讓 reply_token 不會逾時浪費掉），背景繼續算，算完後改用沒有時間
+        # 限制的 push_message 補發正式答案——只有這一小部分真的算比較久的長尾請求
+        # 才會用到則數。
         #
         # 重要部署前提：Cloud Run 預設只有在「處理請求期間」才配置 CPU，回應送出後
         # CPU 會被節流，背景執行緒可能因此卡住/變超慢。這個服務必須開啟「CPU 一律
         # 配置」（gcloud 的 --no-cpu-throttling，或 Console 編輯修訂版本頁「一律配置
-        # CPU」），否則這裡的背景執行緒不保證能可靠跑完。
-        ack_text = "收到您的訊息了！沛沛正在為您查詢最合適的資訊，請稍等一下下 🔍😊"
+        # CPU」），否則超過時限、真的走到背景 push 這條路的請求不保證能可靠跑完。
         append_user_history(user_id, "求職者", raw_msg)
-        # 刻意不把 ack_text 寫入對話歷史：這只是系統層級的「稍等」提示，不是真正的
-        # 對話內容，寫進去會佔用歷史視窗（只留最後 10 則）、也會讓下一輪 AI 看到的
-        # 對話紀錄被這句話打斷，變成「求職者提問」後面接的不是「沛沛的正式答案」。
-        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ack_text))
 
-        threading.Thread(
-            target=_run_ai_decision_and_push,
-            args=(user_id, raw_msg, active_jobs, faq_list, current_location, history_text, target_line_bot_api),
-            daemon=True,
-        ).start()
+        future = _AI_DECISION_EXECUTOR.submit(
+            _compute_ai_decision_messages,
+            user_id, raw_msg, active_jobs, faq_list, current_location, history_text,
+        )
+        try:
+            messages = future.result(timeout=AI_DECISION_SYNC_TIMEOUT_SECONDS)
+            target_line_bot_api.reply_message(reply_token, messages)
+        except concurrent.futures.TimeoutError:
+            ack_text = "收到您的訊息了！沛沛正在為您查詢最合適的資訊，請稍等一下下 🔍😊"
+            # 刻意不把 ack_text 寫入對話歷史：這只是系統層級的「稍等」提示，不是真正
+            # 的對話內容，寫進去會佔用歷史視窗（只留最後 10 則）、也會讓下一輪 AI
+            # 看到的對話紀錄被這句話打斷，變成「求職者提問」後面接的不是「沛沛的
+            # 正式答案」。
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ack_text))
+            future.add_done_callback(
+                lambda fut: _push_ai_decision_messages(fut, user_id, target_line_bot_api)
+            )
         return
 
     except Exception as e:
@@ -429,21 +474,37 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         )
 
 
-def _run_ai_decision_and_push(
+def _fallback_messages() -> TextSendMessage:
+    """AI 決策流程內部發生未預期例外時的保底訊息，同時給同步（reply_message）跟
+    逾時後背景（push_message）兩條路徑共用，確保無論走哪條路徑、保底文案都一致。"""
+    fallback_msg = "您好！我是招募顧問沛沛 😊 剛才系統稍有延遲，請問您想了解哪種類型的工作或發薪福利呢？"
+    return TextSendMessage(
+        text=fallback_msg,
+        quick_reply=QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="📍 找新莊工作", text="新莊工作")),
+            QuickReplyButton(action=MessageAction(label="📍 找桃園工作", text="桃園工作")),
+            QuickReplyButton(action=MessageAction(label="💰 了解發薪日", text="發薪日是哪天")),
+            QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+        ])
+    )
+
+
+def _compute_ai_decision_messages(
     user_id: str,
     raw_msg: str,
     active_jobs: list,
     faq_list: list,
     current_location: str,
     history_text: str,
-    target_line_bot_api: LineBotApi,
 ):
-    """在背景執行緒跑真正耗時的 AI 決策（候選集合建構 + Gemini 呼叫 + 解析），
-    是 process_user_message() 步驟 2 原本的內容搬過來的，差別只有：這裡執行的時候
-    reply_token 已經在 process_user_message() 用掉了（回過「查詢中」），所以全程
-    改用沒有時間限制的 push_message(user_id, ...) 送出正式答案，不能再用
-    reply_message。外層包一層 try/except：任何步驟失敗都要想辦法還是推播一則訊息
-    給使用者，不能讓使用者只收到「查詢中」就沒有下文。"""
+    """執行真正耗時的 AI 決策（候選集合建構 + Gemini 呼叫 + 解析），是
+    process_user_message() 步驟 2 原本的內容搬過來的。這個函式故意只負責「算出
+    答案」，不負責「怎麼送出去」——送出方式（免費的 reply_message 還是逾時後才
+    用的 push_message）由呼叫端決定，這樣同一份決策邏輯才能同時給「限時同步等待」
+    跟「逾時後背景補發」兩條路徑共用，不必重複兩份。
+
+    保證不會往外拋出例外：任何步驟失敗都在這裡攔截並回傳保底訊息，讓呼叫端
+    不需要再處理例外，只要送出這裡回傳的 messages 即可。"""
     try:
         _current_slots_for_candidates = get_user_slots(user_id)
         ai_job_candidates = build_ai_job_candidates(
@@ -543,8 +604,7 @@ def _run_ai_decision_and_push(
                 QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
                 QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
             ])
-            target_line_bot_api.push_message(user_id, TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons)))
-            return
+            return TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons))
 
         elif action == "RECOMMEND":
             reply_text = ai_reply_text or "太棒了！沛沛為您推薦以下符合需求的職缺："
@@ -558,8 +618,7 @@ def _run_ai_decision_and_push(
                 matched_jobs = ai_job_candidates[:4]
 
             flex_card = create_job_flex_card(matched_jobs, user_id, current_location)
-            target_line_bot_api.push_message(user_id, [TextSendMessage(text=reply_text), flex_card])
-            return
+            return [TextSendMessage(text=reply_text), flex_card]
 
         elif action in ("ASK", "NO_MATCH"):
             reply_text = ai_reply_text or "您好呀！沛沛隨時為您服務，想請問您偏好哪個地區或工作班別呢？"
@@ -572,18 +631,13 @@ def _run_ai_decision_and_push(
                 QuickReplyButton(action=MessageAction(label="🌙 固定夜班", text="夜班工作")),
                 QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
             ])
-            target_line_bot_api.push_message(user_id, TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons)))
-            return
+            return TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons))
 
         # ---------------- 保底引導[cite: 6] ----------------
         progressive_text, progressive_buttons = build_progressive_question(user_id, current_location)
         if progressive_text:
             append_user_history(user_id, "招募顧問沛沛", progressive_text)
-            target_line_bot_api.push_message(
-                user_id,
-                TextSendMessage(text=progressive_text, quick_reply=QuickReply(items=progressive_buttons))
-            )
-            return
+            return TextSendMessage(text=progressive_text, quick_reply=QuickReply(items=progressive_buttons))
 
         default_text = "您好呀！我是招募顧問沛沛 😊\n\n很高興為您服務！想了解您偏好在哪個地區上班？或是偏好早班還是夜班呢？"
         append_user_history(user_id, "招募顧問沛沛", default_text)
@@ -594,26 +648,29 @@ def _run_ai_decision_and_push(
             QuickReplyButton(action=MessageAction(label="🌙 固定夜班", text="夜班工作")),
             QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
         ])
-        target_line_bot_api.push_message(user_id, TextSendMessage(text=default_text, quick_reply=quick_reply))
+        return TextSendMessage(text=default_text, quick_reply=quick_reply)
 
     except Exception:
-        print(f"[背景 AI 決策異常 Traceback]: {traceback.format_exc()}")
-        fallback_msg = "您好！我是招募顧問沛沛 😊 剛才系統稍有延遲，請問您想了解哪種類型的工作或發薪福利呢？"
-        try:
-            target_line_bot_api.push_message(
-                user_id,
-                TextSendMessage(
-                    text=fallback_msg,
-                    quick_reply=QuickReply(items=[
-                        QuickReplyButton(action=MessageAction(label="📍 找新莊工作", text="新莊工作")),
-                        QuickReplyButton(action=MessageAction(label="📍 找桃園工作", text="桃園工作")),
-                        QuickReplyButton(action=MessageAction(label="💰 了解發薪日", text="發薪日是哪天")),
-                        QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
-                    ])
-                )
-            )
-        except Exception:
-            print(f"[背景 AI 決策 - 連 push_message 保底通知都失敗 Traceback]: {traceback.format_exc()}")
+        print(f"[AI 決策異常 Traceback]: {traceback.format_exc()}")
+        return _fallback_messages()
+
+
+def _push_ai_decision_messages(future: concurrent.futures.Future, user_id: str, target_line_bot_api: LineBotApi) -> None:
+    """限時同步等待逾時後的補發路徑：process_user_message() 已經先用 reply_token
+    回過「查詢中」的 ack，這裡是 future 算完後的 done-callback，改用沒有時間限制
+    的 push_message(user_id, ...) 補發正式答案。_compute_ai_decision_messages()
+    內部已經把所有例外都轉成保底訊息、保證不會往外拋例外，這裡的 try/except
+    純粹是最後一道防線，避免使用者只收到 ack 就沒有下文。"""
+    try:
+        messages = future.result()
+    except Exception:
+        print(f"[限時等待逾時後取得 AI 決策結果失敗 Traceback]: {traceback.format_exc()}")
+        messages = _fallback_messages()
+
+    try:
+        target_line_bot_api.push_message(user_id, messages)
+    except Exception:
+        print(f"[限時等待逾時後 push_message 補發失敗 Traceback]: {traceback.format_exc()}")
 
 
 def process_image_message(event, target_line_bot_api: LineBotApi):

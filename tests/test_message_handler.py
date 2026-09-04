@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import os
 import sys
@@ -10,7 +11,7 @@ from tests import _env  # noqa: F401  (匯入即副作用：見 _env.py 說明)
 from tests import _stub_gcp
 _stub_gcp.install()
 
-from linebot.models import QuickReplyButton, MessageAction
+from linebot.models import QuickReplyButton, MessageAction, TextSendMessage
 from handlers import message_handler as h
 
 
@@ -117,11 +118,14 @@ class ProcessImageMessageTests(unittest.TestCase):
 
 
 class AsyncAiDecisionArchitectureTests(unittest.TestCase):
-    """驗證非同步「立即 ack + 背景 push」架構：process_user_message() 走到需要
-    呼叫 Gemini 的路徑時，應該立刻用 reply_token 回一句「查詢中」並馬上返回
-    （不能同步卡住等 AI 算完），真正的答案改在背景執行緒算完後用 push_message
-    送出，藉此保證不管 Gemini 算多久使用者最終都會收到回覆（不受 LINE 30 秒
-    reply token 上限影響——這是壓力測試實測到 p99 超過 30 秒後改的架構）。"""
+    """驗證「限時同步等待、逾時才背景補發」架構：process_user_message() 走到需要
+    呼叫 Gemini 的路徑時，會把 AI 決策丟進執行緒池，最多同步等
+    AI_DECISION_SYNC_TIMEOUT_SECONDS 秒——時限內算完就直接用免費的 reply_token
+    回覆正式答案（不會變成計費的 push_message）；只有真的算比較久、超過時限的
+    請求，才會先用 reply_token 回一句「查詢中」，再改用沒有時間限制的
+    push_message 補發正式答案，藉此保證不管 Gemini 算多久使用者最終都會收到
+    回覆（不受 LINE 30 秒 reply token 上限影響——這是壓力測試實測到 p99 超過
+    30 秒後改的架構），同時避免把所有 AI 回覆都變成消耗則數的 push_message。"""
 
     def _make_event(self, text="有沒有特殊的職缺推薦", user_id="test-user-async"):
         event = MagicMock()
@@ -130,32 +134,69 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         event.message.text = text
         return event
 
-    def test_sends_immediate_ack_and_defers_ai_call_to_background_thread(self):
+    def test_fast_ai_decision_replies_via_free_reply_message(self):
+        # AI 決策在時限內算完 → 直接用 reply_token 回覆正式答案，完全不呼叫
+        # push_message（維持跟原本同步架構一樣免費）
         event = self._make_event()
         line_bot_api = MagicMock()
+        fast_message = TextSendMessage(text="這是即時算完的正式答案")
 
         with patch("handlers.message_handler.get_user_history", return_value=[]), \
              patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
              patch("handlers.message_handler.update_user_slots"), \
              patch("handlers.message_handler.append_user_history"), \
-             patch("handlers.message_handler.threading.Thread") as mock_thread_cls:
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=fast_message):
             h.process_user_message(event, line_bot_api)
 
-        # 立刻回一次 ack，不會同步等 AI 決策算完
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
         self.assertEqual(args[0], "valid-reply-token")
-        self.assertIn("查詢", args[1].text)
+        self.assertEqual(args[1], fast_message)
+        line_bot_api.push_message.assert_not_called()
 
-        # 真正的 AI 決策丟進背景 daemon thread，不會卡住行程結束
-        mock_thread_cls.assert_called_once()
-        _, kwargs = mock_thread_cls.call_args
-        self.assertEqual(kwargs.get("target"), h._run_ai_decision_and_push)
-        self.assertTrue(kwargs.get("daemon"))
-        mock_thread_cls.return_value.start.assert_called_once()
+    def test_slow_ai_decision_acks_then_pushes_via_push_message(self):
+        # AI 決策超過時限還沒算完 → 先用 reply_token 回一句「查詢中」的 ack，
+        # 之後才改用 push_message 補發正式答案
+        import threading
+        import time
 
-    def test_background_function_pushes_recommend_result_via_push_message(self):
+        event = self._make_event()
         line_bot_api = MagicMock()
+        release_compute = threading.Event()
+        slow_message = TextSendMessage(text="這是算比較久才算完的正式答案")
+
+        def _slow_compute(*args, **kwargs):
+            release_compute.wait(timeout=5)
+            return slow_message
+
+        with patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots"), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.AI_DECISION_SYNC_TIMEOUT_SECONDS", 0.05), \
+             patch("handlers.message_handler._compute_ai_decision_messages", side_effect=_slow_compute):
+            h.process_user_message(event, line_bot_api)
+
+            # 立刻回一次 ack，不會同步卡住等 AI 決策算完
+            line_bot_api.reply_message.assert_called_once()
+            args, _ = line_bot_api.reply_message.call_args
+            self.assertEqual(args[0], "valid-reply-token")
+            self.assertIn("查詢", args[1].text)
+            line_bot_api.push_message.assert_not_called()
+
+            # 讓背景的 AI 決策算完，觸發 done-callback 補發正式答案；用短輪詢
+            # 等待而不是動到共用的執行緒池，避免弄壞其他測試共用的狀態
+            release_compute.set()
+            deadline = time.monotonic() + 5
+            while not line_bot_api.push_message.called and time.monotonic() < deadline:
+                time.sleep(0.02)
+
+        line_bot_api.push_message.assert_called_once()
+        args, _ = line_bot_api.push_message.call_args
+        self.assertEqual(args[0], "test-user-async")
+        self.assertEqual(args[1], slow_message)
+
+    def test_compute_ai_decision_messages_returns_recommend_result(self):
         fake_decision = json.dumps({
             "action": "RECOMMEND", "reply": "推薦這個職缺給你", "ids": [0], "buttons": []
         })
@@ -167,29 +208,32 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
              patch("handlers.message_handler.build_ai_job_candidates", return_value=[fake_job]), \
              patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]), \
              patch("handlers.message_handler.create_job_flex_card", return_value="FLEX_CARD"):
-            h._run_ai_decision_and_push(
-                "test-user", "有推薦的職缺嗎", [], [], "新莊", "", line_bot_api
+            messages = h._compute_ai_decision_messages(
+                "test-user", "有推薦的職缺嗎", [], [], "新莊", ""
             )
 
-        # 背景執行緒用 push_message（不是 reply_message）送出正式答案
-        line_bot_api.reply_message.assert_not_called()
-        line_bot_api.push_message.assert_called_once()
-        args, _ = line_bot_api.push_message.call_args
-        self.assertEqual(args[0], "test-user")
-        messages = args[1]
         self.assertEqual(messages[0].text, "推薦這個職缺給你")
         self.assertEqual(messages[1], "FLEX_CARD")
 
-    def test_background_function_still_pushes_fallback_on_internal_exception(self):
-        # 就算背景執行緒內部整個爆炸（例如 Firestore/Notion/Gemini 任何一個環節
-        # 出問題），也一定要想辦法推播一則保底訊息給使用者，不能讓使用者只收到
-        # 「查詢中」的 ack 就沒有下文
-        line_bot_api = MagicMock()
-
+    def test_compute_ai_decision_messages_returns_fallback_on_internal_exception(self):
+        # 就算計算過程整個爆炸（例如 Firestore/Notion/Gemini 任何一個環節出問題），
+        # 也一定要回傳保底訊息，不能讓例外往外拋出、導致呼叫端完全沒有東西可送
         with patch("handlers.message_handler.get_user_slots", side_effect=RuntimeError("boom")):
-            h._run_ai_decision_and_push(
-                "test-user", "有推薦的職缺嗎", [], [], "", "", line_bot_api
+            message = h._compute_ai_decision_messages(
+                "test-user", "有推薦的職缺嗎", [], [], "", ""
             )
+
+        self.assertIn("延遲", message.text)
+
+    def test_push_ai_decision_messages_pushes_fallback_when_future_raises(self):
+        # done-callback 收到的 future 本身丟例外（理論上 _compute_ai_decision_messages
+        # 已經攔截所有例外，這裡是最後一道防線）時，仍要 push 一則保底訊息，不能
+        # 讓使用者只收到 ack 就沒有下文
+        line_bot_api = MagicMock()
+        future = concurrent.futures.Future()
+        future.set_exception(RuntimeError("boom"))
+
+        h._push_ai_decision_messages(future, "test-user", line_bot_api)
 
         line_bot_api.push_message.assert_called_once()
         args, _ = line_bot_api.push_message.call_args
