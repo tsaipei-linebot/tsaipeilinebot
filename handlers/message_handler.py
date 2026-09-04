@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 import traceback
 from linebot import LineBotApi
 from linebot.models import (
@@ -384,7 +385,66 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=faq_reply_text, quick_reply=quick_reply))
                 return
 
-        # ---------------- 步驟 2：Vertex AI 顧問推理 (FAQ 優先 + 未收錄捕獲 + 條件退讓)[cite: 6] ----------------
+        # ---------------- 步驟 2：非同步觸發 AI 決策，避免 Gemini 延遲讓使用者收不到回覆 ----------------
+        # 壓力測試證實（見 HANDOFF.md）：Gemini 決策在中高併發下 p99 延遲會超過 LINE
+        # 30 秒 reply token 上限（實測併發 15 時 p99/max 達 40 秒），如果繼續同步等
+        # AI 算完才回覆，量大時會有部分使用者完全收不到任何回應、且不會有任何錯誤
+        # 提示。改成「立即用 reply_token 回一句已收到＋背景執行真正的 AI 決策＋算完
+        # 後改用沒有時間限制的 Push Message API 補發正式答案」：reply_token 一定在
+        # 使用者傳訊息後幾秒內就用掉，不會逾時；不管 Gemini 算多久，使用者最終都保證
+        # 會收到正式回覆。
+        #
+        # 重要部署前提：Cloud Run 預設只有在「處理請求期間」才配置 CPU，回應送出後
+        # CPU 會被節流，背景執行緒可能因此卡住/變超慢。這個服務必須開啟「CPU 一律
+        # 配置」（gcloud 的 --no-cpu-throttling，或 Console 編輯修訂版本頁「一律配置
+        # CPU」），否則這裡的背景執行緒不保證能可靠跑完。
+        ack_text = "收到您的訊息了！沛沛正在為您查詢最合適的資訊，請稍等一下下 🔍😊"
+        append_user_history(user_id, "求職者", raw_msg)
+        # 刻意不把 ack_text 寫入對話歷史：這只是系統層級的「稍等」提示，不是真正的
+        # 對話內容，寫進去會佔用歷史視窗（只留最後 10 則）、也會讓下一輪 AI 看到的
+        # 對話紀錄被這句話打斷，變成「求職者提問」後面接的不是「沛沛的正式答案」。
+        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ack_text))
+
+        threading.Thread(
+            target=_run_ai_decision_and_push,
+            args=(user_id, raw_msg, active_jobs, faq_list, current_location, history_text, target_line_bot_api),
+            daemon=True,
+        ).start()
+        return
+
+    except Exception as e:
+        print(f"[處理訊息嚴重異常 Traceback]: {traceback.format_exc()}")
+        fallback_msg = "您好！我是招募顧問沛沛 😊 剛才系統稍有延遲，請問您想了解哪種類型的工作或發薪福利呢？"
+        target_line_bot_api.reply_message(
+            reply_token,
+            TextSendMessage(
+                text=fallback_msg,
+                quick_reply=QuickReply(items=[
+                    QuickReplyButton(action=MessageAction(label="📍 找新莊工作", text="新莊工作")),
+                    QuickReplyButton(action=MessageAction(label="📍 找桃園工作", text="桃園工作")),
+                    QuickReplyButton(action=MessageAction(label="💰 了解發薪日", text="發薪日是哪天")),
+                    QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+                ])
+            )
+        )
+
+
+def _run_ai_decision_and_push(
+    user_id: str,
+    raw_msg: str,
+    active_jobs: list,
+    faq_list: list,
+    current_location: str,
+    history_text: str,
+    target_line_bot_api: LineBotApi,
+):
+    """在背景執行緒跑真正耗時的 AI 決策（候選集合建構 + Gemini 呼叫 + 解析），
+    是 process_user_message() 步驟 2 原本的內容搬過來的，差別只有：這裡執行的時候
+    reply_token 已經在 process_user_message() 用掉了（回過「查詢中」），所以全程
+    改用沒有時間限制的 push_message(user_id, ...) 送出正式答案，不能再用
+    reply_message。外層包一層 try/except：任何步驟失敗都要想辦法還是推播一則訊息
+    給使用者，不能讓使用者只收到「查詢中」就沒有下文。"""
+    try:
         _current_slots_for_candidates = get_user_slots(user_id)
         ai_job_candidates = build_ai_job_candidates(
             active_jobs,
@@ -456,12 +516,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
         ai_output = query_gemini_ai(ai_prompt, response_schema=AI_DECISION_SCHEMA)
         print(f"[Gemini 決策輸出]:\n{ai_output}\n")
 
-        append_user_history(user_id, "求職者", raw_msg)
-
-        # ---------------- 步驟 3：解析 AI 輸出（結構化 JSON）[cite: 6] ----------------
         # 開啟結構化輸出模式後 ai_output 保證是合法 JSON（或空字串，代表 AI 呼叫失敗）；
         # 這裡仍保留 try/except 當最後一道防線，任何非預期情況都會落到 action="" 走
-        # 步驟 4 保底引導，不會讓例外往外拋出中斷整個對話。
+        # 保底引導，不會讓例外往外拋出中斷整個對話。
         try:
             decision = json.loads(ai_output) if ai_output else {}
         except (json.JSONDecodeError, TypeError):
@@ -486,7 +543,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 QuickReplyButton(action=MessageAction(label="☀️ 固定早班", text="早班工作")),
                 QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
             ])
-            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons)))
+            target_line_bot_api.push_message(user_id, TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons)))
             return
 
         elif action == "RECOMMEND":
@@ -501,7 +558,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 matched_jobs = ai_job_candidates[:4]
 
             flex_card = create_job_flex_card(matched_jobs, user_id, current_location)
-            target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), flex_card])
+            target_line_bot_api.push_message(user_id, [TextSendMessage(text=reply_text), flex_card])
             return
 
         elif action in ("ASK", "NO_MATCH"):
@@ -515,16 +572,15 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
                 QuickReplyButton(action=MessageAction(label="🌙 固定夜班", text="夜班工作")),
                 QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
             ])
-            quick_reply = QuickReply(items=buttons)
-            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=quick_reply))
+            target_line_bot_api.push_message(user_id, TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons)))
             return
 
-        # ---------------- 步驟 4：保底引導[cite: 6] ----------------
+        # ---------------- 保底引導[cite: 6] ----------------
         progressive_text, progressive_buttons = build_progressive_question(user_id, current_location)
         if progressive_text:
             append_user_history(user_id, "招募顧問沛沛", progressive_text)
-            target_line_bot_api.reply_message(
-                reply_token,
+            target_line_bot_api.push_message(
+                user_id,
                 TextSendMessage(text=progressive_text, quick_reply=QuickReply(items=progressive_buttons))
             )
             return
@@ -538,23 +594,26 @@ def process_user_message(event, target_line_bot_api: LineBotApi):
             QuickReplyButton(action=MessageAction(label="🌙 固定夜班", text="夜班工作")),
             QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
         ])
-        target_line_bot_api.reply_message(reply_token, TextSendMessage(text=default_text, quick_reply=quick_reply))
+        target_line_bot_api.push_message(user_id, TextSendMessage(text=default_text, quick_reply=quick_reply))
 
-    except Exception as e:
-        print(f"[處理訊息嚴重異常 Traceback]: {traceback.format_exc()}")
+    except Exception:
+        print(f"[背景 AI 決策異常 Traceback]: {traceback.format_exc()}")
         fallback_msg = "您好！我是招募顧問沛沛 😊 剛才系統稍有延遲，請問您想了解哪種類型的工作或發薪福利呢？"
-        target_line_bot_api.reply_message(
-            reply_token,
-            TextSendMessage(
-                text=fallback_msg,
-                quick_reply=QuickReply(items=[
-                    QuickReplyButton(action=MessageAction(label="📍 找新莊工作", text="新莊工作")),
-                    QuickReplyButton(action=MessageAction(label="📍 找桃園工作", text="桃園工作")),
-                    QuickReplyButton(action=MessageAction(label="💰 了解發薪日", text="發薪日是哪天")),
-                    QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
-                ])
+        try:
+            target_line_bot_api.push_message(
+                user_id,
+                TextSendMessage(
+                    text=fallback_msg,
+                    quick_reply=QuickReply(items=[
+                        QuickReplyButton(action=MessageAction(label="📍 找新莊工作", text="新莊工作")),
+                        QuickReplyButton(action=MessageAction(label="📍 找桃園工作", text="桃園工作")),
+                        QuickReplyButton(action=MessageAction(label="💰 了解發薪日", text="發薪日是哪天")),
+                        QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+                    ])
+                )
             )
-        )
+        except Exception:
+            print(f"[背景 AI 決策 - 連 push_message 保底通知都失敗 Traceback]: {traceback.format_exc()}")
 
 
 def process_image_message(event, target_line_bot_api: LineBotApi):

@@ -2,7 +2,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -114,6 +114,87 @@ class ProcessImageMessageTests(unittest.TestCase):
         line_bot_api = MagicMock()
         h.process_image_message(event, line_bot_api)
         line_bot_api.reply_message.assert_called_once()
+
+
+class AsyncAiDecisionArchitectureTests(unittest.TestCase):
+    """驗證非同步「立即 ack + 背景 push」架構：process_user_message() 走到需要
+    呼叫 Gemini 的路徑時，應該立刻用 reply_token 回一句「查詢中」並馬上返回
+    （不能同步卡住等 AI 算完），真正的答案改在背景執行緒算完後用 push_message
+    送出，藉此保證不管 Gemini 算多久使用者最終都會收到回覆（不受 LINE 30 秒
+    reply token 上限影響——這是壓力測試實測到 p99 超過 30 秒後改的架構）。"""
+
+    def _make_event(self, text="有沒有特殊的職缺推薦", user_id="test-user-async"):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = user_id
+        event.message.text = text
+        return event
+
+    def test_sends_immediate_ack_and_defers_ai_call_to_background_thread(self):
+        event = self._make_event()
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots"), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.threading.Thread") as mock_thread_cls:
+            h.process_user_message(event, line_bot_api)
+
+        # 立刻回一次 ack，不會同步等 AI 決策算完
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[0], "valid-reply-token")
+        self.assertIn("查詢", args[1].text)
+
+        # 真正的 AI 決策丟進背景 daemon thread，不會卡住行程結束
+        mock_thread_cls.assert_called_once()
+        _, kwargs = mock_thread_cls.call_args
+        self.assertEqual(kwargs.get("target"), h._run_ai_decision_and_push)
+        self.assertTrue(kwargs.get("daemon"))
+        mock_thread_cls.return_value.start.assert_called_once()
+
+    def test_background_function_pushes_recommend_result_via_push_message(self):
+        line_bot_api = MagicMock()
+        fake_decision = json.dumps({
+            "action": "RECOMMEND", "reply": "推薦這個職缺給你", "ids": [0], "buttons": []
+        })
+
+        fake_job = {"職缺名稱(對外)": "測試職缺", "職缺名稱": "測試職缺", "系統廠商名稱": "測試廠商"}
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision), \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[fake_job]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]), \
+             patch("handlers.message_handler.create_job_flex_card", return_value="FLEX_CARD"):
+            h._run_ai_decision_and_push(
+                "test-user", "有推薦的職缺嗎", [], [], "新莊", "", line_bot_api
+            )
+
+        # 背景執行緒用 push_message（不是 reply_message）送出正式答案
+        line_bot_api.reply_message.assert_not_called()
+        line_bot_api.push_message.assert_called_once()
+        args, _ = line_bot_api.push_message.call_args
+        self.assertEqual(args[0], "test-user")
+        messages = args[1]
+        self.assertEqual(messages[0].text, "推薦這個職缺給你")
+        self.assertEqual(messages[1], "FLEX_CARD")
+
+    def test_background_function_still_pushes_fallback_on_internal_exception(self):
+        # 就算背景執行緒內部整個爆炸（例如 Firestore/Notion/Gemini 任何一個環節
+        # 出問題），也一定要想辦法推播一則保底訊息給使用者，不能讓使用者只收到
+        # 「查詢中」的 ack 就沒有下文
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.get_user_slots", side_effect=RuntimeError("boom")):
+            h._run_ai_decision_and_push(
+                "test-user", "有推薦的職缺嗎", [], [], "", "", line_bot_api
+            )
+
+        line_bot_api.push_message.assert_called_once()
+        args, _ = line_bot_api.push_message.call_args
+        self.assertEqual(args[0], "test-user")
+        self.assertIn("延遲", args[1].text)
 
 
 if __name__ == "__main__":
