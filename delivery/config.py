@@ -19,6 +19,13 @@ GCS_BUCKET_NAME = os.getenv("DELIVERY_GCS_BUCKET", "")
 # 等同這個 webhook 不存在（跟 main.py 的 LOAD_TEST_SECRET 是一樣的作法）。
 FORM_WEBHOOK_SECRET = os.getenv("DELIVERY_FORM_WEBHOOK_SECRET", "")
 
+# 車輛領車/還車回報：另一個獨立 LINE 官方帳號（跟這支招募機器人是不同的
+# LINE Channel）的 Google Apps Script 專案（delivery-gas-project）收到群組
+# 訊息後，會呼叫 /delivery/api/vehicle-report 這支 webhook 轉發訊息內容，
+# 要帶的共用密鑰（見 X-Delivery-Vehicle-Secret header）。未設定時該端點
+# 一律回傳 403，等同這個 webhook 不存在。
+VEHICLE_REPORT_WEBHOOK_SECRET = os.getenv("DELIVERY_VEHICLE_REPORT_SECRET", "")
+
 # 廠商清單（選擇廠商 / 人員所屬廠商）
 VENDORS = [
     {"code": "shopee", "name": "蝦皮"},
