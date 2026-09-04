@@ -111,14 +111,23 @@ class LoadTestMessageRequest(BaseModel):
 
 
 class _StubLineBotApi:
-    """頂替真正的 LineBotApi：process_user_message() 只會呼叫到 reply_message()
-    這一個方法，這裡直接記錄下來、不對外發送任何請求。"""
+    """頂替真正的 LineBotApi：process_user_message() 同步路徑會呼叫 reply_message()，
+    超過 AI_DECISION_SYNC_TIMEOUT_SECONDS 的長尾請求則會在背景執行緒算完後改呼叫
+    push_message()（見 handlers/message_handler.py 的限時同步等待架構）。這兩個方法
+    都只是記錄下來、不對外發送任何真實請求；push_message 一樣要頂替，否則長尾請求
+    背景補發時會因為 stub 沒有這個方法而丟出 AttributeError（雖然會被上層的保底
+    try/except 攔住不影響服務，但會在 Cloud Run log 裡持續噴出無意義的錯誤，混淆
+    之後想從 log 判斷背景補發是否真的成功送達的判斷）。"""
 
     def __init__(self):
         self.last_call = None
+        self.last_push_call = None
 
     def reply_message(self, reply_token, messages):
         self.last_call = {"reply_token": reply_token, "messages": messages}
+
+    def push_message(self, user_id, messages):
+        self.last_push_call = {"user_id": user_id, "messages": messages}
 
 
 class _FakeMessage:
