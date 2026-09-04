@@ -26,12 +26,13 @@
 
 - **【需與外部工程師協調】線上履歷填完後自動跳轉回官方 LINE 帳號**：求職者點擊「填寫線上履歷」會被導去外部履歷系統（`resume.tsaipei.com.tw`，網址設定在 `config.py` 的 `DEFAULT_RESUME_URLS`），但填完表單後目前不會自動導回 LINE 官方帳號對話。這個機制牽涉到外部履歷系統那端的表單送出後導轉邏輯（例如導回 LINE 的 `line://` deep link 或加上完成頁），不是這個 repo 這邊能單方面決定/實作的，需要先跟負責 `resume.tsaipei.com.tw` 的外部工程師討論介接方式，確認後才回來這裡實作對應的程式（例如可能要在 `flex_service.py` 的履歷網址加上 redirect 參數，或是新增一個 webhook/callback 端點接收「已完成填寫」通知）。
 - ✅ **帳單帳戶升級**：已完成，目前是正式付費帳戶（不是免費試用）。
-- **【已確認高風險，需要處理】Vertex AI 回應延遲逼近/超過 LINE 30 秒 reply token 時限**：用 `scripts/load_test.py`（PR #13）在**已經是付費帳戶**的狀態下實測：
+- ✅ **【已解決，見下方「已完成」第 23 項】Vertex AI 回應延遲逼近/超過 LINE 30 秒 reply token 時限**：用 `scripts/load_test.py`（PR #13）在**已經是付費帳戶**的狀態下實測：
   - 併發 5、總數 30：p50=5.6s、p95=14.3s、p99/max=21.4s——還在範圍內，但長尾已經偏高
   - 併發 15、總數 50：p50=4.2s、p95=29.0s、**p99/max=40.2s（已確定超過 30 秒）**，50 筆中有 3 筆超過 25 秒，且明顯集中在批次後段（觀察到「越晚送出的請求越慢」的雪崩效應）
-  - 因為帳單已經是付費帳戶，**排除了「免費試用配額過低」這個解釋**，代表 Vertex AI Dynamic Shared Quota 在中等併發（15 左右）就會出現排隊/互搶的雪崩效應，推測是 `ai_service.py` 自己的 429 重試機制在多個請求同時觸發時，重試等待時間彼此疊加造成的。以正式頻道估計的「群發尖峰每分鐘數百則」規模來看，**這個問題幾乎可以確定會發生**，會導致部分求職者完全收不到機器人回覆（reply token 過期，沒有任何錯誤提示，使用者只會覺得已讀不回）。
-  - **建議的根本解法**：改成「先立即回一句『查詢中，稍等』，AI 算完後改用 LINE Push Message API 補發正式答案」的非同步架構——Push Message 沒有 30 秒限制，不管 AI 算多久都保證使用者最終會收到回覆。這是架構層改動（`message_handler.py` 需要拆成「立即回覆」+「背景任務算完再 push」兩段），下次接手時列為優先項目。
-  - 次要可以並行嘗試的方向：去 Vertex AI 主控台申請調高 Gemini 模型的配額上限（`gemini-2.5-flash`／`gemini-2.5-flash-lite`，地區 `global`），看能不能緩解雪崩效應，但不保證能根治，架構層的非同步改法才是真正保證使用者一定收到回覆的做法。
+  - 因為帳單已經是付費帳戶，**排除了「免費試用配額過低」這個解釋**，代表 Vertex AI Dynamic Shared Quota 在中等併發（15 左右）就會出現排隊/互搶的雪崩效應，推測是 `ai_service.py` 自己的 429 重試機制在多個請求同時觸發時，重試等待時間彼此疊加造成的。
+  - 根本解法（限時同步等待＋長尾才背景 push）已實作完成，細節見下方「已完成」第 23 項，包含一次踩坑與修正的紀錄（第一版把所有回覆都改成計費 push，第二版才修正成只有長尾才 push）。
+  - 次要可以並行嘗試的方向（仍未做）：去 Vertex AI 主控台申請調高 Gemini 模型的配額上限（`gemini-2.5-flash`／`gemini-2.5-flash-lite`，地區 `global`），看能不能進一步緩解雪崩效應、降低走到長尾 push 路徑的比例。
+  - **建議下次接手時做**：套用第 23 項的架構後，用 `scripts/load_test.py --concurrency 15 --total 50` 重新壓測驗證：(a) 多數請求應該還是免費的 `reply_message`（可以從回應內容/log 判斷有沒有先收到「查詢中」的 ack 來間接確認）；(b) 確認 Cloud Run 修訂版本已開啟「CPU 一律配置」（`--no-cpu-throttling`），否則長尾請求的背景補發不保證可靠完成。
 - **考慮加上錯誤告警機制**：目前所有例外只靠 `print()` 寫進 Cloud Run log，沒有主動通知。量小時人工看 log 還行，正式頻道建議至少設一個 Cloud Monitoring alert（例如 5xx 或例外次數異常）。
 - **服務帳戶權限過寬，需要重新調整（安全性）**：確認過 `recruitment-bot` 服務目前使用的服務帳戶掛的角色是：服務帳戶使用者、記錄寫入者、**編輯者**、Aiplatform 編輯者、Artifact Registry 寫入者、Cloud Run 管理員。「編輯者 (Editor)」範圍過大（幾乎整個專案的資源都能讀寫），而且清單裡**沒有任何 Firestore/Datastore 相關角色**——代表目前機器人能讀寫 Firestore，其實完全是靠「編輯者」在撐著，這代表直接移除「編輯者」會讓機器人立刻壞掉。修正時**順序一定要對**，避免服務中斷：
   1. 先新增「Cloud Datastore 使用者」（`roles/datastore.user`）角色給同一個服務帳戶
@@ -82,6 +83,10 @@
 
 21. **AI 回覆解析 bug（PR #6）**：實測「有理貨的工作嗎」時發現，Gemini 若沒有照 prompt 範例在 `REPLY:`/`BUTTONS:` 之間換行，`BUTTONS:` 原始文字會被當成訊息內容顯示給使用者。
 22. **AI 決策改用結構化 JSON 輸出（PR #7、#8，徹底解決 #21 這類問題的根源）**：`ai_service.py` 新增 `response_schema` 支援 Gemini 原生結構化輸出模式（`response_mime_type="application/json"`）；`message_handler.py` 的 `ai_prompt` 跟解析邏輯改成 `AI_DECISION_SCHEMA` + `json.loads`，取代原本的 `ACTION:`/`REPLY:`/`BUTTONS:`/`IDS:` 文字格式 + 正則表達式解析，格式錯誤在 API 層級就不可能發生。已用真實對話驗證按鈕正確渲染、無格式外洩、跨地區退讓推薦語氣自然。
+23. **AI 決策改成「限時同步等待＋長尾才背景 push」，解決 reply token 30 秒逾時問題（PR #38，修正 PR #37 的成本問題）**：對應上方待辦事項「Vertex AI 回應延遲逼近/超過 LINE 30 秒 reply token 時限」的最終解法。`message_handler.py` 把 AI 決策丟進固定大小（32 個 worker）的 `ThreadPoolExecutor`，主執行緒最多同步等 `AI_DECISION_SYNC_TIMEOUT_SECONDS`（8 秒）：時限內算完就直接用 `reply_token` 回覆（免費，跟改動前行為一致）；超過時限才先用 `reply_token` 回一句「查詢中」的 ack，背景算完後改用沒有時間限制的 `push_message` 補發正式答案。原本的 `_run_ai_decision_and_push()` 拆成 `_compute_ai_decision_messages()`（純計算，回傳 messages、內部攔截例外回傳保底訊息）、`_fallback_messages()`（保底文案，兩條路徑共用）、`_push_ai_decision_messages()`（逾時後的 done-callback）。
+    - **踩過的坑，下次改這段邏輯要記住**：PR #37 第一版把「所有」AI 決策都改成「立即 ack + 背景 push」，結果讓原本免費的 `reply_message` 全部變成計費、佔用 LINE 月則數的 `push_message`——即使大多數請求其實幾秒內就能算完、根本不需要 push。PR #38 才修正成「先同步限時等，只有真的算比較久的長尾請求才 push」。**任何時候要動這段邏輯，都要記得 reply_message 免費、push_message 計費，不要為了保證回得到而讓所有請求都改走計費路徑。**
+    - **部署前提沒變**：超過時限走到背景補發的請求，仍然依賴 Cloud Run 開啟「CPU 一律配置」（`--no-cpu-throttling`，或 Console 編輯修訂版本頁「一律配置 CPU」），否則回應送出後 CPU 節流可能讓背景執行緒卡住/變超慢。
+    - **尚未驗證**：改完之後還沒有重新用 `scripts/load_test.py --concurrency 15 --total 50` 對正式環境壓測過，下次接手建議先做這件事確認效果。
 
 ## 目前所有檔案的狀態
 
