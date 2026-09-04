@@ -9,7 +9,7 @@ from tests import _stub_gcp
 _stub_gcp.install()
 
 from delivery.repository import vehicle_event_error, vehicle_matches_filters
-from delivery.vehicle_report import parse_vehicle_report
+from delivery.vehicle_report import handle_vehicle_report, parse_vehicle_report
 
 
 class ParseVehicleReportTests(unittest.TestCase):
@@ -91,10 +91,15 @@ class ParseVehicleReportTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "invalid_date")
 
-    def test_unrelated_text_is_missing_fields(self):
+    def test_unrelated_text_is_not_a_report(self):
+        # 群組裡的日常聊天完全不含任何回報欄位關鍵字，不該被當成「格式錯誤」
+        # 對待（那樣同仁在群組裡聊天會一直被機器人回覆格式錯誤訊息）。
         result = parse_vehicle_report("你好，請問明天有班嗎？")
         self.assertFalse(result["ok"])
-        self.assertEqual(result["error"], "missing_fields")
+        self.assertEqual(result["error"], "not_a_report")
+
+    def test_handle_vehicle_report_stays_silent_for_unrelated_text(self):
+        self.assertEqual(handle_vehicle_report("早安，今天天氣不錯"), "")
 
 
 class VehicleEventErrorTests(unittest.TestCase):

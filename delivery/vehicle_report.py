@@ -39,6 +39,12 @@ PARSE_ERROR_MESSAGES = {
     "invalid_date": "❌ 日期格式看不懂，請用「2026-8-25」這種年-月-日的格式重新回覆。",
 }
 
+# 群組裡任何訊息都會被轉發進來解析（見 delivery-gas-project 的
+# Project5_Vehicle.js），所以完全沒有任何一個回報欄位關鍵字（廠商/姓名/
+# 車號/日期/地點）的訊息一律視為同仁在群組裡的普通聊天，不當成回報格式錯誤
+# 處理——不然像「早安」「謝謝」這種訊息也會被回覆一堆錯誤說明，很擾民。
+NOT_A_REPORT = "not_a_report"
+
 EVENT_ERROR_MESSAGES = {
     "vehicle_not_found": "❌ 系統裡查不到這台車，請先請管理員到網頁「車輛管理」新增這台車再回報。",
     "vendor_mismatch": "❌ 這台車登記的廠商跟回報的不一樣，請確認車號或廠商有沒有打錯。",
@@ -69,6 +75,9 @@ def parse_vehicle_report(text: str) -> dict:
             m = pattern.match(line)
             if m:
                 fields[key] = m.group(1).strip()
+
+    if not fields:
+        return {"ok": False, "error": NOT_A_REPORT}
 
     vendor_raw = fields.get("vendor", "")
     personnel_name = fields.get("personnel_name", "")
@@ -104,10 +113,14 @@ def parse_vehicle_report(text: str) -> dict:
 
 
 def handle_vehicle_report(text: str) -> str:
-    """解析 + 寫入資料庫，回傳要回覆到 LINE 群組的文字。延後 import
-    delivery.repository，避免這個模組被載入時就需要 Firestore 憑證。"""
+    """解析 + 寫入資料庫，回傳要回覆到 LINE 群組的文字；回傳空字串代表這則
+    訊息看起來不是在嘗試回報（例如同仁的日常聊天），呼叫端應該保持沉默、
+    不要回覆任何東西。延後 import delivery.repository，避免這個模組被載入
+    時就需要 Firestore 憑證。"""
     parsed = parse_vehicle_report(text)
     if not parsed["ok"]:
+        if parsed["error"] == NOT_A_REPORT:
+            return ""
         return PARSE_ERROR_MESSAGES.get(parsed["error"], "❌ 格式有誤，請確認後重新回報。")
 
     from delivery import repository
