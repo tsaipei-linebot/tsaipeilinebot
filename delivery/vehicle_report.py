@@ -103,7 +103,9 @@ def parse_vehicle_report(text: str) -> dict:
 
     vendor_raw = fields.get("vendor", "")
     personnel_name = fields.get("personnel_name", "")
-    vehicle_no = fields.get("vehicle_no", "")
+    # 車號大小寫正規化跟網頁新增車輛那邊（repository._normalize_vehicle_no）
+    # 一致，避免同仁在群組手打時大小寫沒對齊，被誤判成「查不到這台車」。
+    vehicle_no = fields.get("vehicle_no", "").upper()
     location = fields.get("location", "")
     start_raw = fields.get("start_date", "")
     end_raw = fields.get("end_date", "")
