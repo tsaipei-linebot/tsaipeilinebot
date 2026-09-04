@@ -161,14 +161,6 @@ const BatchEnhanceJobService = {
       return null;
     }
 
-    let accessToken;
-    try {
-      accessToken = VertexAiAuthService.getAccessToken();
-    } catch (authErr) {
-      console.error('❌ 取得 Vertex AI 存取權杖失敗:', authErr);
-      return null;
-    }
-
     const title = job.external_title || job.title || '優質職缺';
     const location = smartLocation || '依公司指派地點';
     const salary = job.salary || '依公司規定';
@@ -207,72 +199,24 @@ const BatchEnhanceJobService = {
 
     // 改用 Vertex AI（跟招募聊天機器人共用同一個 GCP 專案），這份模型清單已在該專案的
     // 招募機器人 (services/ai_service.py) 正式環境驗證可用，不是憑猜測填入。
+    // 實際呼叫（含 429 重試）邏輯收斂在共用函式 callVertexAiWithRetry（程式碼.js），
+    // 跟 Project_Job.js 共用同一份，避免兩邊重複維護。
     const targetModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
-    const MAX_RETRY_PER_MODEL = 2; // 同一模型遇到 429 額度限制時的重試次數上限
-    const RETRY_BASE_DELAY_MS = 1000; // 重試遞增等待時間基準
 
     for (let i = 0; i < targetModels.length; i++) {
       const model = targetModels[i];
-      const url = buildVertexAiGenerateContentUrl(model);
+      const rawText = callVertexAiWithRetry(model, prompt, '[BatchEnhance]');
+      if (!rawText) continue;
 
-      const payload = {
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json'
-        }
-      };
-
-      const options = {
-        method: 'post',
-        contentType: 'application/json',
-        headers: { 'Authorization': 'Bearer ' + accessToken },
-        payload: JSON.stringify(payload),
-        muteHttpExceptions: true
-      };
-
-      for (let attempt = 0; attempt <= MAX_RETRY_PER_MODEL; attempt++) {
-        try {
-          const response = UrlFetchApp.fetch(url, options);
-          const resCode = response.getResponseCode();
-
-          if (resCode === 200) {
-            const jsonRes = JSON.parse(response.getContentText());
-            let textRes = '';
-            const parts = jsonRes.candidates && jsonRes.candidates[0] && jsonRes.candidates[0].content && jsonRes.candidates[0].content.parts;
-            if (Array.isArray(parts)) {
-              parts.forEach(p => { if (p.text) textRes += p.text; });
-            }
-
-            if (textRes) {
-              const cleanJson = textRes.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-              const parsed = JSON.parse(cleanJson);
-              return {
-                highlight: String(parsed.highlight || '').trim(),
-                formatted_detail: String(parsed.formatted_detail || '').trim()
-              };
-            }
-            // HTTP 200 但沒有文字內容：換下一個模型，重試同一模型也不會有幫助
-            break;
-          }
-
-          if (resCode === 429) {
-            const willRetry = attempt < MAX_RETRY_PER_MODEL;
-            console.warn('⚠️ [BatchEnhance] 模型 [' + model + '] 額度限制 (HTTP 429)，' + (willRetry ? '等待後重試...' : '重試已達上限，換下一個模型'));
-            if (willRetry) {
-              Utilities.sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
-              continue;
-            }
-            break;
-          }
-
-          // 其他錯誤：記錄詳細狀態碼與回應內容方便排查，直接換下一個模型
-          console.warn('[BatchEnhance] 模型 [' + model + '] 呼叫失敗 (HTTP ' + resCode + '): ' + response.getContentText().slice(0, 300));
-          break;
-        } catch (e) {
-          console.warn('[BatchEnhance] 模型 [' + model + '] 呼叫或解析異常:', e);
-          break;
-        }
+      try {
+        const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+        const parsed = JSON.parse(cleanJson);
+        return {
+          highlight: String(parsed.highlight || '').trim(),
+          formatted_detail: String(parsed.formatted_detail || '').trim()
+        };
+      } catch (parseErr) {
+        console.warn('[BatchEnhance] 模型 [' + model + '] 回傳內容不是合法 JSON，換下一個模型:', parseErr);
       }
     }
 

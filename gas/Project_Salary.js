@@ -278,6 +278,15 @@ const SalarySheetService = {
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === salaryId) {
         const rowIdx = i + 1;
+
+        // 已退回的補款單不需要留存在試算表裡（也不需要同步給會計看到），直接刪除該列
+        if (status === '已退回') {
+          sheet.deleteRow(rowIdx);
+          SpreadsheetApp.flush();
+          console.log(`🗑️ 薪資補款單 [${salaryId}] 已退回，已從「${CONFIG.SHEET_NAME_SALARY}」刪除該筆紀錄`);
+          return null;
+        }
+
         sheet.getRange(rowIdx, 18).setValue(status);        // R (18): 審核狀態
         sheet.getRange(rowIdx, 19).setValue(supervisorId);  // S (19): 核准主管
         sheet.getRange(rowIdx, 20).setValue(approvedTime);  // T (20): 核准時間

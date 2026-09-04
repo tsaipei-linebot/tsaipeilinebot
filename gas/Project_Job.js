@@ -180,14 +180,6 @@ const AiJobDescriptionService = {
       return fallbackResult;
     }
 
-    let accessToken;
-    try {
-      accessToken = VertexAiAuthService.getAccessToken();
-    } catch (authErr) {
-      console.error('❌ [AiJob] 取得 Vertex AI 存取權杖失敗，使用本地保底規則產出:', authErr);
-      return fallbackResult;
-    }
-
     const prompt = `
 你是一位資深勞動法規顧問與專業人資文案專家。你的任務是根據下方【嚴格沙盒隔離之 6 項對外欄位資料】，進行語意理解與分流整理，一次性輸出 4 個專業招募文案欄位的 JSON 物件。
 
@@ -268,94 +260,44 @@ ${sanitizedDesc}
 
     // 改用 Vertex AI（跟招募聊天機器人共用同一個 GCP 專案），這份模型清單已在該專案的
     // 招募機器人 (services/ai_service.py) 正式環境驗證可用，不是憑猜測填入。
+    // 實際呼叫（含 429 重試）邏輯收斂在共用函式 callVertexAiWithRetry（程式碼.js），
+    // 跟 Project_BatchEnhance.js 共用同一份，避免兩邊重複維護。
     const targetModels = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
-    const MAX_RETRY_PER_MODEL = 2; // 同一模型遇到 429 額度限制時的重試次數上限
-    const RETRY_BASE_DELAY_MS = 1000; // 重試遞增等待時間基準
 
     for (let i = 0; i < targetModels.length; i++) {
       const model = targetModels[i];
-      const url = buildVertexAiGenerateContentUrl(model);
+      const rawText = callVertexAiWithRetry(model, prompt, '[AiJob 4in1]');
+      if (!rawText) continue;
 
-      const payload = {
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json'
-        }
-      };
+      try {
+        const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+        const parsed = JSON.parse(cleanJson);
 
-      const options = {
-        method: 'post',
-        contentType: 'application/json',
-        headers: { 'Authorization': 'Bearer ' + accessToken },
-        payload: JSON.stringify(payload),
-        muteHttpExceptions: true
-      };
+        let polishedTitle = String(parsed.external_title || '').trim();
+        polishedTitle = polishedTitle.replace(/^["'【]*(.*?)["'】]*$/g, '【$1】').replace(/^【【/, '【').replace(/】】$/, '】');
+        polishedTitle = this.enforceComplianceRules(polishedTitle) || fallbackResult.external_title;
 
-      for (let attempt = 0; attempt <= MAX_RETRY_PER_MODEL; attempt++) {
+        const polishedDesc = this.enforceComplianceRules(String(parsed.external_desc || '')) || fallbackResult.external_desc;
+        const highlight = String(parsed.highlight || '').trim() || fallbackResult.highlight;
+        const formattedDetail = String(parsed.formatted_detail || '').trim() || fallbackResult.formatted_detail;
+
+        const result = {
+          external_title: polishedTitle,
+          external_desc: polishedDesc,
+          highlight: highlight,
+          formatted_detail: formattedDetail,
+          isFallback: false
+        };
+
         try {
-          console.log(`📡 [AiJob 4in1] 呼叫模型 [${model}] 生成職缺文案...(第 ${attempt + 1} 次嘗試)`);
-          const response = UrlFetchApp.fetch(url, options);
-          const resCode = response.getResponseCode();
-
-          if (resCode === 200) {
-            const jsonRes = JSON.parse(response.getContentText());
-            let textRes = '';
-            const parts = jsonRes.candidates && jsonRes.candidates[0] && jsonRes.candidates[0].content && jsonRes.candidates[0].content.parts;
-            if (Array.isArray(parts)) {
-              parts.forEach(p => { if (p.text) textRes += p.text; });
-            }
-
-            if (textRes) {
-              const cleanJson = textRes.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-              const parsed = JSON.parse(cleanJson);
-
-              let polishedTitle = String(parsed.external_title || '').trim();
-              polishedTitle = polishedTitle.replace(/^["'【]*(.*?)["'】]*$/g, '【$1】').replace(/^【【/, '【').replace(/】】$/, '】');
-              polishedTitle = this.enforceComplianceRules(polishedTitle) || fallbackResult.external_title;
-
-              const polishedDesc = this.enforceComplianceRules(String(parsed.external_desc || '')) || fallbackResult.external_desc;
-              const highlight = String(parsed.highlight || '').trim() || fallbackResult.highlight;
-              const formattedDetail = String(parsed.formatted_detail || '').trim() || fallbackResult.formatted_detail;
-
-              console.log(`✅ [AiJob 4in1] 模型 [${model}] 成功生成 4 合 1 職缺文案！`);
-              const result = {
-                external_title: polishedTitle,
-                external_desc: polishedDesc,
-                highlight: highlight,
-                formatted_detail: formattedDetail,
-                isFallback: false
-              };
-
-              try {
-                CacheService.getScriptCache().put(cacheKey, JSON.stringify(result), 21600);
-              } catch (cacheWriteErr) {
-                console.warn('[AiJob 4in1] 寫入快取失敗 (不影響本次結果):', cacheWriteErr);
-              }
-
-              return result;
-            }
-            // HTTP 200 但沒有文字內容：換下一個模型，重試同一模型也不會有幫助
-            break;
-          }
-
-          if (resCode === 429) {
-            const willRetry = attempt < MAX_RETRY_PER_MODEL;
-            console.warn(`⚠️ [AiJob 4in1] 模型 [${model}] 額度限制 (HTTP 429)，${willRetry ? '等待後重試...' : '重試已達上限，換下一個模型'}`);
-            if (willRetry) {
-              Utilities.sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
-              continue;
-            }
-            break;
-          }
-
-          // 其他錯誤：記錄詳細狀態碼與回應內容方便排查，直接換下一個模型
-          console.warn(`[AiJob 4in1] 模型 [${model}] 呼叫失敗 (HTTP ${resCode}): ${response.getContentText().slice(0, 300)}`);
-          break;
-        } catch (err) {
-          console.warn(`[AiJob 4in1] 模型 [${model}] 呼叫異常:`, err);
-          break;
+          CacheService.getScriptCache().put(cacheKey, JSON.stringify(result), 21600);
+        } catch (cacheWriteErr) {
+          console.warn('[AiJob 4in1] 寫入快取失敗 (不影響本次結果):', cacheWriteErr);
         }
+
+        return result;
+      } catch (parseErr) {
+        console.warn(`[AiJob 4in1] 模型 [${model}] 回傳內容不是合法 JSON，換下一個模型:`, parseErr);
       }
     }
 

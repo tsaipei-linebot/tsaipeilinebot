@@ -157,6 +157,85 @@ function buildVertexAiGenerateContentUrl(model) {
   return `https://${host}/v1/projects/${encodeURIComponent(CONFIG.GCP_PROJECT_ID)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
 }
 
+/**
+ * 呼叫單一 Vertex AI 模型（含 429 額度限制重試），供 Project_Job.js / Project_BatchEnhance.js 共用，
+ * 避免兩邊各自維護一份幾乎逐字相同的呼叫/重試/錯誤處理邏輯。
+ * 成功時回傳模型輸出的原始文字（可能仍包含 ```json 標記，由呼叫端自行清理與解析 JSON）；
+ * 失敗（含重試用盡、非 200 錯誤、例外）時回傳 null，由呼叫端決定是否換下一個模型或使用保底文案。
+ *
+ * @param {string} model 模型名稱，例如 'gemini-2.5-flash'
+ * @param {string} prompt 傳給模型的完整 prompt
+ * @param {string} logPrefix log 訊息前綴，方便從執行項目分辨是哪個服務呼叫的（例如 '[AiJob 4in1]'）
+ */
+function callVertexAiWithRetry(model, prompt, logPrefix) {
+  const MAX_RETRY_PER_MODEL = 2; // 同一模型遇到 429 額度限制時的重試次數上限
+  const RETRY_BASE_DELAY_MS = 1000; // 重試遞增等待時間基準
+
+  let accessToken;
+  try {
+    accessToken = VertexAiAuthService.getAccessToken();
+  } catch (authErr) {
+    console.error(`${logPrefix} 取得 Vertex AI 存取權杖失敗:`, authErr);
+    return null;
+  }
+
+  const url = buildVertexAiGenerateContentUrl(model);
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'Authorization': 'Bearer ' + accessToken },
+    payload: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: 'application/json'
+      }
+    }),
+    muteHttpExceptions: true
+  };
+
+  for (let attempt = 0; attempt <= MAX_RETRY_PER_MODEL; attempt++) {
+    try {
+      console.log(`${logPrefix} 呼叫模型 [${model}] 生成內容...(第 ${attempt + 1} 次嘗試)`);
+      const response = UrlFetchApp.fetch(url, options);
+      const resCode = response.getResponseCode();
+
+      if (resCode === 200) {
+        const jsonRes = JSON.parse(response.getContentText());
+        let textRes = '';
+        const parts = jsonRes.candidates && jsonRes.candidates[0] && jsonRes.candidates[0].content && jsonRes.candidates[0].content.parts;
+        if (Array.isArray(parts)) {
+          parts.forEach(p => { if (p.text) textRes += p.text; });
+        }
+        if (textRes) {
+          console.log(`✅ ${logPrefix} 模型 [${model}] 成功生成內容！`);
+          return textRes;
+        }
+        // HTTP 200 但沒有文字內容：換下一個模型，重試同一模型也不會有幫助
+        return null;
+      }
+
+      if (resCode === 429) {
+        const willRetry = attempt < MAX_RETRY_PER_MODEL;
+        console.warn(`⚠️ ${logPrefix} 模型 [${model}] 額度限制 (HTTP 429)，${willRetry ? '等待後重試...' : '重試已達上限，換下一個模型'}`);
+        if (willRetry) {
+          Utilities.sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+          continue;
+        }
+        return null;
+      }
+
+      // 其他錯誤：記錄詳細狀態碼與回應內容方便排查，直接換下一個模型
+      console.warn(`${logPrefix} 模型 [${model}] 呼叫失敗 (HTTP ${resCode}): ${response.getContentText().slice(0, 300)}`);
+      return null;
+    } catch (err) {
+      console.warn(`${logPrefix} 模型 [${model}] 呼叫異常:`, err);
+      return null;
+    }
+  }
+  return null;
+}
+
 // 動態取得目標推播群組 ID
 function getTargetLineGroupId() {
   const dynamicId = (PropertiesService.getScriptProperties().getProperty('TARGET_LINE_GROUP_ID') || '').trim();
