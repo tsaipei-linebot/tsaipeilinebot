@@ -7,28 +7,32 @@
 // ==============================================================================
 // 1. 系統環境設定
 // ==============================================================================
+// 指令碼屬性只在載入 CONFIG 時集中讀取一次，避免同一次執行重複呼叫
+// PropertiesService.getScriptProperties()（GAS 服務呼叫本身有固定開銷）
+const _scriptProps = PropertiesService.getScriptProperties();
+
 const CONFIG = {
-  LINE_CHANNEL_ACCESS_TOKEN: (PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN') || '').trim(),
+  LINE_CHANNEL_ACCESS_TOKEN: (_scriptProps.getProperty('LINE_CHANNEL_ACCESS_TOKEN') || '').trim(),
   // GAS 的 Web App 無法讀取 HTTP Header（拿不到 X-Line-Signature），
   // 改用只有本系統與 LINE Webhook 設定網址知道的隨機密鑰，作為 Webhook 來源驗證。
-  LINE_WEBHOOK_SECRET: (PropertiesService.getScriptProperties().getProperty('LINE_WEBHOOK_SECRET') || '').trim(),
+  LINE_WEBHOOK_SECRET: (_scriptProps.getProperty('LINE_WEBHOOK_SECRET') || '').trim(),
   // 管理端查詢用密鑰：保護會回傳同仁名單等內部資料的 doGet 端點，避免公開洩漏
-  ADMIN_API_SECRET: (PropertiesService.getScriptProperties().getProperty('ADMIN_API_SECRET') || '').trim(),
-  NOTION_API_KEY: (PropertiesService.getScriptProperties().getProperty('NOTION_API_KEY') || '').trim(),
-  NOTION_DATABASE_ID: (PropertiesService.getScriptProperties().getProperty('NOTION_DATABASE_ID') || '').replace(/-/g, '').trim(),
+  ADMIN_API_SECRET: (_scriptProps.getProperty('ADMIN_API_SECRET') || '').trim(),
+  NOTION_API_KEY: (_scriptProps.getProperty('NOTION_API_KEY') || '').trim(),
+  NOTION_DATABASE_ID: (_scriptProps.getProperty('NOTION_DATABASE_ID') || '').replace(/-/g, '').trim(),
   NOTION_VERSION: '2022-06-28',
-  GOOGLE_DRIVE_FOLDER_ID: (PropertiesService.getScriptProperties().getProperty('GOOGLE_DRIVE_FOLDER_ID') || '').trim(),
-  SPREADSHEET_ID: (PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || '').trim(),
+  GOOGLE_DRIVE_FOLDER_ID: (_scriptProps.getProperty('GOOGLE_DRIVE_FOLDER_ID') || '').trim(),
+  SPREADSHEET_ID: (_scriptProps.getProperty('SPREADSHEET_ID') || '').trim(),
   SHEET_NAME_ORG: '員工主管組織表',
   SHEET_NAME_SALARY: '薪資補款紀錄',
   SHEET_NAME_PROJECT: '專案合約紀錄',
-  HR_ACCOUNTING_EMAILS: PropertiesService.getScriptProperties().getProperty('HR_ACCOUNTING_EMAILS') || 'finance@tsaipei.com.tw',
+  HR_ACCOUNTING_EMAILS: _scriptProps.getProperty('HR_ACCOUNTING_EMAILS') || 'finance@tsaipei.com.tw',
   DEFAULT_LINE_GROUP_ID: 'C0fd6d96dc33202b3c636c5f3b62a5250',
-  ADMIN_LINE_USER_ID: (PropertiesService.getScriptProperties().getProperty('ADMIN_LINE_USER_ID') || '').trim(),
+  ADMIN_LINE_USER_ID: (_scriptProps.getProperty('ADMIN_LINE_USER_ID') || '').trim(),
   // Vertex AI（跟招募聊天機器人共用同一個 GCP 專案），取代原本 Gemini Developer API Key 的方式，
   // 避免卡在 AI Studio 免費層級極低的配額限制
-  GCP_PROJECT_ID: (PropertiesService.getScriptProperties().getProperty('GCP_PROJECT_ID') || 'tsaipei-505807').trim(),
-  GCP_LOCATION: (PropertiesService.getScriptProperties().getProperty('GCP_LOCATION') || 'global').trim()
+  GCP_PROJECT_ID: (_scriptProps.getProperty('GCP_PROJECT_ID') || 'tsaipei-505807').trim(),
+  GCP_LOCATION: (_scriptProps.getProperty('GCP_LOCATION') || 'global').trim()
 };
 
 // 正確 LINE ID 驗證正則
