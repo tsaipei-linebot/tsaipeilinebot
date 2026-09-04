@@ -7,7 +7,7 @@ from linebot import LineBotApi
 from linebot.models import (
     TextSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
-from config import STAFFED_HOURS_START, STAFFED_HOURS_END, TAIPEI_TZ
+from config import STAFFED_HOURS_START, STAFFED_HOURS_END, STAFFED_HOURS_GUARD_ENABLED, TAIPEI_TZ
 from services.session_service import (
     get_user_history, append_user_history, get_user_slots, update_user_slots, clear_user_slots, CLEAR_SLOT
 )
@@ -130,9 +130,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
         return
 
-    if not bypass_staffed_hours_guard and _is_staffed_hours():
+    if STAFFED_HOURS_GUARD_ENABLED and not bypass_staffed_hours_guard and _is_staffed_hours():
         # 白天交給真人專員在 LINE 聊天模式手動回覆，沛沛不主動介入，避免兩邊
-        # 同時回覆互相打架（詳見 HANDOFF.md「日夜接力」）。
+        # 同時回覆互相打架（詳見 HANDOFF.md「日夜接力」）。這個守門邏輯本身
+        # 靠 STAFFED_HOURS_GUARD_ENABLED 這個總開關控制生不生效，見 config.py
+        # 說明——還在測試頻道、LINE 後台排程還沒設定好之前保持關閉，避免白天
+        # 測試時機器人看起來像故障。
         return
 
     raw_msg = event.message.text.strip()
@@ -707,7 +710,7 @@ def process_image_message(event, target_line_bot_api: LineBotApi):
     if reply_token in ["00000000000000000000000000000000", "ffffffffffffffffffffffffffffffff"]:
         return
 
-    if _is_staffed_hours():
+    if STAFFED_HOURS_GUARD_ENABLED and _is_staffed_hours():
         # 白天交給真人專員手動處理，理由同 process_user_message()。
         return
 

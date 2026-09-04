@@ -80,7 +80,15 @@ LOAD_TEST_SECRET = os.getenv("LOAD_TEST_SECRET", "")
 # STAFFED_HOURS_START～STAFFED_HOURS_END 這段時間內，沛沛完全不主動回覆，
 # 交給真人專員在 LINE 聊天模式手動處理（見 handlers/message_handler.py
 # 的 _is_staffed_hours()）。
+#
+# STAFFED_HOURS_GUARD_ENABLED：這個機制的總開關，預設關閉（不管幾點都照舊
+# 回覆，等同這個功能還沒上線）。還在測試頻道、LINE 官方帳號後台的「回應時間
+# 設定」排程還沒設好之前，開著這個守門邏輯會讓白天測試時機器人看起來像故障
+# （完全不回覆），所以刻意讓程式碼合併進 main 後不會立刻生效。等正式要切換
+# 到「白天真人、晚上沛沛」的運作模式時，才去 Cloud Run 設定環境變數
+# STAFFED_HOURS_GUARD_ENABLED=true 打開，不需要再改程式碼、重新部署一次即可。
 # ==========================================
+STAFFED_HOURS_GUARD_ENABLED = os.getenv("STAFFED_HOURS_GUARD_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 STAFFED_HOURS_START = time(10, 10)
 STAFFED_HOURS_END = time(18, 50)
 TAIPEI_TZ = pytz.timezone("Asia/Taipei")
