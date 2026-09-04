@@ -401,7 +401,16 @@ function doPost(e) {
     }
     
     const requestType = requestData.type;
-    
+
+    // 蜜罐機器人偵測：表單頁面有一個對真人隱藏的欄位（hp_field），真人看不到也不會填寫，
+    // 但單純爬蟲/自動化程式碰到欄位常會自動填值。只套用在對外公開表單送出的請求類型，
+    // 一旦觸發直接回傳「成功」但不實際處理，避免讓機器人知道自己被擋下而改用其他手法。
+    const HONEYPOT_PROTECTED_TYPES = ['SUBMIT_JOB', 'SUBMIT_SALARY', 'SUBMIT_PROJECT'];
+    if (HONEYPOT_PROTECTED_TYPES.includes(requestType) && String(requestData.hp_field || '').trim() !== '') {
+      console.warn(`🤖 蜜罐欄位被觸發，判定為非真人自動送出，已忽略此請求 (type=${requestType})`);
+      return createJsonResponse({ status: 'success', message: '已收到，感謝您的提交。' });
+    }
+
     if (requestType === 'GET_JOBS') {
       const userName = String(requestData.userName || '').trim();
       const userId = String(requestData.userId || '').trim();
