@@ -249,7 +249,12 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
 class StaffedHoursGuardTests(unittest.TestCase):
     """驗證「日夜接力」的白天守門邏輯：同仁上班時段（10:10–18:50，含 10 分鐘
     交接緩衝，見 config.py 說明）沛沛完全不主動回覆，交給真人專員在 LINE
-    聊天模式手動處理；這段時間之外才會進到原本的快速路徑／AI 決策邏輯。"""
+    聊天模式手動處理；這段時間之外才會進到原本的快速路徑／AI 決策邏輯。
+
+    這整個機制受 STAFFED_HOURS_GUARD_ENABLED 這個總開關控制，預設關閉——
+    還在測試頻道、LINE 後台排程還沒設定好之前，就算剛好在白天測試，機器人
+    也要維持「不管幾點都照舊回覆」的舊行為，不能讓人誤以為壞掉。下面驗證
+    守門邏輯生效行為的測試都會另外把這個開關 patch 成 True。"""
 
     def test_is_staffed_hours_boundaries(self):
         # 邊界採「左閉右開」：10:10 算已經上班、18:50 算已經下班（機器人啟動）
@@ -272,7 +277,8 @@ class StaffedHoursGuardTests(unittest.TestCase):
         event.message.text = "有沒有工作"
         line_bot_api = MagicMock()
 
-        with patch("handlers.message_handler._is_staffed_hours", return_value=True), \
+        with patch("handlers.message_handler.STAFFED_HOURS_GUARD_ENABLED", True), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=True), \
              patch("handlers.message_handler.fetch_jobs_data") as mock_fetch_jobs, \
              patch("handlers.message_handler.fetch_faqs_data") as mock_fetch_faqs:
             h.process_user_message(event, line_bot_api)
@@ -282,6 +288,32 @@ class StaffedHoursGuardTests(unittest.TestCase):
         line_bot_api.push_message.assert_not_called()
         mock_fetch_jobs.assert_not_called()
         mock_fetch_faqs.assert_not_called()
+
+    def test_guard_disabled_by_default_replies_even_during_staffed_hours(self):
+        # STAFFED_HOURS_GUARD_ENABLED 預設關閉：還在測試頻道、LINE 後台排程
+        # 還沒設定好之前，就算 _is_staffed_hours() 判斷是白天，也要維持「不管
+        # 幾點都照舊回覆」的舊行為，不能讓人誤以為機器人壞掉。這裡故意不 patch
+        # STAFFED_HOURS_GUARD_ENABLED，直接用它在 config.py 的預設值。
+        self.assertFalse(h.STAFFED_HOURS_GUARD_ENABLED)
+
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-guard-off"
+        event.message.text = "有沒有工作"
+        line_bot_api = MagicMock()
+        fast_message = TextSendMessage(text="開關關閉時照舊回覆")
+
+        with patch("handlers.message_handler._is_staffed_hours", return_value=True), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots"), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=fast_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], fast_message)
 
     def test_process_user_message_bypass_flag_ignores_staffed_hours(self):
         # /internal/load-test-message 端點靠這個旗標，讓壓力測試不管執行時間
@@ -293,7 +325,8 @@ class StaffedHoursGuardTests(unittest.TestCase):
         line_bot_api = MagicMock()
         fast_message = TextSendMessage(text="壓力測試繞過白天守門")
 
-        with patch("handlers.message_handler._is_staffed_hours", return_value=True), \
+        with patch("handlers.message_handler.STAFFED_HOURS_GUARD_ENABLED", True), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=True), \
              patch("handlers.message_handler.get_user_history", return_value=[]), \
              patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
              patch("handlers.message_handler.update_user_slots"), \
@@ -311,7 +344,8 @@ class StaffedHoursGuardTests(unittest.TestCase):
         event.source.user_id = "test-user-day"
         line_bot_api = MagicMock()
 
-        with patch("handlers.message_handler._is_staffed_hours", return_value=True):
+        with patch("handlers.message_handler.STAFFED_HOURS_GUARD_ENABLED", True), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=True):
             h.process_image_message(event, line_bot_api)
 
         line_bot_api.reply_message.assert_not_called()
