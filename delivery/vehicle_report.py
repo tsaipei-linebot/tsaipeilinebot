@@ -42,6 +42,15 @@ _FIELD_PATTERNS = {
 
 _DATE_PATTERN = re.compile(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$")
 
+# 範本／說明文字裡常用「（空白）」提示同仁這欄不用填，但同仁複製範本時偶爾
+# 會連這幾個字也一起打進去，變成該欄位「有填但填的是空白字樣」；這種情況
+# 應該當成沒填，不要當成日期格式錯誤來擋。
+_BLANK_PLACEHOLDER_PATTERN = re.compile(r"^[（(]?\s*空白\s*[）)]?$")
+
+
+def _is_blank_placeholder(value: str) -> bool:
+    return bool(_BLANK_PLACEHOLDER_PATTERN.match((value or "").strip()))
+
 PARSE_ERROR_MESSAGES = {
     "missing_fields": "❌ 回報格式有誤：廠商、姓名、車號、開始或結束日期（擇一）、地點都要填，請照範本重新回覆。",
     "invalid_vendor": "❌ 廠商看不懂，請填蝦皮／UD／UC／順豐其中一個。",
@@ -98,6 +107,10 @@ def parse_vehicle_report(text: str) -> dict:
     location = fields.get("location", "")
     start_raw = fields.get("start_date", "")
     end_raw = fields.get("end_date", "")
+    if _is_blank_placeholder(start_raw):
+        start_raw = ""
+    if _is_blank_placeholder(end_raw):
+        end_raw = ""
     start_date = _normalize_date(start_raw)
     end_date = _normalize_date(end_raw)
 
