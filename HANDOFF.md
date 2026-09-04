@@ -34,6 +34,8 @@
   - ✅ **Cloud Run「CPU 一律配置」已開啟**：`gcloud run services update recruitment-bot --region asia-east1 --no-cpu-throttling`，目前修訂版本 `recruitment-bot-00126-7rs` 已套用。
   - 修正後併發 15、總數 50 重新實測：p50=4.50s、p95=9.59s、**p99/max=13.31s**（含網路）／伺服器端純處理 p99/max=10.78s，安全落在 30 秒門檻內。50 筆中有 15 筆（約 30%）落在 8~9 秒區間，確認長尾（ack+背景 push）路徑有被正確觸發。
   - 次要可以並行嘗試的方向（仍未做）：① 去 Vertex AI 主控台申請調高 Gemini 模型的配額上限（`gemini-2.5-flash`／`gemini-2.5-flash-lite`，地區 `global`），看能不能進一步緩解雪崩效應、降低走到長尾 push 路徑的比例；② 觀察到部分請求耗時明顯超過 8 秒同步時限（最高到 10.78s），推測是 Cloud Run vCPU 數量偏少、高併發下 Python GIL 競爭造成的延遲，可考慮檢查/調高 `recruitment-bot` 的 vCPU 配置。
+- **【程式碼已完成，仍需使用者手動設定 LINE 後台】日夜接力：白天真人、晚上沛沛**：程式碼端已完成（見下方「已完成」第 24 項）——同仁上班時段（10:10–18:50，含 10 分鐘交接緩衝）`message_handler.py` 會靜默略過所有訊息，交給真人在 LINE 聊天模式手動處理；這個時段之外才會進到原本的快速路徑／AI 決策邏輯。**還缺一步 LINE 官方帳號後台的手動設定**：到「設定」→「回應設定」→「回應時間設定」，排程 10:10–18:50 切到「聊天」模式（同仁手動回覆）、18:50–10:10 切到「Bot」模式（webhook 交給沛沛），這步無法用程式碼代勞，需要使用者自己去 LINE 後台操作。另外要留意：2022 年更新後「聊天」模式跟 Webhook 可以並存，所以就算沒設定或設定錯誤，我們自己的守門邏輯（`_is_staffed_hours()`）還是會擋住白天的自動回覆，兩邊算是雙重保險。
+  - 已知限制：真人在 LINE App／OA 後台手動回覆完全不會寫入 Firestore（LINE 平台沒有提供這類事件的 webhook），晚間沛沛接手時看不到白天談過什麼，屬於預期中的限制，非 bug。
 - **考慮加上錯誤告警機制**：目前所有例外只靠 `print()` 寫進 Cloud Run log，沒有主動通知。量小時人工看 log 還行，正式頻道建議至少設一個 Cloud Monitoring alert（例如 5xx 或例外次數異常）。
 - **服務帳戶權限過寬，需要重新調整（安全性）**：確認過 `recruitment-bot` 服務目前使用的服務帳戶掛的角色是：服務帳戶使用者、記錄寫入者、**編輯者**、Aiplatform 編輯者、Artifact Registry 寫入者、Cloud Run 管理員。「編輯者 (Editor)」範圍過大（幾乎整個專案的資源都能讀寫），而且清單裡**沒有任何 Firestore/Datastore 相關角色**——代表目前機器人能讀寫 Firestore，其實完全是靠「編輯者」在撐著，這代表直接移除「編輯者」會讓機器人立刻壞掉。修正時**順序一定要對**，避免服務中斷：
   1. 先新增「Cloud Datastore 使用者」（`roles/datastore.user`）角色給同一個服務帳戶
@@ -88,6 +90,9 @@
     - **踩過的坑，下次改這段邏輯要記住**：PR #37 第一版把「所有」AI 決策都改成「立即 ack + 背景 push」，結果讓原本免費的 `reply_message` 全部變成計費、佔用 LINE 月則數的 `push_message`——即使大多數請求其實幾秒內就能算完、根本不需要 push。PR #38 才修正成「先同步限時等，只有真的算比較久的長尾請求才 push」。**任何時候要動這段邏輯，都要記得 reply_message 免費、push_message 計費，不要為了保證回得到而讓所有請求都改走計費路徑。**
     - ✅ **部署前提已完成**：Cloud Run「CPU 一律配置」已開啟（`--no-cpu-throttling`），目前修訂版本 `recruitment-bot-00126-7rs` 已套用，背景執行緒不會再受回應送出後的 CPU 節流影響。
     - ✅ **已重新壓測驗證**：`scripts/load_test.py --concurrency 15 --total 50` 實測 p99/max 從 40.2s 降到 13.31s（含網路）／10.78s（純伺服器處理），安全落在 30 秒門檻內，且有約 30% 請求觀察到落在 8 秒同步時限附近，證實長尾路徑確實有被觸發。細節見上方待辦事項。壓測時也順手發現並修掉一個測試盲點：`/internal/load-test-message` 端點的 stub 沒實作 `push_message()`，導致每次長尾請求都在 log 噴出無意義的錯誤（PR #40）。
+24. **日夜接力：同仁上班時段沛沛靜默，交給真人手動回覆（PR #42）**：對應上方「日夜接力」待辦事項的程式碼部分。`config.py` 新增 `STAFFED_HOURS_START`（10:10）／`STAFFED_HOURS_END`（18:50）／`TAIPEI_TZ`；`message_handler.py` 新增 `_is_staffed_hours()`，`process_user_message()`／`process_image_message()` 一開頭就檢查，命中同仁上班時段（含 10 分鐘交接緩衝）就直接靜默 return，不做任何 Notion/Firestore/Gemini 呼叫。`process_user_message()` 新增 `bypass_staffed_hours_guard` 參數，只給 `/internal/load-test-message` 內部壓力測試端點用，避免壓測結果受執行當下是白天還是晚上影響。
+    - **緩衝時間的取捨**：機器人比同仁實際下班（19:00）提早 10 分鐘於 18:50 啟動、比同仁實際上班（10:00）延後 10 分鐘於 10:10 才停止，寧可緩衝時段內偶爾跟同仁重複回覆（無害），也不要讓求職者在交接空檔完全沒人接（比重複回覆嚴重很多）。
+    - **仍待使用者完成**：LINE 官方帳號後台的「回應時間設定」排程仍需手動設定，見上方待辦事項。
 
 ## 目前所有檔案的狀態
 
