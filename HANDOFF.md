@@ -1136,9 +1136,26 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
      `/api/job-system-sso/exchange` 換回姓名/PIN，再照原本手動登入會做的
      事（呼叫同一支 `VERIFY_LOGIN` GAS 端點、寫入
      `sessionStorage`/`currentUser`）；沒有代碼或交換失敗就呼叫原本的
-     登入流程，不影響現有的手動登入。這段程式碼還沒實際交付，需要先確認
-     那個系統的部署方式（Netlify 是接 Git 自動部署，還是手動上傳檔案）才
-     知道怎麼套用。
+     登入流程，不影響現有的手動登入。
+
+**上線狀態**：以上設定（環境變數、Cloud Scheduler、`index.html` 銜接片段
+手動上傳 Netlify）都已完成並實測成功，同仁登入 `/portal` 點「職缺維護
+系統」卡片可以直接免登入進去。
+
+**踩過的雷：職缺系統的 PIN 欄位存的是雜湊值，不是明文**——上線初期同步
+完 Firestore 後實測，發現全部帳號都卡在手動輸入畫面、Console 顯示
+`verify_login_failed`。追查那個系統的主程式（「程式碼.gs」）才發現
+`EmployeeRegistrationService.processRegistration()` 寫入組織表時，PIN
+其實是先做 `sha256Hash(pin)`（無鹽 SHA-256）才存進 Sheet；登入驗證
+`OrgService.verifyEmployeePin()` 收到明文 PIN 後也會自己雜湊一次比對。
+我們原本的同步邏輯把 Sheet 裡的雜湊值原樣存進 Firestore、再原樣轉發給
+`VERIFY_LOGIN`，等於雜湊了兩次，永遠對不上。修法：PIN 只有 4 位數字
+（10000 種組合），`job_portal_sso.py` 的 `_resolve_plaintext_pin()`
+預先算好這 10000 種雜湊值對照回明文的表，同步時直接反查存明文 PIN
+進 Firestore（仍相容舊資料的明文 4 碼格式，原樣使用不查表）。**如果
+之後那個系統改了 PIN 的雜湊方式（例如加鹽），這個反查表會整組失效，
+需要回頭看那支主程式的 `sha256Hash()`/`verifyEmployeePin()` 現在怎麼做，
+重新調整 `_resolve_plaintext_pin()`。**
 
 **已知限制／刻意的取捨**：
 - Firestore 鏡射資料跟 Google Sheet 之間有同步延遲（取決於 Cloud
@@ -1149,9 +1166,10 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
   兩邊姓名寫法如果不一致（例如簡稱、別名）就不會比對成功——這是老闆
   確認過可以接受的行為（「比對不到的就不給登入就好了」，不是這個功能要
   解決的問題）。
-- 測試涵蓋範圍延續既有分工：`mint_sso_token()`/`verify_sso_token()`（純
-  函式，不碰 Firestore）有完整單元測試涵蓋正常換回、被竄改、過期三種
-  情況；路由只測「不需要真的打 Firestore」的部分（未登入時的導向、
+- 測試涵蓋範圍延續既有分工：`mint_sso_token()`/`verify_sso_token()`/
+  `_resolve_plaintext_pin()`（純函式，不碰 Firestore）有完整單元測試，
+  涵蓋正常換回、被竄改、過期、明文/雜湊 PIN 反查、反查不到等情況；路由
+  只測「不需要真的打 Firestore」的部分（未登入時的導向、
   `/api/job-system-sso/exchange` 的代碼驗證邏輯、同步端點的密鑰檢查）。
   `sync_identities_from_sheet()`/`find_identity_by_name()` 需要真的連
   Google Sheets API / Firestore，留給有 GCP 憑證的環境做整合測試。
