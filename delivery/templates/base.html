@@ -20,6 +20,7 @@
         </a>
         {% if user %}
         <nav class="topnav">
+            <a href="/portal">回主頁</a>
             <span class="topnav-user">{{ user.name }}</span>
             {% if user.role == "admin" %}
             <a href="/delivery/users">帳號管理</a>
