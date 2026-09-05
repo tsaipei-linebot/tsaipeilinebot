@@ -853,10 +853,12 @@ Git）。兩邊帳號密碼各自獨立、有一批同仁兩邊都要用，所�
   `/delivery/static/style.css`（沿用同一套顏色/字體/卡片樣式，包括
   `.home-grid`/`.home-panel`/`.badge` 這些既有 class），配送部系統以後改
   配色，這一頁會自動跟著變，不用兩邊分別維護一份 CSS。
-- 畫面上放了三張卡片：配送部系統（連去 `/delivery/login`）、職缺維護系統
+- 畫面上原本放了三張卡片，後來新增管理部系統時多加了第四張（見下面
+  「多模組權限架構＋管理部系統」章節）：配送部系統（連去 `/delivery/login`）、
+  管理部（連去 `/management/login`）、職缺維護系統
   （連去 `https://ubiquitous-choux-38eefb.netlify.app/`）、一張灰色虛線
   「更多部門系統／即將推出」佔位卡——這是使用者明確要求先放上去的，即使
-  目前還沒有對應的第三個系統。
+  目前還沒有對應的下一個系統。
 - 既有的 `/`（Cloud Run 健康檢查，回傳純 JSON）完全沒有動，`/portal` 是
   全新的獨立路徑。
 - `/delivery/login` 這個網址本身沒有改變任何行為，同仁還是可以直接用原本
@@ -869,3 +871,112 @@ Git）。兩邊帳號密碼各自獨立、有一批同仁兩邊都要用，所�
 斷點在窄螢幕下會自動把卡片疊起來，不用額外寫 CSS）畫面正常、沒有跑版。
 沒有做的事：這一頁完全是靜態連結，職缺維護系統那邊的網址如果之後換了，
 要記得回來改 `portal.html` 裡的連結。
+
+## 新增：多模組權限架構 ＋ 管理部系統（`/management`）＋ 帳號權限管理（`/accounts`）
+
+背景：老闆打算開始規劃「管理部＋業務主管」專區（v1 先做公告事項/會議記錄/
+規章SOP文件庫），這是繼配送部系統之後第一個新部門模組，藉這個機會把帳號
+權限從「配送部專屬的單一 role 欄位」改成「一個帳號可以橫跨好幾個部門，
+每個部門各自的角色分開設定」，登入一次就能在有權限的部門之間切換，不用
+重複登入。
+
+### 權限模型
+
+沿用老闆畫的示意圖（總權限/各部門主管/各部門專員三層），存在 Firestore
+`delivery_users` 這個既有 collection（沒有為了改名搬移正式環境資料，純粹
+是命名上的歷史包袱）裡每個帳號文件的兩個新欄位：
+
+- `is_platform_admin`（bool）：全平台只會有一個人（老闆本人），視同所有
+  模組的管理員。**這個旗標不開放透過任何網頁表單修改**，只能透過
+  `delivery/seed_admin.py --platform-admin` 或直接改資料庫設定，避免這麼
+  關鍵的權限被誤觸。
+- `modules`（dict，例如 `{"delivery": "admin", "management": "staff"}`）：
+  帳號在每個模組各自的角色，"admin"（主管）或 "staff"（專員），沒有的
+  模組代表完全沒有權限，連首頁都會被導去 `/portal`。
+
+舊版的單一 `role` 欄位已經移除，改由這兩個欄位取代。
+
+### 新增的核心檔案
+
+- **`platform_db.py`**（根目錄）：使用者帳號的 Firestore 存取（從
+  `delivery/db.py` 搬出來，因為帳號從此是全平台共用，不是配送部專屬）。
+  `delivery/db.py` 保留 `from platform_db import get_db, users_ref` 向下
+  相容既有的 `from delivery.db import users_ref` 呼叫端。
+- **`platform_accounts.py`**（根目錄）：密碼雜湊/驗證、帳號 CRUD、
+  `module_role()`/`has_module_access()`，以及三個 FastAPI 依賴工廠：
+  `require_module_access(module_code)`、`require_module_admin(module_code)`、
+  `require_platform_admin`。`MODULES` 這個清單就是目前掛載的部門模組
+  （`delivery`、`management`），**之後每加一個新部門，只要在這裡多加一筆，
+  `/accounts` 帳號權限管理頁面就會自動多一欄可以勾選**，不用再改權限邏輯
+  本身。
+- **`delivery/auth.py`／`management/auth.py`**：都改成薄薄一層包在
+  `platform_accounts.py` 外面，各自把模組代碼固定成 `"delivery"`／
+  `"management"`，並且 `current_user()` 會額外算出一個 `role` 欄位（只反映
+  該模組自己的角色），讓既有樣板（`base.html`、`incident_detail.html`……）
+  裡 `user.role == "admin"` 這種寫法完全不用改。
+- **`/accounts`**（`accounts_routes.py` + `templates/accounts_list.html` /
+  `templates/account_form.html`，掛在根 app）：唯一能新增/編輯/刪除帳號、
+  勾選每個帳號在各模組角色的地方，只有 `is_platform_admin` 看得到。取代了
+  舊版配送部系統自己的「帳號管理」（`/delivery/users`，已經整個移除）。
+
+### Session 共用機制
+
+`delivery_app`、`management_app`、根 `app` 三邊都各自掛一份
+`SessionMiddleware`，但用**同一組** `secret_key`（`DELIVERY_SESSION_SECRET_KEY`）
+跟**同一個** `session_cookie` 名稱（`"delivery_session"`，沿用配送部系統
+原本取的名字，沒有改名）。因為 cookie 預設 `path="/"`，瀏覽器端就是同一顆
+cookie，三個獨立掛載的 FastAPI 子系統可以互相讀到彼此寫入的登入狀態，
+效果上等同單一登入（SSO），不需要額外的登入伺服器或跨服務呼叫。
+
+**這個機制只在同一個 Cloud Run 服務、同一個網域底下的模組之間有效**
+（配送部/管理部/未來新部門都算）。職缺維護系統是完全獨立在 Netlify 的
+系統，不共用這個 cookie，還是要分開登入。
+
+### 管理部系統（`management/`）
+
+完全比照 `delivery/` 的目錄結構（`config.py`／`db.py`／`auth.py`／
+`storage.py`／`repository.py`／`app.py`／`routes/`／`templates/`），掛在
+`/management`。v1 三個功能，都是「管理員可以新增/刪除，所有有管理部權限
+的同仁都能看」：
+
+- **公告事項**（`management_announcements`）：標題+內容，純文字，沒有附件。
+- **會議記錄**（`management_meeting_notes`）：標題/日期/部門（自由文字）/
+  內容，可依部門篩選查詢。
+- **規章/SOP 文件庫**（`management_documents`）：標題/分類/說明+必填的
+  上傳檔案，檔案存在跟配送部系統同一個 GCS bucket（`DELIVERY_GCS_BUCKET`），
+  blob 路徑前綴改成 `management/` 避免混在一起，一樣是私有 bucket、只能
+  透過登入後的下載路由讀取。
+
+三個功能都刻意不做「編輯」，只有「新增」跟「刪除」——比照這個 repo 一路以來
+偏好單向操作的風格，之後如果真的需要編輯再加。
+
+`management/templates/base.html` 直接沿用 `/delivery/static/style.css`，
+沒有另外寫一份 CSS；首頁一開始就加了「回主頁」連結（沒有像配送部系統那樣
+分兩階段補上）。
+
+### 已知限制／尚未做的事
+
+- `is_platform_admin` 的授予/收回完全沒有網頁介面，只能用
+  `delivery/seed_admin.py` 或直接改資料庫，這是刻意的設計（見上面權限模型
+  說明），不是遺漏。
+- 三個管理部功能都沒有「編輯」，只有新增/刪除；公告/會議記錄也沒有像
+  文件庫一樣支援附件——都是先做最小可用版本，之後真的有需要再擴充。
+- **正式環境需要跑一次一次性遷移腳本**（新部署這批程式碼之後、同仁開始
+  使用管理部系統之前）：
+  ```bash
+  python -m scripts.migrate_users_to_modules <老闆自己在配送部系統的帳號>
+  ```
+  這支腳本會把現有帳號的舊版 `role` 欄位轉成新版 `modules` 欄位，並把指定
+  的帳號標記成 `is_platform_admin`；執行前會先印出即將變更的內容，要手動
+  輸入 `yes` 才會真的寫入。沒有跑這支腳本的話，舊帳號會因為缺少 `modules`
+  欄位而完全沒有任何模組的權限（`module_role()` 對空 dict 一律回傳
+  `None`），需要透過 `/accounts` 由 `is_platform_admin` 帳號重新指派——但
+  在還沒有任何 `is_platform_admin` 帳號之前，`/accounts` 本身也進不去，
+  所以這支腳本是必要的第一步，不能跳過。
+- 測試涵蓋範圍跟配送部系統一路以來的分工一致：純函式（密碼雜湊、
+  `module_role`/`has_module_access`、遷移腳本的規劃邏輯）有完整單元測試；
+  路由只測「不需要真的打 Firestore」的部分（未登入時的導向、登入頁渲染），
+  需要模擬「已登入且有特定模組權限」才能測到的頁面內容，留給有 GCP 憑證
+  的環境做整合測試。另外用偽造的 session cookie（跟 `SessionMiddleware`
+  簽章方式一致，純粹本機手動驗證用，沒有寫進自動化測試）搭配 `playwright`
+  截圖確認過管理部主頁、`/accounts/new` 帳號權限表單畫面正常。

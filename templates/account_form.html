@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯帳號' if account else '新增帳號' }} - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ '編輯帳號：' + account.username if account else '新增帳號' }}</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="{{ '/accounts/' + account.username + '/edit' if account else '/accounts/new' }}" class="form-stack form-narrow">
+    {% if not account %}
+    <label>帳號
+        <input type="text" name="username" required autofocus>
+    </label>
+    {% endif %}
+    <label>密碼{% if account %}（留空代表不修改）{% endif %}
+        <input type="password" name="password" autocomplete="new-password" {% if not account %}required{% endif %}>
+    </label>
+    <label>姓名
+        <input type="text" name="name" value="{{ account.name if account else '' }}" required>
+    </label>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>部門模組</th>
+                <th>權限</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in modules %}
+            <tr>
+                <td>{{ m.name }}</td>
+                <td>
+                    <select name="module_{{ m.code }}">
+                        <option value="" {% if not (account and account.modules.get(m.code)) %}selected{% endif %}>不開放</option>
+                        {% for r in roles %}
+                        <option value="{{ r.code }}" {% if account and account.modules.get(m.code) == r.code %}selected{% endif %}>{{ r.name }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <button type="submit" class="btn btn-primary">{{ '儲存' if account else '建立帳號' }}</button>
+</form>
+<p class="back-link"><a href="/accounts">&larr; 回帳號權限管理</a></p>
+{% endblock %}

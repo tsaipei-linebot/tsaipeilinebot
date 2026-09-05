@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}材霈有限公司-配送部系統{% endblock %}</title>
+    <title>{% block title %}帳號權限管理 - 材霈有限公司{% endblock %}</title>
     <link rel="stylesheet" href="/delivery/static/style.css">
 </head>
 <body>
     <header class="topbar">
-        <a class="brand" href="/delivery/">
+        <a class="brand" href="/portal">
             <span class="brand-mark">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M3 7.5L12 3l9 4.5v9L12 21l-9-4.5v-9z"/>
@@ -16,18 +16,11 @@
                     <path d="M12 12v9"/>
                 </svg>
             </span>
-            材霈有限公司-配送部系統
+            材霈有限公司
         </a>
-        {% if user %}
         <nav class="topnav">
             <a href="/portal">回主頁</a>
-            <span class="topnav-user">{{ user.name }}</span>
-            {% if user.is_platform_admin %}
-            <a href="/accounts">帳號權限管理</a>
-            {% endif %}
-            <a href="/delivery/logout">登出</a>
         </nav>
-        {% endif %}
     </header>
     <main class="container">
         {% block content %}{% endblock %}

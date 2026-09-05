@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}登入 - 材霈有限公司-配送部系統{% endblock %}
+{% block title %}登入 - 材霈有限公司-管理部{% endblock %}
 {% block content %}
 <div class="login-box">
-    <h1>配送部系統</h1>
+    <h1>管理部</h1>
     <p class="subtitle">請使用同仁帳號登入</p>
     {% if error %}<p class="error">{{ error }}</p>{% endif %}
     {% if info %}<p class="hint">{{ info }}</p>{% endif %}
-    <form method="post" action="/delivery/login" class="form-stack">
+    <form method="post" action="/management/login" class="form-stack">
         <label>帳號
             <input type="text" name="username" autocomplete="username" required autofocus>
         </label>

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 class PortalPageTests(unittest.TestCase):
     """/portal 是登入前選擇要進哪個內部系統的導覽頁：確認頁面正常出現、
-    兩個系統的連結都在，而且沒有動到既有的健康檢查路由（/）。"""
+    每個系統的連結都在，而且沒有動到既有的健康檢查路由（/）。"""
 
     def setUp(self):
         self.client = TestClient(main.app)
@@ -33,6 +33,11 @@ class PortalPageTests(unittest.TestCase):
         resp = self.client.get("/portal")
         self.assertIn('href="/delivery/login"', resp.text)
         self.assertIn("配送部系統", resp.text)
+
+    def test_portal_links_to_management_login(self):
+        resp = self.client.get("/portal")
+        self.assertIn('href="/management/login"', resp.text)
+        self.assertIn("管理部", resp.text)
 
     def test_portal_links_to_job_listing_system(self):
         resp = self.client.get("/portal")
