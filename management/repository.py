@@ -56,7 +56,16 @@ def delete_announcement(announcement_id: str) -> bool:
 # ==========================================
 # 會議記錄
 # ==========================================
-def create_meeting_note(title: str, meeting_date: str, department: str, content: str, created_by: str, created_by_name: str) -> str:
+def create_meeting_note(
+    title: str,
+    meeting_date: str,
+    department: str,
+    content: str,
+    created_by: str,
+    created_by_name: str,
+    attachment_blob_path: str = "",
+    attachment_filename: str = "",
+) -> str:
     ref = meeting_notes_ref().document()
     ref.set(
         {
@@ -66,6 +75,8 @@ def create_meeting_note(title: str, meeting_date: str, department: str, content:
             "content": content,
             "created_by": created_by,
             "created_by_name": created_by_name,
+            "attachment_blob_path": attachment_blob_path,
+            "attachment_filename": attachment_filename,
             "created_at": time.time(),
         }
     )

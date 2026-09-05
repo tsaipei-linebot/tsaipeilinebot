@@ -10,6 +10,12 @@
 
 <p style="white-space: pre-wrap;">{{ meeting.content }}</p>
 
+{% if meeting.attachment_blob_path %}
+<p>
+    <a class="btn" href="/management/files/{{ meeting.attachment_blob_path }}" target="_blank" rel="noopener">下載附件：{{ meeting.attachment_filename }}</a>
+</p>
+{% endif %}
+
 {% if user.role == "admin" %}
 <form method="post" action="/management/meetings/{{ meeting.id }}/delete"
       onsubmit="return confirm('確定要刪除這筆會議記錄嗎？');">

@@ -27,6 +27,8 @@ ALLOWED_UPLOAD_CONTENT_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 
 # 文件庫分類（規章制度/SOP/教育訓練……），純粹是畫面上篩選跟顯示用的自由
