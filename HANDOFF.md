@@ -1136,9 +1136,26 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
      `/api/job-system-sso/exchange` 換回姓名/PIN，再照原本手動登入會做的
      事（呼叫同一支 `VERIFY_LOGIN` GAS 端點、寫入
      `sessionStorage`/`currentUser`）；沒有代碼或交換失敗就呼叫原本的
-     登入流程，不影響現有的手動登入。這段程式碼還沒實際交付，需要先確認
-     那個系統的部署方式（Netlify 是接 Git 自動部署，還是手動上傳檔案）才
-     知道怎麼套用。
+     登入流程，不影響現有的手動登入。
+
+**上線狀態**：以上設定（環境變數、Cloud Scheduler、`index.html` 銜接片段
+手動上傳 Netlify）都已完成並實測成功，同仁登入 `/portal` 點「職缺維護
+系統」卡片可以直接免登入進去。
+
+**踩過的雷：職缺系統的 PIN 欄位存的是雜湊值，不是明文**——上線初期同步
+完 Firestore 後實測，發現全部帳號都卡在手動輸入畫面、Console 顯示
+`verify_login_failed`。追查那個系統的主程式（「程式碼.gs」）才發現
+`EmployeeRegistrationService.processRegistration()` 寫入組織表時，PIN
+其實是先做 `sha256Hash(pin)`（無鹽 SHA-256）才存進 Sheet；登入驗證
+`OrgService.verifyEmployeePin()` 收到明文 PIN 後也會自己雜湊一次比對。
+我們原本的同步邏輯把 Sheet 裡的雜湊值原樣存進 Firestore、再原樣轉發給
+`VERIFY_LOGIN`，等於雜湊了兩次，永遠對不上。修法：PIN 只有 4 位數字
+（10000 種組合），`job_portal_sso.py` 的 `_resolve_plaintext_pin()`
+預先算好這 10000 種雜湊值對照回明文的表，同步時直接反查存明文 PIN
+進 Firestore（仍相容舊資料的明文 4 碼格式，原樣使用不查表）。**如果
+之後那個系統改了 PIN 的雜湊方式（例如加鹽），這個反查表會整組失效，
+需要回頭看那支主程式的 `sha256Hash()`/`verifyEmployeePin()` 現在怎麼做，
+重新調整 `_resolve_plaintext_pin()`。**
 
 **已知限制／刻意的取捨**：
 - Firestore 鏡射資料跟 Google Sheet 之間有同步延遲（取決於 Cloud
@@ -1149,9 +1166,97 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
   兩邊姓名寫法如果不一致（例如簡稱、別名）就不會比對成功——這是老闆
   確認過可以接受的行為（「比對不到的就不給登入就好了」，不是這個功能要
   解決的問題）。
-- 測試涵蓋範圍延續既有分工：`mint_sso_token()`/`verify_sso_token()`（純
-  函式，不碰 Firestore）有完整單元測試涵蓋正常換回、被竄改、過期三種
-  情況；路由只測「不需要真的打 Firestore」的部分（未登入時的導向、
+- 測試涵蓋範圍延續既有分工：`mint_sso_token()`/`verify_sso_token()`/
+  `_resolve_plaintext_pin()`（純函式，不碰 Firestore）有完整單元測試，
+  涵蓋正常換回、被竄改、過期、明文/雜湊 PIN 反查、反查不到等情況；路由
+  只測「不需要真的打 Firestore」的部分（未登入時的導向、
   `/api/job-system-sso/exchange` 的代碼驗證邏輯、同步端點的密鑰檢查）。
   `sync_identities_from_sheet()`/`find_identity_by_name()` 需要真的連
   Google Sheets API / Firestore，留給有 GCP 憑證的環境做整合測試。
+
+## 新增：資產管理「門號」繳費提醒 ＋ 管理部專屬 LINE 官方帳號
+
+背景：公司內部同仁配有的公務門號有四、五十支，每支的繳費/扣款日因為
+同仁到職日不同而分散在每個月不同的日子，容易忘記繳費。這次補上「每月
+繳費日」欄位＋每週固定提醒，並且申請了一個全新的 LINE 官方帳號給管理部
+專用（跟招募機器人沛沛、配送部完全獨立），避免推播/群組事務跟沛沛的
+求職者對話 AI 混在一起。
+
+**資產/設備管理：「門號」分類新增每月繳費日**
+- `management_assets` 文件新增 `sim_payment_day` 欄位（1~31 的數字字串），
+  只有分類是「門號」才有意義，其他 3 個分類一律是空字串。這是資產管理
+  第一個「依分類顯示不同欄位」的案例（`asset_form.html` 用簡單的 JS
+  依 `category` 下拉選單的值切換顯示，不是 delivery `DOC_TYPES` 那種
+  設定檔驅動的機制，這裡欄位夠少，直接寫死一個 if 就好）。
+- 新增/編輯都會驗證是 1~31 的整數，其餘一律當作沒填（`asset_routes.py`
+  的 `_clean_sim_payment_day()`）；設定/修改繳費日跟保管人/狀態的異動
+  是分開的獨立表單（`/management/assets/{id}/sim-payment-day`），不會
+  留進歷史事件表——這不是一次「事件」，只是這顆門號本身固定屬性的修正。
+- 換算下一次繳費日的邏輯（`repository._next_due_date()`）：如果今天已經
+  過了這個月的繳費日就換算下個月；如果繳費日超過當月天數（例如 31 號
+  但當月是 2 月），自動用當月最後一天代替。
+
+**門號繳費提醒（每週一排程）**
+- `POST /management/api/sim-payment-reminder-check`：Cloud Scheduler 每週
+  一台北時間上午 9 點呼叫一次，比照配送部文件到期提醒的密鑰驗證作法
+  （`X-Management-Asset-Reminder-Secret` header）。抓出「下一次繳費日
+  落在今天起 7 天內」的所有門號（`repository.list_sim_payment_reminders()`），
+  整理成一則訊息推播到管理部 LINE 群組。
+- 固定每週觸發一次，天然不會對同一顆門號重複提醒，**不需要**像配送部
+  文件到期提醒那樣另外記錄「提醒過了沒有」，邏輯比配送部那支還單純。
+
+**管理部專屬 LINE 官方帳號**
+- 全新申請的 LINE Messaging API Channel（`management/line_bot.py`），跟
+  招募機器人（沛沛）、配送部完全獨立——如果共用沛沛的 Channel，管理部
+  群組裡的任何訊息都會被沛沛現有的求職者對話 AI 接手處理，內部聊天會被
+  誤判成求職者在問工作機會，所以另外申請一個全新帳號兩邊隔離。
+- Webhook（`POST /management/line/callback`，見
+  `routes/line_webhook_routes.py`）刻意只做一件事：收到任何訊息，回覆
+  這個聊天室的 ID（群組回 Group ID、多人聊天室回 Room ID、一對一聊天回
+  User ID）。把這個新機器人拉進管理部 LINE 群組後，機器人會直接在群組裡
+  回覆 Group ID，複製貼到環境變數即可——比配送部「去 Cloud Logging 撈
+  log」的做法更方便，而且完全沒有自動對話/AI 邏輯。
+- `management/line_bot.py` 的 `push_group_message()` 是目前唯一的推播
+  入口，只有門號繳費提醒會呼叫；之後如果管理部要加其他推播（公告發布、
+  會議記錄等），都可以直接沿用這支函式。
+
+**上線前要做的事**：
+1. Cloud Run 設定環境變數：
+   - `MANAGEMENT_LINE_CHANNEL_ACCESS_TOKEN`／`MANAGEMENT_LINE_CHANNEL_SECRET`：
+     新申請的管理部 LINE 官方帳號的 Channel Access Token / Channel Secret。
+   - `MANAGEMENT_LINE_GROUP_ID`：把新機器人拉進管理部群組、發一則訊息，
+     機器人會直接回覆這個群組的 Group ID，複製貼過來即可。
+   - `MANAGEMENT_ASSET_REMINDER_SECRET`：隨機字串（`openssl rand -hex 32`），
+     Cloud Scheduler 呼叫時要帶同一組在 header 裡。
+2. 到 LINE Developers Console 把這個新 Channel 的 Webhook URL 設定成
+   `https://recruitment-bot-412901869672.asia-east1.run.app/management/line/callback`，
+   並開啟「Use webhook」。
+3. 設定 Cloud Scheduler 每週一觸發一次：
+   ```bash
+   gcloud scheduler jobs create http management-sim-payment-reminder \
+     --project=tsaipei-505807 \
+     --location=asia-east1 \
+     --schedule="0 9 * * 1" \
+     --time-zone="Asia/Taipei" \
+     --uri="https://recruitment-bot-412901869672.asia-east1.run.app/management/api/sim-payment-reminder-check" \
+     --http-method=POST \
+     --headers="X-Management-Asset-Reminder-Secret=跟 Cloud Run 上設定的同一組密鑰"
+   ```
+4. 到每一支「門號」資產的詳細頁，補上實際的每月繳費日（新資產可以在
+   建立時直接填，舊資產要一筆一筆到詳細頁補設定）。
+
+**已知限制／刻意的取捨**：
+- 沒有做「即將設定成非門號分類但已經有繳費日」的自動清空機制——如果
+  管理員手動把一個已經設定繳費日的資產改成別的分類，`sim_payment_day`
+  欄位會留著舊值但不會再被提醒邏輯用到（`list_sim_payment_reminders()`
+  只掃 `category == "sim"` 的資產），不影響功能，純粹是欄位沒有物理清空。
+- 順便在 `job_portal_sso.py` 的 Sheet 同步邏輯裡多存一欄「員工 LINE ID」
+  進 Firestore（`job_system_identities` collection），目前沒有任何功能
+  會用到，只是幫「以後可能的個人提醒功能」預先鋪路（老闆提到未來可能會
+  想針對個人而不是整個群組推播）。
+- 測試涵蓋範圍延續既有分工：`_parse_payment_day()`/`_next_due_date()`
+  （純函式，不碰 Firestore）有完整單元測試，涵蓋一般情況、月底天數不足、
+  跨年等邊界狀況；路由只測「不需要真的打 Firestore」的部分（未登入時的
+  導向、提醒端點的密鑰檢查、LINE Webhook 在未設定/缺簽章 header 時的
+  行為）。`list_sim_payment_reminders()`（要連 Firestore）跟真正的 LINE
+  簽章驗證（line-bot-sdk 本身的責任）留給有憑證的環境做整合測試。

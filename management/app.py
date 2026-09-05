@@ -11,7 +11,9 @@ from management.routes import (
     file_routes,
     home_routes,
     kpi_routes,
+    line_webhook_routes,
     meeting_routes,
+    reminder_routes,
     staff_directory_routes,
 )
 
@@ -38,3 +40,5 @@ management_app.include_router(client_visit_routes.router)
 management_app.include_router(staff_directory_routes.router)
 management_app.include_router(asset_routes.router)
 management_app.include_router(file_routes.router)
+management_app.include_router(line_webhook_routes.router)
+management_app.include_router(reminder_routes.router)

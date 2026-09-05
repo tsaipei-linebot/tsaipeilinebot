@@ -3,7 +3,9 @@
 文件庫一定要有附件、客戶拜訪紀錄只有特定人看得到），分開寫更直觀，之後
 各自演變也不會互相牽扯。
 """
+import calendar
 import time
+from datetime import date
 
 from management.config import ASSET_STATUS_MAP
 from management.db import (
@@ -376,7 +378,16 @@ def delete_staff_member(staff_id: str) -> bool:
 # （報廢日期）欄位——跟「狀態剛好是報廢」比起來，這個欄位更明確地回答
 # 「這個東西是什麼時候報廢的」，之後要盤點報廢時間就不用去翻歷史事件表。
 # ==========================================
-def create_asset(category: str, name: str, assigned_to: str, status: str, notes: str, created_by: str, created_by_name: str) -> str:
+def create_asset(
+    category: str,
+    name: str,
+    assigned_to: str,
+    status: str,
+    notes: str,
+    created_by: str,
+    created_by_name: str,
+    sim_payment_day: str = "",
+) -> str:
     ref = assets_ref().document()
     ref.set(
         {
@@ -385,6 +396,10 @@ def create_asset(category: str, name: str, assigned_to: str, status: str, notes:
             "assigned_to": assigned_to,
             "status": status,
             "retired_at": "",
+            # 只有分類是「門號」才有意義（每月固定繳費/扣款日，1~31 的數字），
+            # 其他分類一律留空字串。見 update_asset_sim_payment_day() 跟
+            # list_sim_payment_reminders()。
+            "sim_payment_day": sim_payment_day,
             "notes": notes,
             "created_by": created_by,
             "created_by_name": created_by_name,
@@ -476,4 +491,69 @@ def list_asset_events(asset_id: str) -> list:
         data["id"] = snapshot.id
         result.append(data)
     result.sort(key=lambda e: e.get("created_at", 0), reverse=True)
+    return result
+
+
+def update_asset_sim_payment_day(asset_id: str, sim_payment_day: str) -> bool:
+    """只給「門號」分類的資產設定/修改每月繳費日，跟保管人/狀態那組
+    record_asset_event() 是分開的獨立欄位——這不是一次「事件」，單純是
+    這顆門號本身固定屬性的修正，不需要留歷史紀錄。"""
+    ref = assets_ref().document(asset_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"sim_payment_day": sim_payment_day})
+    return True
+
+
+def _parse_payment_day(value) -> int:
+    """把資產文件裡的 sim_payment_day 換算成 1~31 的整數；空白、非數字、
+    超出範圍一律回傳 None（代表這筆資產還沒設定繳費日，或分類根本不是
+    門號）。"""
+    try:
+        day = int(value)
+    except (TypeError, ValueError):
+        return None
+    if 1 <= day <= 31:
+        return day
+    return None
+
+
+def _next_due_date(today: date, day: int) -> date:
+    """算出「這個月」或「下個月」的第 day 天當作下一次繳費日——如果今天
+    已經過了這個月的繳費日，換算下個月；如果 day 超過當月天數（例如 31
+    號但當月是 2 月），自動用當月最後一天代替（比照信用卡帳單「月底最後
+    一個工作天」的常見做法）。"""
+
+    def _clamp(year: int, month: int) -> int:
+        return min(day, calendar.monthrange(year, month)[1])
+
+    candidate = date(today.year, today.month, _clamp(today.year, today.month))
+    if candidate < today:
+        year = today.year + (1 if today.month == 12 else 0)
+        month = 1 if today.month == 12 else today.month + 1
+        candidate = date(year, month, _clamp(year, month))
+    return candidate
+
+
+def list_sim_payment_reminders(days_ahead: int) -> list:
+    """回傳「門號」資產中，下一次繳費日落在「今天起 days_ahead 天內」
+    （含今天）的清單，依繳費日由近到遠排序。這支是給每週固定排程一次的
+    /management/api/sim-payment-reminder-check 呼叫（見
+    routes/reminder_routes.py）——排程本身一週只跑一次，天然不會對同一顆
+    門號重複提醒，不需要像配送部文件到期提醒那樣另外記錄「提醒過了沒
+    有」。"""
+    today = date.today()
+    result = []
+    for snapshot in assets_ref().where("category", "==", "sim").stream():
+        data = snapshot.to_dict() or {}
+        day = _parse_payment_day(data.get("sim_payment_day"))
+        if day is None:
+            continue
+        due_date = _next_due_date(today, day)
+        if (due_date - today).days > days_ahead:
+            continue
+        data["id"] = snapshot.id
+        data["due_date"] = due_date.isoformat()
+        result.append(data)
+    result.sort(key=lambda a: a["due_date"])
     return result

@@ -82,6 +82,61 @@ class ManagementRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertTrue(resp.headers["location"].endswith("/delivery/login"))
 
+    def test_sim_payment_day_update_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.post("/management/assets/some-id/sim-payment-day", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/management/login"))
+
+
+class SimPaymentReminderEndpointTests(unittest.TestCase):
+    """/management/api/sim-payment-reminder-check 比照配送部文件到期提醒的
+    密鑰保護作法：沒帶對 header 一律 403，不會真的去查 Firestore 或推播。"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+
+    def test_forbidden_without_secret_configured(self):
+        resp = self.client.post("/management/api/sim-payment-reminder-check")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_forbidden_with_wrong_secret(self):
+        import management.routes.reminder_routes as reminder_routes
+
+        original = reminder_routes.ASSET_REMINDER_SECRET
+        reminder_routes.ASSET_REMINDER_SECRET = "correct-secret"
+        try:
+            resp = self.client.post(
+                "/management/api/sim-payment-reminder-check",
+                headers={"X-Management-Asset-Reminder-Secret": "wrong-secret"},
+            )
+            self.assertEqual(resp.status_code, 403)
+        finally:
+            reminder_routes.ASSET_REMINDER_SECRET = original
+
+
+class ManagementLineWebhookTests(unittest.TestCase):
+    """管理部專屬 LINE Webhook：沒設定 Channel Secret（測試環境預設狀態）
+    一律回傳 503，等同這個功能還沒啟用；有設定但缺簽章 header 則是 400。
+    不驗證真正的簽章比對邏輯——那是 line-bot-sdk 本身的責任。"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+
+    def test_returns_503_when_channel_not_configured(self):
+        resp = self.client.post("/management/line/callback", content=b"{}")
+        self.assertEqual(resp.status_code, 503)
+
+    def test_returns_400_when_signature_header_missing_but_configured(self):
+        import management.routes.line_webhook_routes as line_webhook_routes
+
+        original_handler = line_webhook_routes.handler
+        line_webhook_routes.handler = object()  # 只需要是 truthy，不會真的被呼叫到
+        try:
+            resp = self.client.post("/management/line/callback", content=b"{}")
+            self.assertEqual(resp.status_code, 400)
+        finally:
+            line_webhook_routes.handler = original_handler
+
 
 if __name__ == "__main__":
     unittest.main()

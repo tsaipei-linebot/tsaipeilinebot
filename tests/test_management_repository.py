@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -8,6 +9,7 @@ from tests import _env  # noqa: F401
 from tests import _stub_gcp
 _stub_gcp.install()
 
+import management.repository as repository
 from management.repository import can_view_client_visit, group_staff_by_department, record_asset_event
 
 
@@ -60,6 +62,60 @@ class RecordAssetEventValidationTests(unittest.TestCase):
         self.assertFalse(
             record_asset_event("asset1", "not-a-real-status", "alice", "2026-01-01", "", "bob", "Bob")
         )
+
+
+class ParsePaymentDayTests(unittest.TestCase):
+    """_parse_payment_day() 把資產文件裡的 sim_payment_day 換算成 1~31
+    的整數，其餘一律回傳 None（還沒設定、或格式不明的舊資料）。"""
+
+    def test_valid_day_parses(self):
+        self.assertEqual(repository._parse_payment_day("15"), 15)
+
+    def test_boundary_days_are_valid(self):
+        self.assertEqual(repository._parse_payment_day("1"), 1)
+        self.assertEqual(repository._parse_payment_day("31"), 31)
+
+    def test_out_of_range_returns_none(self):
+        self.assertIsNone(repository._parse_payment_day("0"))
+        self.assertIsNone(repository._parse_payment_day("32"))
+
+    def test_non_numeric_returns_none(self):
+        self.assertIsNone(repository._parse_payment_day("十五"))
+
+    def test_empty_or_none_returns_none(self):
+        self.assertIsNone(repository._parse_payment_day(""))
+        self.assertIsNone(repository._parse_payment_day(None))
+
+
+class NextDueDateTests(unittest.TestCase):
+    """_next_due_date() 算出「這個月」或「下個月」的繳費日，並處理月底
+    天數不足（例如 31 號但當月是 2 月）跟跨年（12 月換算下個月變 1 月）
+    這兩種邊界狀況。"""
+
+    def test_day_later_this_month_stays_this_month(self):
+        today = date(2026, 3, 10)
+        self.assertEqual(repository._next_due_date(today, 15), date(2026, 3, 15))
+
+    def test_day_already_passed_rolls_to_next_month(self):
+        today = date(2026, 3, 20)
+        self.assertEqual(repository._next_due_date(today, 15), date(2026, 4, 15))
+
+    def test_today_is_the_due_day_counts_as_this_month(self):
+        today = date(2026, 3, 15)
+        self.assertEqual(repository._next_due_date(today, 15), date(2026, 3, 15))
+
+    def test_day_beyond_month_length_clamps_to_last_day(self):
+        # 2026 年 2 月只有 28 天，31 號要換算成 2/28。
+        today = date(2026, 2, 1)
+        self.assertEqual(repository._next_due_date(today, 31), date(2026, 2, 28))
+
+    def test_leap_year_february_clamps_to_29(self):
+        today = date(2028, 2, 1)
+        self.assertEqual(repository._next_due_date(today, 31), date(2028, 2, 29))
+
+    def test_rolls_over_from_december_to_january(self):
+        today = date(2026, 12, 20)
+        self.assertEqual(repository._next_due_date(today, 15), date(2027, 1, 15))
 
 
 if __name__ == "__main__":
