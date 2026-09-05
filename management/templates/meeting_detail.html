@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ meeting.title }} - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ meeting.title }}</h1>
+<p class="meta">
+    日期：{{ meeting.meeting_date }}
+    部門：{{ meeting.department }}
+    記錄人：{{ meeting.created_by_name }}
+</p>
+
+<p style="white-space: pre-wrap;">{{ meeting.content }}</p>
+
+{% if user.role == "admin" %}
+<form method="post" action="/management/meetings/{{ meeting.id }}/delete"
+      onsubmit="return confirm('確定要刪除這筆會議記錄嗎？');">
+    <button type="submit" class="btn btn-danger">刪除</button>
+</form>
+{% endif %}
+
+<p class="back-link"><a href="/management/meetings">&larr; 回會議記錄</a></p>
+{% endblock %}

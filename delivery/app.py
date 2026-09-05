@@ -16,7 +16,6 @@ from delivery.routes import (
     repayment_routes,
     search_routes,
     sick_leave_routes,
-    user_routes,
     vehicle_routes,
     vendor_routes,
     webhook_routes,
@@ -39,7 +38,6 @@ delivery_app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 delivery_app.include_router(auth_routes.router)
 delivery_app.include_router(home_routes.router)
 delivery_app.include_router(vendor_routes.router)
-delivery_app.include_router(user_routes.router)
 delivery_app.include_router(import_routes.router)
 delivery_app.include_router(search_routes.router)
 delivery_app.include_router(repayment_routes.router)

@@ -5,17 +5,21 @@ from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.sessions import SessionMiddleware
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, ImageMessage
 
+import accounts_routes
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
     LOAD_TEST_SECRET
 )
+from delivery.config import SESSION_SECRET_KEY
 from handlers.message_handler import process_user_message, process_image_message
 from delivery.app import delivery_app
+from management.app import management_app
 
 # 內部系統入口頁（/portal）：登入前選擇要進配送部系統還是職缺維護系統的靜態
 # 導覽頁，內容固定不變，讀一次存起來即可，不用每次請求都重新開檔案。
@@ -28,9 +32,23 @@ app = FastAPI(
     version="12.0.0"
 )
 
-# 配送部系統：獨立子系統（自己的登入/session/資料表），掛載在 /delivery 底下，
-# 跟上面 LINE 招募機器人的 webhook 路由完全分開，互不影響。
+# 根 app 自己也裝一份 SessionMiddleware（跟 delivery_app/management_app
+# 用同一組 secret key + cookie 名稱），這樣掛在根 app 上的 /accounts
+# （帳號權限管理）才讀得到跟 /delivery、/management 共用的同一顆登入
+# session cookie，不用另外登入一次。
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET_KEY,
+    session_cookie="delivery_session",
+    max_age=14 * 24 * 3600,
+)
+app.include_router(accounts_routes.router, prefix="/accounts")
+
+# 配送部系統、管理部系統：各自獨立子系統（自己的路由/資料表，共用同一顆
+# 登入 session cookie），掛在 /delivery、/management 底下，跟上面 LINE
+# 招募機器人的 webhook 路由完全分開，互不影響。
 app.mount("/delivery", delivery_app)
+app.mount("/management", management_app)
 
 # LINE 官方帳號客戶端實例化[cite: 2]
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN) if LINE_CHANNEL_ACCESS_TOKEN else None

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}規章/SOP 文件庫 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">規章/SOP 文件庫</h1>
+    {% if user.role == "admin" %}
+    <a class="btn btn-primary" href="/management/documents/new">上傳文件</a>
+    {% endif %}
+</div>
+
+<form method="get" action="/management/documents" class="filter-bar">
+    <select name="category">
+        <option value="">全部分類</option>
+        {% for c in categories %}
+        <option value="{{ c.code }}" {% if filter_category == c.code %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn">篩選</button>
+    {% if filter_category %}
+    <a class="btn" href="/management/documents">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if documents %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>標題</th>
+            <th>分類</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for d in documents %}
+        <tr>
+            <td>{{ d.title }}</td>
+            <td>{{ category_map.get(d.category, d.category) }}</td>
+            <td><a href="/management/documents/{{ d.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有符合條件的文件。</p>
+{% endif %}
+
+<p class="back-link"><a href="/management/">&larr; 回主頁</a></p>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ document.title }} - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ document.title }}</h1>
+<p class="meta">
+    分類：{{ category_map.get(document.category, document.category) }}
+    上傳人：{{ document.created_by_name }}
+</p>
+
+{% if document.description %}
+<p style="white-space: pre-wrap;">{{ document.description }}</p>
+{% endif %}
+
+<p>
+    <a class="btn btn-primary" href="/management/files/{{ document.blob_path }}" target="_blank" rel="noopener">下載檔案：{{ document.filename }}</a>
+</p>
+
+{% if user.role == "admin" %}
+<form method="post" action="/management/documents/{{ document.id }}/delete"
+      onsubmit="return confirm('確定要刪除這份文件嗎？');">
+    <button type="submit" class="btn btn-danger">刪除文件</button>
+</form>
+{% endif %}
+
+<p class="back-link"><a href="/management/documents">&larr; 回文件庫</a></p>
+{% endblock %}

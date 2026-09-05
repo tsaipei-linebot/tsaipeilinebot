@@ -5,12 +5,13 @@
 就連線。這樣測試或本機在沒有 GCP Application Default Credentials 的情況下，
 仍然可以 import 這個模組（例如只是要測 auth.py 的密碼雜湊邏輯），不會因為
 匯入鏈間接觸發 Firestore 連線而整個炸掉。
+
+使用者帳號（users_ref）已經搬到根目錄的 platform_db.py——那是全平台共用的
+帳號表，不是配送部專屬的資料，這裡重新匯入只是為了不用改遍所有既有的
+`from delivery.db import users_ref` 呼叫端。
 """
-from google.cloud import firestore
+from platform_db import get_db, users_ref  # noqa: F401  (向下相容既有匯入)
 
-from config import GCP_PROJECT_ID
-
-USERS_COLLECTION = "delivery_users"
 PERSONNEL_COLLECTION = "delivery_personnel"
 REPAYMENTS_COLLECTION = "delivery_repayments"
 SICK_LEAVES_COLLECTION = "delivery_sick_leaves"
@@ -18,19 +19,6 @@ APPLICANTS_COLLECTION = "delivery_applicants"
 VEHICLES_COLLECTION = "delivery_vehicles"
 VEHICLE_EVENTS_COLLECTION = "delivery_vehicle_events"
 INCIDENT_EVENTS_COLLECTION = "delivery_incident_events"
-
-_client = None
-
-
-def get_db():
-    global _client
-    if _client is None:
-        _client = firestore.Client(project=GCP_PROJECT_ID, database="(default)")
-    return _client
-
-
-def users_ref():
-    return get_db().collection(USERS_COLLECTION)
 
 
 def personnel_ref():

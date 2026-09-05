@@ -8,49 +8,55 @@ from tests import _env  # noqa: F401
 from tests import _stub_gcp
 _stub_gcp.install()
 
-from delivery.auth import hash_password, validate_user_deletion, verify_password
+from delivery.auth import current_user
 
 
-class PasswordHashingTests(unittest.TestCase):
-    def test_correct_password_verifies(self):
-        stored = hash_password("hello-world-123")
-        self.assertTrue(verify_password("hello-world-123", stored))
-
-    def test_wrong_password_fails(self):
-        stored = hash_password("hello-world-123")
-        self.assertFalse(verify_password("wrong-password", stored))
-
-    def test_same_password_hashes_differently_each_time(self):
-        self.assertNotEqual(hash_password("same-password"), hash_password("same-password"))
-
-    def test_malformed_stored_hash_returns_false_instead_of_raising(self):
-        self.assertFalse(verify_password("anything", "not-a-valid-hash"))
-        self.assertFalse(verify_password("anything", ""))
-        self.assertFalse(verify_password("anything", None))
+class _FakeSession(dict):
+    def get(self, key, default=None):
+        return dict.get(self, key, default)
 
 
-class ValidateUserDeletionTests(unittest.TestCase):
-    def test_cannot_delete_self(self):
-        error = validate_user_deletion("alice", "alice", "staff", admin_count=2)
-        self.assertEqual(error, "self")
+class _FakeRequest:
+    def __init__(self, user=None):
+        self.session = _FakeSession()
+        if user is not None:
+            self.session["user"] = user
 
-    def test_cannot_delete_last_admin(self):
-        error = validate_user_deletion("alice", "bob", "admin", admin_count=1)
-        self.assertEqual(error, "last_admin")
 
-    def test_can_delete_admin_when_others_remain(self):
-        error = validate_user_deletion("alice", "bob", "admin", admin_count=2)
-        self.assertEqual(error, "")
+class CurrentUserBackwardCompatRoleTests(unittest.TestCase):
+    """delivery/auth.py 的 current_user() 是薄薄一層包在 platform_accounts
+    共用邏輯外面：既有樣板（base.html、incident_detail.html……）都寫
+    `user.role == "admin"`，這裡確保那個計算出來的 role 欄位，反映的是
+    「配送部」這個模組的角色，不是別的模組。"""
 
-    def test_can_delete_staff_regardless_of_admin_count(self):
-        error = validate_user_deletion("alice", "bob", "staff", admin_count=1)
-        self.assertEqual(error, "")
+    def test_no_session_returns_none(self):
+        self.assertIsNone(current_user(_FakeRequest()))
 
-    def test_self_check_takes_priority_over_last_admin_check(self):
-        # 自己就是最後一位管理員時，還是回傳 "self"（不能刪自己這個規則優先），
-        # 而不是被 last_admin 規則蓋過去，訊息才會準確對應到真正的原因。
-        error = validate_user_deletion("alice", "alice", "admin", admin_count=1)
-        self.assertEqual(error, "self")
+    def test_delivery_admin_gets_role_admin(self):
+        account = {"username": "alice", "name": "Alice", "modules": {"delivery": "admin"}, "is_platform_admin": False}
+        user = current_user(_FakeRequest(account))
+        self.assertEqual(user["role"], "admin")
+
+    def test_delivery_staff_gets_role_staff(self):
+        account = {"username": "bob", "name": "Bob", "modules": {"delivery": "staff"}, "is_platform_admin": False}
+        user = current_user(_FakeRequest(account))
+        self.assertEqual(user["role"], "staff")
+
+    def test_admin_of_another_module_only_is_still_staff_here(self):
+        account = {"username": "carol", "name": "Carol", "modules": {"management": "admin"}, "is_platform_admin": False}
+        user = current_user(_FakeRequest(account))
+        self.assertEqual(user["role"], "staff")
+
+    def test_platform_admin_gets_role_admin_even_without_explicit_delivery_entry(self):
+        account = {"username": "boss", "name": "老闆", "modules": {}, "is_platform_admin": True}
+        user = current_user(_FakeRequest(account))
+        self.assertEqual(user["role"], "admin")
+
+    def test_original_account_fields_pass_through(self):
+        account = {"username": "alice", "name": "Alice", "modules": {"delivery": "admin"}, "is_platform_admin": False}
+        user = current_user(_FakeRequest(account))
+        self.assertEqual(user["username"], "alice")
+        self.assertEqual(user["is_platform_admin"], False)
 
 
 if __name__ == "__main__":

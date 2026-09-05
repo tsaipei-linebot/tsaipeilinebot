@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}主頁 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">主頁</h1>
+<div class="home-grid">
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
+        </span>
+        <h2>公告事項</h2>
+        <p class="hint">全公司/管理部公告，管理員可以發布，同仁都看得到</p>
+        <a class="btn btn-block" href="/management/announcements">查看公告</a>
+    </section>
+
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+        </span>
+        <h2>會議記錄</h2>
+        <p class="hint">各部門會議記錄，可依部門篩選查詢</p>
+        <a class="btn btn-block" href="/management/meetings">查看會議記錄</a>
+    </section>
+
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+            </svg>
+        </span>
+        <h2>規章/SOP 文件庫</h2>
+        <p class="hint">規章制度、SOP、範本文件下載</p>
+        <a class="btn btn-block" href="/management/documents">查看文件庫</a>
+    </section>
+</div>
+{% endblock %}
