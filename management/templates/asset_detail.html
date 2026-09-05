@@ -8,10 +8,24 @@
     {% if asset.retired_at %}
     報廢日期：{{ asset.retired_at }}
     {% endif %}
+    {% if asset.category == "sim" %}
+    每月繳費日：{{ asset.sim_payment_day and (asset.sim_payment_day ~ " 號") or "尚未設定" }}
+    {% endif %}
 </p>
 
 {% if asset.notes %}
 <p style="white-space: pre-wrap;">{{ asset.notes }}</p>
+{% endif %}
+
+{% if asset.category == "sim" and user.role == "admin" %}
+<h2 class="section-title">設定每月繳費日</h2>
+<form method="post" action="/management/assets/{{ asset.id }}/sim-payment-day" class="form-stack form-narrow">
+    <label>每月繳費日（1~31號）
+        <input type="number" name="sim_payment_day" min="1" max="31" value="{{ asset.sim_payment_day }}">
+    </label>
+    <button type="submit" class="btn btn-primary">更新</button>
+</form>
+<p class="hint">每週一上午 9 點，系統會自動檢查所有門號，把一週內要繳費的整理成一則 LINE 訊息推播到管理部群組。</p>
 {% endif %}
 
 {% if user.role == "admin" %}

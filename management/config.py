@@ -60,3 +60,27 @@ ASSET_STATUSES = [
 ]
 ASSET_STATUS_MAP = {s["code"]: s["name"] for s in ASSET_STATUSES}
 DEFAULT_ASSET_STATUS = "in_use"
+
+# ==========================================
+# 管理部專屬 LINE 官方帳號
+# 跟招募機器人（沛沛）、配送部完全獨立的另一個 LINE Messaging API Channel，
+# 刻意只用來做「推播通知」＋ Webhook 回覆聊天室 ID（見 line_bot.py／
+# routes/line_webhook_routes.py），不接任何自動對話/AI 邏輯，避免跟沛沛的
+# 求職者對話混在一起。
+# ==========================================
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("MANAGEMENT_LINE_CHANNEL_ACCESS_TOKEN", "")
+LINE_CHANNEL_SECRET = os.getenv("MANAGEMENT_LINE_CHANNEL_SECRET", "")
+# 要推播通知的目標群組 ID：把這個新機器人拉進管理部群組後，機器人會直接在
+# 群組裡回覆這個群組的 Group ID，複製貼到這個環境變數即可，不用像配送部
+# 那樣去 Cloud Logging 撈。
+LINE_NOTIFY_GROUP_ID = os.getenv("MANAGEMENT_LINE_GROUP_ID", "")
+
+# ==========================================
+# 門號繳費提醒（見 routes/reminder_routes.py）
+# Cloud Scheduler 每週一上午 9 點呼叫一次，比照配送部文件到期提醒的密鑰
+# 驗證作法（X-Management-Asset-Reminder-Secret header）。未設定時該端點
+# 一律回傳 403，等同不存在。固定每週觸發一次，天然不會重複提醒同一顆
+# 門號，不需要像配送部那樣另外記錄「提醒過了沒有」。
+# ==========================================
+ASSET_REMINDER_SECRET = os.getenv("MANAGEMENT_ASSET_REMINDER_SECRET", "")
+SIM_PAYMENT_REMINDER_DAYS_AHEAD = 7

@@ -43,6 +43,20 @@ def new_asset_form(request: Request, redirect=Depends(admin_required)):
     )
 
 
+def _clean_sim_payment_day(category: str, raw_value: str) -> str:
+    """只有分類是「門號」才會採用送出的繳費日，其他分類一律強制清空——
+    避免表單被竄改或前端 JS 沒生效時，把不相干的值存進其他分類的資產。
+    值不是 1~31 的整數（含空白、非數字）一律當成沒填。"""
+    if category != "sim":
+        return ""
+    value = (raw_value or "").strip()
+    try:
+        day = int(value)
+    except ValueError:
+        return ""
+    return str(day) if 1 <= day <= 31 else ""
+
+
 @router.post("/assets/new")
 def create_asset_submit(
     request: Request,
@@ -51,6 +65,7 @@ def create_asset_submit(
     assigned_to: str = Form(""),
     status: str = Form(DEFAULT_ASSET_STATUS),
     notes: str = Form(""),
+    sim_payment_day: str = Form(""),
     redirect=Depends(admin_required),
 ):
     if redirect:
@@ -73,7 +88,16 @@ def create_asset_submit(
             {"user": user, "categories": ASSET_CATEGORIES, "statuses": ASSET_STATUSES, "error": "名稱/編號不能空白。"},
             status_code=400,
         )
-    repository.create_asset(category, name, assigned_to.strip(), status, notes.strip(), user["username"], user["name"])
+    repository.create_asset(
+        category,
+        name,
+        assigned_to.strip(),
+        status,
+        notes.strip(),
+        user["username"],
+        user["name"],
+        sim_payment_day=_clean_sim_payment_day(category, sim_payment_day),
+    )
     return RedirectResponse(url="/management/assets", status_code=303)
 
 
@@ -115,6 +139,21 @@ def update_asset_submit(
     repository.record_asset_event(
         asset_id, status, assigned_to.strip(), event_date, note.strip(), user["username"], user["name"]
     )
+    return RedirectResponse(url=f"/management/assets/{asset_id}", status_code=303)
+
+
+@router.post("/assets/{asset_id}/sim-payment-day")
+def update_sim_payment_day_submit(
+    asset_id: str,
+    request: Request,
+    sim_payment_day: str = Form(""),
+    redirect=Depends(admin_required),
+):
+    if redirect:
+        return redirect
+    asset = repository.get_asset(asset_id)
+    if asset and asset.get("category") == "sim":
+        repository.update_asset_sim_payment_day(asset_id, _clean_sim_payment_day("sim", sim_payment_day))
     return RedirectResponse(url=f"/management/assets/{asset_id}", status_code=303)
 
 

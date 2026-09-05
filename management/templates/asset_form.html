@@ -28,10 +28,24 @@
             {% endfor %}
         </select>
     </label>
+    <label id="sim_payment_day_label" style="display: none;">每月繳費日（1~31號）
+        <input type="number" name="sim_payment_day" min="1" max="31" placeholder="例如：15">
+    </label>
     <label>備註（選填）
         <textarea name="notes" rows="3"></textarea>
     </label>
     <button type="submit" class="btn btn-primary">建立</button>
 </form>
 <p class="back-link"><a href="/management/assets">&larr; 回資產/設備管理</a></p>
+<script>
+    (function () {
+        var categorySelect = document.querySelector('select[name="category"]');
+        var simLabel = document.getElementById('sim_payment_day_label');
+        function toggleSimField() {
+            simLabel.style.display = categorySelect.value === 'sim' ? '' : 'none';
+        }
+        categorySelect.addEventListener('change', toggleSimField);
+        toggleSimField();
+    })();
+</script>
 {% endblock %}

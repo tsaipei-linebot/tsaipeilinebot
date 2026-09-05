@@ -13,6 +13,8 @@
    不會即時去打 Google Sheets API。Sheet 裡的 PIN 欄位存的其實是無鹽
    SHA-256 雜湊值（不是明文），同步時會先換算回明文 PIN 再存進 Firestore
    （見 _resolve_plaintext_pin()），因為 VERIFY_LOGIN 端點要收明文 PIN。
+   順便把 Sheet 裡的「員工 LINE ID」也一起存進 Firestore，目前沒有任何
+   功能會用到，只是幫「以後可能的個人提醒功能」預先鋪路。
 2. 同仁在 /portal 點「職缺維護系統」卡片時（見 portal_routes.py），拿他
    帳號的姓名去 Firestore 查對應的 PIN，查得到就簽發一組幾十秒後失效、
    一次性用途的代碼放在網址上帶過去；查不到就直接導去原本的網址，同仁
@@ -117,13 +119,19 @@ def sync_identities_from_sheet() -> int:
     count = 0
     for row in rows:
         name = (row[0] if len(row) > 0 else "").strip()
+        # B欄=員工LINE ID：這次不會拿來做任何事，純粹是幫「以後可能的
+        # 個人提醒功能」預先鋪路——反正同步程式已經在讀這一列，順便多存
+        # 一欄不多花成本，之後真的要用不用回頭改同步邏輯。
+        line_id = (row[1] if len(row) > 1 else "").strip()
         raw_pin = (row[8] if len(row) > 8 else "").strip()
         if not name or not raw_pin:
             continue
         pin = _resolve_plaintext_pin(raw_pin)
         if not pin:
             continue
-        _identities_ref().document(name).set({"name": name, "pin": pin, "synced_at": synced_at})
+        _identities_ref().document(name).set(
+            {"name": name, "pin": pin, "line_id": line_id, "synced_at": synced_at}
+        )
         count += 1
     return count
 
