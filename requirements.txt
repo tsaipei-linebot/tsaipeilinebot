@@ -12,4 +12,5 @@ jinja2
 python-multipart
 itsdangerous
 openpyxl
+google-api-python-client
 

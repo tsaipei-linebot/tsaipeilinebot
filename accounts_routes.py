@@ -32,6 +32,7 @@ def accounts_list(request: Request, error: str = "", redirect=Depends(platform_a
         request,
         "accounts_list.html",
         {
+            "user": platform_accounts.current_account(request),
             "accounts": platform_accounts.list_accounts(),
             "modules": MODULES,
             "role_map": MODULE_ROLE_MAP,
@@ -45,7 +46,9 @@ def new_account_form(request: Request, redirect=Depends(platform_accounts.requir
     if redirect:
         return redirect
     return templates.TemplateResponse(
-        request, "account_form.html", {"account": None, "modules": MODULES, "roles": MODULE_ROLES, "error": ""}
+        request,
+        "account_form.html",
+        {"user": platform_accounts.current_account(request), "account": None, "modules": MODULES, "roles": MODULE_ROLES, "error": ""},
     )
 
 
@@ -69,7 +72,7 @@ async def create_account_submit(request: Request, redirect=Depends(platform_acco
         return templates.TemplateResponse(
             request,
             "account_form.html",
-            {"account": None, "modules": MODULES, "roles": MODULE_ROLES, "error": error},
+            {"user": platform_accounts.current_account(request), "account": None, "modules": MODULES, "roles": MODULE_ROLES, "error": error},
             status_code=400,
         )
 
@@ -85,7 +88,9 @@ def edit_account_form(username: str, request: Request, redirect=Depends(platform
     if not account:
         return RedirectResponse(url="/accounts?error=not_found", status_code=303)
     return templates.TemplateResponse(
-        request, "account_form.html", {"account": account, "modules": MODULES, "roles": MODULE_ROLES, "error": ""}
+        request,
+        "account_form.html",
+        {"user": platform_accounts.current_account(request), "account": account, "modules": MODULES, "roles": MODULE_ROLES, "error": ""},
     )
 
 
@@ -107,7 +112,7 @@ async def edit_account_submit(username: str, request: Request, redirect=Depends(
         return templates.TemplateResponse(
             request,
             "account_form.html",
-            {"account": account, "modules": MODULES, "roles": MODULE_ROLES, "error": error},
+            {"user": platform_accounts.current_account(request), "account": account, "modules": MODULES, "roles": MODULE_ROLES, "error": error},
             status_code=400,
         )
 

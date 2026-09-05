@@ -1050,3 +1050,108 @@ vehicle 相關函式），原本的最小可用版本（只有新增/刪除）�
   連結。
 - 狀態/保管人更新僅開放管理員（`admin_required`），跟新增/刪除的權限
   範圍一致；一般同仁仍可檢視詳細頁跟歷史紀錄。
+
+## 新增：統一登入入口（/login + 登入才看得到的 /portal）＋ 職缺維護系統免登入銜接
+
+背景：老闆希望材霈內部系統的入口帳密統一——連到 `/portal` 就先要求登入
+（不要進了各部門才各自登入一次），登入後依權限自由切換部門；另外還有一套
+完全獨立的「職缺維護系統」（Notion + Google Sheets 為資料庫、Netlify +
+Google Apps Script 架的靜態網站，網址
+`https://ubiquitous-choux-38eefb.netlify.app/`，同仁用「姓名 + 4 碼 PIN」
+登入，帳密是同仁在另一個 LINE 群組用機器人自動綁定寫進一份 Google
+Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁不用在兩套系統
+之間重複輸入帳密。這輪把這兩件事一起做掉。
+
+**統一登入 / 登入才看得到的 /portal**：
+- 新增全平台共用的 `/login`（GET 顯示表單、POST 驗證）／`/logout`
+  （`login_routes.py`＋`templates/login.html`），登入邏輯沿用既有的
+  `platform_accounts.authenticate()`，跟 `/accounts`、各部門模組共用同一顆
+  `delivery_session` cookie，這裡不是又做一套新的登入機制。`next` 參數
+  控制登入成功後要導去哪裡，`_safe_next_path()` 只接受同站相對路徑，避免
+  被拿來做開放式轉址。
+- `/portal`（`portal_routes.py`＋`templates/portal_home.html`）從原本任何人
+  都看得到的靜態頁面，改成登入後才看得到（`_require_login` 依賴：未登入
+  導去 `/login?next=/portal`），而且只顯示這個帳號有權限的部門卡片
+  （`platform_accounts.MODULES` + `has_module_access()` 篩選），不是固定
+  的兩張卡片——之後新增部門模組不用再改這個頁面。各部門自己的登入頁
+  （`/delivery/login`、`/management/login`）保留不動，作為深連結
+  （direct link）進來時的備援，不是主要入口。
+- `templates/base.html` 的頂部導覽列補上登入狀態（顯示姓名、
+  `is_platform_admin` 才看得到「帳號權限管理」連結、登出按鈕），
+  `accounts_routes.py` 的四個頁面補上 `user` 給樣板用。
+
+**職缺維護系統免登入銜接**（`job_portal_sso.py` + `portal_routes.py` 的
+`/portal/job-system-login`、`/api/job-system-sso/exchange`、
+`/internal/sync-job-system-identities`）：
+- 完全不動職缺維護系統那個專案的程式碼，只在我們這邊做銜接。運作方式
+  分兩段：① 排程把「員工主管組織表」這份 Google Sheet 的姓名/PIN 欄位
+  定期鏡射進 Firestore（`sync_identities_from_sheet()`，走 Cloud Run 掛載
+  的服務帳號身分讀 Sheets API，不需要另外存一組憑證）；② 同仁在 /portal
+  點「職缺維護系統」卡片時，拿他這個平台帳號的「姓名」（本名，跟職缺
+  系統 Sheet 裡的姓名是同一個人、同一種寫法）去 Firestore 查對應的 PIN，
+  查得到就簽發一組 45 秒後失效、簽章保護的一次性代碼放在網址上帶過去，
+  查不到就直接導去職缺系統原本網址，同仁照舊手動輸入姓名/PIN，不受影響、
+  也不會看到任何錯誤訊息——這張卡片刻意設計成「登入 /portal 的每個人都
+  看得到」，比對不到才是唯一的差別。
+- 代碼本身不是真的 PIN，安全性完全靠簽章合法+沒過期
+  （`SSO_TOKEN_MAX_AGE_SECONDS = 45`），過期或偽造一律回傳 `None`，不區分
+  原因。真正的姓名/PIN 是職缺系統的網頁自己在背景用 `fetch` 呼叫
+  `/api/job-system-sso/exchange` 換回來，不會出現在網址上，比直接把 PIN
+  放進網址安全很多。這支交換端點刻意不要求我們平台自己的登入 session
+  （呼叫方是另一個網域的頁面，本來就沒有也不需要有我們的 session
+  cookie），改用只允許職缺系統網域的 CORS 白名單
+  （`Access-Control-Allow-Origin`）把關。
+
+**上線前要做的事**（GCP 端的準備已經全部做完，只差下面兩步）：
+
+1. 已完成：`gcloud services enable sheets.googleapis.com`（Sheets API）、
+   確認 Cloud Run 服務帳號
+   （`412901869672-compute@developer.gserviceaccount.com`）、把那份
+   「員工主管組織表」Google Sheet 分享給這組服務帳號（檢視者權限）。
+2. **還沒做，需要老闆或有權限的同仁執行**：
+   - Cloud Run 設定環境變數 `JOB_SHEET_SYNC_SECRET`（隨機字串，例如
+     `openssl rand -hex 32`），Cloud Scheduler 呼叫同步端點時要帶同一組
+     在 header 裡。未設定時 `/internal/sync-job-system-identities` 一律
+     回傳 403，等同這個端點不存在。
+   - 設定 Cloud Scheduler 定期觸發同步（例如每小時一次，抓新綁定的
+     同仁）：
+     ```bash
+     gcloud scheduler jobs create http job-system-identity-sync \
+       --project=tsaipei-505807 \
+       --location=asia-east1 \
+       --schedule="0 * * * *" \
+       --time-zone="Asia/Taipei" \
+       --uri="https://recruitment-bot-412901869672.asia-east1.run.app/internal/sync-job-system-identities" \
+       --http-method=POST \
+       --headers="X-Job-Sheet-Sync-Secret=跟 Cloud Run 上設定的同一組密鑰"
+     ```
+   - 部署更新後的程式碼（`gcloud run deploy`），並且**至少手動打一次**
+     `POST /internal/sync-job-system-identities`（帶正確的 header），否則
+     在 Cloud Scheduler 第一次觸發之前，Firestore 裡還沒有任何職缺系統的
+     身分對照資料，同仁點「職缺維護系統」卡片會全部落到「比對不到、導去
+     原網址手動登入」的分支。
+   - 職缺維護系統 `index.html` 需要補上一小段額外的 `<script>`（純新增，
+     不改動既有任何一行）：覆蓋 `window.checkAndPromptLogin`，先檢查網址
+     有沒有 `?sso=` 代碼，有的話背景呼叫
+     `/api/job-system-sso/exchange` 換回姓名/PIN，再照原本手動登入會做的
+     事（呼叫同一支 `VERIFY_LOGIN` GAS 端點、寫入
+     `sessionStorage`/`currentUser`）；沒有代碼或交換失敗就呼叫原本的
+     登入流程，不影響現有的手動登入。這段程式碼還沒實際交付，需要先確認
+     那個系統的部署方式（Netlify 是接 Git 自動部署，還是手動上傳檔案）才
+     知道怎麼套用。
+
+**已知限制／刻意的取捨**：
+- Firestore 鏡射資料跟 Google Sheet 之間有同步延遲（取決於 Cloud
+  Scheduler 排程頻率），剛綁定 PIN 的同仁要等下一次同步才會出現在免登入
+  名單裡，這段時間點卡片一樣會落到「比對不到、導去原網址手動登入」，
+  不會出錯、也不會卡住。
+- 姓名比對是完全比對（strip 前後空白，其餘要求一致），沒有做模糊比對；
+  兩邊姓名寫法如果不一致（例如簡稱、別名）就不會比對成功——這是老闆
+  確認過可以接受的行為（「比對不到的就不給登入就好了」，不是這個功能要
+  解決的問題）。
+- 測試涵蓋範圍延續既有分工：`mint_sso_token()`/`verify_sso_token()`（純
+  函式，不碰 Firestore）有完整單元測試涵蓋正常換回、被竄改、過期三種
+  情況；路由只測「不需要真的打 Firestore」的部分（未登入時的導向、
+  `/api/job-system-sso/exchange` 的代碼驗證邏輯、同步端點的密鑰檢查）。
+  `sync_identities_from_sheet()`/`find_identity_by_name()` 需要真的連
+  Google Sheets API / Firestore，留給有 GCP 憑證的環境做整合測試。
