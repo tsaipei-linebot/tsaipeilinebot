@@ -834,3 +834,38 @@ webhook 端點/密鑰（`delivery/incident_report.py` + `/delivery/api/incident-
 確認訊息、網頁 `/incidents` 清單看得到這筆、管理員能設定風險等級跟結案；
 也可以手動執行一次 `sendIncidentWeeklyReminder`（Apps Script 編輯器裡直接
 執行這個函式），確認提醒訊息有正確推播回原群組。
+
+## 新增：內部系統入口頁（`/portal`）
+
+同仁除了配送部系統，另外也有一個獨立的「職缺維護系統」（同仁維護開放招募/
+停招等職缺狀態，內容會直接寫進 Notion，再連動到官網跟招募機器人「沛沛」；
+目前是 Netlify + Google Apps Script 架構，跟這個 repo 完全獨立、還沒有進
+Git）。兩邊帳號密碼各自獨立、有一批同仁兩邊都要用，所以加了這支 `/portal`
+路由當作「登入前選擇要進哪個系統」的導覽頁——**這支路由掛在 `main.py`
+（根 app），不是 `delivery/` 子系統底下**，因為它要同時導去配送部系統跟一個
+完全外部的系統，放進 `delivery/` 的話語意上會很奇怪。
+
+- `main.py` 開機時讀一次 `portal.html`（存在模組層級的 `PORTAL_HTML`
+  常數），`/portal` 這個路由直接回傳這份固定內容，沒有任何動態資料，也
+  刻意不要求登入——這一頁本身不碰任何資料，只是連結，各系統各自的帳密還是
+  在各自的登入頁輸入。
+- `portal.html` 直接 `<link>` 引用配送部系統既有的
+  `/delivery/static/style.css`（沿用同一套顏色/字體/卡片樣式，包括
+  `.home-grid`/`.home-panel`/`.badge` 這些既有 class），配送部系統以後改
+  配色，這一頁會自動跟著變，不用兩邊分別維護一份 CSS。
+- 畫面上放了三張卡片：配送部系統（連去 `/delivery/login`）、職缺維護系統
+  （連去 `https://ubiquitous-choux-38eefb.netlify.app/`）、一張灰色虛線
+  「更多部門系統／即將推出」佔位卡——這是使用者明確要求先放上去的，即使
+  目前還沒有對應的第三個系統。
+- 既有的 `/`（Cloud Run 健康檢查，回傳純 JSON）完全沒有動，`/portal` 是
+  全新的獨立路徑。
+- `/delivery/login` 這個網址本身沒有改變任何行為，同仁還是可以直接用原本
+  的網址/書籤登入，`/portal` 純粹是額外多一個好記的共用入口，不是強制的
+  單一入口。
+
+**已知限制**：`tests/test_portal.py` 用 TestClient 驗證了頁面正常回應、
+兩個系統的連結都在、佔位卡有出現、既有的 `/` 健康檢查沒被動到；另外用
+`playwright` 手動截圖確認過桌面版跟手機版（`.home-grid` 既有的響應式
+斷點在窄螢幕下會自動把卡片疊起來，不用額外寫 CSS）畫面正常、沒有跑版。
+沒有做的事：這一頁完全是靜態連結，職缺維護系統那邊的網址如果之後換了，
+要記得回來改 `portal.html` 裡的連結。
