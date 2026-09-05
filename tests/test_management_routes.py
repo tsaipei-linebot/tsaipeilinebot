@@ -56,6 +56,18 @@ class ManagementRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertTrue(resp.headers["location"].endswith("/management/login"))
 
+    def test_asset_detail_page_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/management/assets/some-id", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/management/login"))
+
+    def test_new_asset_form_path_is_not_shadowed_by_detail_route(self):
+        # /assets/new 要能正確配到「新增資產」的路由，而不是被
+        # /assets/{asset_id} 這個動態路由攔截、把 "new" 當成 asset_id。
+        resp = self.client.get("/management/assets/new", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/management/login"))
+
     def test_login_page_renders(self):
         resp = self.client.get("/management/login")
         self.assertEqual(resp.status_code, 200)

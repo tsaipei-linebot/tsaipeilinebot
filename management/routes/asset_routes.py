@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 
@@ -10,7 +12,7 @@ router = APIRouter()
 
 
 @router.get("/assets")
-def asset_list(request: Request, category: str = "", redirect=Depends(login_required)):
+def asset_list(request: Request, category: str = "", status: str = "", name: str = "", redirect=Depends(login_required)):
     if redirect:
         return redirect
     return templates.TemplateResponse(
@@ -18,11 +20,14 @@ def asset_list(request: Request, category: str = "", redirect=Depends(login_requ
         "asset_list.html",
         {
             "user": current_user(request),
-            "assets": repository.list_assets(category_filter=category),
+            "assets": repository.list_assets(category_filter=category, status_filter=status, name_filter=name),
             "categories": ASSET_CATEGORIES,
+            "statuses": ASSET_STATUSES,
             "category_map": ASSET_CATEGORY_MAP,
             "status_map": ASSET_STATUS_MAP,
             "filter_category": category,
+            "filter_status": status,
+            "filter_name": name,
         },
     )
 
@@ -70,6 +75,47 @@ def create_asset_submit(
         )
     repository.create_asset(category, name, assigned_to.strip(), status, notes.strip(), user["username"], user["name"])
     return RedirectResponse(url="/management/assets", status_code=303)
+
+
+@router.get("/assets/{asset_id}")
+def asset_detail(asset_id: str, request: Request, redirect=Depends(login_required)):
+    if redirect:
+        return redirect
+    asset = repository.get_asset(asset_id)
+    if not asset:
+        return RedirectResponse(url="/management/assets", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "asset_detail.html",
+        {
+            "user": current_user(request),
+            "asset": asset,
+            "category_map": ASSET_CATEGORY_MAP,
+            "status_map": ASSET_STATUS_MAP,
+            "statuses": ASSET_STATUSES,
+            "events": repository.list_asset_events(asset_id),
+            "today": date.today().isoformat(),
+        },
+    )
+
+
+@router.post("/assets/{asset_id}/update")
+def update_asset_submit(
+    asset_id: str,
+    request: Request,
+    status: str = Form(...),
+    assigned_to: str = Form(""),
+    event_date: str = Form(...),
+    note: str = Form(""),
+    redirect=Depends(admin_required),
+):
+    if redirect:
+        return redirect
+    user = current_user(request)
+    repository.record_asset_event(
+        asset_id, status, assigned_to.strip(), event_date, note.strip(), user["username"], user["name"]
+    )
+    return RedirectResponse(url=f"/management/assets/{asset_id}", status_code=303)
 
 
 @router.post("/assets/{asset_id}/delete")

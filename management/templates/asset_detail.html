@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ asset.name }} - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ category_map.get(asset.category, asset.category) }}：{{ asset.name }}</h1>
+<p class="meta">
+    狀態：<span class="badge {{ 'badge-ok' if asset.status == 'in_use' else ('badge-missing' if asset.status == 'retired' else 'badge-pending') }}">{{ status_map.get(asset.status, asset.status) }}</span>
+    目前保管人：{{ asset.assigned_to or "-" }}
+    {% if asset.retired_at %}
+    報廢日期：{{ asset.retired_at }}
+    {% endif %}
+</p>
+
+{% if asset.notes %}
+<p style="white-space: pre-wrap;">{{ asset.notes }}</p>
+{% endif %}
+
+{% if user.role == "admin" %}
+<h2 class="section-title">更新狀態/保管人</h2>
+<form method="post" action="/management/assets/{{ asset.id }}/update" class="form-stack form-narrow">
+    <label>狀態
+        <select name="status" required>
+            {% for s in statuses %}
+            <option value="{{ s.code }}" {% if asset.status == s.code %}selected{% endif %}>{{ s.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>保管人
+        <input type="text" name="assigned_to" value="{{ asset.assigned_to }}">
+    </label>
+    <label>日期
+        <input type="date" name="event_date" value="{{ today }}" required>
+    </label>
+    <label>備註（選填）
+        <textarea name="note" rows="3"></textarea>
+    </label>
+    <button type="submit" class="btn btn-primary">更新</button>
+</form>
+<p class="hint">狀態選「報廢」送出後，這裡填的日期會存成報廢日期。</p>
+{% endif %}
+
+<h2 class="section-title">歷史紀錄</h2>
+{% if events %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>日期</th>
+            <th>狀態</th>
+            <th>保管人</th>
+            <th>備註</th>
+            <th>操作人</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for e in events %}
+        <tr>
+            <td>{{ e.event_date }}</td>
+            <td>{{ status_map.get(e.status, e.status) }}</td>
+            <td>{{ e.assigned_to or "-" }}</td>
+            <td>{{ e.note or "-" }}</td>
+            <td>{{ e.reported_by_name }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有異動紀錄。</p>
+{% endif %}
+
+{% if user.role == "admin" %}
+<form method="post" action="/management/assets/{{ asset.id }}/delete"
+      onsubmit="return confirm('確定要刪除這筆資產嗎？');">
+    <button type="submit" class="btn btn-danger">刪除資產</button>
+</form>
+{% endif %}
+
+<p class="back-link"><a href="/management/assets">&larr; 回資產/設備管理</a></p>
+{% endblock %}

@@ -5,8 +5,10 @@
 """
 import time
 
+from management.config import ASSET_STATUS_MAP
 from management.db import (
     announcements_ref,
+    asset_events_ref,
     assets_ref,
     client_visits_ref,
     documents_ref,
@@ -365,7 +367,12 @@ def delete_staff_member(staff_id: str) -> bool:
 
 # ==========================================
 # 資產/設備管理
-# 公務車（跟配送部車輛管理無關）、公務手機、門號、電腦。
+# 公務車（跟配送部車輛管理無關）、公務手機、門號、電腦。比照配送部系統的
+# 車輛管理（delivery.repository 的 vehicle 相關函式）：每筆資產有詳細頁，
+# 保管人/狀態可以隨時間變動，每次變動記一筆歷史事件，而不是像公告/文件
+# 那樣建立後就固定不變。報廢是其中一種狀態，但額外多存一個 retired_at
+# （報廢日期）欄位——跟「狀態剛好是報廢」比起來，這個欄位更明確地回答
+# 「這個東西是什麼時候報廢的」，之後要盤點報廢時間就不用去翻歷史事件表。
 # ==========================================
 def create_asset(category: str, name: str, assigned_to: str, status: str, notes: str, created_by: str, created_by_name: str) -> str:
     ref = assets_ref().document()
@@ -375,6 +382,7 @@ def create_asset(category: str, name: str, assigned_to: str, status: str, notes:
             "name": name,
             "assigned_to": assigned_to,
             "status": status,
+            "retired_at": "",
             "notes": notes,
             "created_by": created_by,
             "created_by_name": created_by_name,
@@ -393,12 +401,18 @@ def get_asset(asset_id: str):
     return data
 
 
-def list_assets(category_filter: str = "") -> list:
+def list_assets(category_filter: str = "", status_filter: str = "", name_filter: str = "") -> list:
     category_filter = (category_filter or "").strip()
+    status_filter = (status_filter or "").strip()
+    name_filter = (name_filter or "").strip().lower()
     result = []
     for snapshot in assets_ref().stream():
         data = snapshot.to_dict() or {}
         if category_filter and data.get("category") != category_filter:
+            continue
+        if status_filter and data.get("status") != status_filter:
+            continue
+        if name_filter and name_filter not in data.get("name", "").lower():
             continue
         data["id"] = snapshot.id
         result.append(data)
@@ -412,3 +426,52 @@ def delete_asset(asset_id: str) -> bool:
         return False
     ref.delete()
     return True
+
+
+def record_asset_event(
+    asset_id: str,
+    status: str,
+    assigned_to: str,
+    event_date: str,
+    note: str,
+    reported_by: str,
+    reported_by_name: str,
+) -> bool:
+    """更新資產目前的保管人/狀態，並記一筆歷史事件（比照配送部車輛管理的
+    manual-event 做法）。status 是「報廢」時，順便把 retired_at 設成這次
+    事件的日期；狀態改回其他值不會自動清掉 retired_at，避免誤操作把報廢
+    日期洗掉——真的填錯要改，直接進資料庫修正。"""
+    if status not in ASSET_STATUS_MAP:
+        return False
+    ref = assets_ref().document(asset_id)
+    if not ref.get().exists:
+        return False
+
+    update = {"status": status, "assigned_to": assigned_to}
+    if status == "retired":
+        update["retired_at"] = event_date
+    ref.update(update)
+
+    asset_events_ref().document().set(
+        {
+            "asset_id": asset_id,
+            "status": status,
+            "assigned_to": assigned_to,
+            "event_date": event_date,
+            "note": note,
+            "reported_by": reported_by,
+            "reported_by_name": reported_by_name,
+            "created_at": time.time(),
+        }
+    )
+    return True
+
+
+def list_asset_events(asset_id: str) -> list:
+    result = []
+    for snapshot in asset_events_ref().where("asset_id", "==", asset_id).stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda e: e.get("created_at", 0), reverse=True)
+    return result

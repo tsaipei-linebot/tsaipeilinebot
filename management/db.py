@@ -11,6 +11,7 @@ KPI_REPORTS_COLLECTION = "management_kpi_reports"
 CLIENT_VISITS_COLLECTION = "management_client_visits"
 STAFF_DIRECTORY_COLLECTION = "management_staff_directory"
 ASSETS_COLLECTION = "management_assets"
+ASSET_EVENTS_COLLECTION = "management_asset_events"
 
 
 def announcements_ref():
@@ -39,3 +40,7 @@ def staff_directory_ref():
 
 def assets_ref():
     return get_db().collection(ASSETS_COLLECTION)
+
+
+def asset_events_ref():
+    return get_db().collection(ASSET_EVENTS_COLLECTION)

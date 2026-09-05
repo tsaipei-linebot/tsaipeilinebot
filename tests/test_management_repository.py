@@ -8,7 +8,7 @@ from tests import _env  # noqa: F401
 from tests import _stub_gcp
 _stub_gcp.install()
 
-from management.repository import can_view_client_visit, group_staff_by_department
+from management.repository import can_view_client_visit, group_staff_by_department, record_asset_event
 
 
 class CanViewClientVisitTests(unittest.TestCase):
@@ -50,6 +50,16 @@ class GroupStaffByDepartmentTests(unittest.TestCase):
 
     def test_empty_list_returns_empty_groups(self):
         self.assertEqual(group_staff_by_department([]), [])
+
+
+class RecordAssetEventValidationTests(unittest.TestCase):
+    """record_asset_event() 在真的去查/寫 Firestore 之前，會先擋掉不合法的
+    狀態代碼——這一段不用碰資料庫就能測到。"""
+
+    def test_invalid_status_rejected_before_touching_firestore(self):
+        self.assertFalse(
+            record_asset_event("asset1", "not-a-real-status", "alice", "2026-01-01", "", "bob", "Bob")
+        )
 
 
 if __name__ == "__main__":
