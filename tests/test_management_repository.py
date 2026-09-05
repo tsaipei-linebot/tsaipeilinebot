@@ -12,27 +12,26 @@ from management.repository import can_view_client_visit, group_staff_by_departme
 
 
 class CanViewClientVisitTests(unittest.TestCase):
-    """客戶拜訪紀錄刻意只有記錄本人跟管理部主管（is_management_admin，
-    呼叫端會用 user["role"] == "admin" 算出來，全平台管理員也會落在這裡，
-    因為 platform_accounts.module_role() 對任何模組都回傳 admin）看得到，
-    這是這次管理部功能裡唯一一個「不是全部門共享」的可見範圍規則，值得
-    直接測。"""
+    """客戶拜訪紀錄刻意只有記錄本人跟全平台管理員看得到，這是這次管理部
+    功能裡唯一一個「不是全部門共享」的可見範圍規則，值得直接測。"""
 
     def test_creator_can_view_own_visit(self):
         visit = {"created_by": "alice"}
-        self.assertTrue(can_view_client_visit(visit, "alice", is_management_admin=False))
+        self.assertTrue(can_view_client_visit(visit, "alice", is_platform_admin=False))
 
     def test_other_staff_cannot_view_someone_elses_visit(self):
         visit = {"created_by": "alice"}
-        self.assertFalse(can_view_client_visit(visit, "bob", is_management_admin=False))
+        self.assertFalse(can_view_client_visit(visit, "bob", is_platform_admin=False))
 
-    def test_management_admin_can_view_any_visit(self):
+    def test_platform_admin_can_view_any_visit(self):
         visit = {"created_by": "alice"}
-        self.assertTrue(can_view_client_visit(visit, "manager", is_management_admin=True))
+        self.assertTrue(can_view_client_visit(visit, "boss", is_platform_admin=True))
 
-    def test_creator_who_is_also_management_admin_can_still_view_own(self):
+    def test_module_admin_who_is_not_platform_admin_cannot_view_others(self):
+        # 這裡刻意強調：management 模組的「主管」角色跟 is_platform_admin
+        # 是兩回事，只有後者能看到別人的拜訪紀錄。
         visit = {"created_by": "alice"}
-        self.assertTrue(can_view_client_visit(visit, "alice", is_management_admin=True))
+        self.assertFalse(can_view_client_visit(visit, "management_admin", is_platform_admin=False))
 
 
 class GroupStaffByDepartmentTests(unittest.TestCase):

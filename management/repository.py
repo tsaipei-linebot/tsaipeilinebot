@@ -232,11 +232,11 @@ def delete_kpi_report(report_id: str):
 
 # ==========================================
 # 客戶拜訪紀錄（業務主管專用）
-# 有管理部權限的同仁都可以新增，但刻意設計成「只有記錄本人跟管理部主管
-# （management 模組角色是 admin 的帳號，全平台管理員也算在內，因為
-# platform_accounts.module_role() 對任何模組都會回傳 admin）看得到」——
-# 這是業務同仁私下的拜訪紀錄，不是像公告/會議記錄那樣全部門共享的資訊，
-# 跟其他管理部功能的可見範圍邏輯不一樣。
+# 有管理部權限的同仁都可以新增，但刻意設計成「只有記錄本人跟全平台管理員
+# （老闆）看得到」——這是業務同仁私下的拜訪紀錄，不是像公告/會議記錄那樣
+# 全部門共享的資訊，跟其他管理部功能的可見範圍邏輯不一樣。畫面上的文字用
+# 「主管」這個說法（比較貼近老闆平常怎麼稱呼自己這個角色），但實際權限
+# 就是只認 is_platform_admin，管理部自己的「主管」角色沒有額外開放。
 # ==========================================
 def create_client_visit(
     client_name: str,
@@ -265,12 +265,10 @@ def create_client_visit(
     return ref.id
 
 
-def can_view_client_visit(visit: dict, username: str, is_management_admin: bool) -> bool:
-    """純函式，方便測試：只有記錄本人（created_by）或管理部主管（含全平台
-    管理員）看得到這筆拜訪紀錄。is_management_admin 由呼叫端算好傳進來
-    （見 management.auth.current_user() 算出的 user["role"]），這個函式
-    本身不管這個布林值是怎麼來的。"""
-    if is_management_admin:
+def can_view_client_visit(visit: dict, username: str, is_platform_admin: bool) -> bool:
+    """純函式，方便測試：只有記錄本人（created_by）或全平台管理員看得到
+    這筆拜訪紀錄。"""
+    if is_platform_admin:
         return True
     return visit.get("created_by") == username
 
@@ -284,12 +282,12 @@ def get_client_visit(visit_id: str):
     return data
 
 
-def list_client_visits(username: str, is_management_admin: bool) -> list:
+def list_client_visits(username: str, is_platform_admin: bool) -> list:
     """只回傳這個帳號看得到的拜訪紀錄（見 can_view_client_visit）。"""
     result = []
     for snapshot in client_visits_ref().stream():
         data = snapshot.to_dict() or {}
-        if not can_view_client_visit(data, username, is_management_admin):
+        if not can_view_client_visit(data, username, is_platform_admin):
             continue
         data["id"] = snapshot.id
         result.append(data)
