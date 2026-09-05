@@ -1,8 +1,8 @@
-"""客戶拜訪紀錄：有管理部權限的同仁都可以新增，但刻意只有記錄本人跟全平台
-管理員（老闆）看得到——這是業務同仁私下的拜訪紀錄，可見範圍比公告/會議
-記錄這些全部門共享的功能窄很多，所以這裡的權限檢查沒有直接用
-login_required/admin_required 就結束，還要另外用 repository.
-can_view_client_visit() 檢查「這一筆是不是給我看的」。
+"""客戶拜訪紀錄：有管理部權限的同仁都可以新增，但刻意只有記錄本人跟管理部
+主管（user["role"] == "admin"，全平台管理員也算在內）看得到——這是業務
+同仁私下的拜訪紀錄，可見範圍比公告/會議記錄這些全部門共享的功能窄很多，
+所以這裡的權限檢查沒有直接用 login_required/admin_required 就結束，還要
+另外用 repository.can_view_client_visit() 檢查「這一筆是不是給我看的」。
 """
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -19,7 +19,7 @@ def client_visit_list(request: Request, redirect=Depends(login_required)):
     if redirect:
         return redirect
     user = current_user(request)
-    visits = repository.list_client_visits(user["username"], user["is_platform_admin"])
+    visits = repository.list_client_visits(user["username"], user["role"] == "admin")
     return templates.TemplateResponse(request, "client_visit_list.html", {"user": user, "visits": visits})
 
 
@@ -68,7 +68,7 @@ def client_visit_detail(visit_id: str, request: Request, redirect=Depends(login_
         return redirect
     user = current_user(request)
     visit = repository.get_client_visit(visit_id)
-    if not visit or not repository.can_view_client_visit(visit, user["username"], user["is_platform_admin"]):
+    if not visit or not repository.can_view_client_visit(visit, user["username"], user["role"] == "admin"):
         return RedirectResponse(url="/management/client-visits", status_code=303)
     return templates.TemplateResponse(request, "client_visit_detail.html", {"user": user, "visit": visit})
 
@@ -79,7 +79,7 @@ def delete_client_visit_submit(visit_id: str, request: Request, redirect=Depends
         return redirect
     user = current_user(request)
     visit = repository.get_client_visit(visit_id)
-    if not visit or not repository.can_view_client_visit(visit, user["username"], user["is_platform_admin"]):
+    if not visit or not repository.can_view_client_visit(visit, user["username"], user["role"] == "admin"):
         return RedirectResponse(url="/management/client-visits", status_code=303)
     repository.delete_client_visit(visit_id)
     return RedirectResponse(url="/management/client-visits", status_code=303)
