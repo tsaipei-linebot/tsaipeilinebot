@@ -1,8 +1,6 @@
-import os
 import time
 import uuid
 from fastapi import FastAPI, Request, Header, HTTPException
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
@@ -11,6 +9,8 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, ImageMessage
 
 import accounts_routes
+import login_routes
+import portal_routes
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
@@ -20,12 +20,6 @@ from delivery.config import SESSION_SECRET_KEY
 from handlers.message_handler import process_user_message, process_image_message
 from delivery.app import delivery_app
 from management.app import management_app
-
-# 內部系統入口頁（/portal）：登入前選擇要進配送部系統還是職缺維護系統的靜態
-# 導覽頁，內容固定不變，讀一次存起來即可，不用每次請求都重新開檔案。
-_PORTAL_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "portal.html")
-with open(_PORTAL_HTML_PATH, encoding="utf-8") as _f:
-    PORTAL_HTML = _f.read()
 
 app = FastAPI(
     title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine - V12 (Modular)",
@@ -43,6 +37,11 @@ app.add_middleware(
     max_age=14 * 24 * 3600,
 )
 app.include_router(accounts_routes.router, prefix="/accounts")
+# /login、/logout：全平台共用的登入頁（見 login_routes.py）。
+app.include_router(login_routes.router)
+# /portal：登入後才看得到的內部系統入口頁，加上職缺維護系統的免登入銜接
+# （見 portal_routes.py）。
+app.include_router(portal_routes.router)
 
 # 配送部系統、管理部系統：各自獨立子系統（自己的路由/資料表，共用同一顆
 # 登入 session cookie），掛在 /delivery、/management 底下，跟上面 LINE
@@ -64,14 +63,6 @@ def health_check():
         "service": "Tsaipei AI Recruitment Consultant (PeiPei V12 Modular Engine) is running."
     }
 
-
-@app.get("/portal", response_class=HTMLResponse)
-def internal_portal():
-    """登入前選擇要進哪個內部系統的導覽頁：目前是配送部系統（本服務底下的
-    /delivery）跟職缺維護系統（另一個獨立的 Netlify 專案），純導覽用途，
-    本身不需要登入、也不碰任何資料——各系統各自的帳號密碼還是在各自登入頁
-    輸入，這裡只負責「連過去」。"""
-    return PORTAL_HTML
 
 # ==========================================
 # 共用 Webhook 處理邏輯

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}登入 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="login-box">
+    <h1>內部系統入口</h1>
+    <p class="subtitle">請使用同仁帳號登入</p>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post" action="/login" class="form-stack">
+        <input type="hidden" name="next" value="{{ next }}">
+        <label>帳號
+            <input type="text" name="username" autocomplete="username" required autofocus>
+        </label>
+        <label>密碼
+            <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit" class="btn btn-primary">登入</button>
+    </form>
+</div>
+{% endblock %}
