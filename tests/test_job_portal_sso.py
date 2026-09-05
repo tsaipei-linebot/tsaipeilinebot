@@ -26,8 +26,14 @@ class SsoTokenTests(unittest.TestCase):
         self.assertEqual(result, {"name": "王小明", "pin": "1234"})
 
     def test_tampered_token_is_rejected(self):
+        # 刻意竄改簽章區段（第一個 "." 之前是內容，之後才是時間戳記+簽章）
+        # 中間的字元，不要動最後一個字元——base64url 最後一碼常常有幾個
+        # bit 是不影響解碼結果的 padding，偶爾竄改最後一碼還是會解出一樣的
+        # 內容，導致這個測試不穩定（flaky）。改中間字元才能保證雜湊值一定
+        # 跟著改變。
         token = job_portal_sso.mint_sso_token("王小明", "1234")
-        tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
+        mid = len(token) // 2
+        tampered = token[:mid] + ("a" if token[mid] != "a" else "b") + token[mid + 1 :]
         self.assertIsNone(job_portal_sso.verify_sso_token(tampered))
 
     def test_garbage_token_is_rejected(self):

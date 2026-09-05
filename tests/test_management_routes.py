@@ -138,5 +138,24 @@ class ManagementLineWebhookTests(unittest.TestCase):
             line_webhook_routes.handler = original_handler
 
 
+class IdQueryPatternTests(unittest.TestCase):
+    """_ID_QUERY_PATTERN 決定機器人「什麼時候才回覆聊天室 ID」：這個群組
+    之後可能拿來給同仁討論事情，機器人只在收到查詢指令時才出聲，其餘訊息
+    一律不回應，不能對每一則訊息都跳出來回覆 ID 打擾大家。"""
+
+    def setUp(self):
+        import management.routes.line_webhook_routes as line_webhook_routes
+
+        self.pattern = line_webhook_routes._ID_QUERY_PATTERN
+
+    def test_matches_group_id_command_variants(self):
+        for text in ["群組ID", "群組 id", "#群組ID", "groupid", "group id", "GROUPID"]:
+            self.assertIsNotNone(self.pattern.match(text), f"應該要比對到：{text}")
+
+    def test_does_not_match_ordinary_chat_messages(self):
+        for text in ["今天開會改到下午三點", "群組ID是多少啊", "groupid please", "早安"]:
+            self.assertIsNone(self.pattern.match(text), f"不應該比對到：{text}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1211,11 +1211,15 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
   群組裡的任何訊息都會被沛沛現有的求職者對話 AI 接手處理，內部聊天會被
   誤判成求職者在問工作機會，所以另外申請一個全新帳號兩邊隔離。
 - Webhook（`POST /management/line/callback`，見
-  `routes/line_webhook_routes.py`）刻意只做一件事：收到任何訊息，回覆
-  這個聊天室的 ID（群組回 Group ID、多人聊天室回 Room ID、一對一聊天回
-  User ID）。把這個新機器人拉進管理部 LINE 群組後，機器人會直接在群組裡
-  回覆 Group ID，複製貼到環境變數即可——比配送部「去 Cloud Logging 撈
-  log」的做法更方便，而且完全沒有自動對話/AI 邏輯。
+  `routes/line_webhook_routes.py`）**只對特定查詢指令有反應**：在聊天室
+  打「群組ID」／「groupid」（大小寫、有無空格都可以，見
+  `_ID_QUERY_PATTERN`）才會回覆這個聊天室的 ID（群組回 Group ID、多人
+  聊天室回 Room ID、一對一聊天回 User ID），其餘訊息一律不回應——這個
+  群組之後會拿來給同仁討論事情，機器人不能對每一則訊息都跳出來回覆 ID
+  打擾大家，只在真的需要查 ID 時才出聲。把這個新機器人拉進管理部 LINE
+  群組後，發「群組ID」這則訊息，機器人就會回覆 Group ID，複製貼到環境
+  變數即可——比配送部「去 Cloud Logging 撈 log」的做法更方便，而且完全
+  沒有自動對話/AI 邏輯。
 - `management/line_bot.py` 的 `push_group_message()` 是目前唯一的推播
   入口，只有門號繳費提醒會呼叫；之後如果管理部要加其他推播（公告發布、
   會議記錄等），都可以直接沿用這支函式。
@@ -1254,9 +1258,11 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
   進 Firestore（`job_system_identities` collection），目前沒有任何功能
   會用到，只是幫「以後可能的個人提醒功能」預先鋪路（老闆提到未來可能會
   想針對個人而不是整個群組推播）。
-- 測試涵蓋範圍延續既有分工：`_parse_payment_day()`/`_next_due_date()`
-  （純函式，不碰 Firestore）有完整單元測試，涵蓋一般情況、月底天數不足、
-  跨年等邊界狀況；路由只測「不需要真的打 Firestore」的部分（未登入時的
-  導向、提醒端點的密鑰檢查、LINE Webhook 在未設定/缺簽章 header 時的
-  行為）。`list_sim_payment_reminders()`（要連 Firestore）跟真正的 LINE
-  簽章驗證（line-bot-sdk 本身的責任）留給有憑證的環境做整合測試。
+- 測試涵蓋範圍延續既有分工：`_parse_payment_day()`/`_next_due_date()`/
+  `_ID_QUERY_PATTERN`（純函式/純規則，不碰 Firestore）有完整單元測試，
+  涵蓋一般情況、月底天數不足、跨年等邊界狀況，以及查詢指令的各種寫法
+  跟一般聊天訊息不會誤觸發；路由只測「不需要真的打 Firestore」的部分
+  （未登入時的導向、提醒端點的密鑰檢查、LINE Webhook 在未設定/缺簽章
+  header 時的行為）。`list_sim_payment_reminders()`（要連 Firestore）跟
+  真正的 LINE 簽章驗證（line-bot-sdk 本身的責任）留給有憑證的環境做
+  整合測試。
