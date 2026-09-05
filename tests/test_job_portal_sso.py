@@ -1,3 +1,4 @@
+import hashlib
 import os
 import sys
 import time
@@ -49,6 +50,35 @@ class SsoTokenTests(unittest.TestCase):
         other_serializer = URLSafeTimedSerializer(SESSION_SECRET_KEY, salt="some-other-purpose")
         foreign_token = other_serializer.dumps({"name": "王小明", "pin": "1234"})
         self.assertIsNone(job_portal_sso.verify_sso_token(foreign_token))
+
+
+class ResolvePlaintextPinTests(unittest.TestCase):
+    """_resolve_plaintext_pin() 要處理職缺系統組織表 PIN 欄位的兩種可能
+    格式：舊資料是明文 4 碼數字、新資料是 sha256Hash(明文 pin) 算出來的
+    無鹽 SHA-256 雜湊值（見那個系統主程式的 EmployeeRegistrationService.
+    processRegistration()）。VERIFY_LOGIN 端點只收明文 pin，所以雜湊值
+    一定要換算回明文才能用。"""
+
+    def test_legacy_plaintext_pin_passthrough(self):
+        self.assertEqual(job_portal_sso._resolve_plaintext_pin("1234"), "1234")
+
+    def test_plaintext_pin_with_leading_zero(self):
+        self.assertEqual(job_portal_sso._resolve_plaintext_pin("0007"), "0007")
+
+    def test_hashed_pin_resolves_to_plaintext(self):
+        hashed = hashlib.sha256(b"5678").hexdigest()
+        self.assertEqual(job_portal_sso._resolve_plaintext_pin(hashed), "5678")
+
+    def test_hashed_pin_uppercase_still_resolves(self):
+        hashed = hashlib.sha256(b"5678").hexdigest().upper()
+        self.assertEqual(job_portal_sso._resolve_plaintext_pin(hashed), "5678")
+
+    def test_unresolvable_value_returns_none(self):
+        self.assertIsNone(job_portal_sso._resolve_plaintext_pin("not-a-pin-or-hash"))
+
+    def test_empty_value_returns_none(self):
+        self.assertIsNone(job_portal_sso._resolve_plaintext_pin(""))
+        self.assertIsNone(job_portal_sso._resolve_plaintext_pin(None))
 
 
 if __name__ == "__main__":

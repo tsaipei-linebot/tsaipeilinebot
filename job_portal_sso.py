@@ -10,7 +10,9 @@
 整體運作分兩段：
 1. 排程把 Google Sheet 的姓名/PIN 定期同步進 Firestore（見
    sync_identities_from_sheet()），我們自己的請求路徑只讀 Firestore，
-   不會即時去打 Google Sheets API。
+   不會即時去打 Google Sheets API。Sheet 裡的 PIN 欄位存的其實是無鹽
+   SHA-256 雜湊值（不是明文），同步時會先換算回明文 PIN 再存進 Firestore
+   （見 _resolve_plaintext_pin()），因為 VERIFY_LOGIN 端點要收明文 PIN。
 2. 同仁在 /portal 點「職缺維護系統」卡片時（見 portal_routes.py），拿他
    帳號的姓名去 Firestore 查對應的 PIN，查得到就簽發一組幾十秒後失效、
    一次性用途的代碼放在網址上帶過去；查不到就直接導去原本的網址，同仁
@@ -19,7 +21,9 @@
    而且這個交換動作是那個系統的網頁自己在背景呼叫，不會出現在網址上，
    比直接把 PIN 放進網址安全很多。
 """
+import hashlib
 import os
+import re
 import time
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -54,14 +58,41 @@ IDENTITIES_COLLECTION = "job_system_identities"
 SSO_TOKEN_MAX_AGE_SECONDS = 45
 _serializer = URLSafeTimedSerializer(SESSION_SECRET_KEY, salt="job-portal-sso")
 
+# 職缺系統的組織表 PIN 欄位存的不是明文 PIN，而是 sha256Hash(pin)（見那個
+# 系統主程式的 EmployeeRegistrationService.processRegistration()：對純
+# 4 碼數字字串做「無鹽」SHA-256，沒有加任何鹽或姓名混入）。但 VERIFY_LOGIN
+# 端點收到的 pin 參數必須是明文——它自己會再雜湊一次去跟 Sheet 裡的值比對
+# （OrgService.verifyEmployeePin()），把雜湊值原封不動送過去等於雜湊了
+# 兩次，一定對不上。
+#
+# 因為 PIN 只有 4 位數字、只有 10000 種可能組合，這裡預先算好這 10000 種
+# 雜湊值對照回明文 PIN 的表，同步時直接反查——這不是在破解對方系統，這份
+# 資料本來就是我們已經被授權讀取的同一份 Sheet，只是換成 VERIFY_LOGIN 看
+# 得懂的形式（明文）而已。舊資料如果還是明文 4 碼（那支程式碼相容舊資料、
+# 一旦驗證通過會自動升級成雜湊值），直接原樣使用即可，不需要查表。
+_PIN_HASH_TO_PLAINTEXT = {
+    hashlib.sha256(f"{i:04d}".encode("utf-8")).hexdigest(): f"{i:04d}" for i in range(10000)
+}
+
+
+def _resolve_plaintext_pin(raw_value: str):
+    """把 Sheet 裡 PIN 欄位的原始值（明文 4 碼或 SHA-256 雜湊值）換算回
+    明文 PIN；查不到對應明文（例如欄位值格式不明）回傳 None。"""
+    value = (raw_value or "").strip()
+    if re.fullmatch(r"\d{4}", value):
+        return value
+    return _PIN_HASH_TO_PLAINTEXT.get(value.lower())
+
 
 def _identities_ref():
     return get_db().collection(IDENTITIES_COLLECTION)
 
 
 def sync_identities_from_sheet() -> int:
-    """讀取 Google Sheet 目前的姓名/PIN，鏡射寫進 Firestore。回傳同步的
-    筆數。姓名或 PIN 是空白的列直接跳過（可能是還沒完成 LINE 綁定的舊列）。
+    """讀取 Google Sheet 目前的姓名/PIN，鏡射寫進 Firestore（存的是換算回
+    明文後的 PIN，見 _resolve_plaintext_pin()）。回傳同步的筆數。姓名是
+    空白、PIN 欄位是空白、或 PIN 欄位換算不出明文的列一律跳過（分別對應
+    「還沒完成 LINE 綁定」「還沒設定 PIN」「格式不明的舊資料」）。
 
     用 google.auth.default() 走 Cloud Run 掛載的服務帳號身分（跟
     firestore.Client() 是同一套 Application Default Credentials 機制），
@@ -86,8 +117,11 @@ def sync_identities_from_sheet() -> int:
     count = 0
     for row in rows:
         name = (row[0] if len(row) > 0 else "").strip()
-        pin = (row[8] if len(row) > 8 else "").strip()
-        if not name or not pin:
+        raw_pin = (row[8] if len(row) > 8 else "").strip()
+        if not name or not raw_pin:
+            continue
+        pin = _resolve_plaintext_pin(raw_pin)
+        if not pin:
             continue
         _identities_ref().document(name).set({"name": name, "pin": pin, "synced_at": synced_at})
         count += 1
