@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}員工名冊 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">員工名冊</h1>
+    {% if user.role == "admin" %}
+    <a class="btn btn-primary" href="/management/staff-directory/new">新增人員</a>
+    {% endif %}
+</div>
+<p class="hint">全公司員工名冊（跟配送部系統的人員管理是兩回事）。<a href="/management/staff-directory/org-chart">查看組織圖</a></p>
+
+{% if staff %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>部門</th>
+            <th>姓名</th>
+            <th>職稱</th>
+            {% if user.role == "admin" %}
+            <th></th>
+            {% endif %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for s in staff %}
+        <tr>
+            <td>{{ s.department }}</td>
+            <td>{{ s.name }}</td>
+            <td>{{ s.title }}</td>
+            {% if user.role == "admin" %}
+            <td>
+                <form method="post" action="/management/staff-directory/{{ s.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除「{{ s.name }}」嗎？');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+            </td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有員工資料。</p>
+{% endif %}
+
+<p class="back-link"><a href="/management/">&larr; 回主頁</a></p>
+{% endblock %}

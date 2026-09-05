@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}客戶拜訪紀錄 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">客戶拜訪紀錄</h1>
+    <a class="btn btn-primary" href="/management/client-visits/new">新增拜訪紀錄</a>
+</div>
+<p class="hint">這裡只會看到自己新增的紀錄（管理員可以看到全部）。</p>
+
+{% if visits %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>拜訪日期</th>
+            <th>客戶名稱</th>
+            <th>拜訪人員</th>
+            <th>跟進狀態</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for v in visits %}
+        <tr>
+            <td>{{ v.visit_date }}</td>
+            <td>{{ v.client_name }}</td>
+            <td>{{ v.visitor }}</td>
+            <td>{{ v.follow_up_status }}</td>
+            <td><a href="/management/client-visits/{{ v.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有拜訪紀錄。</p>
+{% endif %}
+
+<p class="back-link"><a href="/management/">&larr; 回主頁</a></p>
+{% endblock %}

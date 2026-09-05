@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}新增拜訪紀錄 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">新增拜訪紀錄</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/management/client-visits/new" class="form-stack form-narrow">
+    <label>客戶名稱
+        <input type="text" name="client_name" required>
+    </label>
+    <label>拜訪日期
+        <input type="date" name="visit_date" required>
+    </label>
+    <label>約訪人員
+        <input type="text" name="arranged_by" required>
+    </label>
+    <label>拜訪人員
+        <input type="text" name="visitor" required>
+    </label>
+    <label>跟進狀態
+        <input type="text" name="follow_up_status" placeholder="例如：待跟進、已成交" required>
+    </label>
+    <label>備註（選填）
+        <textarea name="notes" rows="4"></textarea>
+    </label>
+    <button type="submit" class="btn btn-primary">新增</button>
+</form>
+<p class="back-link"><a href="/management/client-visits">&larr; 回客戶拜訪紀錄</a></p>
+{% endblock %}

@@ -31,6 +31,31 @@ class ManagementRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertTrue(resp.headers["location"].endswith("/management/login"))
 
+    def test_kpi_reports_page_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/management/kpi-reports", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/management/login"))
+
+    def test_client_visits_page_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/management/client-visits", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/management/login"))
+
+    def test_staff_directory_page_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/management/staff-directory", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/management/login"))
+
+    def test_org_chart_page_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/management/staff-directory/org-chart", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/management/login"))
+
+    def test_assets_page_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/management/assets", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/management/login"))
+
     def test_login_page_renders(self):
         resp = self.client.get("/management/login")
         self.assertEqual(resp.status_code, 200)

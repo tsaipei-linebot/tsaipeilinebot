@@ -41,3 +41,22 @@ DOCUMENT_CATEGORIES = [
     {"code": "other", "name": "其他"},
 ]
 DOCUMENT_CATEGORY_MAP = {c["code"]: c["name"] for c in DOCUMENT_CATEGORIES}
+
+# 資產/設備分類：公務車（跟配送部的車輛管理是兩回事，那個是配送人員在騎的
+# 營業用車，這裡是公司內部行政用途的財產）、公務手機、門號、電腦。
+ASSET_CATEGORIES = [
+    {"code": "vehicle", "name": "公務車"},
+    {"code": "phone", "name": "公務手機"},
+    {"code": "sim", "name": "門號"},
+    {"code": "computer", "name": "電腦"},
+]
+ASSET_CATEGORY_MAP = {c["code"]: c["name"] for c in ASSET_CATEGORIES}
+
+ASSET_STATUSES = [
+    {"code": "in_use", "name": "使用中"},
+    {"code": "idle", "name": "閒置"},
+    {"code": "maintenance", "name": "維修中"},
+    {"code": "retired", "name": "報廢"},
+]
+ASSET_STATUS_MAP = {s["code"]: s["name"] for s in ASSET_STATUSES}
+DEFAULT_ASSET_STATUS = "in_use"
