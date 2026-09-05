@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ visit.client_name }} - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ visit.client_name }}</h1>
+<p class="meta">
+    拜訪日期：{{ visit.visit_date }}
+    約訪人員：{{ visit.arranged_by }}
+    拜訪人員：{{ visit.visitor }}
+    跟進狀態：{{ visit.follow_up_status }}
+</p>
+
+{% if visit.notes %}
+<p style="white-space: pre-wrap;">{{ visit.notes }}</p>
+{% endif %}
+
+<form method="post" action="/management/client-visits/{{ visit.id }}/delete"
+      onsubmit="return confirm('確定要刪除這筆拜訪紀錄嗎？');">
+    <button type="submit" class="btn btn-danger">刪除</button>
+</form>
+
+<p class="back-link"><a href="/management/client-visits">&larr; 回客戶拜訪紀錄</a></p>
+{% endblock %}

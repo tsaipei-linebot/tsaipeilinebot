@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ report.title }} - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ report.title }}</h1>
+<p class="meta">上傳人：{{ report.created_by_name }}</p>
+
+{% if report.description %}
+<p style="white-space: pre-wrap;">{{ report.description }}</p>
+{% endif %}
+
+<p>
+    <a class="btn btn-primary" href="/management/files/{{ report.blob_path }}" target="_blank" rel="noopener">下載檔案：{{ report.filename }}</a>
+</p>
+
+{% if user.role == "admin" %}
+<form method="post" action="/management/kpi-reports/{{ report.id }}/delete"
+      onsubmit="return confirm('確定要刪除這份報表嗎？');">
+    <button type="submit" class="btn btn-danger">刪除報表</button>
+</form>
+{% endif %}
+
+<p class="back-link"><a href="/management/kpi-reports">&larr; 回業績報表庫</a></p>
+{% endblock %}

@@ -4,11 +4,15 @@ from starlette.middleware.sessions import SessionMiddleware
 from management.config import SESSION_SECRET_KEY
 from management.routes import (
     announcement_routes,
+    asset_routes,
     auth_routes,
+    client_visit_routes,
     document_routes,
     file_routes,
     home_routes,
+    kpi_routes,
     meeting_routes,
+    staff_directory_routes,
 )
 
 management_app = FastAPI(title="管理部系統")
@@ -29,4 +33,8 @@ management_app.include_router(home_routes.router)
 management_app.include_router(announcement_routes.router)
 management_app.include_router(meeting_routes.router)
 management_app.include_router(document_routes.router)
+management_app.include_router(kpi_routes.router)
+management_app.include_router(client_visit_routes.router)
+management_app.include_router(staff_directory_routes.router)
+management_app.include_router(asset_routes.router)
 management_app.include_router(file_routes.router)

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}業績報表庫 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">業績報表庫</h1>
+    {% if user.role == "admin" %}
+    <a class="btn btn-primary" href="/management/kpi-reports/new">上傳報表</a>
+    {% endif %}
+</div>
+<p class="hint">業績/KPI 報表（Excel/PDF/PPT/圖片），管理員上傳，有管理部權限的同仁都能檢視。</p>
+
+{% if reports %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>標題</th>
+            <th>上傳人</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in reports %}
+        <tr>
+            <td>{{ r.title }}</td>
+            <td>{{ r.created_by_name }}</td>
+            <td><a href="/management/kpi-reports/{{ r.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有業績報表。</p>
+{% endif %}
+
+<p class="back-link"><a href="/management/">&larr; 回主頁</a></p>
+{% endblock %}

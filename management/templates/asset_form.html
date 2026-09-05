@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}新增資產 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">新增資產</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/management/assets/new" class="form-stack form-narrow">
+    <label>分類
+        <select name="category" required>
+            {% for c in categories %}
+            <option value="{{ c.code }}">{{ c.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>名稱/編號
+        <input type="text" name="name" placeholder="例如：車牌號碼、手機序號、門號、電腦資產編號" required>
+    </label>
+    <label>保管人（選填）
+        <input type="text" name="assigned_to">
+    </label>
+    <label>狀態
+        <select name="status">
+            {% for s in statuses %}
+            <option value="{{ s.code }}" {% if s.code == "in_use" %}selected{% endif %}>{{ s.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>備註（選填）
+        <textarea name="notes" rows="3"></textarea>
+    </label>
+    <button type="submit" class="btn btn-primary">建立</button>
+</form>
+<p class="back-link"><a href="/management/assets">&larr; 回資產/設備管理</a></p>
+{% endblock %}
