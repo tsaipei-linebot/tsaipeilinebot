@@ -9,7 +9,8 @@ from tests import _env  # noqa: F401
 from tests import _stub_gcp
 _stub_gcp.install()
 
-from delivery.incident_report import handle_incident_report, parse_incident_report
+import delivery.incident_report as incident_report
+from delivery.incident_report import format_weekly_reminder, handle_incident_report, parse_incident_report
 from delivery.repository import incident_matches_filters
 
 _VALID_TEXT = (
@@ -131,6 +132,64 @@ class ParseIncidentReportTests(unittest.TestCase):
         self.assertTrue(mock_create.called)
         self.assertIn("林子椉", reply)
         self.assertIn("✅", reply)
+
+
+class FormatWeeklyReminderTests(unittest.TestCase):
+    """format_weekly_reminder() 這次改成每筆都列出完整 11 個欄位（原本只有
+    姓名/廠商/時間/地點的一行摘要），確保欄位沒有漏掉、廠商顯示的是中文
+    名稱（不是內部代碼），而且多筆案件時每筆之間有清楚分隔。"""
+
+    def _incident(self, **overrides):
+        base = {
+            "vendor": "ud",
+            "identity_type": "雇傭",
+            "personnel_name": "測試用",
+            "occurred_at": "2026-09-04 15:00",
+            "location": "測試地點",
+            "duty_status": "執行勤務中",
+            "police_called": "無",
+            "injury": "無",
+            "family_contacted": "無",
+            "third_party_involved": "無",
+            "description": "這是一筆測試資料",
+        }
+        base.update(overrides)
+        return base
+
+    def test_empty_list_returns_empty_string(self):
+        self.assertEqual(format_weekly_reminder([]), "")
+
+    def test_includes_all_eleven_fields(self):
+        message = format_weekly_reminder([self._incident()])
+        self.assertIn("1.廠商名稱：UD", message)
+        self.assertIn("2.身分類別：雇傭", message)
+        self.assertIn("3.人員名稱：測試用", message)
+        self.assertIn("4.發生時間：2026-09-04 15:00", message)
+        self.assertIn("5.發生地點：測試地點", message)
+        self.assertIn("6.執行勤務中/上下班途中：執行勤務中", message)
+        self.assertIn("7.是否報警：無", message)
+        self.assertIn("8.受傷情形：無", message)
+        self.assertIn("9.是否聯繫家屬：無", message)
+        self.assertIn("10.是否牽扯他人：無", message)
+        self.assertIn("11.意外事件經過：這是一筆測試資料", message)
+
+    def test_vendor_shown_as_display_name_not_internal_code(self):
+        message = format_weekly_reminder([self._incident(vendor="shopee")])
+        self.assertIn("1.廠商名稱：蝦皮", message)
+        self.assertNotIn("廠商名稱：shopee", message)
+
+    def test_multiple_items_each_get_full_detail_block(self):
+        message = format_weekly_reminder([self._incident(personnel_name="小明"), self._incident(personnel_name="小華")])
+        self.assertIn("小明", message)
+        self.assertIn("小華", message)
+        self.assertEqual(message.count(incident_report._TRIGGER_LINE), 2)
+
+    def test_items_beyond_cap_are_summarized_not_dropped_silently(self):
+        cap = incident_report._MAX_ITEMS_IN_WEEKLY_REMINDER
+        items = [self._incident(personnel_name=f"同仁{i}") for i in range(cap + 3)]
+        message = format_weekly_reminder(items)
+        self.assertEqual(message.count(incident_report._TRIGGER_LINE), cap)
+        self.assertIn("還有 3 筆，請登入系統查看", message)
 
 
 class IncidentMatchesFiltersTests(unittest.TestCase):

@@ -32,7 +32,25 @@ from datetime import date
 
 from delivery.config import DUTY_STATUSES, IDENTITY_TYPES, VENDOR_LOOKUP, VENDOR_MAP, YES_NO_VALUES
 
-_MAX_ITEMS_IN_WEEKLY_REMINDER = 20
+# 提醒訊息改成每筆都列出完整 11 個欄位後（見 format_weekly_reminder()），
+# 單筆內容比原本「一行摘要」長很多，LINE 文字訊息本身有長度上限，這裡把
+# 上限從原本的 20 筆調低，避免真的遇到未結案案件很多時整則訊息超過長度
+# 上限、被 LINE API 直接拒收，一筆都送不出去。
+_MAX_ITEMS_IN_WEEKLY_REMINDER = 8
+
+_INCIDENT_FIELD_LABELS = [
+    ("vendor", "廠商名稱"),
+    ("identity_type", "身分類別"),
+    ("personnel_name", "人員名稱"),
+    ("occurred_at", "發生時間"),
+    ("location", "發生地點"),
+    ("duty_status", "執行勤務中/上下班途中"),
+    ("police_called", "是否報警"),
+    ("injury", "受傷情形"),
+    ("family_contacted", "是否聯繫家屬"),
+    ("third_party_involved", "是否牽扯他人"),
+    ("description", "意外事件經過"),
+]
 
 _TRIGGER_LINE = "意外事件回傳格式"
 
@@ -172,18 +190,30 @@ def handle_incident_report(text: str) -> str:
     )
 
 
+def _format_incident_detail(item: dict) -> str:
+    """把一筆未結案案件還原成同仁當初回報時的完整格式（11 個欄位一字不
+    漏），方便管理員/主管不用登入系統也能直接看懂整起事件的來龍去脈，
+    不是只看到姓名/廠商/時間/地點這種摘要。"""
+    lines = [_TRIGGER_LINE]
+    for i, (key, label) in enumerate(_INCIDENT_FIELD_LABELS, start=1):
+        value = VENDOR_MAP.get(item.get(key), item.get(key)) if key == "vendor" else item.get(key, "")
+        lines.append(f"{i}.{label}：{value}")
+    return "\n".join(lines)
+
+
 def format_weekly_reminder(items: list) -> str:
     """組成每週一未結案意外事件提醒訊息；沒有未結案案件時回傳空字串，呼叫
-    端（GAS 的時間驅動觸發器）看到空字串就不要推播，避免每週固定洗版。"""
+    端（GAS 的時間驅動觸發器）看到空字串就不要推播，避免每週固定洗版。
+    每一筆都用 _format_incident_detail() 列出完整 11 個欄位，不是簡化過的
+    一行摘要。"""
     if not items:
         return ""
     lines = [f"📋 配送部系統－意外事件未結案提醒（共 {len(items)} 筆）"]
     for item in items[:_MAX_ITEMS_IN_WEEKLY_REMINDER]:
-        vendor_name = VENDOR_MAP.get(item.get("vendor"), item.get("vendor"))
-        lines.append(
-            f"⚠️ {item.get('personnel_name')}（{vendor_name}）- {item.get('occurred_at')}，{item.get('location')}"
-        )
+        lines.append("")
+        lines.append(_format_incident_detail(item))
     remaining = len(items) - _MAX_ITEMS_IN_WEEKLY_REMINDER
     if remaining > 0:
+        lines.append("")
         lines.append(f"...還有 {remaining} 筆，請登入系統查看")
     return "\n".join(lines)
