@@ -436,4 +436,50 @@ body {
 
 .back-link { margin-top: 24px; }
 .back-link a { color: var(--brand-dark); text-decoration: none; font-size: 14px; font-weight: 600; }
+
+/* ==========================================
+   少凱業務開發專區：Google Sheet 分頁切換
+   ========================================== */
+.sheet-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.sheet-tab-btn {
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.sheet-tab-btn:hover { background: var(--bg); }
+
+.sheet-tab-btn.active {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+}
+
+.sheet-search {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+}
+
+.sheet-search:focus {
+    outline: none;
+    border-color: var(--brand);
+}
 .back-link a:hover { text-decoration: underline; }

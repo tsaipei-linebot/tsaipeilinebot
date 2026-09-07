@@ -13,6 +13,7 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage
 import accounts_routes
 import login_routes
 import portal_routes
+import salesdev_routes
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
@@ -46,6 +47,9 @@ app.include_router(login_routes.router)
 # /portal：登入後才看得到的內部系統入口頁，加上職缺維護系統的免登入銜接
 # （見 portal_routes.py）。
 app.include_router(portal_routes.router)
+# /salesdev：少凱業務開發專區，唯讀顯示 Google Sheet 內容，跟 /accounts、
+# /portal 一樣直接掛在根 app（見 salesdev_routes.py）。
+app.include_router(salesdev_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，
