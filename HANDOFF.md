@@ -1298,6 +1298,116 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
   真正的 LINE 簽章驗證（line-bot-sdk 本身的責任）留給有憑證的環境做
   整合測試。
 
+## 新增：人資專區模組（`/hr`）：意外通報／員工體檢報告／員工關懷彙整／公司證照彙整／教育訓練彙整
+
+比照配送部/管理部的既有架構，新增第三個獨立部門模組，透過既有的多模組
+權限架構（`platform_accounts.MODULES` 加一筆 `"hr"`）掛進 `/accounts`
+帳號管理、`/portal` 入口頁，登入方式、session 共用機制都完全比照現有
+模組，不用額外設計。原始需求裡的「員工資料彙整及追蹤」使用者要求先擱置
+（可能跟管理部既有的「員工名冊/組織圖」有重疊，待確認後再補），這次先做
+其餘 5 項。
+
+### 意外通報（新群組，`hr/incident_report.py` + `hr/routes/incident_routes.py`）
+
+跟配送部「意外事件回報」（見前面「配送部系統」章節）功能幾乎一樣——同一套
+11 個回報欄位、風險等級（低/中/高）、單向結案機制、「人員名稱＋發生時間」
+當作識別同一起事件的依據（重複回報會覆寫既有內容，不會多開一筆）——但
+**沿用管理部現有的 LINE 官方帳號**（`management/line_bot.py` 那組，目前
+只用在門號繳費提醒 + 回覆群組 ID），**不經過 `delivery-gas-project`**：
+
+- 這組帳號的 webhook 本來就直接打進這支服務（`/management/line/callback`），
+  不像配送部那組要先經過 GAS 轉發，所以不需要另外申請 LINE 帳號、也不需要
+  動 `delivery-gas-project` 那個 repo。
+- `management/routes/line_webhook_routes.py` 的訊息處理多一段判斷：訊息
+  來自 `HR_INCIDENT_GROUP_ID` 這個群組時，改交給 `hr.incident_report`
+  解析、寫入 `hr_incident_events`，並把結果直接回覆到同一個群組；不符合
+  意外通報格式的訊息（例如日常聊天）保持沉默，跟這個群組原本「打群組ID
+  才回覆」的行為並存，互不干擾。
+- **只回覆同一個群組的登記確認訊息，不轉發到第二個群組**——比配送部那套
+  單純（配送部因為要通知管理／督導層而多轉發一份原文到第二個群組，這次
+  沒有這個需求）。
+- **「廠商名稱」這裡改成自由文字**：不像配送部限定蝦皮/UD/UC/順豐，同仁
+  填什麼就存什麼，不做白名單驗證（`hr/incident_report.py` 拿掉了對應的
+  `invalid_vendor` 錯誤分支）。
+- 未結案案件的每週提醒：新增 `POST /hr/api/incident-weekly-reminder-check`，
+  Cloud Scheduler 呼叫，直接用 `management.line_bot.push_message()`（見
+  下方新增的通用函式）推播回 `HR_INCIDENT_GROUP_ID`，不需要像配送部那樣
+  另外在 GAS 那邊設時間驅動觸發器——因為 Python 這邊本來就有這組帳號的
+  Token，不需要額外經過 GAS 才能推播。
+
+`management/line_bot.py` 新增通用的 `push_message(target_id, text)`，
+`push_group_message()`（門號繳費提醒用）改成呼叫它並固定帶
+`LINE_NOTIFY_GROUP_ID`，人資這邊則是直接帶 `HR_INCIDENT_GROUP_ID` 呼叫，
+共用同一個 LINE 帳號物件、同一組 Token，不用重複建立客戶端。
+
+### 員工體檢報告／員工關懷彙整／公司證照彙整／教育訓練彙整
+
+四個都是獨立的完整網頁功能（新增/搜尋/編輯/刪除），檔案上傳沿用跟配送部/
+管理部同一個 GCS bucket（`DELIVERY_GCS_BUCKET`），blob 路徑前綴改成
+`hr/`：
+
+- **員工體檢報告**（`hr_health_checks`）：姓名/部門/受檢日期/下次應受檢
+  日期/備註/報告檔案，可依姓名/部門搜尋。**目前沒有自動到期提醒**，只有
+  統整＋人工查詢，之後真的需要再仿照公司證照的做法補上（使用者確認過
+  這個範圍）。
+- **員工關懷彙整**（`hr_care_logs`）：不做死板分類，日期/主題（自由文字，
+  例如「關懷面談」「不法侵害會議記錄」）/當事人姓名（選填）/內容/可選
+  PDF 附件，可用關鍵字搜尋主題/姓名/內容。
+- **公司證照彙整**（`hr_licenses`）：公司本身持有的證照/執照/許可（不是
+  同仁個人文件），名稱/發證機關/證照編號/到期日/檔案，到期提醒做法完全
+  比照配送部文件到期提醒——`last_reminded_at` 記錄提醒時間避免短時間內
+  重複提醒，到期日異動時清掉這個記錄讓提醒週期重新開始算。新增
+  `POST /hr/api/license-reminder-check`，Cloud Scheduler 呼叫，**推播對象
+  沿用管理部「門號繳費提醒」現有的群組設定**（`push_group_message()`），
+  不用另外指定推播對象。
+- **教育訓練彙整**（`hr_trainings`）：姓名/課程名稱/上課日期/訓練時數
+  （選填）/備註/完訓證明檔案（選填），可依姓名/課程名稱搜尋。
+
+### 上線前要做的事
+
+1. **取得意外通報新群組的 Group ID**：把管理部那組 LINE 官方帳號拉進
+   要回報意外事件的新群組，群組裡打「群組ID」，機器人會回覆 Group ID，
+   設進 Cloud Run 環境變數 `HR_INCIDENT_GROUP_ID`。
+2. Cloud Run 設定其餘兩組觸發密鑰（`openssl rand -hex 32`）：
+   - `HR_INCIDENT_REMINDER_SECRET`
+   - `HR_LICENSE_REMINDER_SECRET`
+3. 設定 Cloud Scheduler 兩個每週排程（時段可以跟現有的門號繳費提醒錯開，
+   例如同一天不同時間）：
+   ```bash
+   gcloud scheduler jobs create http hr-incident-weekly-reminder \
+     --project=tsaipei-505807 \
+     --location=asia-east1 \
+     --schedule="0 9 * * 1" \
+     --time-zone="Asia/Taipei" \
+     --uri="https://recruitment-bot-412901869672.asia-east1.run.app/hr/api/incident-weekly-reminder-check" \
+     --http-method=POST \
+     --headers="X-Hr-Incident-Reminder-Secret=跟 Cloud Run 上設定的同一組密鑰"
+
+   gcloud scheduler jobs create http hr-license-reminder \
+     --project=tsaipei-505807 \
+     --location=asia-east1 \
+     --schedule="0 10 * * 1" \
+     --time-zone="Asia/Taipei" \
+     --uri="https://recruitment-bot-412901869672.asia-east1.run.app/hr/api/license-reminder-check" \
+     --http-method=POST \
+     --headers="X-Hr-License-Reminder-Secret=跟 Cloud Run 上設定的同一組密鑰"
+   ```
+4. 到 `/accounts`（全平台管理員登入）把需要用到人資專區的帳號，模組欄位
+   勾選「人資專區」的主管或專員角色——這個頁面是自動根據
+   `platform_accounts.MODULES` 產生的，不需要額外設定就會多出這一欄。
+   全平台管理員（老闆本人）不用另外設定就已經視同人資專區的管理員。
+
+沒有完成第 1、2 步設定時，意外通報只會被當成一般聊天訊息忽略（不會報錯、
+也不會誤觸），兩個提醒端點會一律回傳 403，等同功能還沒生效。
+
+**已知限制**：意外通報解析（沿用配送部同一套正則邏輯，只是拿掉廠商白
+名單）、各功能的篩選/搜尋純函式都有完整單元測試；路由層級只測「不需要
+真的打 Firestore」的部分（未登入時的導向、兩個提醒端點的密鑰檢查）。真正
+會讀寫 Firestore/GCS 的路徑（新增/編輯/上傳檔案）以及 LINE 簽章驗證，
+留給有 GCP/LINE 憑證的環境做整合測試；上線後建議實際跑一次「意外通報群組
+回報一則測試訊息」「上傳一份體檢報告/證照確認下載連結正常」「證照到期
+提醒手動觸發一次確認推播到管理部群組」這幾個情境。
+
 ## CI/CD 自動部署（GitHub Actions）
 
 以前每次改完程式碼，都要使用者自己在 Cloud Shell 手動跑
