@@ -1,5 +1,7 @@
+import hmac
 import time
 import uuid
+
 from fastapi import FastAPI, Request, Header, HTTPException
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -14,12 +16,13 @@ import portal_routes
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
-    LOAD_TEST_SECRET
+    LOAD_TEST_SECRET, FACTORY_WATCH_TRIGGER_SECRET
 )
 from delivery.config import SESSION_SECRET_KEY
 from handlers.message_handler import process_user_message, process_image_message
 from delivery.app import delivery_app
 from management.app import management_app
+from services.factory_watch_service import run_weekly_scan
 
 app = FastAPI(
     title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine - V12 (Modular)",
@@ -214,3 +217,18 @@ async def load_test_message(payload: LoadTestMessageRequest, x_load_test_secret:
         "elapsed_seconds": round(elapsed, 3),
         "reply": _summarize_reply(stub_api.last_call["messages"] if stub_api.last_call else None),
     }
+
+
+# ==========================================
+# 每週新工廠登記監控：由 Cloud Scheduler 定期呼叫觸發，
+# 不對外公開，用共用密鑰驗證避免被任意觸發。
+# ==========================================
+@app.post("/internal/factory-watch/run")
+async def trigger_factory_watch(x_factory_watch_secret: str = Header(None)):
+    if not FACTORY_WATCH_TRIGGER_SECRET or not x_factory_watch_secret or not hmac.compare_digest(
+        x_factory_watch_secret, FACTORY_WATCH_TRIGGER_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    summary = await run_in_threadpool(run_weekly_scan, line_bot_api)
+    return summary
