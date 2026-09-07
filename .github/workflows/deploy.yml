@@ -4,8 +4,8 @@ name: Deploy to Cloud Run
 # 不使用長期存放的金鑰，而是用 GCP 的 Workload Identity Federation
 # 讓 GitHub 用「臨時身分」登入 GCP，安全性比存密鑰高。
 #
-# 這個 workflow 需要先在 GCP 完成一次性設定（建立 Workload Identity Pool /
-# Provider / 部署用服務帳號），設定步驟見 HANDOFF.md「CI/CD 自動部署」章節。
+# 一次性 GCP 設定（Workload Identity Pool / Provider / 部署用服務帳號）
+# 已依 HANDOFF.md「CI/CD 自動部署」章節的指令完成。
 
 on:
   push:
@@ -20,9 +20,7 @@ env:
   PROJECT_ID: tsaipei-505807
   REGION: asia-east1
   SERVICE: recruitment-bot
-  # TODO: 這裡的 PROJECT_NUMBER 要換成 GCP 設定步驟印出來的真實數字，
-  # 目前是占位字串，設定完成前這個 workflow 還不能正常運作。
-  WORKLOAD_IDENTITY_PROVIDER: projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  WORKLOAD_IDENTITY_PROVIDER: projects/412901869672/locations/global/workloadIdentityPools/github-pool/providers/github-provider
   SERVICE_ACCOUNT: github-actions-deployer@tsaipei-505807.iam.gserviceaccount.com
 
 jobs:
