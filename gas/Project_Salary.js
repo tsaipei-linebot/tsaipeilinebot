@@ -214,23 +214,43 @@ const SalaryWorkflowService = {
     const status = postbackData.status;
     const applicantId = postbackData.applicant_id;
     const salaryId = postbackData.salary_id;
-    
-    const salaryRecordCheck = SalarySheetService.getSalaryRecord(salaryId);
-    if (!salaryRecordCheck) {
-      LineService.replyTextMessage(event.replyToken, '❌ 操作失敗：找不到該薪資補款單資料。');
-      return;
-    }
-    if (salaryRecordCheck.reviewStatus === '已核准' || salaryRecordCheck.reviewStatus === '已退回') {
-      LineService.replyTextMessage(event.replyToken, `⚠️ 操作無效：此單據已由主管完成審核 (目前狀態：${salaryRecordCheck.reviewStatus})，無法重複簽核。`);
-      return;
-    }
 
     const isApproved = (status === 'approve');
     const reviewStatus = isApproved ? '已核准' : '已退回';
     const nowStr = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
-    
-    const salaryRecord = SalarySheetService.updateSalaryReviewStatus(salaryId, reviewStatus, operatorSupervisorId, nowStr);
-    
+
+    // 用鎖把「檢查是否已審核」跟「寫入新狀態」包成同一個不可被打斷的動作，
+    // 避免主管快速點兩下、或 LINE 重送同一個 postback 事件時，兩個請求都讀到
+    // 「尚未審核」而各自通過檢查，造成同一張補款單被重複核准、重複寄出正式報表。
+    const lock = LockService.getScriptLock();
+    let lockAcquired = false;
+    try {
+      lockAcquired = lock.tryLock(10000);
+    } catch (lockErr) {
+      console.error('取得薪資審核鎖定失敗:', lockErr);
+    }
+    if (!lockAcquired) {
+      LineService.replyTextMessage(event.replyToken, '❌ 系統忙碌中（可能有人同時在審核），請稍後再試一次。');
+      return;
+    }
+
+    let salaryRecord;
+    try {
+      const salaryRecordCheck = SalarySheetService.getSalaryRecord(salaryId);
+      if (!salaryRecordCheck) {
+        LineService.replyTextMessage(event.replyToken, '❌ 操作失敗：找不到該薪資補款單資料。');
+        return;
+      }
+      if (salaryRecordCheck.reviewStatus === '已核准' || salaryRecordCheck.reviewStatus === '已退回') {
+        LineService.replyTextMessage(event.replyToken, `⚠️ 操作無效：此單據已由主管完成審核 (目前狀態：${salaryRecordCheck.reviewStatus})，無法重複簽核。`);
+        return;
+      }
+
+      salaryRecord = SalarySheetService.updateSalaryReviewStatus(salaryId, reviewStatus, operatorSupervisorId, nowStr);
+    } finally {
+      lock.releaseLock();
+    }
+
     if (isApproved && salaryRecord) {
       try {
         EmailService.sendSalaryCompensationReport(salaryRecord);
