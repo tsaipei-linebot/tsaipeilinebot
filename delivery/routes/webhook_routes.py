@@ -68,7 +68,8 @@ async def vehicle_report_webhook(request: Request, x_delivery_vehicle_secret: st
 async def incident_report_webhook(request: Request, x_delivery_incident_secret: str = Header(None)):
     """跟 vehicle_report_webhook 同一個 GAS 專案、同一個 LINE 群組轉發過來，
     但走獨立的密鑰/端點，解析成意外事件回報寫入資料庫。GAS 那邊收到回覆後
-    除了貼回原群組，還會另外推播同一則訊息到第二個群組（見
+    除了貼回原群組，只有 ok=true（真的成功寫入系統的回報，不是格式錯誤
+    的嘗試）才會另外把同仁原始貼的完整文字推播到第二個群組（見
     delivery-gas-project 的 Project6_Incident.js），這裡不需要知道第二個
     群組是誰。"""
     if not INCIDENT_REPORT_WEBHOOK_SECRET or x_delivery_incident_secret != INCIDENT_REPORT_WEBHOOK_SECRET:
@@ -76,8 +77,8 @@ async def incident_report_webhook(request: Request, x_delivery_incident_secret: 
 
     body = await request.json()
     text = body.get("text") or ""
-    reply = handle_incident_report(text)
-    return {"reply": reply}
+    ok, reply = handle_incident_report(text)
+    return {"reply": reply, "ok": ok}
 
 
 @router.get("/api/incident-weekly-reminder-text")
