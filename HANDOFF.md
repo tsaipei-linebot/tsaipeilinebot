@@ -1356,18 +1356,22 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
    開啟印出來的網址、按同意，把瀏覽器最後跳轉到的那個網址（網址列裡
    會有 `localhost` 跟一長串 `code=...`，即使頁面顯示「無法連線」也
    沒關係，要的只是網址本身）整段複製，貼回 Cloud Shell 的提示。
-   接著執行：
+   接著執行（**不要直接 `cat ~/.clasprc.json` 複製**——那是一整行很長
+   的 JSON，Cloud Shell 顯示時會自動換行，滑鼠複製貼上很容易不小心混進
+   換行符號，把 JSON 弄壞，之前就是這樣才第一次失敗）：
    ```bash
-   cat ~/.clasprc.json
+   cat ~/.clasprc.json | base64 -w 0
    ```
-   把印出來的整段內容（是一段 JSON）複製起來，到
+   這樣印出來的是一串 base64 編碼過的文字，即使複製時混進換行符號也
+   不影響，之後 workflow 會自動解碼還原。把印出來的整段內容複製起來，到
    `https://github.com/tsaipei-linebot/delivery-gas-project/settings/secrets/actions`
    （或手動：repo 頁面 → Settings → Secrets and variables → Actions →
    New repository secret），Name 填 `CLASPRC_JSON`，Value 貼上剛剛複製
-   的內容，按 Add secret。
+   的內容，按 Add secret（如果之前已經設定過一次，直接編輯覆蓋掉舊的
+   內容即可）。
 
    **這組憑證等於是這個 Google 帳號的登入資訊，只有 repo 管理員看得到、
-   不會顯示在任何 log 裡，但還是要留意不要把這段 JSON 貼到別的地方。**
+   不會顯示在任何 log 裡，但還是要留意不要把這段內容貼到別的地方。**
 
 兩邊都設定完成後，之後只要 Claude 把程式碼合併進各自的 `main` 分支，
 就會自動部署／`clasp push`，不用再手動執行指令；如果之後想暫停自動
