@@ -278,8 +278,8 @@ ${sanitizedDesc}
         polishedTitle = this.enforceComplianceRules(polishedTitle) || fallbackResult.external_title;
 
         const polishedDesc = this.enforceComplianceRules(String(parsed.external_desc || '')) || fallbackResult.external_desc;
-        const highlight = String(parsed.highlight || '').trim() || fallbackResult.highlight;
-        const formattedDetail = String(parsed.formatted_detail || '').trim() || fallbackResult.formatted_detail;
+        const highlight = this.enforceComplianceRules(String(parsed.highlight || '').trim()) || fallbackResult.highlight;
+        const formattedDetail = this.enforceComplianceRules(String(parsed.formatted_detail || '').trim()) || fallbackResult.formatted_detail;
 
         const result = {
           external_title: polishedTitle,
@@ -553,6 +553,14 @@ const JobWorkflowService = {
     
     const updateNotionResult = NotionService.updateJobPageReviewStatus(pageId, reviewStatus, jobStatus, finalDateStr);
     console.log(`Notion 審核狀態更新結果:`, JSON.stringify(updateNotionResult));
+
+    // Notion 沒有真的寫入成功就先擋下來，不對外宣布「已核准」也不公開推播，
+    // 避免後台紀錄跟已經公告出去的內容脫鉤。因為 Notion 上的審核狀態還是舊的，
+    // 主管可以直接重新點一次審核按鈕重試（不會被「已審核過」的檢查卡住）。
+    if (!updateNotionResult || updateNotionResult.status !== 'success') {
+      LineService.replyTextMessage(event.replyToken, `⚠️ 職缺審核處理失敗：Notion 系統更新未完成，請稍後再試一次審核，或聯繫系統管理員確認 Notion 頁面狀態（Page ID: ${pageId}）。`);
+      return;
+    }
 
     currentJobDetail = NotionService.getJobPageById(pageId) || currentJobDetail;
     const jobTitle = currentJobDetail ? (currentJobDetail.title || currentJobDetail.internal_title || '招募職缺') : '招募職缺';
@@ -1054,6 +1062,12 @@ const NotionService = {
       console.warn('取得 Notion Page 屬性定義失敗:', e);
     }
 
+    // 逐項記錄「審核狀態」「狀態」這兩個關鍵欄位是否真的寫入成功，
+    // 呼叫端要靠這個結果判斷能不能對外宣布「已核准」並公開推播，
+    // 不能像原本一樣不管 Notion 有沒有寫成功都直接回傳 success。
+    let reviewStatusOk = true;
+    let jobStatusOk = true;
+
     if (reviewStatus) {
       let reviewPayload = { properties: { '審核狀態': { select: { name: String(reviewStatus) } } } };
       let resReview = UrlFetchApp.fetch(url, {
@@ -1072,6 +1086,7 @@ const NotionService = {
           muteHttpExceptions: true
         });
       }
+      reviewStatusOk = resReview.getResponseCode() < 400;
       console.log(`[Notion PATCH 審核狀態] Page [${pageId}] - HTTP ${resReview.getResponseCode()}: ${resReview.getContentText()}`);
     }
 
@@ -1093,6 +1108,7 @@ const NotionService = {
           muteHttpExceptions: true
         });
       }
+      jobStatusOk = resStatus.getResponseCode() < 400;
       console.log(`[Notion PATCH 狀態] Page [${pageId}] - HTTP ${resStatus.getResponseCode()}: ${resStatus.getContentText()}`);
     }
 
@@ -1114,7 +1130,11 @@ const NotionService = {
       }
     }
 
-    return { status: 'success' };
+    return {
+      status: (reviewStatusOk && jobStatusOk) ? 'success' : 'partial_failure',
+      reviewStatusOk: reviewStatusOk,
+      jobStatusOk: jobStatusOk
+    };
   },
   
   buildNotionProperties: function(f, reviewStatus, jobStatus) {

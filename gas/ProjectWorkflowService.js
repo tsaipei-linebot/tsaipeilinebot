@@ -24,6 +24,16 @@ const ProjectWorkflowService = {
       if (!applicantName) {
         return { status: 'error', message: '申請同仁姓名不可為空' };
       }
+
+      // 身份驗證：比照薪資補款流程，只有已完成 LINE 綁定的真同仁才能送出，
+      // 避免公開端點被冒名夾帶任意附件觸發系統寄信給財會
+      const employeeBinding = OrgService.getEmployeeBindingByName(applicantName);
+      if (!employeeBinding.isBound) {
+        return {
+          status: 'unauthorized',
+          message: `申請同仁【${applicantName}】尚未完成 LINE 身分綁定！\n請先至 LINE 官方帳號發送「綁定+${applicantName}+4位PIN碼」完成綁定後再進行合約提報。`
+        };
+      }
       if (!vendor) {
         return { status: 'error', message: '請填寫廠商名稱' };
       }

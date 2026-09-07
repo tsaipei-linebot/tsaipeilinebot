@@ -165,7 +165,9 @@ const BatchEnhanceJobService = {
     const location = smartLocation || '依公司指派地點';
     const salary = job.salary || '依公司規定';
     const shift = job.shift || '依排班規定';
-    const rawDesc = job.external_desc || '歡迎洽詢應徵。';
+    // 送進 AI 前先本地過濾一次（跟 Project_Job.js 共用同一份就業服務法規則），
+    // 避免原始資料裡的歧視性字句被當成「參考資料」再被 AI 複述出來
+    const rawDesc = AiJobDescriptionService.enforceComplianceRules(job.external_desc || '歡迎洽詢應徵。');
 
     const prompt = '你是一位資深勞動法規顧問與專業人資文案專家。請根據以下提供的【原始職缺資料】，輸出 JSON 物件。\n\n' +
       '【原始職缺資料】\n' +
@@ -197,6 +199,13 @@ const BatchEnhanceJobService = {
       '  "formatted_detail": "條列式排版說明完整文字"\n' +
       '}';
 
+    // 保底文案（AI 全部呼叫失敗、或過濾後被清空時使用）：只陳述確定為真的事實
+    // （薪資、班別、地點），不做「無經驗可」這類原始資料未提及、可能失真的宣稱
+    const fallbackResult = {
+      highlight: '開放應徵【' + title + '】！工作地點：' + location + '，班別：' + shift + '，薪資：' + salary + '，歡迎立即應徵！',
+      formatted_detail: '📋【職缺名稱：' + title + '】\n\n📍【工作地點】：' + location + '\n💰【薪資待遇】：' + salary + '\n⏰【工作班別】：' + shift + '\n\n📝【工作內容】：\n' + rawDesc + '\n\n💡 依《就業服務法》規定，所有職缺皆無性別、年齡限制。'
+    };
+
     // 改用 Vertex AI（跟招募聊天機器人共用同一個 GCP 專案），這份模型清單已在該專案的
     // 招募機器人 (services/ai_service.py) 正式環境驗證可用，不是憑猜測填入。
     // 實際呼叫（含 429 重試）邏輯收斂在共用函式 callVertexAiWithRetry（程式碼.js），
@@ -212,20 +221,15 @@ const BatchEnhanceJobService = {
         const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
         const parsed = JSON.parse(cleanJson);
         return {
-          highlight: String(parsed.highlight || '').trim(),
-          formatted_detail: String(parsed.formatted_detail || '').trim()
+          highlight: AiJobDescriptionService.enforceComplianceRules(String(parsed.highlight || '').trim()) || fallbackResult.highlight,
+          formatted_detail: AiJobDescriptionService.enforceComplianceRules(String(parsed.formatted_detail || '').trim()) || fallbackResult.formatted_detail
         };
       } catch (parseErr) {
         console.warn('[BatchEnhance] 模型 [' + model + '] 回傳內容不是合法 JSON，換下一個模型:', parseErr);
       }
     }
 
-    // 保底回傳（AI 全部呼叫失敗時使用）：只陳述確定為真的事實（薪資、班別、地點），
-    // 不做「無經驗可」這類原始資料未提及、可能失真的宣稱
-    return {
-      highlight: '開放應徵【' + title + '】！工作地點：' + location + '，班別：' + shift + '，薪資：' + salary + '，歡迎立即應徵！',
-      formatted_detail: '📋【職缺名稱：' + title + '】\n\n📍【工作地點】：' + location + '\n💰【薪資待遇】：' + salary + '\n⏰【工作班別】：' + shift + '\n\n📝【工作內容】：\n' + rawDesc + '\n\n💡 依《就業服務法》規定，所有職缺皆無性別、年齡限制。'
-    };
+    return fallbackResult;
   },
 
   /**
@@ -236,24 +240,13 @@ const BatchEnhanceJobService = {
     if (!cleanPageId) return false;
 
     const url = 'https://api.notion.com/v1/pages/' + cleanPageId;
-    
-    // 將長文本每 1900 字元切為一個 rich_text 區塊
-    const detailChunks = [];
-    for (let i = 0; i < formattedDetail.length; i += 1900) {
-      detailChunks.push({
-        type: 'text',
-        text: { content: formattedDetail.slice(i, i + 1900) }
-      });
-    }
 
+    // 長文本分塊邏輯改用跟 Project_Job.js 共用的 NotionService.buildRichTextProp，
+    // 避免兩邊各自維護一份容易失去同步；順便讓「精華亮點」也得到原本沒有的長度保護
     const payload = {
       properties: {
-        '精華亮點': {
-          rich_text: [{ type: 'text', text: { content: highlight } }]
-        },
-        '排版工作說明': {
-          rich_text: detailChunks
-        }
+        '精華亮點': NotionService.buildRichTextProp(highlight),
+        '排版工作說明': NotionService.buildRichTextProp(formattedDetail)
       }
     };
 

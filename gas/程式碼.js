@@ -32,7 +32,11 @@ const CONFIG = {
   // Vertex AI（跟招募聊天機器人共用同一個 GCP 專案），取代原本 Gemini Developer API Key 的方式，
   // 避免卡在 AI Studio 免費層級極低的配額限制
   GCP_PROJECT_ID: (_scriptProps.getProperty('GCP_PROJECT_ID') || 'tsaipei-505807').trim(),
-  GCP_LOCATION: (_scriptProps.getProperty('GCP_LOCATION') || 'global').trim()
+  GCP_LOCATION: (_scriptProps.getProperty('GCP_LOCATION') || 'global').trim(),
+  // PIN 雜湊用的秘密字串（pepper），跟 PIN 一起下去算雜湊，避免雜湊值萬一外流時
+  // 被人用「4 位數字只有 10000 種可能」預先算出對照表反查真實 PIN。
+  // 需在「指令碼屬性」新增 PIN_PEPPER，值為一段不外流的隨機亂碼字串。
+  PIN_PEPPER: (_scriptProps.getProperty('PIN_PEPPER') || '').trim()
 };
 
 // 正確 LINE ID 驗證正則
@@ -42,6 +46,12 @@ const LINE_ID_REGEX = /^[a-zA-Z0-9_-]{10,64}$/;
 function sha256Hash(text) {
   const signature = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text), Utilities.Charset.UTF_8);
   return signature.map(byte => (byte < 0 ? byte + 256 : byte).toString(16).padStart(2, '0')).join('');
+}
+
+// PIN 專用雜湊（加鹽）：sha256Hash 是通用工具（也被拿去當 AI 快取鍵值用），
+// 不直接改動它的行為，另外包一層專門給 PIN 使用，避免混淆用途。
+function hashPinWithPepper(pin) {
+  return sha256Hash(String(pin) + CONFIG.PIN_PEPPER);
 }
 
 // 常用「多值文字」拆分工具：依逗號、頓號、斜線、反斜線、換行、空白等常見分隔符號拆開並去除頭尾空白，
@@ -501,9 +511,23 @@ const EmployeeRegistrationService = {
       }
     }
     
+    // 用鎖把「讀表比對 → 寫入」包成同一個不可被打斷的動作，避免同仁重複點擊綁定
+    // 或剛好有另一位同仁幾乎同時綁定時，兩個請求都讀到「尚未存在」而各自寫入，
+    // 造成同一人被建立兩筆重複資料、或寫入位置互相覆蓋。
+    const lock = LockService.getScriptLock();
+    let lockAcquired = false;
+    try {
+      lockAcquired = lock.tryLock(10000);
+    } catch (lockErr) {
+      console.error('取得員工綁定鎖定失敗:', lockErr);
+    }
+    if (!lockAcquired) {
+      return { status: 'error', message: '系統忙碌中（可能同時有人在綁定），請稍後再試一次。' };
+    }
+
     try {
       const sheet = SpreadsheetService.getOrCreateSheet(CONFIG.SHEET_NAME_ORG);
-      
+
       if (sheet.getLastRow() === 0) {
         sheet.appendRow(['員工姓名', '員工 LINE ID', '主管姓名', '主管 LINE ID', '主管 Email', '員工工號', 'LINE暱稱', '綁定時間', 'PIN碼', '員工Email']);
         SpreadsheetApp.flush();
@@ -518,27 +542,36 @@ const EmployeeRegistrationService = {
       }
 
       const data = sheet.getDataRange().getValues();
-      let matchedRow = -1;
-      let existingLineId = '';
-      
+      const nameMatches = [];
+
       for (let i = 1; i < data.length; i++) {
         const rowName = String(data[i][0] || '').trim();
         if (rowName === name) {
-          matchedRow = i + 1;
-          existingLineId = String(data[i][1] || '').trim();
-          break;
+          nameMatches.push({ rowIdx: i + 1, lineId: String(data[i][1] || '').trim() });
         }
       }
 
-      if (matchedRow > 0 && existingLineId && LINE_ID_REGEX.test(existingLineId) && existingLineId !== userId) {
-        return { 
-          status: 'error', 
-          message: `【綁定失敗】組織表中的「${name}」已綁定其他 LINE 帳號。\n若需更換帳號，請聯繫系統管理員協助解除舊綁定。` 
+      // 組織表裡有超過一位同名同仁時，系統無法判斷是哪一位，直接擋下自動綁定，
+      // 避免誤認成第一筆而綁錯人或覆蓋別人的資料，改由管理員人工確認後處理。
+      if (nameMatches.length > 1) {
+        return {
+          status: 'error',
+          message: `【綁定失敗】組織表中有 ${nameMatches.length} 位同仁姓名皆為「${name}」，系統無法自動判斷是哪一位，請聯繫系統管理員協助手動綁定。`
         };
       }
-      
+
+      const matchedRow = nameMatches.length === 1 ? nameMatches[0].rowIdx : -1;
+      const existingLineId = nameMatches.length === 1 ? nameMatches[0].lineId : '';
+
+      if (matchedRow > 0 && existingLineId && LINE_ID_REGEX.test(existingLineId) && existingLineId !== userId) {
+        return {
+          status: 'error',
+          message: `【綁定失敗】組織表中的「${name}」已綁定其他 LINE 帳號。\n若需更換帳號，請聯繫系統管理員協助解除舊綁定。`
+        };
+      }
+
       const nowStr = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
-      const hashedPin = sha256Hash(pin);
+      const hashedPin = hashPinWithPepper(pin);
       let message = '';
       
       if (matchedRow > 0) {
@@ -583,6 +616,8 @@ const EmployeeRegistrationService = {
     } catch (err) {
       console.error('員工 LINE 綁定處理失敗:', err);
       return { status: 'error', message: '寫入試算表失敗: ' + err.toString() };
+    } finally {
+      lock.releaseLock();
     }
   }
 };
@@ -593,11 +628,17 @@ const EmployeeRegistrationService = {
 const LineWebhookService = {
   handleEvents: function(events) {
     events.forEach(event => {
-      if (event.type === 'postback' && event.postback && event.postback.data) {
-        this.processPostback(event);
-      }
-      if (event.type === 'message' && event.message && event.message.type === 'text') {
-        this.processTextMessage(event);
+      try {
+        if (event.type === 'postback' && event.postback && event.postback.data) {
+          this.processPostback(event);
+        }
+        if (event.type === 'message' && event.message && event.message.type === 'text') {
+          this.processTextMessage(event);
+        }
+      } catch (eventErr) {
+        // 單一事件出錯只記錄，不中斷同一批次（同一次 webhook 呼叫）裡的其他事件，
+        // 否則 LINE 一次送多個事件時，前面一個出錯會讓後面的事件整批消失且不會重送。
+        console.error('處理單一 LINE 事件失敗（不影響同批次其他事件）:', eventErr, JSON.stringify(event));
       }
     });
   },
@@ -861,7 +902,10 @@ const OrgService = {
       }
 
       const data = this.getOrgData();
-      const inputHashedPin = sha256Hash(cleanPin);
+      // 新版（加鹽）雜湊是唯一該長期保留的格式；舊版（無鹽）雜湊只用來相容既有資料，
+      // 比對命中後會立即升級成新版，逐步把表格內的雜湊值全部換成加鹽版本。
+      const inputHashedPin = hashPinWithPepper(cleanPin);
+      const legacyHashedPin = sha256Hash(cleanPin);
 
       for (let i = 1; i < data.length; i++) {
         const row = data[i];
@@ -876,17 +920,17 @@ const OrgService = {
               message: `同仁【${cleanName}】尚未於 LINE 聊天室完成綁定！\n請先發送「綁定+${cleanName}+4位PIN碼」完成綁定。`
             };
           }
-          if (constantTimeEquals(empPin, inputHashedPin) || constantTimeEquals(empPin, cleanPin)) {
+          if (constantTimeEquals(empPin, inputHashedPin) || constantTimeEquals(empPin, legacyHashedPin) || constantTimeEquals(empPin, cleanPin)) {
             LoginAttemptGuard.clear(cleanName);
 
-            // 若比對命中的是明文 PIN（尚未雜湊的舊資料），登入成功時順便升級寫回雜湊值，
-            // 之後就只會用雜湊比對，逐步清除表格中的明文 PIN
+            // 若比對命中的不是「新版加鹽雜湊」（可能是明文 PIN，或舊版無鹽雜湊），
+            // 登入成功時順便升級寫回新版加鹽雜湊，逐步清除表格中的明文/舊雜湊 PIN
             if (empPin !== inputHashedPin) {
               try {
                 const orgSheet = SpreadsheetService.getOrCreateSheet(CONFIG.SHEET_NAME_ORG);
                 orgSheet.getRange(i + 1, 9).setValue(inputHashedPin);
                 SpreadsheetApp.flush();
-                console.log(`🔐 已將【${cleanName}】的明文 PIN 自動升級為雜湊值`);
+                console.log(`🔐 已將【${cleanName}】的 PIN 自動升級為新版加鹽雜湊`);
               } catch (upgradeErr) {
                 console.warn('自動升級 PIN 雜湊失敗 (不影響本次登入):', upgradeErr);
               }
