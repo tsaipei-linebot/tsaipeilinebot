@@ -1,5 +1,7 @@
 # 匯聘資料模型
 
+> 專案正式名稱：**人力銀行app**（本文件為「匯聘計畫」規劃討論的一部分，兩者指同一專案）
+
 對應 `docs/job-app-architecture-plan.md` 的延伸規格。完整版（含 ER 圖、狀態機圖）已發布：
 https://claude.ai/code/artifact/ee99c6ce-23b1-4388-b967-842e3ce4c221
 
