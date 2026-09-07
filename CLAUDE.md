@@ -36,9 +36,15 @@ git repo 裡**：
   session。**改完程式碼只是 git push，真正要生效還需要使用者（或有 `clasp`
   登入權限的人）額外執行 `git pull && clasp push`，這件事一定要主動提醒，
   不要漏掉。**
-- **職缺維護系統**：獨立在 Netlify + Google Apps Script 的專案，跟這個 repo
-  之間透過 `job_portal_sso.py` 做免登入銜接（詳見 `HANDOFF.md`）。這個專案
-  的原始碼目前是靠使用者手動貼給 Claude 看，沒有對應的 git repo。
+- **職缺維護及表單系統（GAS 後端）**：跟這個 repo 之間透過 `job_portal_sso.py`
+  做免登入銜接（詳見 `HANDOFF.md`）。程式碼已經納入版控，就在**這個 repo**
+  的 `gas/` 目錄下，但開發分支跟這個 recruitment-bot 專案不同，是獨立的
+  `claude/google-apps-script-setup-7appxk` 分支（不要跟目前分支搞混，兩者
+  是同一個 GitHub repo 底下平行開發的兩個獨立系統）。切換過去可以看
+  `gas/README.md` 了解完整架構、Google Apps Script 專案設定、部署流程
+  （`clasp push -f && clasp deploy -i <固定部署ID>`）。前端表單頁面
+  `gas/index.html` 託管在 Netlify，使用者刻意不將其納入版控，改動需手動
+  下載重新上傳。
 
 ## 部署與環境
 
