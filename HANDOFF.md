@@ -1413,3 +1413,19 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
 Apps Script 專案又被重新建立、搬移、或改名，一定要記得同步更新
 `.clasp.json` 的 `scriptId`**，否則不管是手動 `clasp push` 還是這裡的
 自動化都會一直失敗，而且錯誤訊息長得完全像是權限問題，很容易誤判方向。
+
+**踩過的另一個雷：`clasp push` 只會更新程式碼原始碼，不會自動反映到
+「固定版本」的部署（deployment）上，LINE Webhook 如果接的是固定版本，
+單純 push 完全沒用**——同一天（2026-09-07）解決 scriptId 問題之後，
+`clasp push` 本身確實成功了，但使用者實測意外事件回報，發現第二群組
+收到的還是舊邏輯（簡短確認句，不是完整原文）。原因是這個 Apps Script
+專案有兩個部署：一個是 `@HEAD`（永遠對應最新程式碼），另一個綁定在
+「固定版本」（`clasp deployments` 可以查到，deployment id 開頭
+`AKfycbwbKr7...`）——LINE Developers Console 設定的 Webhook 網址接的是
+後者，這種部署的程式碼版本要額外執行 `clasp deploy -i <deployment id>`
+才會更新，push 再多次都不會自動反映上去。已經在 `delivery-gas-project`
+的 `.github/workflows/clasp-push.yml` 加上 `clasp deploy -i ...` 這一步，
+自動化現在會同時做 push + deploy 兩件事。**這一步比單純 push 需要更嚴格
+的權限（要跟 Apps Script 專案擁有者同網域的帳號），如果之後這個自動化
+又開始出現類似「明明 push 成功但沒生效」的狀況，先檢查 `CLASPRC_JSON`
+這個 secret 存的帳號是不是還符合這個條件。**
