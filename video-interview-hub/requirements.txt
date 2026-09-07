@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+agora-token-builder
+livekit-api

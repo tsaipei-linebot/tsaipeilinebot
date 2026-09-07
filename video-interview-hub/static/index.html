@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>視訊面試中心 - POC 測試</title>
+<link rel="stylesheet" href="/style.css" />
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+  <main>
+    <h1>視訊面試中心</h1>
+    <p class="hint">內部技術驗證頁面，非正式面試環境</p>
+
+    <div id="status" class="status">正在初始化 LINE 登入…</div>
+
+    <div id="join-panel" class="panel" hidden>
+      <p>目前登入者：<strong id="display-name">-</strong></p>
+      <button id="join-btn">加入測試房間</button>
+    </div>
+
+    <div id="call-panel" class="panel" hidden>
+      <div class="video-grid">
+        <div id="local-player" class="video-tile"></div>
+        <div id="remote-players" class="video-grid remote"></div>
+      </div>
+      <button id="leave-btn" class="danger">離開房間</button>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
