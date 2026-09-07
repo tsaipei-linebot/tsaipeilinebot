@@ -1401,3 +1401,15 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
 就會自動部署／`clasp push`，不用再手動執行指令；如果之後想暫停自動
 部署（例如想手動控制上線時機），到 GitHub 該 repo 的 Actions 頁籤把
 對應的 workflow 停用即可，不影響手動部署方式繼續運作。
+
+**踩過的雷：`delivery-gas-project` 的 Apps Script 專案如果被重建過，
+`.clasp.json` 裡的 `scriptId` 要記得同步更新**——2026-09-07 曾經花了不少
+時間排查 `clasp push`（不管手動還是自動化）一律回傳
+`The caller does not have permission`，一開始誤判是 Google Workspace
+網域層級的第三方應用程式限制，換了三個帳號測試都一樣失敗；後來才發現
+真正原因是 Apps Script 專案兩天前被重建過（新的 scriptId），但
+`.clasp.json` 裡還是指向舊專案——舊專案已經沒有人有對應的存取權，
+不管用哪個帳號都會是同一個錯誤。**以後如果 `delivery-gas-project` 的
+Apps Script 專案又被重新建立、搬移、或改名，一定要記得同步更新
+`.clasp.json` 的 `scriptId`**，否則不管是手動 `clasp push` 還是這裡的
+自動化都會一直失敗，而且錯誤訊息長得完全像是權限問題，很容易誤判方向。
