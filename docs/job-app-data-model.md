@@ -85,7 +85,7 @@ https://claude.ai/code/artifact/ee99c6ce-23b1-4388-b967-842e3ce4c221
 4. `MerchantUser.client_id` 對應的 `Client` 必須是 `SELF_SERVE` 模式
 5. `ResumeSyncRecord.sync_status = PENDING_ASSIGNMENT` 時需人工在待分派佇列處理，系統不可自動猜測建立關聯
 6. `Candidate.line_user_id` 是去重主要依據；無 LINE 應徵者以 `phone` 作次要去重依據
-7. 聊天訊息本體沿用現有 repo 已驗證的 Firestore session 模式儲存，Postgres 只存 `ApplicationEvent` 作稽核摘要
+7. 聊天訊息本體沿用現有 repo 已驗證的 Firestore session 模式儲存，Postgres 只存 `ApplicationEvent` 作稽核摘要——**此規則僅適用 Phase 0–2**；Phase 3 起隨獨立訊息系統（取代 LINE）上線，需另外設計 `Conversation`/`Message` 相關資料表，屆時本規則需重新檢視（見 `job-app-handoff.md` 範圍決策脈絡第6點）
 
 ## 待確認事項
 
