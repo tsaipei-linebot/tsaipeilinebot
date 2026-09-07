@@ -1546,3 +1546,56 @@ Apps Script 專案又被重新建立、搬移、或改名，一定要記得同�
 的權限（要跟 Apps Script 專案擁有者同網域的帳號），如果之後這個自動化
 又開始出現類似「明明 push 成功但沒生效」的狀況，先檢查 `CLASPRC_JSON`
 這個 secret 存的帳號是不是還符合這個條件。**
+
+## 新增：少凱業務開發專區改成權限控管 ＋ 唯讀網頁（不再直接連 Google Sheet）
+
+背景：`/portal` 首頁原本有一張「少凱業務開發專區」卡片，是寫死在
+`templates/portal_home.html` 裡的一個外部連結，直接連去 Google Sheet 的
+編輯畫面——跟其他部門卡片不一樣，**這張卡片沒有走 `/accounts` 的權限
+判斷，只要能登入 `/portal` 的任何帳號都看得到**，而且點進去是原始試算表
+畫面（可以被誤改、排版也不好看）。這次改成兩件事：① 比照其他部門模組，
+用 `/accounts` 控制誰看得到這張卡片；② 卡片點進去是這個系統自己畫的唯讀
+網頁，不再直接連去 Google Sheet。
+
+### 權限控管
+
+在 `platform_accounts.py` 的 `MODULES` 多加一筆
+`{"code": "salesdev", "name": "少凱業務開發專區"}`，跟其他模組一樣，之後
+可以直接在 `/accounts` 頁面勾選哪些帳號看得到、`/accounts` 的帳號編輯表單
+也會自動多一欄，不用另外改程式碼。**這次改完之後，除了老闆本人（全平台
+管理員），沒有任何帳號會自動有這個模組的權限，要記得去 `/accounts` 手動
+勾選誰可以看。**
+
+### 唯讀網頁
+
+- 新增 `services/salesdev_sheet_service.py`：用跟
+  `services/factory_watch_service.py` 一樣的 Cloud Run 服務帳戶 ADC 連線
+  Google Sheets API，差別是這裡只讀（scope 是
+  `spreadsheets.readonly`），把整份試算表的每個分頁都讀出來，整理成
+  `[{title, headers, rows, truncated}, ...]`。刻意不管試算表裡實際的欄位
+  長什麼樣子（少凱業務開發的名單、工廠監控彙整可能是不同分頁、不同欄位），
+  用「第一列當表頭、其餘都是資料列」通用處理，不寫死任何欄位名稱。單一
+  分頁超過 500 列只顯示前 500 列（`truncated` 會是 `True`），避免資料量
+  一多整頁跑很慢。
+- 新增 `salesdev_routes.py` + `templates/salesdev_home.html`：`/salesdev`
+  這個路由直接掛在根 `app`（跟 `/accounts`、`/portal`一樣），不像
+  delivery/management/hr 是獨立掛載一個子系統——因為這裡資料量小、純唯讀，
+  不需要自己的一整套子系統。畫面上每個 Google Sheet 分頁對應一個分頁
+  按鈕（純前端 JS 切換，不用重新整理），每個分頁表格上面有一個純前端的
+  搜尋框（比對整列文字，不用重新整理、不用打 API）。
+- 讀不到 Google Sheet 時（試算表 ID 沒設定／沒分享權限／試算表被刪除）
+  畫面上會顯示清楚的中文提示，不會噴 500 錯誤頁。
+- 試算表 ID 設在 `config.py` 的 `SALESDEV_SHEET_ID`，預設值就是原本卡片
+  寫死連去的那份試算表 ID，所以**不需要額外設定就能沿用原本那份表**；
+  之後如果要換一份試算表，改 Cloud Run 環境變數 `SALESDEV_SHEET_ID` 即可，
+  不用改程式碼重新部署。
+
+### 上線前要做的事
+
+1. **這份 Google Sheet 要分享「檢視者」權限給 Cloud Run 服務帳戶**（
+   `tsaipei-505807` 專案的預設運算服務帳戶，或另外指定的服務帳戶信箱，
+   在 Google Sheet 右上角「共用」設定）——沒分享的話 `/salesdev` 頁面會
+   顯示「沒有權限讀取」的提示，不影響其他功能。
+2. **到 `/accounts` 幫需要看這份資料的帳號（例如少凱本人）勾選「少凱業務
+   開發專區」的權限**——改完程式碼這一刻起，除了老闆本人，沒有人會自動
+   看到這張卡片／能打開這個頁面。

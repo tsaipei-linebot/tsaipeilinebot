@@ -105,3 +105,12 @@ FACTORY_WATCH_SHEET_NAME = os.getenv("FACTORY_WATCH_SHEET_NAME", "新登記工�
 FACTORY_WATCH_LINE_TARGET_ID = os.getenv("FACTORY_WATCH_LINE_TARGET_ID", "")
 # Cloud Scheduler 呼叫 /internal/factory-watch/run 時要帶的共用密鑰，避免端點被任意觸發
 FACTORY_WATCH_TRIGGER_SECRET = os.getenv("FACTORY_WATCH_TRIGGER_SECRET", "")
+
+# ==========================================
+# 10. 少凱業務開發專區（/salesdev）唯讀顯示的 Google Sheet
+# 預設值是原本 /portal 首頁卡片直接連去編輯的那份「派遣客戶開發名單、
+# 新登記工廠監控彙整」試算表；改用別的試算表時可以用環境變數覆蓋，不用
+# 改程式碼。這份試算表需要分享「檢視者」權限給 Cloud Run 服務帳戶才讀得到
+# （見 services/salesdev_sheet_service.py）。
+# ==========================================
+SALESDEV_SHEET_ID = os.getenv("SALESDEV_SHEET_ID", "1DdkW0eOP8PrvXlioVYY6LYzpswHTrIJotgvCMe-oS-Q")

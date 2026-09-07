@@ -34,6 +34,7 @@
 | 配送部系統 | `/delivery` | 配送部同仁 | 人員報到文件、補款、假別、應徵名單、車輛回報、意外事件回報 |
 | 管理部系統 | `/management` | 管理部/業務主管 | 公告/會議記錄/SOP、業績報表、客戶拜訪紀錄、員工名冊組織圖、資產設備（含門號繳費提醒） |
 | 人資專區 | `/hr` | 人資 | 意外通報彙整、員工體檢報告、員工關懷彙整、公司證照彙整、教育訓練彙整 |
+| 少凱業務開發專區 | `/salesdev` | 業務開發（需 `/accounts` 開通） | 唯讀顯示派遣客戶開發名單、新登記工廠監控彙整（讀自 Google Sheet） |
 | 帳號權限管理 | `/accounts` | 平台管理員（老闆） | 新增/刪除帳號、設定每個帳號在各模組的角色 |
 | 統一入口頁 | `/portal` | 所有已登入同仁 | 依帳號權限顯示看得到的模組卡片 |
 | 登入頁 | `/login` | 所有同仁 | 統一登入，也銜接職缺維護系統免登入 SSO |
@@ -118,13 +119,19 @@ cookie，還是要分開登入。
 7. 設定兩個 Cloud Scheduler 每週排程。
 8. 到 `/accounts` 開通相關帳號權限。
 
+**少凱業務開發專區（`/salesdev`）上線前還缺：**
+9. 把試算表分享「檢視者」權限給 Cloud Run 服務帳戶（否則頁面會顯示
+   「沒有權限讀取」）。
+10. 到 `/accounts` 幫需要看這份資料的帳號開通「少凱業務開發專區」權限
+    ——改成權限控管之後，除了老闆本人，沒有人會自動看到。
+
 **整體維運：**
-9. CI/CD 自動部署的一次性設定（Workload Identity Federation、`clasp`
-   登入憑證存成 GitHub Secret）尚未完成，見上方第 4 節。
-10. 考慮加 Cloud Monitoring 錯誤告警（目前例外只靠 `print()` 寫進
+11. CI/CD 自動部署的一次性設定（Workload Identity Federation、`clasp`
+    登入憑證存成 GitHub Secret）尚未完成，見上方第 4 節。
+12. 考慮加 Cloud Monitoring 錯誤告警（目前例外只靠 `print()` 寫進
     Cloud Run log，沒有主動通知）。
-11. 考慮加 Firestore TTL 自動清除過期 session。
-12. 考慮把各項金鑰（Notion／Gemini／LINE channel secret 等）搬到
+13. 考慮加 Firestore TTL 自動清除過期 session。
+14. 考慮把各項金鑰（Notion／Gemini／LINE channel secret 等）搬到
     Secret Manager，取代目前明文環境變數的做法。
 
 ## 6. 想知道更多細節，去哪裡查

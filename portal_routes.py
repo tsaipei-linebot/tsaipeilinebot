@@ -29,6 +29,13 @@ _MODULE_CARD_INFO = {
     "hr": {
         "description": "意外通報、體檢報告、員工關懷、公司證照、教育訓練彙整",
     },
+    "salesdev": {
+        "description": "派遣客戶開發名單、新登記工廠監控彙整",
+        # 其他模組都是掛在自己的子系統底下，卡片連去各自的 /{code}/login；
+        # 這個模組直接掛在根 app 上（見 salesdev_routes.py），沒有獨立的
+        # 登入頁，卡片直接連過去即可。
+        "href": "/salesdev",
+    },
 }
 
 
@@ -52,7 +59,7 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
             {
                 "name": module["name"],
                 "description": info.get("description", ""),
-                "href": f"/{module['code']}/login",
+                "href": info.get("href", f"/{module['code']}/login"),
             }
         )
     return templates.TemplateResponse(
