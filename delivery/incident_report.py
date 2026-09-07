@@ -173,10 +173,11 @@ def handle_incident_report(text: str) -> tuple:
 
     from delivery import repository
 
-    repository.create_incident_event(parsed)
+    _incident_id, created = repository.create_incident_event(parsed)
+    action = "已登記" if created else "已更新"
 
     return True, (
-        f"✅ 已登記意外事件回報：{parsed['personnel_name']}（{parsed['identity_type']}），"
+        f"✅ {action}意外事件回報：{parsed['personnel_name']}（{parsed['identity_type']}），"
         f"{parsed['occurred_at']}，{parsed['location']}。已寫入系統，後續由管理員評估風險等級並追蹤結案。"
     )
 

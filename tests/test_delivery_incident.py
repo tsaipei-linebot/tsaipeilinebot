@@ -128,12 +128,24 @@ class ParseIncidentReportTests(unittest.TestCase):
 
     @patch("delivery.repository.create_incident_event")
     def test_handle_incident_report_writes_and_replies(self, mock_create):
-        mock_create.return_value = "incident123"
+        mock_create.return_value = ("incident123", True)
         ok, reply = handle_incident_report(_VALID_TEXT)
         self.assertTrue(ok)
         self.assertTrue(mock_create.called)
         self.assertIn("林子椉", reply)
         self.assertIn("✅", reply)
+        self.assertIn("已登記", reply)
+
+    @patch("delivery.repository.create_incident_event")
+    def test_handle_incident_report_overwriting_existing_says_updated(self, mock_create):
+        # 人員名稱＋發生時間跟既有紀錄相同時，repository 會覆寫既有那筆
+        # （created=False），回覆文字要講「已更新」，不能誤導同仁以為
+        # 又新開了一筆。
+        mock_create.return_value = ("incident123", False)
+        ok, reply = handle_incident_report(_VALID_TEXT)
+        self.assertTrue(ok)
+        self.assertIn("已更新", reply)
+        self.assertNotIn("已登記", reply)
 
     def test_handle_incident_report_format_error_is_not_ok(self):
         # 格式錯誤（例如發生時間看不懂）同仁會收到 ❌ 提示，但 ok 要是

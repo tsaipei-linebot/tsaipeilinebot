@@ -779,6 +779,17 @@ webhook 端點/密鑰（`delivery/incident_report.py` + `/delivery/api/incident-
 填的，是管理員事後在網頁 `/incidents/{id}` 詳細頁設定/操作（單向操作，
 比照補款/假別核准機制，僅限管理員）。
 
+**同一起事件重複回報，改成覆寫而不是新增一筆**：以「人員名稱＋發生時間」
+當作識別同一起事件的依據（見 `repository.create_incident_event()` /
+`_find_incident_event_by_key()`），這兩個欄位完全相同的回報，會直接覆寫
+既有那筆的回報內容（11 個欄位），不會多開一筆重複紀錄——涵蓋兩種常見情境：
+同仁手滑重傳一模一樣的內容，或發現打錯字重新回報修正過的版本。刻意不覆寫
+`risk_level`／`status`／`created_at`，避免同仁重傳同一起事件時，不小心洗掉
+管理員已經做好的風險評估／結案狀態。`create_incident_event()` 回傳
+`(incident_id, created)`，`created=False` 時 `handle_incident_report()`
+回覆的文字會說「已更新」而不是「已登記」，讓同仁清楚知道系統認得這是同一起
+事件的更新，不是又新開了一筆。
+
 **這次新增了兩件跟車輛回報不一樣的事**：
 1. **同一筆新回報要推播到兩個群組，但兩邊內容不一樣、而且只有成功登記才轉發**：
    原群組（`replyLineMessage`）收到的一律是配送部系統回傳的簡短確認句
