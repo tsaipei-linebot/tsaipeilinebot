@@ -15,6 +15,7 @@
 
 ## 專案基本資訊
 
+- **專案名稱：材霈招募聊天機器人**
 - 專案性質：材霈有限公司的 LINE 招募聊天機器人「沛沛」
 - 技術棧：FastAPI + line-bot-sdk + Notion API（職缺/FAQ 資料庫）+ Vertex AI Gemini（決策與回覆生成）+ Firestore（session/槽位儲存）
 - GCP 專案 ID：`tsaipei-505807`
