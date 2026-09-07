@@ -152,22 +152,32 @@ def parse_incident_report(text: str) -> dict:
     }
 
 
-def handle_incident_report(text: str) -> str:
-    """解析 + 寫入資料庫，回傳要回覆到 LINE 群組的文字；回傳空字串代表這則
-    訊息看起來不是在嘗試回報，呼叫端應該保持沉默、不要回覆任何東西。延後
-    import delivery.repository，避免這個模組被載入時就需要 Firestore 憑證。"""
+def handle_incident_report(text: str) -> tuple:
+    """解析 + 寫入資料庫，回傳 (ok, reply)：
+    - reply 是要回覆到 LINE 群組的文字；空字串代表這則訊息看起來不是在
+      嘗試回報，呼叫端應該保持沉默、不要回覆任何東西。
+    - ok 代表這筆資料是不是真的成功寫入系統（一筆有效的意外事件回報）。
+      格式錯誤（ok=False 但 reply 非空，同仁會看到 ❌ 提示）跟「根本不是
+      在回報」（ok=False 且 reply 是空字串）都算失敗，差別只在要不要回覆。
+      呼叫端（見 delivery/routes/webhook_routes.py）會把 ok 一起回傳給
+      GAS，GAS 只有在 ok 是 true 時才會把原始文字轉發到第二個群組——格式
+      錯誤的嘗試不該讓管理／督導群組也收到一則無效的訊息。
+
+    延後 import delivery.repository，避免這個模組被載入時就需要 Firestore
+    憑證。"""
     parsed = parse_incident_report(text)
     if not parsed["ok"]:
         if parsed["error"] == NOT_A_REPORT:
-            return ""
-        return PARSE_ERROR_MESSAGES.get(parsed["error"], "❌ 格式有誤，請確認後重新回報。")
+            return False, ""
+        return False, PARSE_ERROR_MESSAGES.get(parsed["error"], "❌ 格式有誤，請確認後重新回報。")
 
     from delivery import repository
 
-    repository.create_incident_event(parsed)
+    _incident_id, created = repository.create_incident_event(parsed)
+    action = "已登記" if created else "已更新"
 
-    return (
-        f"✅ 已登記意外事件回報：{parsed['personnel_name']}（{parsed['identity_type']}），"
+    return True, (
+        f"✅ {action}意外事件回報：{parsed['personnel_name']}（{parsed['identity_type']}），"
         f"{parsed['occurred_at']}，{parsed['location']}。已寫入系統，後續由管理員評估風險等級並追蹤結案。"
     )
 

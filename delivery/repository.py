@@ -908,17 +908,49 @@ _INCIDENT_FIELDS = (
 )
 
 
-def create_incident_event(data: dict) -> str:
-    """新增一筆意外事件回報，回傳新文件 ID。data 需含 _INCIDENT_FIELDS 這
-    11 個欄位（見 delivery.incident_report.parse_incident_report 的回傳
-    值），風險等級／結案狀態一律用預設值，不接受呼叫端指定。"""
-    ref = incident_events_ref().document()
+def _find_incident_event_by_key(personnel_name: str, occurred_at: str):
+    """依「人員名稱＋發生時間」找既有的意外事件回報，找不到回傳 None。
+    這組合視為同一起事件的識別鍵（見 create_incident_event() 的說明），
+    兩者缺一不比對，避免空字串互相誤判成同一筆。"""
+    if not personnel_name or not occurred_at:
+        return None
+    query = (
+        incident_events_ref()
+        .where("personnel_name", "==", personnel_name)
+        .where("occurred_at", "==", occurred_at)
+        .limit(1)
+    )
+    for snapshot in query.stream():
+        return snapshot.id
+    return None
+
+
+def create_incident_event(data: dict) -> tuple:
+    """新增一筆意外事件回報，回傳 (incident_id, created)：
+    - 如果「人員名稱＋發生時間」跟既有紀錄完全相同，視為同仁在回報同一起
+      事件（例如手滑重傳、或發現打錯字重新回報修正），直接覆寫既有那筆
+      的回報內容（_INCIDENT_FIELDS 這 11 個欄位），不會多開一筆重複紀錄，
+      created 回傳 False。
+    - 找不到既有紀錄才真的新建一筆，風險等級／結案狀態用預設值（不接受
+      呼叫端指定），created 回傳 True。
+
+    刻意不覆寫既有紀錄的 risk_level／status／created_at——那是管理員事後
+    才會填的欄位，同仁重傳同一起事件的內容更新，不該把管理員已經做的
+    風險評估／結案狀態洗掉。data 需含 _INCIDENT_FIELDS 這 11 個欄位（見
+    delivery.incident_report.parse_incident_report 的回傳值）。"""
     payload = {key: data.get(key, "") for key in _INCIDENT_FIELDS}
+
+    existing_id = _find_incident_event_by_key(data.get("personnel_name", ""), data.get("occurred_at", ""))
+    if existing_id:
+        incident_events_ref().document(existing_id).update(payload)
+        return existing_id, False
+
+    ref = incident_events_ref().document()
     payload["risk_level"] = ""
     payload["status"] = DEFAULT_INCIDENT_STATUS
     payload["created_at"] = time.time()
     ref.set(payload)
-    return ref.id
+    return ref.id, True
 
 
 def get_incident_event(incident_id: str):

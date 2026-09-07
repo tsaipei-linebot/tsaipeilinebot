@@ -779,10 +779,34 @@ webhook 端點/密鑰（`delivery/incident_report.py` + `/delivery/api/incident-
 填的，是管理員事後在網頁 `/incidents/{id}` 詳細頁設定/操作（單向操作，
 比照補款/假別核准機制，僅限管理員）。
 
+**同一起事件重複回報，改成覆寫而不是新增一筆**：以「人員名稱＋發生時間」
+當作識別同一起事件的依據（見 `repository.create_incident_event()` /
+`_find_incident_event_by_key()`），這兩個欄位完全相同的回報，會直接覆寫
+既有那筆的回報內容（11 個欄位），不會多開一筆重複紀錄——涵蓋兩種常見情境：
+同仁手滑重傳一模一樣的內容，或發現打錯字重新回報修正過的版本。刻意不覆寫
+`risk_level`／`status`／`created_at`，避免同仁重傳同一起事件時，不小心洗掉
+管理員已經做好的風險評估／結案狀態。`create_incident_event()` 回傳
+`(incident_id, created)`，`created=False` 時 `handle_incident_report()`
+回覆的文字會說「已更新」而不是「已登記」，讓同仁清楚知道系統認得這是同一起
+事件的更新，不是又新開了一筆。
+
 **這次新增了兩件跟車輛回報不一樣的事**：
-1. **同一筆新回報要推播到兩個群組**：GAS 收到 Python 回傳的確認文字後，除了
-   貼回原群組（`replyLineMessage`），還會用同一支 `sendLineMessage()` 推播
-   同一則訊息到另一個群組（`INCIDENT_NOTIFY_GROUP_ID`，例如管理／督導群）。
+1. **同一筆新回報要推播到兩個群組，但兩邊內容不一樣、而且只有成功登記才轉發**：
+   原群組（`replyLineMessage`）收到的一律是配送部系統回傳的簡短確認句
+   （`result.reply`）——不管是成功登記還是格式錯誤都會回這句，讓同仁知道
+   有沒有填對。第二個群組（`INCIDENT_NOTIFY_GROUP_ID`，例如管理／督導群）
+   收到的是同仁原始貼的完整回報文字（`text`，11 個欄位一字不漏，見
+   `Project6_Incident.js` 的 `handleIncidentReport_()`），**但只有真的成功
+   寫入系統（`result.ok === true`）才會轉發**——格式錯誤的嘗試不會讓管理／
+   督導層也收到一則無效的錯誤訊息。`ok` 這個欄位是 Python 的
+   `handle_incident_report()` 回傳的（見 `delivery/incident_report.py`，
+   回傳值是 `(ok, reply)` 這個 tuple，`webhook_routes.py` 的
+   `/api/incident-report` 端點把兩者都包進 JSON 回傳給 GAS）——**改動這兩
+   支程式碼時，記得部署順序要先 Python（Cloud Run）再 GAS
+   （`clasp push`），不然 GAS 還沒讀得懂 `ok` 欄位時，即使 Python 已經
+   有回傳，順序顛倒也不會壞（`result.ok` 是 `undefined`、JS 當假值處理，
+   頂多是那段期間第二個群組暫時收不到東西，不會誤發），但還是建議照順序
+   部署比較乾淨。**
 2. **每週一未結案案件提醒**：這個不是 Cloud Scheduler 打 Python（那樣
    Cloud Run 就要另外持有 CHANNEL1 的 Token），而是在 Apps Script 那邊設一個
    **時間驅動觸發器**（跟 Project1/Project2/Project4 現有排程一樣的做法，
