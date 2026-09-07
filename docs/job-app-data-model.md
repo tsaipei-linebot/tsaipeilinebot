@@ -9,6 +9,7 @@ https://claude.ai/code/artifact/ee99c6ce-23b1-4388-b967-842e3ce4c221
 
 - **MANAGED**：職缺屬於內部派遣團隊代管的客戶，由 `StaffUser` 操作，`JobPosting.team_id` 必填。**V1 只會用到這個模式。**
 - **SELF_SERVE**：職缺屬於未來開放的外部自助商家，由 `MerchantUser` 操作，職缺必須先經審核（`requires_review = true`）才能上線。相關欄位現在就定義好，但 Phase 0 不會有任何資料落在這個模式。
+- **SELF_SERVE 首發商家 = 內部團隊自己**：Phase 2 開放 SELF_SERVE 時，第一批上線的不是外部客戶，而是自家派遣團隊本身——會開通 `MerchantUser` 帳號、走真正的自助刊登/審核流程，真實求職者可應徵，但免收費、無用量上限，目的是用真實流量驗證自助流程本身。驗證過後才開放真外部商家（收費）。因此不能假設「有 SELF_SERVE 記錄＝會被收費」。
 
 ## 實體定義
 
@@ -92,3 +93,4 @@ https://claude.ai/code/artifact/ee99c6ce-23b1-4388-b967-842e3ce4c221
 - **應徵記錄的客戶/職缺對應**：外部系統是否已標記每筆應徵對應的職缺單／客戶
 - **越南擴展的 Market 維度**：暫不加入正式欄位，待 Phase 0 穩定後再評估
 - **StaffUser 登入方式**：內部帳密邀請制、或串接公司既有 Google Workspace SSO
+- **Client 費用豁免欄位**：內部團隊以 SELF_SERVE 身份上線時免收費、無用量上限，需要對應欄位（如 `billing_exempt`）標記，待 Phase 2 訂閱/計費模型設計時一併定案
