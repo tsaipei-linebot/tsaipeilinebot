@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}員工關懷彙整 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">員工關懷彙整</h1>
+    {% if user.role == "admin" %}
+    <a class="btn btn-primary" href="/hr/care-logs/new">新增紀錄</a>
+    {% endif %}
+</div>
+
+<form method="get" action="/hr/care-logs" class="filter-bar">
+    <input type="text" name="q" value="{{ filter_q }}" placeholder="搜尋主題/姓名/內容關鍵字">
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_q %}
+    <a class="btn" href="/hr/care-logs">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if records %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>日期</th>
+            <th>主題</th>
+            <th>當事人</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in records %}
+        <tr>
+            <td>{{ r.log_date }}</td>
+            <td>{{ r.subject }}</td>
+            <td>{{ r.personnel_name or "-" }}</td>
+            <td><a href="/hr/care-logs/{{ r.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有符合條件的紀錄。</p>
+{% endif %}
+
+<p class="back-link"><a href="/hr/">&larr; 回主頁</a></p>
+{% endblock %}

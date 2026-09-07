@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ record.personnel_name }} - {{ record.course_name }} - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ record.personnel_name }} - {{ record.course_name }}</h1>
+<p class="meta">
+    上課日期：{{ record.training_date }}
+    時數：{{ record.hours or "-" }}
+</p>
+
+{% if record.note %}
+<p style="white-space: pre-wrap;">{{ record.note }}</p>
+{% endif %}
+
+{% if record.blob_path %}
+<p>
+    <a class="btn" href="/hr/files/{{ record.blob_path }}" target="_blank" rel="noopener">下載完訓證明：{{ record.filename }}</a>
+</p>
+{% endif %}
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+{% if user.role == "admin" %}
+<h2 class="section-title">編輯</h2>
+<form method="post" action="/hr/trainings/{{ record.id }}/update" enctype="multipart/form-data" class="form-stack form-narrow">
+    <label>姓名
+        <input type="text" name="personnel_name" value="{{ record.personnel_name }}" required>
+    </label>
+    <label>課程名稱
+        <input type="text" name="course_name" value="{{ record.course_name }}" required>
+    </label>
+    <label>上課日期
+        <input type="date" name="training_date" value="{{ record.training_date }}" required>
+    </label>
+    <label>訓練時數（選填）
+        <input type="number" name="hours" min="0" step="0.5" value="{{ record.hours }}">
+    </label>
+    <label>備註（選填）
+        <textarea name="note" rows="3">{{ record.note }}</textarea>
+    </label>
+    <label>更換完訓證明（選填，不選則維持原檔案）
+        <input type="file" name="file">
+    </label>
+    <button type="submit" class="btn btn-primary">更新</button>
+</form>
+
+<form method="post" action="/hr/trainings/{{ record.id }}/delete"
+      onsubmit="return confirm('確定要刪除這筆訓練紀錄嗎？');">
+    <button type="submit" class="btn btn-danger">刪除</button>
+</form>
+{% endif %}
+
+<p class="back-link"><a href="/hr/trainings">&larr; 回教育訓練彙整</a></p>
+{% endblock %}

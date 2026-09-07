@@ -22,6 +22,7 @@ from delivery.config import SESSION_SECRET_KEY
 from handlers.message_handler import process_user_message, process_image_message
 from delivery.app import delivery_app
 from management.app import management_app
+from hr.app import hr_app
 from services.factory_watch_service import run_weekly_scan
 
 app = FastAPI(
@@ -46,11 +47,12 @@ app.include_router(login_routes.router)
 # （見 portal_routes.py）。
 app.include_router(portal_routes.router)
 
-# 配送部系統、管理部系統：各自獨立子系統（自己的路由/資料表，共用同一顆
-# 登入 session cookie），掛在 /delivery、/management 底下，跟上面 LINE
-# 招募機器人的 webhook 路由完全分開，互不影響。
+# 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
+# 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，
+# 跟上面 LINE 招募機器人的 webhook 路由完全分開，互不影響。
 app.mount("/delivery", delivery_app)
 app.mount("/management", management_app)
+app.mount("/hr", hr_app)
 
 # LINE 官方帳號客戶端實例化[cite: 2]
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN) if LINE_CHANNEL_ACCESS_TOKEN else None

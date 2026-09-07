@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}公司證照彙整 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">公司證照彙整</h1>
+    {% if user.role == "admin" %}
+    <a class="btn btn-primary" href="/hr/licenses/new">新增證照</a>
+    {% endif %}
+</div>
+
+<form method="get" action="/hr/licenses" class="filter-bar">
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋證照名稱">
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_name %}
+    <a class="btn" href="/hr/licenses">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if records %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>證照名稱</th>
+            <th>發證機關</th>
+            <th>證照編號</th>
+            <th>到期日</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in records %}
+        <tr>
+            <td>{{ r.name }}</td>
+            <td>{{ r.issuer or "-" }}</td>
+            <td>{{ r.license_no or "-" }}</td>
+            <td>{{ r.expiry_date }}</td>
+            <td><a href="/hr/licenses/{{ r.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有符合條件的證照。</p>
+{% endif %}
+
+<p class="back-link"><a href="/hr/">&larr; 回主頁</a></p>
+{% endblock %}

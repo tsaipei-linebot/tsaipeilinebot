@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}新增證照 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">新增證照</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/hr/licenses/new" enctype="multipart/form-data" class="form-stack form-narrow">
+    <label>證照名稱
+        <input type="text" name="name" required>
+    </label>
+    <label>發證機關（選填）
+        <input type="text" name="issuer">
+    </label>
+    <label>證照編號（選填）
+        <input type="text" name="license_no">
+    </label>
+    <label>到期日
+        <input type="date" name="expiry_date" required>
+    </label>
+    <label>證照檔案（選填，PDF/圖片）
+        <input type="file" name="file">
+    </label>
+    <button type="submit" class="btn btn-primary">建立</button>
+</form>
+<p class="back-link"><a href="/hr/licenses">&larr; 回公司證照彙整</a></p>
+{% endblock %}

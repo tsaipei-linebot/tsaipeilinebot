@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}教育訓練彙整 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">教育訓練彙整</h1>
+    {% if user.role == "admin" %}
+    <a class="btn btn-primary" href="/hr/trainings/new">新增訓練紀錄</a>
+    {% endif %}
+</div>
+
+<form method="get" action="/hr/trainings" class="filter-bar">
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
+    <input type="text" name="course" value="{{ filter_course }}" placeholder="搜尋課程名稱">
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_name or filter_course %}
+    <a class="btn" href="/hr/trainings">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if records %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>姓名</th>
+            <th>課程名稱</th>
+            <th>上課日期</th>
+            <th>時數</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in records %}
+        <tr>
+            <td>{{ r.personnel_name }}</td>
+            <td>{{ r.course_name }}</td>
+            <td>{{ r.training_date }}</td>
+            <td>{{ r.hours or "-" }}</td>
+            <td><a href="/hr/trainings/{{ r.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有符合條件的訓練紀錄。</p>
+{% endif %}
+
+<p class="back-link"><a href="/hr/">&larr; 回主頁</a></p>
+{% endblock %}

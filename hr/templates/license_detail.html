@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ record.name }} - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ record.name }}</h1>
+<p class="meta">
+    發證機關：{{ record.issuer or "-" }}
+    證照編號：{{ record.license_no or "-" }}
+    到期日：{{ record.expiry_date }}
+</p>
+
+{% if record.blob_path %}
+<p>
+    <a class="btn" href="/hr/files/{{ record.blob_path }}" target="_blank" rel="noopener">下載檔案：{{ record.filename }}</a>
+</p>
+{% endif %}
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+{% if user.role == "admin" %}
+<h2 class="section-title">編輯</h2>
+<form method="post" action="/hr/licenses/{{ record.id }}/update" enctype="multipart/form-data" class="form-stack form-narrow">
+    <label>證照名稱
+        <input type="text" name="name" value="{{ record.name }}" required>
+    </label>
+    <label>發證機關（選填）
+        <input type="text" name="issuer" value="{{ record.issuer }}">
+    </label>
+    <label>證照編號（選填）
+        <input type="text" name="license_no" value="{{ record.license_no }}">
+    </label>
+    <label>到期日
+        <input type="date" name="expiry_date" value="{{ record.expiry_date }}" required>
+    </label>
+    <label>更換檔案（選填，不選則維持原檔案）
+        <input type="file" name="file">
+    </label>
+    <button type="submit" class="btn btn-primary">更新</button>
+</form>
+<p class="hint">到期日有異動時，到期提醒的週期會重新開始算。</p>
+
+<form method="post" action="/hr/licenses/{{ record.id }}/delete"
+      onsubmit="return confirm('確定要刪除這筆證照嗎？');">
+    <button type="submit" class="btn btn-danger">刪除</button>
+</form>
+{% endif %}
+
+<p class="back-link"><a href="/hr/licenses">&larr; 回公司證照彙整</a></p>
+{% endblock %}

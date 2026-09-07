@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ record.subject }} - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ record.subject }}</h1>
+<p class="meta">
+    日期：{{ record.log_date }}
+    當事人：{{ record.personnel_name or "-" }}
+    記錄人：{{ record.created_by_name }}
+</p>
+
+<p style="white-space: pre-wrap;">{{ record.content }}</p>
+
+{% if record.blob_path %}
+<p>
+    <a class="btn" href="/hr/files/{{ record.blob_path }}" target="_blank" rel="noopener">下載附件：{{ record.filename }}</a>
+</p>
+{% endif %}
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+{% if user.role == "admin" %}
+<h2 class="section-title">編輯</h2>
+<form method="post" action="/hr/care-logs/{{ record.id }}/update" enctype="multipart/form-data" class="form-stack form-narrow">
+    <label>日期
+        <input type="date" name="log_date" value="{{ record.log_date }}" required>
+    </label>
+    <label>主題
+        <input type="text" name="subject" value="{{ record.subject }}" required>
+    </label>
+    <label>當事人姓名（選填）
+        <input type="text" name="personnel_name" value="{{ record.personnel_name }}">
+    </label>
+    <label>內容
+        <textarea name="content" rows="8" required>{{ record.content }}</textarea>
+    </label>
+    <label>更換附件（選填，不選則維持原附件）
+        <input type="file" name="file">
+    </label>
+    <button type="submit" class="btn btn-primary">更新</button>
+</form>
+
+<form method="post" action="/hr/care-logs/{{ record.id }}/delete"
+      onsubmit="return confirm('確定要刪除這筆紀錄嗎？');">
+    <button type="submit" class="btn btn-danger">刪除</button>
+</form>
+{% endif %}
+
+<p class="back-link"><a href="/hr/care-logs">&larr; 回員工關懷彙整</a></p>
+{% endblock %}

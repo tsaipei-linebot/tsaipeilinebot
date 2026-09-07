@@ -43,6 +43,7 @@ MODULE_ROLE_MAP = {r["code"]: r["name"] for r in MODULE_ROLES}
 MODULES = [
     {"code": "delivery", "name": "配送部系統"},
     {"code": "management", "name": "管理部"},
+    {"code": "hr", "name": "人資專區"},
 ]
 MODULE_MAP = {m["code"]: m["name"] for m in MODULES}
 

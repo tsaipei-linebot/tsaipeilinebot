@@ -26,6 +26,9 @@ _MODULE_CARD_INFO = {
     "management": {
         "description": "公告事項、會議記錄、規章/SOP 文件庫、業績報表、客戶拜訪、員工名冊、資產設備",
     },
+    "hr": {
+        "description": "意外通報、體檢報告、員工關懷、公司證照、教育訓練彙整",
+    },
 }
 
 

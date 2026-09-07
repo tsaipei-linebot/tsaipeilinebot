@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}員工體檢報告 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">員工體檢報告</h1>
+    {% if user.role == "admin" %}
+    <a class="btn btn-primary" href="/hr/health-checks/new">新增體檢報告</a>
+    {% endif %}
+</div>
+
+<form method="get" action="/hr/health-checks" class="filter-bar">
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
+    <input type="text" name="department" value="{{ filter_department }}" placeholder="搜尋部門">
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_name or filter_department %}
+    <a class="btn" href="/hr/health-checks">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if records %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>姓名</th>
+            <th>部門</th>
+            <th>受檢日期</th>
+            <th>下次應受檢日期</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in records %}
+        <tr>
+            <td>{{ r.personnel_name }}</td>
+            <td>{{ r.department or "-" }}</td>
+            <td>{{ r.check_date }}</td>
+            <td>{{ r.next_due_date or "-" }}</td>
+            <td><a href="/hr/health-checks/{{ r.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有符合條件的體檢報告。</p>
+{% endif %}
+
+<p class="back-link"><a href="/hr/">&larr; 回主頁</a></p>
+{% endblock %}

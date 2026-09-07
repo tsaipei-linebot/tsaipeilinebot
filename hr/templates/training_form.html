@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}新增訓練紀錄 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">新增訓練紀錄</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/hr/trainings/new" enctype="multipart/form-data" class="form-stack form-narrow">
+    <label>姓名
+        <input type="text" name="personnel_name" required>
+    </label>
+    <label>課程名稱
+        <input type="text" name="course_name" required>
+    </label>
+    <label>上課日期
+        <input type="date" name="training_date" required>
+    </label>
+    <label>訓練時數（選填）
+        <input type="number" name="hours" min="0" step="0.5">
+    </label>
+    <label>備註（選填）
+        <textarea name="note" rows="3"></textarea>
+    </label>
+    <label>完訓證明（選填，PDF/圖片）
+        <input type="file" name="file">
+    </label>
+    <button type="submit" class="btn btn-primary">建立</button>
+</form>
+<p class="back-link"><a href="/hr/trainings">&larr; 回教育訓練彙整</a></p>
+{% endblock %}

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ record.personnel_name }} 體檢報告 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ record.personnel_name }} 的體檢報告</h1>
+<p class="meta">
+    部門：{{ record.department or "-" }}
+    受檢日期：{{ record.check_date }}
+    下次應受檢日期：{{ record.next_due_date or "-" }}
+</p>
+
+{% if record.note %}
+<p style="white-space: pre-wrap;">{{ record.note }}</p>
+{% endif %}
+
+{% if record.blob_path %}
+<p>
+    <a class="btn" href="/hr/files/{{ record.blob_path }}" target="_blank" rel="noopener">下載報告：{{ record.filename }}</a>
+</p>
+{% endif %}
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+{% if user.role == "admin" %}
+<h2 class="section-title">編輯</h2>
+<form method="post" action="/hr/health-checks/{{ record.id }}/update" enctype="multipart/form-data" class="form-stack form-narrow">
+    <label>姓名
+        <input type="text" name="personnel_name" value="{{ record.personnel_name }}" required>
+    </label>
+    <label>部門（選填）
+        <input type="text" name="department" value="{{ record.department }}">
+    </label>
+    <label>受檢日期
+        <input type="date" name="check_date" value="{{ record.check_date }}" required>
+    </label>
+    <label>下次應受檢日期（選填）
+        <input type="date" name="next_due_date" value="{{ record.next_due_date }}">
+    </label>
+    <label>備註（選填）
+        <textarea name="note" rows="3">{{ record.note }}</textarea>
+    </label>
+    <label>更換報告檔案（選填，不選則維持原檔案）
+        <input type="file" name="file">
+    </label>
+    <button type="submit" class="btn btn-primary">更新</button>
+</form>
+
+<form method="post" action="/hr/health-checks/{{ record.id }}/delete"
+      onsubmit="return confirm('確定要刪除這筆體檢報告嗎？');">
+    <button type="submit" class="btn btn-danger">刪除</button>
+</form>
+{% endif %}
+
+<p class="back-link"><a href="/hr/health-checks">&larr; 回員工體檢報告</a></p>
+{% endblock %}

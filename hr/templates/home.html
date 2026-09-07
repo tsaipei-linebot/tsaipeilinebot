@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}主頁 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">主頁</h1>
+<div class="home-grid">
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+        </span>
+        <h2>意外通報</h2>
+        <p class="hint">同仁在指定 LINE 群組回報，風險等級與結案由管理員在詳細頁設定</p>
+        <a class="btn btn-block" href="/hr/incidents">查看意外通報</a>
+    </section>
+
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+        </span>
+        <h2>員工體檢報告</h2>
+        <p class="hint">體檢報告統整，記錄受檢日期與下次應受檢日期</p>
+        <a class="btn btn-block" href="/hr/health-checks">查看體檢報告</a>
+    </section>
+
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+        </span>
+        <h2>員工關懷彙整</h2>
+        <p class="hint">關懷面談、不法侵害會議記錄等，可上傳 PDF 附件</p>
+        <a class="btn btn-block" href="/hr/care-logs">查看關懷紀錄</a>
+    </section>
+
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="8" r="7"/>
+                <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>
+            </svg>
+        </span>
+        <h2>公司證照彙整</h2>
+        <p class="hint">公司持有的證照/執照/許可，快到期會推播提醒</p>
+        <a class="btn btn-block" href="/hr/licenses">查看公司證照</a>
+    </section>
+
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+                <path d="M6 12v5c3 3 9 3 12 0v-5"/>
+            </svg>
+        </span>
+        <h2>教育訓練彙整</h2>
+        <p class="hint">同仁的訓練課程紀錄，可依姓名/課程查詢</p>
+        <a class="btn btn-block" href="/hr/trainings">查看教育訓練</a>
+    </section>
+</div>
+{% endblock %}

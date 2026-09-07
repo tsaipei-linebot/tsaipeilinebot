@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}新增關懷紀錄 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">新增關懷紀錄</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/hr/care-logs/new" enctype="multipart/form-data" class="form-stack form-narrow">
+    <label>日期
+        <input type="date" name="log_date" required>
+    </label>
+    <label>主題
+        <input type="text" name="subject" placeholder="例如：關懷面談、不法侵害會議記錄" required>
+    </label>
+    <label>當事人姓名（選填）
+        <input type="text" name="personnel_name">
+    </label>
+    <label>內容
+        <textarea name="content" rows="8" required></textarea>
+    </label>
+    <label>附件（選填，PDF/Word/圖片）
+        <input type="file" name="file">
+    </label>
+    <button type="submit" class="btn btn-primary">建立</button>
+</form>
+<p class="back-link"><a href="/hr/care-logs">&larr; 回員工關懷彙整</a></p>
+{% endblock %}
