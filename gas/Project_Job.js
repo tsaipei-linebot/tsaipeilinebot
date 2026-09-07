@@ -61,9 +61,9 @@ const AiJobDescriptionService = {
 
     // 行政區 >= 5 個時聚合
     if (cityStr) {
-      return `${cityStr} 各區門市據點（共 ${distCount} 區，錄取後依居住地就近分發）`;
+      return `${cityStr} 各區門市據點（共 ${distCount} 區，門市自選）`;
     }
-    return `各區門市據點（共 ${distCount} 區，錄取後依居住地就近分發）`;
+    return `各區門市據點（共 ${distCount} 區，門市自選）`;
   },
 
   /**
