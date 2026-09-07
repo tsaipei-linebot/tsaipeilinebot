@@ -1266,3 +1266,110 @@ Sheet），老闆明確表示不想動那個專案的程式碼，只想讓同仁
   header 時的行為）。`list_sim_payment_reminders()`（要連 Firestore）跟
   真正的 LINE 簽章驗證（line-bot-sdk 本身的責任）留給有憑證的環境做
   整合測試。
+
+## CI/CD 自動部署（GitHub Actions）
+
+以前每次改完程式碼，都要使用者自己在 Cloud Shell 手動跑
+`gcloud run deploy`（這個 repo）或 `git pull && clasp push`
+（`delivery-gas-project` repo）才會真正生效。現在改成合併到各自的 `main`
+分支後，GitHub 自動幫忙部署，不用再手動跑指令。
+
+- **這個 repo（`tsaipeilinebot`）**：`.github/workflows/deploy.yml`，
+  合併到 `main` 後自動用 `gcloud run deploy --source .` 部署到 Cloud Run
+  服務 `recruitment-bot`。用的是 GCP 的 **Workload Identity
+  Federation**（讓 GitHub 用「臨時身分」登入 GCP），刻意不把任何長期
+  密鑰存在 GitHub 上，安全性比較高。
+- **`delivery-gas-project` repo**：`.github/workflows/clasp-push.yml`，
+  合併到 `main` 後自動 `clasp push` 到真正的 Apps Script 專案。這個沒有
+  對應的「不存密鑰」做法（`clasp` 本身的機制就是要存一組登入後產生的
+  授權資訊），存在 GitHub 這個 repo 的 Secret 裡（`CLASPRC_JSON`），只有
+  repo 管理員看得到，一般協作者看不到內容。
+
+**這兩個 workflow 都需要先做一次性設定才會生效**（設定完成前，workflow
+檔案雖然已經存在，但因為缺必要的密鑰/身分設定會直接失敗，不影響現有
+手動部署方式繼續運作）：
+
+1. **Cloud Run 那邊**：在 Cloud Shell 執行下面整段指令建立一個專門給
+   GitHub 用的身分（`github-actions-deployer` 服務帳號）：
+
+   ```bash
+   PROJECT_ID="tsaipei-505807"
+   REPO="tsaipei-linebot/tsaipeilinebot"
+   POOL_ID="github-pool"
+   PROVIDER_ID="github-provider"
+   SA_NAME="github-actions-deployer"
+   SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+   gcloud config set project "$PROJECT_ID"
+
+   gcloud services enable \
+     iamcredentials.googleapis.com \
+     sts.googleapis.com \
+     run.googleapis.com \
+     cloudbuild.googleapis.com \
+     artifactregistry.googleapis.com
+
+   gcloud iam service-accounts create "$SA_NAME" \
+     --display-name="GitHub Actions 自動部署"
+
+   for ROLE in roles/run.admin roles/iam.serviceAccountUser \
+     roles/cloudbuild.builds.editor roles/artifactregistry.writer \
+     roles/storage.admin; do
+     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+       --member="serviceAccount:${SA_EMAIL}" \
+       --role="$ROLE"
+   done
+
+   gcloud iam workload-identity-pools create "$POOL_ID" \
+     --location="global" \
+     --display-name="GitHub Actions Pool"
+
+   gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
+     --location="global" \
+     --workload-identity-pool="$POOL_ID" \
+     --display-name="GitHub Provider" \
+     --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+     --attribute-condition="assertion.repository=='${REPO}'" \
+     --issuer-uri="https://token.actions.githubusercontent.com"
+
+   PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
+
+   gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+     --role="roles/iam.workloadIdentityUser" \
+     --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO}"
+
+   echo "=== 請把下面這行完整貼給 Claude ==="
+   echo "PROJECT_NUMBER=${PROJECT_NUMBER}"
+   ```
+
+   跑完之後，把終端機印出來的 `PROJECT_NUMBER=...` 那一行貼給 Claude，
+   Claude 會把它填進 `deploy.yml` 裡原本寫 `<PROJECT_NUMBER>` 占位字串
+   的地方，設定才算真正完成。
+
+2. **`delivery-gas-project` 那邊**：需要先產生一份 `clasp` 的登入憑證，
+   再存成 GitHub 的 Secret：
+   ```bash
+   npm install -g @google/clasp   # 如果 Cloud Shell 還沒裝過
+   clasp login --no-localhost
+   ```
+   按照畫面指示，用**平常登入這個 Apps Script 專案的 Google 帳號**
+   開啟印出來的網址、按同意，把瀏覽器最後跳轉到的那個網址（網址列裡
+   會有 `localhost` 跟一長串 `code=...`，即使頁面顯示「無法連線」也
+   沒關係，要的只是網址本身）整段複製，貼回 Cloud Shell 的提示。
+   接著執行：
+   ```bash
+   cat ~/.clasprc.json
+   ```
+   把印出來的整段內容（是一段 JSON）複製起來，到
+   `https://github.com/tsaipei-linebot/delivery-gas-project/settings/secrets/actions`
+   （或手動：repo 頁面 → Settings → Secrets and variables → Actions →
+   New repository secret），Name 填 `CLASPRC_JSON`，Value 貼上剛剛複製
+   的內容，按 Add secret。
+
+   **這組憑證等於是這個 Google 帳號的登入資訊，只有 repo 管理員看得到、
+   不會顯示在任何 log 裡，但還是要留意不要把這段 JSON 貼到別的地方。**
+
+兩邊都設定完成後，之後只要 Claude 把程式碼合併進各自的 `main` 分支，
+就會自動部署／`clasp push`，不用再手動執行指令；如果之後想暫停自動
+部署（例如想手動控制上線時機），到 GitHub 該 repo 的 Actions 頁籤把
+對應的 workflow 停用即可，不影響手動部署方式繼續運作。
