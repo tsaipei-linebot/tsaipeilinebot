@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}{{ person.name }} - 缺件狀況{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ person.name }}</h1>
+<p class="meta">廠商：{{ vendor_name }}　電話：{{ person.phone or "-" }}</p>
+
+{% if error == "id_number" %}
+<p class="error">身分證字號格式不正確，請確認後再輸入一次（沒有儲存）。</p>
+{% endif %}
+
+{% if not storage_configured %}
+<p class="warning">尚未設定檔案儲存空間（DELIVERY_GCS_BUCKET），目前只能記錄到期日，無法上傳檔案。</p>
+{% endif %}
+
+<form method="post" action="/delivery/personnel/{{ person.id }}/bulk-update" enctype="multipart/form-data">
+    <div class="filter-bar">
+        <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+            人員狀態
+            <select name="employment_status">
+                {% for s in personnel_statuses %}
+                <option value="{{ s.code }}" {% if current_employment_status == s.code %}selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% if show_cooperation_type %}
+        <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+            合作方式
+            <select name="cooperation_type">
+                <option value="" {% if not person.cooperation_type %}selected{% endif %}>尚未決定</option>
+                {% for c in cooperation_types %}
+                <option value="{{ c.code }}" {% if person.cooperation_type == c.code %}selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% endif %}
+        {% if show_client %}
+        <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+            負責客戶
+            <select name="client">
+                <option value="" {% if not person.client %}selected{% endif %}>尚未決定</option>
+                {% for c in clients %}
+                <option value="{{ c.code }}" {% if person.client == c.code %}selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% endif %}
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-bulk-update">一鍵全部更新</button>
+
+    <div class="table-scroll">
+    <table class="data-table sticky-head">
+        <thead>
+            <tr>
+                <th>應備項目</th>
+                <th>目前狀態</th>
+                <th>編輯</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for doc in doc_statuses %}
+            <tr>
+                <td>{{ doc.name }}{% if doc.kind == "file_expiry" and not doc.required %}（非必填）{% endif %}</td>
+
+                {% if doc.kind == "id_number" %}
+                <td>
+                    {% if doc.missing %}<span class="badge badge-missing">缺件</span>{% else %}<span class="badge badge-ok">已備齊</span>{% endif %}
+                    {{ doc.value or "" }}
+                </td>
+                <td><input type="text" name="id_number" value="{{ doc.value }}" placeholder="A123456789" maxlength="10"></td>
+
+                {% elif doc.kind == "email" %}
+                <td>
+                    {% if doc.missing %}<span class="badge badge-missing">缺件</span>{% else %}<span class="badge badge-ok">已備齊</span>{% endif %}
+                    {{ doc.value or "" }}
+                </td>
+                <td><input type="email" name="email" value="{{ doc.value }}" placeholder="name@example.com"></td>
+
+                {% elif doc.kind == "checkbox" %}
+                <td>
+                    {% if doc.missing %}<span class="badge badge-missing">缺件</span>{% else %}<span class="badge badge-ok">已備齊</span>{% endif %}
+                </td>
+                <td>
+                    <label>
+                        <input type="checkbox" name="checked_{{ doc.code }}" {% if doc.checked %}checked{% endif %}>
+                        {% if doc.code == "driver_license" %}已繳交{% elif doc.code == "contract" %}已簽定{% else %}已完成{% endif %}
+                    </label>
+                </td>
+
+                {% elif doc.kind == "file" %}
+                <td>
+                    {% if doc.missing %}<span class="badge badge-missing">缺件</span>{% else %}<span class="badge badge-ok">已備齊</span>{% endif %}
+                    {% if doc.has_file %}
+                    <a class="file-link" href="/delivery/files/{{ doc.file_path }}" target="_blank" rel="noopener">查看檔案</a>
+                    {% endif %}
+                </td>
+                <td><input type="file" name="file_{{ doc.code }}" accept="image/*,application/pdf"></td>
+
+                {% else %}
+                <td>
+                    {% if doc.missing %}<span class="badge badge-missing">{% if doc.expired %}已過期{% else %}缺件{% endif %}</span>{% else %}<span class="badge badge-ok">已備齊</span>{% endif %}
+                    {% if doc.expiry_date %}到期日：{{ doc.expiry_date }}{% endif %}
+                    {% if doc.has_file %}
+                    <a class="file-link" href="/delivery/files/{{ doc.file_path }}" target="_blank" rel="noopener">查看檔案</a>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="accept-row">
+                        <input type="file" name="file_{{ doc.code }}" accept="image/*,application/pdf">
+                        <input type="date" name="expiry_date_{{ doc.code }}" value="{{ doc.expiry_date }}" placeholder="留空由系統辨識">
+                    </div>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-bulk-update">一鍵全部更新</button>
+</form>
+<p class="hint" style="margin-top:12px;">強制險等需要到期日的項目，上傳檔案後系統會自動辨識到期日；辨識不出來的話可以在「到期日」欄位手動輸入，跟其他欄位一起按「一鍵全部更新」送出。</p>
+
+<p class="back-link"><a href="/delivery/vendor/{{ person.vendor }}">&larr; 回 {{ vendor_name }} 人員清單</a></p>
+{% endblock %}

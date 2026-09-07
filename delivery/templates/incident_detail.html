@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}意外事件：{{ incident.personnel_name }} - 材霈有限公司-配送部系統{% endblock %}
+{% block content %}
+<h1 class="page-title">意外事件：{{ incident.personnel_name }}</h1>
+<p class="meta">
+    廠商：{{ vendor_name }}
+    身分類別：{{ incident.identity_type }}
+    狀態：<span class="badge {{ 'badge-resigned' if incident.status == 'closed' else 'badge-pending' }}">{{ incident_status_map.get(incident.status, incident.status) }}</span>
+</p>
+
+<table class="data-table">
+    <tbody>
+        <tr><th>發生時間</th><td>{{ incident.occurred_at }}</td></tr>
+        <tr><th>發生地點</th><td>{{ incident.location }}</td></tr>
+        <tr><th>執行勤務中/上下班途中</th><td>{{ incident.duty_status }}</td></tr>
+        <tr><th>是否報警</th><td>{{ incident.police_called }}</td></tr>
+        <tr><th>受傷情形</th><td>{{ incident.injury }}</td></tr>
+        <tr><th>是否聯繫家屬</th><td>{{ incident.family_contacted }}</td></tr>
+        <tr><th>是否牽扯他人</th><td>{{ incident.third_party_involved }}</td></tr>
+        <tr><th>意外事件經過</th><td>{{ incident.description }}</td></tr>
+    </tbody>
+</table>
+
+{% if user.role == "admin" %}
+<h2 class="section-title">風險等級</h2>
+<form method="post" action="/delivery/incidents/{{ incident.id }}/risk-level" class="inline-form">
+    <select name="risk_level" required>
+        <option value="">請選擇</option>
+        {% for r in risk_levels %}
+        <option value="{{ r }}" {% if incident.risk_level == r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary">設定</button>
+</form>
+
+{% if incident.status != "closed" %}
+<h2 class="section-title">結案</h2>
+<p class="hint">結案為單向操作，結案後無法改回未結案。</p>
+<form method="post" action="/delivery/incidents/{{ incident.id }}/close">
+    <button type="submit" class="btn">標記結案</button>
+</form>
+{% endif %}
+{% else %}
+<h2 class="section-title">風險等級</h2>
+<p>
+    {% if incident.risk_level == "高" %}
+    <span class="badge badge-missing">{{ incident.risk_level }}</span>
+    {% elif incident.risk_level == "中" %}
+    <span class="badge badge-pending">{{ incident.risk_level }}</span>
+    {% elif incident.risk_level == "低" %}
+    <span class="badge badge-ok">{{ incident.risk_level }}</span>
+    {% else %}
+    <span class="badge badge-resigned">未設定</span>
+    {% endif %}
+</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/incidents">&larr; 回意外事件清單</a></p>
+{% endblock %}

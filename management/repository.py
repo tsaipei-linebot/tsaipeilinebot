@@ -1,0 +1,559 @@
+"""管理部系統的資料存取層：公告、會議記錄、文件庫……等各自獨立的 CRUD，刻意
+不做成一個共用的泛型 CRUD 函式——欄位跟業務規則各自不同（公告沒有附件、
+文件庫一定要有附件、客戶拜訪紀錄只有特定人看得到），分開寫更直觀，之後
+各自演變也不會互相牽扯。
+"""
+import calendar
+import time
+from datetime import date
+
+from management.config import ASSET_STATUS_MAP
+from management.db import (
+    announcements_ref,
+    asset_events_ref,
+    assets_ref,
+    client_visits_ref,
+    documents_ref,
+    kpi_reports_ref,
+    meeting_notes_ref,
+    staff_directory_ref,
+)
+
+# ==========================================
+# 公告事項
+# ==========================================
+_ANNOUNCEMENT_FIELDS = ["title", "body", "created_by", "created_by_name"]
+
+
+def create_announcement(title: str, body: str, created_by: str, created_by_name: str) -> str:
+    ref = announcements_ref().document()
+    ref.set(
+        {
+            "title": title,
+            "body": body,
+            "created_by": created_by,
+            "created_by_name": created_by_name,
+            "created_at": time.time(),
+        }
+    )
+    return ref.id
+
+
+def get_announcement(announcement_id: str):
+    snapshot = announcements_ref().document(announcement_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def list_announcements() -> list:
+    result = []
+    for snapshot in announcements_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda a: a.get("created_at", 0), reverse=True)
+    return result
+
+
+def delete_announcement(announcement_id: str) -> bool:
+    ref = announcements_ref().document(announcement_id)
+    if not ref.get().exists:
+        return False
+    ref.delete()
+    return True
+
+
+# ==========================================
+# 會議記錄
+# ==========================================
+def create_meeting_note(
+    title: str,
+    meeting_date: str,
+    department: str,
+    content: str,
+    created_by: str,
+    created_by_name: str,
+    attachment_blob_path: str = "",
+    attachment_filename: str = "",
+) -> str:
+    ref = meeting_notes_ref().document()
+    ref.set(
+        {
+            "title": title,
+            "meeting_date": meeting_date,
+            "department": department,
+            "content": content,
+            "created_by": created_by,
+            "created_by_name": created_by_name,
+            "attachment_blob_path": attachment_blob_path,
+            "attachment_filename": attachment_filename,
+            "created_at": time.time(),
+        }
+    )
+    return ref.id
+
+
+def get_meeting_note(note_id: str):
+    snapshot = meeting_notes_ref().document(note_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def list_meeting_notes(department_filter: str = "") -> list:
+    department_filter = (department_filter or "").strip()
+    result = []
+    for snapshot in meeting_notes_ref().stream():
+        data = snapshot.to_dict() or {}
+        if department_filter and data.get("department") != department_filter:
+            continue
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda n: n.get("meeting_date", ""), reverse=True)
+    return result
+
+
+def delete_meeting_note(note_id: str) -> bool:
+    ref = meeting_notes_ref().document(note_id)
+    if not ref.get().exists:
+        return False
+    ref.delete()
+    return True
+
+
+# ==========================================
+# 規章/SOP 文件庫
+# ==========================================
+def create_document(title: str, category: str, description: str, blob_path: str, filename: str, created_by: str, created_by_name: str) -> str:
+    ref = documents_ref().document()
+    ref.set(
+        {
+            "title": title,
+            "category": category,
+            "description": description,
+            "blob_path": blob_path,
+            "filename": filename,
+            "created_by": created_by,
+            "created_by_name": created_by_name,
+            "created_at": time.time(),
+        }
+    )
+    return ref.id
+
+
+def get_document(document_id: str):
+    snapshot = documents_ref().document(document_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def list_documents(category_filter: str = "") -> list:
+    category_filter = (category_filter or "").strip()
+    result = []
+    for snapshot in documents_ref().stream():
+        data = snapshot.to_dict() or {}
+        if category_filter and data.get("category") != category_filter:
+            continue
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda d: d.get("created_at", 0), reverse=True)
+    return result
+
+
+def delete_document(document_id: str):
+    """回傳被刪除文件的 blob_path（給呼叫端一併清掉 GCS 上的檔案），
+    找不到文件時回傳 None。"""
+    ref = documents_ref().document(document_id)
+    snapshot = ref.get()
+    if not snapshot.exists:
+        return None
+    blob_path = (snapshot.to_dict() or {}).get("blob_path")
+    ref.delete()
+    return blob_path
+
+
+# ==========================================
+# 業績報表庫（業務主管專用）
+# 單純是檔案上傳/下載（Excel/PDF/PPT/圖檔），不做成計算目標達成率的儀表板
+# ——老闆表示這樣就夠用，之後真的需要再擴充。
+# ==========================================
+def create_kpi_report(title: str, description: str, blob_path: str, filename: str, created_by: str, created_by_name: str) -> str:
+    ref = kpi_reports_ref().document()
+    ref.set(
+        {
+            "title": title,
+            "description": description,
+            "blob_path": blob_path,
+            "filename": filename,
+            "created_by": created_by,
+            "created_by_name": created_by_name,
+            "created_at": time.time(),
+        }
+    )
+    return ref.id
+
+
+def get_kpi_report(report_id: str):
+    snapshot = kpi_reports_ref().document(report_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def list_kpi_reports() -> list:
+    result = []
+    for snapshot in kpi_reports_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda r: r.get("created_at", 0), reverse=True)
+    return result
+
+
+def delete_kpi_report(report_id: str):
+    """回傳被刪除報表的 blob_path（給呼叫端一併清掉 GCS 上的檔案），
+    找不到報表時回傳 None。"""
+    ref = kpi_reports_ref().document(report_id)
+    snapshot = ref.get()
+    if not snapshot.exists:
+        return None
+    blob_path = (snapshot.to_dict() or {}).get("blob_path")
+    ref.delete()
+    return blob_path
+
+
+# ==========================================
+# 客戶拜訪紀錄（業務主管專用）
+# 有管理部權限的同仁都可以新增，但刻意設計成「只有記錄本人跟全平台管理員
+# （老闆）看得到」——這是業務同仁私下的拜訪紀錄，不是像公告/會議記錄那樣
+# 全部門共享的資訊，跟其他管理部功能的可見範圍邏輯不一樣。畫面上的文字用
+# 「主管」這個說法（比較貼近老闆平常怎麼稱呼自己這個角色），但實際權限
+# 就是只認 is_platform_admin，管理部自己的「主管」角色沒有額外開放。
+# ==========================================
+def create_client_visit(
+    client_name: str,
+    visit_date: str,
+    arranged_by: str,
+    visitor: str,
+    follow_up_status: str,
+    notes: str,
+    created_by: str,
+    created_by_name: str,
+) -> str:
+    ref = client_visits_ref().document()
+    ref.set(
+        {
+            "client_name": client_name,
+            "visit_date": visit_date,
+            "arranged_by": arranged_by,
+            "visitor": visitor,
+            "follow_up_status": follow_up_status,
+            "notes": notes,
+            "created_by": created_by,
+            "created_by_name": created_by_name,
+            "created_at": time.time(),
+        }
+    )
+    return ref.id
+
+
+def can_view_client_visit(visit: dict, username: str, is_platform_admin: bool) -> bool:
+    """純函式，方便測試：只有記錄本人（created_by）或全平台管理員看得到
+    這筆拜訪紀錄。"""
+    if is_platform_admin:
+        return True
+    return visit.get("created_by") == username
+
+
+def get_client_visit(visit_id: str):
+    snapshot = client_visits_ref().document(visit_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def list_client_visits(username: str, is_platform_admin: bool) -> list:
+    """只回傳這個帳號看得到的拜訪紀錄（見 can_view_client_visit）。"""
+    result = []
+    for snapshot in client_visits_ref().stream():
+        data = snapshot.to_dict() or {}
+        if not can_view_client_visit(data, username, is_platform_admin):
+            continue
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda v: v.get("visit_date", ""), reverse=True)
+    return result
+
+
+def delete_client_visit(visit_id: str) -> bool:
+    ref = client_visits_ref().document(visit_id)
+    if not ref.get().exists:
+        return False
+    ref.delete()
+    return True
+
+
+# ==========================================
+# 全公司員工名冊／組織圖（人事/組織）
+# 跟配送部系統的「人員管理」是兩回事：那個是配送員/廠商人員，這裡是公司
+# 內部同仁（含業務、管理部、內勤……），欄位刻意精簡（部門/姓名/職稱），
+# 之後真的有需要再擴充。組織圖是這份名冊依部門分組後的畫面呈現，不是
+# 另外維護一份資料。
+# ==========================================
+def create_staff_member(department: str, name: str, title: str, created_by: str, created_by_name: str) -> str:
+    ref = staff_directory_ref().document()
+    ref.set(
+        {
+            "department": department,
+            "name": name,
+            "title": title,
+            "created_by": created_by,
+            "created_by_name": created_by_name,
+            "created_at": time.time(),
+        }
+    )
+    return ref.id
+
+
+def get_staff_member(staff_id: str):
+    snapshot = staff_directory_ref().document(staff_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def list_staff_members() -> list:
+    result = []
+    for snapshot in staff_directory_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda s: (s.get("department", ""), s.get("name", "")))
+    return result
+
+
+def group_staff_by_department(staff_list: list) -> list:
+    """把名冊依部門分組，回傳 [{"department": ..., "members": [...]}, ...]，
+    純函式方便測試，組織圖畫面直接拿這個結果去畫。部門依名稱排序，同部門內
+    依姓名排序（沿用 list_staff_members() 已經排好的順序）。"""
+    groups = {}
+    order = []
+    for member in staff_list:
+        dept = member.get("department", "")
+        if dept not in groups:
+            groups[dept] = []
+            order.append(dept)
+        groups[dept].append(member)
+    return [{"department": dept, "members": groups[dept]} for dept in order]
+
+
+def delete_staff_member(staff_id: str) -> bool:
+    ref = staff_directory_ref().document(staff_id)
+    if not ref.get().exists:
+        return False
+    ref.delete()
+    return True
+
+
+# ==========================================
+# 資產/設備管理
+# 公務車（跟配送部車輛管理無關）、公務手機、門號、電腦。比照配送部系統的
+# 車輛管理（delivery.repository 的 vehicle 相關函式）：每筆資產有詳細頁，
+# 保管人/狀態可以隨時間變動，每次變動記一筆歷史事件，而不是像公告/文件
+# 那樣建立後就固定不變。報廢是其中一種狀態，但額外多存一個 retired_at
+# （報廢日期）欄位——跟「狀態剛好是報廢」比起來，這個欄位更明確地回答
+# 「這個東西是什麼時候報廢的」，之後要盤點報廢時間就不用去翻歷史事件表。
+# ==========================================
+def create_asset(
+    category: str,
+    name: str,
+    assigned_to: str,
+    status: str,
+    notes: str,
+    created_by: str,
+    created_by_name: str,
+    sim_payment_day: str = "",
+) -> str:
+    ref = assets_ref().document()
+    ref.set(
+        {
+            "category": category,
+            "name": name,
+            "assigned_to": assigned_to,
+            "status": status,
+            "retired_at": "",
+            # 只有分類是「門號」才有意義（每月固定繳費/扣款日，1~31 的數字），
+            # 其他分類一律留空字串。見 update_asset_sim_payment_day() 跟
+            # list_sim_payment_reminders()。
+            "sim_payment_day": sim_payment_day,
+            "notes": notes,
+            "created_by": created_by,
+            "created_by_name": created_by_name,
+            "created_at": time.time(),
+        }
+    )
+    return ref.id
+
+
+def get_asset(asset_id: str):
+    snapshot = assets_ref().document(asset_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def list_assets(category_filter: str = "", status_filter: str = "", name_filter: str = "") -> list:
+    category_filter = (category_filter or "").strip()
+    status_filter = (status_filter or "").strip()
+    name_filter = (name_filter or "").strip().lower()
+    result = []
+    for snapshot in assets_ref().stream():
+        data = snapshot.to_dict() or {}
+        if category_filter and data.get("category") != category_filter:
+            continue
+        if status_filter and data.get("status") != status_filter:
+            continue
+        if name_filter and name_filter not in data.get("name", "").lower():
+            continue
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda a: a.get("created_at", 0), reverse=True)
+    return result
+
+
+def delete_asset(asset_id: str) -> bool:
+    ref = assets_ref().document(asset_id)
+    if not ref.get().exists:
+        return False
+    ref.delete()
+    return True
+
+
+def record_asset_event(
+    asset_id: str,
+    status: str,
+    assigned_to: str,
+    event_date: str,
+    note: str,
+    reported_by: str,
+    reported_by_name: str,
+) -> bool:
+    """更新資產目前的保管人/狀態，並記一筆歷史事件（比照配送部車輛管理的
+    manual-event 做法）。status 是「報廢」時，順便把 retired_at 設成這次
+    事件的日期；狀態改回其他值不會自動清掉 retired_at，避免誤操作把報廢
+    日期洗掉——真的填錯要改，直接進資料庫修正。"""
+    if status not in ASSET_STATUS_MAP:
+        return False
+    ref = assets_ref().document(asset_id)
+    if not ref.get().exists:
+        return False
+
+    update = {"status": status, "assigned_to": assigned_to}
+    if status == "retired":
+        update["retired_at"] = event_date
+    ref.update(update)
+
+    asset_events_ref().document().set(
+        {
+            "asset_id": asset_id,
+            "status": status,
+            "assigned_to": assigned_to,
+            "event_date": event_date,
+            "note": note,
+            "reported_by": reported_by,
+            "reported_by_name": reported_by_name,
+            "created_at": time.time(),
+        }
+    )
+    return True
+
+
+def list_asset_events(asset_id: str) -> list:
+    result = []
+    for snapshot in asset_events_ref().where("asset_id", "==", asset_id).stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        result.append(data)
+    result.sort(key=lambda e: e.get("created_at", 0), reverse=True)
+    return result
+
+
+def update_asset_sim_payment_day(asset_id: str, sim_payment_day: str) -> bool:
+    """只給「門號」分類的資產設定/修改每月繳費日，跟保管人/狀態那組
+    record_asset_event() 是分開的獨立欄位——這不是一次「事件」，單純是
+    這顆門號本身固定屬性的修正，不需要留歷史紀錄。"""
+    ref = assets_ref().document(asset_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"sim_payment_day": sim_payment_day})
+    return True
+
+
+def _parse_payment_day(value) -> int:
+    """把資產文件裡的 sim_payment_day 換算成 1~31 的整數；空白、非數字、
+    超出範圍一律回傳 None（代表這筆資產還沒設定繳費日，或分類根本不是
+    門號）。"""
+    try:
+        day = int(value)
+    except (TypeError, ValueError):
+        return None
+    if 1 <= day <= 31:
+        return day
+    return None
+
+
+def _next_due_date(today: date, day: int) -> date:
+    """算出「這個月」或「下個月」的第 day 天當作下一次繳費日——如果今天
+    已經過了這個月的繳費日，換算下個月；如果 day 超過當月天數（例如 31
+    號但當月是 2 月），自動用當月最後一天代替（比照信用卡帳單「月底最後
+    一個工作天」的常見做法）。"""
+
+    def _clamp(year: int, month: int) -> int:
+        return min(day, calendar.monthrange(year, month)[1])
+
+    candidate = date(today.year, today.month, _clamp(today.year, today.month))
+    if candidate < today:
+        year = today.year + (1 if today.month == 12 else 0)
+        month = 1 if today.month == 12 else today.month + 1
+        candidate = date(year, month, _clamp(year, month))
+    return candidate
+
+
+def list_sim_payment_reminders(days_ahead: int) -> list:
+    """回傳「門號」資產中，下一次繳費日落在「今天起 days_ahead 天內」
+    （含今天）的清單，依繳費日由近到遠排序。這支是給每週固定排程一次的
+    /management/api/sim-payment-reminder-check 呼叫（見
+    routes/reminder_routes.py）——排程本身一週只跑一次，天然不會對同一顆
+    門號重複提醒，不需要像配送部文件到期提醒那樣另外記錄「提醒過了沒
+    有」。"""
+    today = date.today()
+    result = []
+    for snapshot in assets_ref().where("category", "==", "sim").stream():
+        data = snapshot.to_dict() or {}
+        day = _parse_payment_day(data.get("sim_payment_day"))
+        if day is None:
+            continue
+        due_date = _next_due_date(today, day)
+        if (due_date - today).days > days_ahead:
+            continue
+        data["id"] = snapshot.id
+        data["due_date"] = due_date.isoformat()
+        result.append(data)
+    result.sort(key=lambda a: a["due_date"])
+    return result

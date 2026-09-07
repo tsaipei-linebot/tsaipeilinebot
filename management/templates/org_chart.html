@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}組織圖 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">組織圖</h1>
+<p class="hint">依部門分組呈現，資料來源跟員工名冊是同一份。</p>
+
+{% if groups %}
+<div class="home-grid">
+    {% for g in groups %}
+    <section class="home-panel">
+        <h2>{{ g.department }}（{{ g.members|length }} 人）</h2>
+        <table class="data-table">
+            <tbody>
+                {% for m in g.members %}
+                <tr>
+                    <td>{{ m.name }}</td>
+                    <td>{{ m.title }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    {% endfor %}
+</div>
+{% else %}
+<p class="empty">目前沒有員工資料。</p>
+{% endif %}
+
+<p class="back-link"><a href="/management/staff-directory">&larr; 回員工名冊</a></p>
+{% endblock %}

@@ -3,7 +3,8 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-os.environ.setdefault("GEMINI_API_KEY", "dummy")
+
+from tests import _env  # noqa: F401  (匯入即副作用：見 _env.py 說明)
 
 from services import flex_service as f
 

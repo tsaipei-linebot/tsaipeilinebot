@@ -1,4 +1,6 @@
 import os
+from datetime import time
+import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -62,7 +64,37 @@ GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "tsaipei-505807")
 GCP_LOCATION = os.getenv("GCP_LOCATION", "global")
 
 # ==========================================
-# 7. 每週新工廠登記監控設定
+# 7. 壓力測試專用（僅供內部壓力測試腳本使用，預設關閉）
+# main.py 的 /internal/load-test-message 端點需要這組密鑰才會受理請求；
+# 沒有設定（空字串）時該端點一律回傳 403，等同完全關閉。
+# ==========================================
+LOAD_TEST_SECRET = os.getenv("LOAD_TEST_SECRET", "")
+
+# ==========================================
+# 8. 白天／晚間回覆時段（日夜接力，見 HANDOFF.md）
+# 同仁上班時間為每天 10:00–19:00（含週末，班表相同）。這裡刻意抓 10 分鐘
+# 交接緩衝：機器人比同仁實際下班時間（19:00）提早 10 分鐘啟動、比同仁實際
+# 上班時間（10:00）延後 10 分鐘才停止——目的是寧可偶爾跟同仁重複回覆，
+# 也不要讓求職者在交接空檔完全沒有任何一邊回覆。
+#
+# STAFFED_HOURS_START～STAFFED_HOURS_END 這段時間內，沛沛完全不主動回覆，
+# 交給真人專員在 LINE 聊天模式手動處理（見 handlers/message_handler.py
+# 的 _is_staffed_hours()）。
+#
+# STAFFED_HOURS_GUARD_ENABLED：這個機制的總開關，預設關閉（不管幾點都照舊
+# 回覆，等同這個功能還沒上線）。還在測試頻道、LINE 官方帳號後台的「回應時間
+# 設定」排程還沒設好之前，開著這個守門邏輯會讓白天測試時機器人看起來像故障
+# （完全不回覆），所以刻意讓程式碼合併進 main 後不會立刻生效。等正式要切換
+# 到「白天真人、晚上沛沛」的運作模式時，才去 Cloud Run 設定環境變數
+# STAFFED_HOURS_GUARD_ENABLED=true 打開，不需要再改程式碼、重新部署一次即可。
+# ==========================================
+STAFFED_HOURS_GUARD_ENABLED = os.getenv("STAFFED_HOURS_GUARD_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+STAFFED_HOURS_START = time(10, 10)
+STAFFED_HOURS_END = time(18, 50)
+TAIPEI_TZ = pytz.timezone("Asia/Taipei")
+
+# ==========================================
+# 9. 每週新工廠登記監控設定
 # 資料源：政府資料開放平台《登記工廠名錄》(經濟部產業發展署，dataset id 6569)
 # ==========================================
 FACTORY_OPENDATA_DATASET_ID = os.getenv("FACTORY_OPENDATA_DATASET_ID", "6569")

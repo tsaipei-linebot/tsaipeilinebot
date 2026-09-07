@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ announcement.title }} - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ announcement.title }}</h1>
+<p class="meta">發布人：{{ announcement.created_by_name }}</p>
+
+<p style="white-space: pre-wrap;">{{ announcement.body }}</p>
+
+{% if user.role == "admin" %}
+<form method="post" action="/management/announcements/{{ announcement.id }}/delete"
+      onsubmit="return confirm('確定要刪除這則公告嗎？');">
+    <button type="submit" class="btn btn-danger">刪除公告</button>
+</form>
+{% endif %}
+
+<p class="back-link"><a href="/management/announcements">&larr; 回公告事項</a></p>
+{% endblock %}

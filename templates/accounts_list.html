@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}帳號權限管理 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">帳號權限管理</h1>
+    <a class="btn btn-primary" href="/accounts/new">新增帳號</a>
+</div>
+<p class="hint">每個帳號可以同時擁有好幾個部門的權限，登入一次就能在有權限的部門之間切換，不用重複登入。</p>
+
+{% if error == "self" %}
+<p class="error">不能刪除自己的帳號。</p>
+{% elif error == "platform_admin" %}
+<p class="error">不能刪除擁有全平台管理權限的帳號。</p>
+{% elif error == "not_found" %}
+<p class="error">找不到這個帳號，可能已經被刪除了。</p>
+{% endif %}
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>帳號</th>
+            <th>姓名</th>
+            <th>權限</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for a in accounts %}
+        <tr>
+            <td>{{ a.username }}</td>
+            <td>{{ a.name }}</td>
+            <td>
+                {% if a.is_platform_admin %}
+                <span class="badge badge-ok">全平台管理員</span>
+                {% endif %}
+                {% for m in modules %}
+                {% if a.modules.get(m.code) %}
+                <span class="badge {{ 'badge-pending' if a.modules.get(m.code) == 'admin' else 'badge-employed' }}">
+                    {{ m.name }}：{{ role_map.get(a.modules.get(m.code), a.modules.get(m.code)) }}
+                </span>
+                {% endif %}
+                {% endfor %}
+                {% if not a.is_platform_admin and not a.modules %}
+                <span class="badge badge-resigned">尚未指派</span>
+                {% endif %}
+            </td>
+            <td>
+                <a href="/accounts/{{ a.username }}/edit">編輯</a>
+                {% if not a.is_platform_admin %}
+                <form method="post" action="/accounts/{{ a.username }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除帳號「{{ a.username }}」嗎？');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

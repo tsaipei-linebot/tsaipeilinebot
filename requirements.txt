@@ -7,5 +7,10 @@ python-dotenv
 pytz
 requests
 google-cloud-firestore
+google-cloud-storage
+jinja2
+python-multipart
+itsdangerous
+openpyxl
 google-api-python-client
 google-auth

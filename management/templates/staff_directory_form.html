@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}新增人員 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">新增人員</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/management/staff-directory/new" class="form-stack form-narrow">
+    <label>部門
+        <input type="text" name="department" placeholder="例如：業務部" required>
+    </label>
+    <label>姓名
+        <input type="text" name="name" required>
+    </label>
+    <label>職稱
+        <input type="text" name="title" required>
+    </label>
+    <button type="submit" class="btn btn-primary">建立</button>
+</form>
+<p class="back-link"><a href="/management/staff-directory">&larr; 回員工名冊</a></p>
+{% endblock %}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}意外事件 - 材霈有限公司-配送部系統{% endblock %}
+{% block content %}
+<h1 class="page-title">意外事件</h1>
+<p class="hint">同仁在 LINE 群組回報意外事件會自動寫進這裡，風險等級與結案由管理員在詳細頁設定。</p>
+
+<form method="get" action="/delivery/incidents" class="filter-bar">
+    <input type="text" name="personnel_name" value="{{ filter_personnel_name }}" placeholder="搜尋人員姓名">
+    <select name="vendor">
+        <option value="">全部廠商</option>
+        {% for v in vendors %}
+        <option value="{{ v.code }}" {% if filter_vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="status">
+        <option value="">全部狀態</option>
+        {% for s in incident_statuses %}
+        <option value="{{ s.code }}" {% if filter_status == s.code %}selected{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="risk_level">
+        <option value="">全部風險等級</option>
+        {% for r in risk_levels %}
+        <option value="{{ r }}" {% if filter_risk_level == r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_personnel_name or filter_vendor or filter_status or filter_risk_level %}
+    <a class="btn" href="/delivery/incidents">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if incidents %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>發生時間</th>
+            <th>人員</th>
+            <th>廠商</th>
+            <th>發生地點</th>
+            <th>風險等級</th>
+            <th>狀態</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for i in incidents %}
+        <tr>
+            <td>{{ i.occurred_at }}</td>
+            <td>{{ i.personnel_name }}</td>
+            <td>{{ vendor_map.get(i.vendor, i.vendor) }}</td>
+            <td>{{ i.location }}</td>
+            <td>
+                {% if i.risk_level == "高" %}
+                <span class="badge badge-missing">{{ i.risk_level }}</span>
+                {% elif i.risk_level == "中" %}
+                <span class="badge badge-pending">{{ i.risk_level }}</span>
+                {% elif i.risk_level == "低" %}
+                <span class="badge badge-ok">{{ i.risk_level }}</span>
+                {% else %}
+                <span class="badge badge-resigned">未設定</span>
+                {% endif %}
+            </td>
+            <td>
+                <span class="badge {{ 'badge-resigned' if i.status == 'closed' else 'badge-pending' }}">
+                    {{ incident_status_map.get(i.status, i.status) }}
+                </span>
+            </td>
+            <td><a href="/delivery/incidents/{{ i.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有符合條件的意外事件。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

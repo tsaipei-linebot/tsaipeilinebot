@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}公告事項 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">公告事項</h1>
+    {% if user.role == "admin" %}
+    <a class="btn btn-primary" href="/management/announcements/new">發布公告</a>
+    {% endif %}
+</div>
+
+{% if announcements %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>標題</th>
+            <th>發布人</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for a in announcements %}
+        <tr>
+            <td>{{ a.title }}</td>
+            <td>{{ a.created_by_name }}</td>
+            <td><a href="/management/announcements/{{ a.id }}">查看內容</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有公告。</p>
+{% endif %}
+
+<p class="back-link"><a href="/management/">&larr; 回主頁</a></p>
+{% endblock %}

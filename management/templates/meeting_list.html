@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}會議記錄 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">會議記錄</h1>
+    {% if user.role == "admin" %}
+    <a class="btn btn-primary" href="/management/meetings/new">新增會議記錄</a>
+    {% endif %}
+</div>
+
+<form method="get" action="/management/meetings" class="filter-bar">
+    <input type="text" name="department" value="{{ filter_department }}" placeholder="依部門搜尋">
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_department %}
+    <a class="btn" href="/management/meetings">清除篩選</a>
+    {% endif %}
+</form>
+
+{% if meetings %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>日期</th>
+            <th>部門</th>
+            <th>標題</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for m in meetings %}
+        <tr>
+            <td>{{ m.meeting_date }}</td>
+            <td>{{ m.department }}</td>
+            <td>{{ m.title }}</td>
+            <td><a href="/management/meetings/{{ m.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有符合條件的會議記錄。</p>
+{% endif %}
+
+<p class="back-link"><a href="/management/">&larr; 回主頁</a></p>
+{% endblock %}

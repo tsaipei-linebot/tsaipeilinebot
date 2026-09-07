@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}內部系統入口 - 材霈有限公司{% endblock %}
+{% block content %}
+<div style="text-align: center; margin: 24px 0 32px;">
+    <h1 class="page-title" style="margin-bottom: 8px;">內部系統入口</h1>
+    <p class="hint" style="margin: 0;">{{ user.name }}，請選擇要進入的系統</p>
+</div>
+
+<div class="home-grid">
+    {% for c in cards %}
+    <a class="home-panel" href="{{ c.href }}" style="text-decoration: none; display: block;">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7.5L12 3l9 4.5v9L12 21l-9-4.5v-9z"/>
+                <path d="M3 7.5L12 12l9-4.5"/>
+                <path d="M12 12v9"/>
+            </svg>
+        </span>
+        <h2>{{ c.name }}</h2>
+        <p class="hint">{{ c.description }}</p>
+        <span style="color: var(--brand-dark); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+            前往
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </span>
+    </a>
+    {% endfor %}
+
+    <a class="home-panel" href="/portal/job-system-login" style="text-decoration: none; display: block;">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="7" width="20" height="14" rx="2"/>
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+                <path d="M2 13h20"/>
+            </svg>
+        </span>
+        <h2>職缺維護系統</h2>
+        <p class="hint">職缺、薪資補款、專案合約維護，同步官網與招募機器人</p>
+        <span style="color: var(--brand-dark); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+            前往
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </span>
+    </a>
+
+    <div class="home-panel" style="opacity: 0.6; cursor: not-allowed; border-style: dashed; position: relative;">
+        <span class="badge badge-pending" style="position: absolute; top: 18px; right: 18px;">即將推出</span>
+        <span class="home-panel-icon" style="background: #eef0f2; color: var(--muted);">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+        <h2 style="color: var(--muted);">更多部門系統</h2>
+        <p class="hint" style="margin-bottom: 0;">未來新增的部門模組將顯示在這裡</p>
+    </div>
+</div>
+
+{% if not cards %}
+<p class="hint" style="text-align: center; margin-top: 24px;">目前這組帳號還沒有任何部門的權限，請聯絡系統管理員協助設定。</p>
+{% endif %}
+{% endblock %}

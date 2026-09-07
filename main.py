@@ -1,23 +1,56 @@
 import hmac
+import time
+import uuid
 
 from fastapi import FastAPI, Request, Header, HTTPException
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.sessions import SessionMiddleware
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, ImageMessage
 
+import accounts_routes
+import login_routes
+import portal_routes
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
-    FACTORY_WATCH_TRIGGER_SECRET
+    LOAD_TEST_SECRET, FACTORY_WATCH_TRIGGER_SECRET
 )
+from delivery.config import SESSION_SECRET_KEY
 from handlers.message_handler import process_user_message, process_image_message
+from delivery.app import delivery_app
+from management.app import management_app
 from services.factory_watch_service import run_weekly_scan
 
 app = FastAPI(
     title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine - V12 (Modular)",
     version="12.0.0"
 )
+
+# 根 app 自己也裝一份 SessionMiddleware（跟 delivery_app/management_app
+# 用同一組 secret key + cookie 名稱），這樣掛在根 app 上的 /accounts
+# （帳號權限管理）才讀得到跟 /delivery、/management 共用的同一顆登入
+# session cookie，不用另外登入一次。
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET_KEY,
+    session_cookie="delivery_session",
+    max_age=14 * 24 * 3600,
+)
+app.include_router(accounts_routes.router, prefix="/accounts")
+# /login、/logout：全平台共用的登入頁（見 login_routes.py）。
+app.include_router(login_routes.router)
+# /portal：登入後才看得到的內部系統入口頁，加上職缺維護系統的免登入銜接
+# （見 portal_routes.py）。
+app.include_router(portal_routes.router)
+
+# 配送部系統、管理部系統：各自獨立子系統（自己的路由/資料表，共用同一顆
+# 登入 session cookie），掛在 /delivery、/management 底下，跟上面 LINE
+# 招募機器人的 webhook 路由完全分開，互不影響。
+app.mount("/delivery", delivery_app)
+app.mount("/management", management_app)
 
 # LINE 官方帳號客戶端實例化[cite: 2]
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN) if LINE_CHANNEL_ACCESS_TOKEN else None
@@ -32,6 +65,7 @@ def health_check():
         "status": "ok",
         "service": "Tsaipei AI Recruitment Consultant (PeiPei V12 Modular Engine) is running."
     }
+
 
 # ==========================================
 # 共用 Webhook 處理邏輯
@@ -82,6 +116,108 @@ def handle_message(event):
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     process_image_message(event, line_bot_api)
+
+# ==========================================
+# 內部壓力測試端點（預設關閉，僅供壓力測試腳本使用）
+#
+# 目的：驗證 Notion / Firestore / Vertex AI 這幾個真實系統在高並發下撐不撐得住，
+# 但不需要、也不應該真的把回覆送給真實求職者。設計上完全繞過 LINE 的
+# reply_message API（用 _StubLineBotApi 頂替），所以：
+# 1. 不需要真實的 LINE reply_token（那個只有真人傳訊息時 LINE 才會核發，
+#    腳本無法偽造），可以無限次重複呼叫
+# 2. 不會有任何真實使用者收到測試訊息
+# 3. 但 process_user_message() 裡其餘的邏輯（Notion 讀取、Firestore
+#    session 讀寫、Gemini 決策呼叫）完全是真的，跟正式流量走一樣的路徑，
+#    量測出來的延遲/錯誤率才有參考價值
+#
+# 安全機制：必須帶對 X-Load-Test-Secret header，值要跟 Cloud Run 環境變數
+# LOAD_TEST_SECRET 完全一致才會受理；沒有設定 LOAD_TEST_SECRET（預設情況）
+# 時一律回傳 403，等同這個端點不存在。
+# ==========================================
+class LoadTestMessageRequest(BaseModel):
+    user_id: str
+    text: str
+
+
+class _StubLineBotApi:
+    """頂替真正的 LineBotApi：process_user_message() 同步路徑會呼叫 reply_message()，
+    超過 AI_DECISION_SYNC_TIMEOUT_SECONDS 的長尾請求則會在背景執行緒算完後改呼叫
+    push_message()（見 handlers/message_handler.py 的限時同步等待架構）。這兩個方法
+    都只是記錄下來、不對外發送任何真實請求；push_message 一樣要頂替，否則長尾請求
+    背景補發時會因為 stub 沒有這個方法而丟出 AttributeError（雖然會被上層的保底
+    try/except 攔住不影響服務，但會在 Cloud Run log 裡持續噴出無意義的錯誤，混淆
+    之後想從 log 判斷背景補發是否真的成功送達的判斷）。"""
+
+    def __init__(self):
+        self.last_call = None
+        self.last_push_call = None
+
+    def reply_message(self, reply_token, messages):
+        self.last_call = {"reply_token": reply_token, "messages": messages}
+
+    def push_message(self, user_id, messages):
+        self.last_push_call = {"user_id": user_id, "messages": messages}
+
+
+class _FakeMessage:
+    def __init__(self, text: str):
+        self.text = text
+
+
+class _FakeSource:
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+
+
+class _FakeEvent:
+    """模擬 line-bot-sdk 的 MessageEvent，只需要 process_user_message() 實際
+    會讀取的三個屬性：reply_token、source.user_id、message.text。"""
+
+    def __init__(self, user_id: str, text: str):
+        # 隨便一組不重複的字串即可，不會真的拿去呼叫 LINE API，
+        # 只要不是 process_user_message 特別排除的兩組驗證用假 token 即可。
+        self.reply_token = f"loadtest-{uuid.uuid4()}"
+        self.source = _FakeSource(user_id)
+        self.message = _FakeMessage(text)
+
+
+def _summarize_reply(messages) -> list:
+    """把 _StubLineBotApi 攔下來的回覆內容整理成方便閱讀的摘要，
+    讓壓力測試腳本除了量測時間，也能順便檢查 AI 回覆是否合理。"""
+    if not messages:
+        return []
+    if not isinstance(messages, list):
+        messages = [messages]
+    summary = []
+    for m in messages:
+        entry = {"type": type(m).__name__}
+        text = getattr(m, "text", None)
+        if text:
+            entry["text"] = text
+        summary.append(entry)
+    return summary
+
+
+@app.post("/internal/load-test-message")
+async def load_test_message(payload: LoadTestMessageRequest, x_load_test_secret: str = Header(None)):
+    if not LOAD_TEST_SECRET or x_load_test_secret != LOAD_TEST_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    fake_event = _FakeEvent(payload.user_id, payload.text)
+    stub_api = _StubLineBotApi()
+
+    start = time.monotonic()
+    # bypass_staffed_hours_guard=True：壓力測試本來就是要測 Notion/Firestore/
+    # Gemini 那條路徑撐不撐得住，不該因為剛好在同仁上班時段執行就被日夜接力
+    # 的守門邏輯擋掉（見 handlers/message_handler.py 的 _is_staffed_hours()）。
+    await run_in_threadpool(process_user_message, fake_event, stub_api, True)
+    elapsed = time.monotonic() - start
+
+    return {
+        "elapsed_seconds": round(elapsed, 3),
+        "reply": _summarize_reply(stub_api.last_call["messages"] if stub_api.last_call else None),
+    }
+
 
 # ==========================================
 # 每週新工廠登記監控：由 Cloud Scheduler 定期呼叫觸發，

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}{{ vendor_name }} - 人員缺件狀況{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">{{ vendor_name }} - 人員缺件狀況</h1>
+    <div class="btn-list" style="flex-direction: row;">
+        <a class="btn" href="/delivery/import">批次匯入</a>
+        <a class="btn btn-primary" href="/delivery/vendor/{{ vendor_code }}/new">新增人員</a>
+    </div>
+</div>
+
+<form method="get" action="/delivery/vendor/{{ vendor_code }}" class="filter-bar">
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
+    <input type="text" name="phone" value="{{ filter_phone }}" placeholder="搜尋電話">
+    <select name="status">
+        <option value="">全部狀態</option>
+        {% for s in personnel_statuses %}
+        <option value="{{ s.code }}" {% if filter_status == s.code %}selected{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="missing_status">
+        <option value="">全部</option>
+        <option value="missing" {% if filter_missing_status == "missing" %}selected{% endif %}>缺件</option>
+        <option value="complete" {% if filter_missing_status == "complete" %}selected{% endif %}>無缺件</option>
+    </select>
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_name or filter_phone or filter_status or filter_missing_status %}
+    <a class="btn" href="/delivery/vendor/{{ vendor_code }}">清除篩選</a>
+    {% endif %}
+</form>
+<p class="hint">
+    預設只顯示有缺件、且狀態不是「離職」「放棄報到」的人員；主動搜尋姓名，或用上面的下拉選單
+    篩選狀態／缺件狀態，都可以看到被預設隱藏的人。
+</p>
+
+{% if rows %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>姓名</th>
+            <th>電話</th>
+            <th>缺件狀況</th>
+            <th>狀態</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>{{ row.person.name }}</td>
+            <td>{{ row.person.phone or "-" }}</td>
+            <td>
+                {% if row.missing %}
+                    {% for m in row.missing %}
+                    <span class="badge badge-missing">{{ m.name }}{% if m.expired %}（已過期）{% endif %}</span>
+                    {% endfor %}
+                {% else %}
+                    <span class="badge badge-ok">齊全</span>
+                {% endif %}
+            </td>
+            <td><span class="badge {{ row.employment_status_badge_class }}">{{ row.employment_status_name }}</span></td>
+            <td><a href="/delivery/personnel/{{ row.person.id }}">查看詳細</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">
+    {% if filter_name or filter_phone %}
+    查無符合條件的人員。
+    {% else %}
+    目前沒有缺件的人員（或此廠商尚無人員資料）。
+    {% endif %}
+</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

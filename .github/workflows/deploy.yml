@@ -1,0 +1,48 @@
+name: Deploy to Cloud Run
+
+# 合併到 main 分支後，自動把最新的程式碼部署到 Cloud Run（recruitment-bot）。
+# 不使用長期存放的金鑰，而是用 GCP 的 Workload Identity Federation
+# 讓 GitHub 用「臨時身分」登入 GCP，安全性比存密鑰高。
+#
+# 一次性 GCP 設定（Workload Identity Pool / Provider / 部署用服務帳號）
+# 已依 HANDOFF.md「CI/CD 自動部署」章節的指令完成。
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: tsaipei-505807
+  REGION: asia-east1
+  SERVICE: recruitment-bot
+  WORKLOAD_IDENTITY_PROVIDER: projects/412901869672/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  SERVICE_ACCOUNT: github-actions-deployer@tsaipei-505807.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --source . \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --quiet
