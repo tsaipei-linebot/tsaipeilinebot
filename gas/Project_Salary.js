@@ -70,7 +70,23 @@ const SalaryWorkflowService = {
     const earnings = payload.earnings || {};
     const deductions = payload.deductions || {};
     const summary = payload.summary || {};
-    
+
+    // 後端依明細重新加總，不信任前端算好的總額（避免有人略過網頁表單、直接對送審端點送出竄改過的總額）
+    const computedTotalEarnings = Object.values(earnings).reduce((sum, v) => sum + (Number(v) || 0), 0);
+    const computedTotalDeductions = Object.values(deductions).reduce((sum, v) => sum + (Number(v) || 0), 0);
+    const computedNetTotal = computedTotalEarnings - computedTotalDeductions;
+
+    if (computedTotalEarnings !== Number(summary.total_earnings || 0)
+        || computedTotalDeductions !== Number(summary.total_deductions || 0)) {
+      console.warn(`薪資補款金額前後端不一致，已改用後端重算值：前端加項=${summary.total_earnings} 後端加項=${computedTotalEarnings}，前端扣項=${summary.total_deductions} 後端扣項=${computedTotalDeductions}`);
+    }
+
+    const verifiedSummary = {
+      total_earnings: computedTotalEarnings,
+      total_deductions: computedTotalDeductions,
+      net_total: computedNetTotal
+    };
+
     const salaryId = 'SAL-' + Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyyMMddHHmmss');
     
     // 處理補款佐證圖檔上傳
@@ -113,9 +129,9 @@ const SalaryWorkflowService = {
       info.compensate_month,        // K (11): 補請款月份 (修正：正確落於第 11 欄)
       info.is_claimable,            // L (12): 是否可請款
       info.pay_type,                // M (13): 補款方式
-      summary.total_earnings,       // N (14): 加項小計
-      summary.total_deductions,     // O (15): 扣項小計
-      summary.net_total,            // P (16): 實補總額
+      verifiedSummary.total_earnings,   // N (14): 加項小計
+      verifiedSummary.total_deductions, // O (15): 扣項小計
+      verifiedSummary.net_total,        // P (16): 實補總額
       info.notes,                   // Q (17): 備註 (必填)
       '待審核',                     // R (18): 審核狀態
       '',                           // S (19): 核准主管
@@ -128,7 +144,7 @@ const SalaryWorkflowService = {
       salaryId: salaryId,
       applicant: applicant,
       info: info,
-      summary: summary,
+      summary: verifiedSummary,
       earnings: earnings,
       deductions: deductions,
       imageUrl: imageUrl
