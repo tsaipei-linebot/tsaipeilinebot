@@ -12,13 +12,14 @@ _stub_gcp.install()
 from services import daily_report_service as dr
 
 
-def _event(path="ai_decision", offset_minutes=0, latency=1.0, fallback=False, category="", brand=""):
+def _event(path="ai_decision", offset_minutes=0, latency=1.0, fallback=False, ai_empty=False, category="", brand=""):
     ts = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc) + timedelta(minutes=offset_minutes)
     return {
         "ts": ts.isoformat(),
         "path": path,
         "latency_seconds": latency,
         "fallback_triggered": fallback,
+        "ai_decision_empty": ai_empty,
         "matched_category": category,
         "matched_brand": brand,
     }
@@ -36,6 +37,23 @@ class ComputeHealthSummaryTests(unittest.TestCase):
         health = dr.compute_health_summary(events)
         self.assertTrue(health["level1_triggered"])
         self.assertEqual(health["fallback_count"], 1)
+
+    def test_single_ai_decision_empty_triggers_level1(self):
+        # Gemini「優雅降級」回傳空字串時不會丟例外、fallback_triggered 會是 False，
+        # 但這仍然代表使用者沒拿到真正的判斷結果，一樣要算進第一層異常門檻
+        events = [_event(ai_empty=True)]
+        health = dr.compute_health_summary(events)
+        self.assertTrue(health["level1_triggered"])
+        self.assertEqual(health["fallback_count"], 0)
+        self.assertEqual(health["ai_empty_count"], 1)
+
+    def test_ai_decision_empty_on_non_ai_path_is_ignored(self):
+        # direct_intercept／high_confidence_faq 這兩條路徑根本不會呼叫 Gemini，
+        # ai_decision_empty 欄位在這兩種事件上沒有意義，不該被誤算
+        events = [_event(path="direct_intercept", ai_empty=True)]
+        health = dr.compute_health_summary(events)
+        self.assertFalse(health["level1_triggered"])
+        self.assertEqual(health["ai_empty_count"], 0)
 
     def test_high_latency_bucket_triggers_level2(self):
         # 同一個 5 分鐘區塊塞 20 筆 latency=20 秒的請求，p95 一定超過門檻 12 秒
@@ -104,6 +122,15 @@ class BuildReportTextTests(unittest.TestCase):
         text = dr.build_report_text(health, [], [], "日")
         self.assertIn("⚠️", text)
         self.assertIn("2 次保底訊息", text)
+
+    def test_ai_decision_empty_warning_shown_separately_from_fallback(self):
+        health = {
+            "level1_triggered": True, "fallback_count": 0, "ai_empty_count": 3,
+            "level2_triggered": False, "worst_bucket_p95_seconds": 1.0,
+        }
+        text = dr.build_report_text(health, [], [], "日")
+        self.assertIn("3 次 AI 決策安靜失敗", text)
+        self.assertNotIn("次保底訊息", text)
 
     def test_faq_candidates_and_keyword_gaps_included_only_when_present(self):
         health = {"level1_triggered": False, "fallback_count": 0, "level2_triggered": False, "worst_bucket_p95_seconds": 1.0}

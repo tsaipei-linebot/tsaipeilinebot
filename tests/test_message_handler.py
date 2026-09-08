@@ -230,6 +230,46 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
 
         self.assertIn("延遲", message.text)
 
+    def test_log_ctx_records_fallback_triggered_on_internal_exception(self):
+        log_ctx = {}
+        with patch("handlers.message_handler.get_user_slots", side_effect=RuntimeError("boom")):
+            h._compute_ai_decision_messages("test-user", "有推薦的職缺嗎", [], [], "", "", log_ctx)
+
+        self.assertTrue(log_ctx.get("fallback_triggered"))
+
+    def test_log_ctx_records_ai_decision_empty_when_gemini_returns_blank(self):
+        # Gemini「優雅降級」回傳空字串時（例如 MODEL_FALLBACK_LIST 每個模型都失敗），
+        # 不會走到 except Exception，但仍然代表這句話沒有被真的判斷過，
+        # 監控要能抓到這種「安靜失敗」（見 services/monitoring_service.py）
+        log_ctx = {}
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=""), \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]), \
+             patch("services.matcher_service.get_user_slots", return_value={"location": "新莊", "shift": "早班", "category": "外送"}):
+            # action 為空字串時會落到 build_progressive_question() 的保底引導，
+            # 那支函式是 matcher_service 自己 import 的 get_user_slots（不是
+            # message_handler 這邊 patch 的那個引用），這裡把地區/班別/類別都
+            # 補齊讓它直接判斷完畢，避免真的打去（測試環境裡被 stub 掉的）Firestore。
+            h._compute_ai_decision_messages("test-user", "隨便說點什麼", [], [], "新莊", "", log_ctx)
+
+        self.assertTrue(log_ctx.get("ai_decision_empty"))
+        self.assertFalse(log_ctx.get("fallback_triggered"))
+
+    def test_log_ctx_no_ai_decision_empty_when_action_present(self):
+        log_ctx = {}
+        fake_decision = json.dumps({"action": "ASK", "reply": "你好", "buttons": []})
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision), \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            h._compute_ai_decision_messages("test-user", "你好", [], [], "新莊", "", log_ctx)
+
+        self.assertNotIn("ai_decision_empty", log_ctx)
+        self.assertEqual(log_ctx.get("action"), "ASK")
+
     def test_push_ai_decision_messages_pushes_fallback_when_future_raises(self):
         # done-callback 收到的 future 本身丟例外（理論上 _compute_ai_decision_messages
         # 已經攔截所有例外，這裡是最後一道防線）時，仍要 push 一則保底訊息，不能

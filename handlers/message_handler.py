@@ -503,6 +503,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             log_ai_decision_event(
                 path="ai_decision", action=log_ctx.get("action", ""),
                 fallback_triggered=log_ctx.get("fallback_triggered", False),
+                ai_decision_empty=log_ctx.get("ai_decision_empty", False),
                 matched_category=detected_category_from_text, matched_brand=detected_brand,
                 latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
             )
@@ -658,6 +659,13 @@ def _compute_ai_decision_messages(
         action = str(decision.get("action") or "").strip().upper()
         if log_ctx is not None:
             log_ctx["action"] = action
+            if not action:
+                # Gemini「優雅降級」回傳空字串或非預期格式時（例如 MODEL_FALLBACK_LIST
+                # 每個模型都失敗、配額用盡），不會走到下面的 except Exception，而是
+                # 直接落到後面的保底引導/預設問候語，使用者看起來像正常對話，但其實
+                # 這句話完全沒有被 Gemini 真的判斷過——這是監控要抓的「安靜失敗」，
+                # 見 services/monitoring_service.py 的說明。
+                log_ctx["ai_decision_empty"] = True
         ai_reply_text = str(decision.get("reply") or "").strip()
         ai_buttons = decision.get("buttons") if isinstance(decision.get("buttons"), list) else []
         ai_ids = decision.get("ids") if isinstance(decision.get("ids"), list) else []
@@ -758,6 +766,7 @@ def _push_ai_decision_messages(
     log_ai_decision_event(
         path="ai_decision", action=log_ctx.get("action", ""),
         fallback_triggered=log_ctx.get("fallback_triggered", False),
+        ai_decision_empty=log_ctx.get("ai_decision_empty", False),
         matched_category=matched_category, matched_brand=matched_brand,
         latency_seconds=(time.monotonic() - request_start) if request_start is not None else 0.0,
         delivery_mode="push",

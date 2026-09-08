@@ -40,6 +40,14 @@ class ParseLogLineRoundTripTests(unittest.TestCase):
         line = _capture_printed_line(path="ai_decision", fallback_triggered=True)
         self.assertTrue(mon.parse_log_line(line)["fallback_triggered"])
 
+    def test_ai_decision_empty_round_trips_as_true(self):
+        line = _capture_printed_line(path="ai_decision", ai_decision_empty=True)
+        self.assertTrue(mon.parse_log_line(line)["ai_decision_empty"])
+
+    def test_ai_decision_empty_defaults_to_false(self):
+        line = _capture_printed_line(path="ai_decision")
+        self.assertFalse(mon.parse_log_line(line)["ai_decision_empty"])
+
     def test_non_marker_line_returns_none(self):
         self.assertIsNone(mon.parse_log_line("普通的一行 log，跟結構化格式無關"))
 

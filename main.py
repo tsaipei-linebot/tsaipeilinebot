@@ -203,7 +203,13 @@ def _summarize_reply(messages) -> list:
 
 @app.post("/internal/load-test-message")
 async def load_test_message(payload: LoadTestMessageRequest, x_load_test_secret: str = Header(None)):
-    if not LOAD_TEST_SECRET or x_load_test_secret != LOAD_TEST_SECRET:
+    # 比照 /internal/factory-watch/run、/internal/daily-report/run 改用
+    # hmac.compare_digest 做固定時間比對，避免用 != 直接比較字串時，理論上
+    # 能被拿來做時間旁道攻擊猜出密鑰（這支端點一旦密鑰外流，任何人都能拿去
+    # 呼叫真正的 Vertex AI/Notion/Firestore，等於免費幫別人燒你的帳單）。
+    if not LOAD_TEST_SECRET or not x_load_test_secret or not hmac.compare_digest(
+        x_load_test_secret, LOAD_TEST_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     fake_event = _FakeEvent(payload.user_id, payload.text)

@@ -41,7 +41,10 @@ def compute_health_summary(
     latency_threshold_seconds: float = None,
     bucket_minutes: int = None,
 ) -> dict:
-    """第一層門檻：保底訊息（fallback_triggered）出現 1 次就算異常。
+    """第一層門檻：保底訊息（fallback_triggered）或 AI 決策安靜失敗
+    （ai_decision_empty，見 services/monitoring_service.py 的說明——Gemini 呼叫
+    優雅降級回傳空字串，不會丟例外，但使用者其實沒拿到真正的判斷結果）任一種
+    出現 1 次就算異常，兩者根因不同、都要算，不能只看 fallback_triggered。
     第二層門檻：把 path=="ai_decision" 的事件依「固定時間區塊」（預設 5 分鐘）
     分組，任一區塊的 p95 延遲超過門檻（預設 12 秒）就算變慢——用固定區塊取代
     「任一 3 分鐘滑動窗口」，判斷邏輯簡單很多、效果差異不大（見 HANDOFF.md）。"""
@@ -51,6 +54,7 @@ def compute_health_summary(
     bucket_minutes = DAILY_REPORT_LATENCY_BUCKET_MINUTES if bucket_minutes is None else bucket_minutes
 
     fallback_count = sum(1 for e in events if e.get("fallback_triggered"))
+    ai_empty_count = sum(1 for e in events if e.get("path") == "ai_decision" and e.get("ai_decision_empty"))
 
     buckets = defaultdict(list)
     for e in events:
@@ -74,7 +78,8 @@ def compute_health_summary(
     return {
         "total_events": len(events),
         "fallback_count": fallback_count,
-        "level1_triggered": fallback_count >= 1,
+        "ai_empty_count": ai_empty_count,
+        "level1_triggered": fallback_count >= 1 or ai_empty_count >= 1,
         "worst_bucket_p95_seconds": round(worst_bucket_p95, 2),
         "worst_bucket_start": worst_bucket_start.isoformat() if worst_bucket_start else None,
         "level2_triggered": worst_bucket_p95 > latency_threshold_seconds,
@@ -113,10 +118,14 @@ def build_report_text(health: dict, faq_candidates: list, keyword_gaps: list, pe
     lines = [f"📊 沛沛{period_label}報告", ""]
 
     lines.append("【健康狀況】")
-    if health.get("level1_triggered"):
-        lines.append(f"⚠️ 過去期間偵測到 {health.get('fallback_count', 0)} 次保底訊息（可能發生例外），建議查看 Cloud Run log")
-    else:
-        lines.append("✅ 無保底訊息觸發")
+    fallback_count = health.get("fallback_count", 0)
+    ai_empty_count = health.get("ai_empty_count", 0)
+    if fallback_count >= 1:
+        lines.append(f"⚠️ 過去期間偵測到 {fallback_count} 次保底訊息（可能發生例外），建議查看 Cloud Run log")
+    if ai_empty_count >= 1:
+        lines.append(f"⚠️ 過去期間有 {ai_empty_count} 次 AI 決策安靜失敗（Gemini 沒有回覆有效結果，但沒有丟例外），建議查看 Cloud Run log／Vertex AI 配額")
+    if fallback_count == 0 and ai_empty_count == 0:
+        lines.append("✅ 無保底訊息／AI 決策失敗觸發")
     p95 = health.get("worst_bucket_p95_seconds", 0)
     if health.get("level2_triggered"):
         lines.append(f"⚠️ 有時段 p95 延遲達 {p95} 秒（門檻 {DAILY_REPORT_LATENCY_P95_THRESHOLD_SECONDS} 秒）")

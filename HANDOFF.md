@@ -25,6 +25,12 @@
 
 ## 待辦事項（下一步優先處理）
 
+- **【上線前流量/正確性盤點，PR 待跑，見下方「已完成」第 27 項】**：使用者希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面盤點。找到並已在程式碼裡修好 4 個問題（見第 27 項細節），另外有幾項**需要使用者自己去 GCP 動手做，Claude 這邊沒辦法代勞**：
+  1. **Cloud Run 建議設定 `--min-instances=1`**：目前不確定有沒有設定最小執行個體數。如果是預設值 0，流量稀疏時第一則訊息可能因為容器冷啟動（拉取映像檔、啟動 Python、初始化 Vertex AI/Firestore 連線）疊加 AI 決策時間，逼近甚至超過 LINE 30 秒 reply token 時限。指令：`gcloud run services update recruitment-bot --region asia-east1 --min-instances=1`（會持續佔用一個執行個體的費用，屬於可靠度換成本的取捨，正式上線建議先開，穩定之後再視實際流量評估要不要調整）。
+  2. **正式上線前建議重新壓測一次，且併發數要接近實際預期流量**：目前只驗證過併發 15、總數 50、20 個不同使用者（見上方「Vertex AI 回應延遲」待辦事項）。正式頻道實際流量未知，建議上線前用 `scripts/load_test.py` 抓一個更接近預期上限的併發數（例如 30～50）重新測一次，同時觀察 Cloud Run 主控台的執行個體數有沒有正確地隨流量增加（如果沒有自動增加，代表 `--max-instances` 或並發設定可能限制到）。測完記得去 Cloud Run 環境變數把 `LOAD_TEST_SECRET` 清空或換掉，不要讓這個能觸發真的 Vertex AI 呼叫的內部端點長期留著有效密鑰。
+  3. **服務帳戶權限過寬（已有的舊待辦，這裡追加一項）**：下方「服務帳戶權限過寬」待辦原本只提到要加「Cloud Datastore 使用者」，這次盤點監控機制時發現，等之後拿掉「編輯者」角色時，也要記得加「記錄檢視者」（`roles/logging.viewer`），不然每日/週報告會讀不到 Cloud Run 的 log。
+  - 這幾項都是流量/GCP 設定層面，Claude 沒有這個專案的 `gcloud` 執行權限，需要使用者自己在 Cloud Shell 跑。
+
 - **【新功能，需完成 GCP 設定才會實際運作】每週新工廠登記監控**：`services/factory_watch_service.py` + `main.py` 的 `POST /internal/factory-watch/run` 端點已完成，邏輯是每次執行去抓政府資料開放平台《[登記工廠名錄](https://data.gov.tw/dataset/6569)》（經濟部產業發展署），篩出近期新登記、且 Firestore 裡沒推播過的工廠，寫入 Google Sheet 明細，並視情況推播 LINE 摘要通知業務。要正式上線還缺以下設定（環境變數留空時，程式仍會安全跳過對應步驟並印出提示，不會噴錯）：
   1. 建一個 Google Sheet 當明細清單，分享編輯權限給 Cloud Run 服務帳戶（`tsaipei-505807` 專案的預設運算服務帳戶，或另外指定的服務帳戶信箱），把試算表 ID 設進 `FACTORY_WATCH_SHEET_ID`
   2. 決定 LINE 推播對象（業務同仁個人帳號或內部群組），取得 LINE user ID / group ID 後設進 `FACTORY_WATCH_LINE_TARGET_ID`（沒設定時只會更新 Sheet，不會推播）
@@ -125,6 +131,12 @@
     - **跟原始定案設計的兩個差異**（實作時的簡化，理由見上方待辦事項）：① 讀 log 的方式改成直接查 Cloud Logging，不是先設定 Cloud Monitoring 記錄型指標；② 只有 LINE 群組會收到報告，沒有另外接「Claude 對話串」這個通知管道；③ FAQ 候選清單目前是原樣列出 Notion 裡的待審問句，沒有加 Gemini 語意分群/建議答案草稿（候選量還小，先不做）。
     - **新增依賴**：`requirements.txt` 加了 `google-cloud-logging`（讀 Cloud Logging 用，`google-auth`/`google-api-python-client` 之前就有）。
     - **新增測試**：`tests/test_monitoring_service.py`（log 格式印出/還原 round-trip）、`tests/test_daily_report_service.py`（兩層門檻判斷、關鍵字缺口統計、報告文字組裝、週報日判斷，共 23 個測試）、`tests/test_notion_service.py` 補了 `FetchPendingFaqCandidatesTests`。
+27. **上線前全面盤點：找到並修好 4 個流量/正確性問題**：使用者表示希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面檢查。逐一讀過 `session_service.py`／`matcher_service.py`／`notion_service.py`／`flex_service.py`／`ai_service.py`／`message_handler.py`／`main.py`／`Dockerfile`／`scripts/load_test.py`，發現並修正以下問題（其餘屬於 GCP 設定/流量層面、需要使用者自己動手的項目，列在上方待辦事項）：
+    - **Firestore 讀-改-寫並發遺失更新（`session_service.py`，影響最大）**：原本 `update_user_slots()`／`append_user_history()`／`clear_user_slots()` 都是「獨立讀一次 → 在 Python 記憶體改 → 寫回」，如果同一個使用者短時間內有兩筆並發請求（例如連續快速傳兩則訊息、或第一則訊息的 AI 決策還在背景算的時候又傳了第二則——這在「限時同步等待＋逾時後背景補發」的架構下並不罕見），兩筆都讀到同一份舊資料，後寫入的會整份覆蓋掉先寫入的，可能造成剛設定的地區/班別條件、或某一則對話沒有被記錄下來就憑空消失。**現有的 `scripts/load_test.py` 其實一直都有機會觸發這個情境**（預設把多個模擬請求分配到同一批 `--distinct-users` 循環使用），只是原本的壓測只看回應時間跟狀態碼，沒有另外檢查 Firestore 資料本身有沒有遺失，所以先前沒被抓到。修正方式：把這三個函式的讀-改-寫包進 Firestore transaction（`db.transaction()` + `@firestore.transactional`），保證同一個使用者的並發更新不會互相蓋掉，Firestore 遇到衝突會自動重試。同時把三態合併、歷史紀錄裁切這兩段純邏輯拆成 `_merge_slot_updates()`／`_append_history_entry()`，方便不接真的 Firestore 也能單元測試（原本這個檔案完全沒有單元測試，新增 `tests/test_session_service.py`）。
+    - **監控機制自己的盲點：Gemini 呼叫「優雅降級」時抓不到（`ai_service.py`／`message_handler.py`／`daily_report_service.py`）**：`query_gemini_ai()` 在 `MODEL_FALLBACK_LIST` 每個模型都失敗（例如配額用盡）時，會吞掉例外、安靜地回傳空字串，不會讓 `_compute_ai_decision_messages()` 走到 `except Exception:` 那個會標記 `fallback_triggered=True` 的分支——使用者只會收到「單一焦點引導」或預設問候語，感覺像正常對話，但這句話其實完全沒有被 Gemini 真的判斷過，而剛做好的每日健康報告卻會顯示一切正常。這是本次上線前盤點自己發現、屬於這次新加的監控功能本身的漏洞，已經一併修正：`log_ctx` 新增 `ai_decision_empty` 欄位（`action` 解析出來是空字串時設為 `True`），`log_ai_decision_event()`／`compute_health_summary()` 的第一層門檻改成 `fallback_triggered` 或 `ai_decision_empty` 任一個出現 1 次都算異常，報告文字也分開列出兩種次數方便判斷根因。
+    - **FAQ 未收錄問題去重查詢完全沒有快取（`notion_service.py`）**：`_fetch_all_faq_question_titles()`（每次求職者問到未收錄的政策類問題就會呼叫一次，寫入前用來判斷是否重複）原本沒有快取，每次都整份掃描 FAQ 資料庫。這次盤點特別留意到一個時間點上的巧合：我們才剛決定「FAQ 候選內容先求量」（見上方 FAQ 週報待辦事項），加上正式頻道流量一多，這支路徑會同時變慢，也可能撞到 Notion API 速率限制——兩件事疊加起來風險比單看任一件事都大。修正方式：比照 `fetch_faqs_data()` 加上 `CACHE_TTL`（30 秒）快取；為了不讓快取視窗內的重複寫入去重失準，寫入成功後直接把新問題併入記憶體快取，不用整份重查。
+    - **`/internal/load-test-message` 密鑰比對沒有用固定時間比較（`main.py`）**：這支端點會真的觸發 Vertex AI/Notion/Firestore 呼叫，原本用 `!=` 比較密鑰，跟其餘兩個內部端點（`/internal/factory-watch/run`、`/internal/daily-report/run`）用 `hmac.compare_digest` 不一致，理論上有時間旁道攻擊風險（密鑰外流或被猜到的話，可以拿去打真的 Vertex AI 燒帳單）。已改成一致用 `hmac.compare_digest`。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 441 個測試，OK。
 
 ## 目前所有檔案的狀態
 
