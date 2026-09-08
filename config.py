@@ -153,7 +153,7 @@ FAQ_WEEKLY_REPORT_WEEKDAY = int(os.getenv("FAQ_WEEKLY_REPORT_WEEKDAY", "0"))
 FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT = int(os.getenv("FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT", "5"))
 
 # ==========================================
-# 11. AI 決策限時同步等待秒數（見 HANDOFF.md「監控與告警機制」壓測章節）
+# 13. AI 決策限時同步等待秒數（見 HANDOFF.md「監控與告警機制」壓測章節）
 # 主執行緒最多同步等這麼多秒：時限內算完就用免費的 reply_token 回覆；超過
 # 時限才先回「查詢中」的 ack、改用計費的 push_message 補發正式答案（見
 # handlers/message_handler.py 的 _AI_DECISION_EXECUTOR 說明）。
