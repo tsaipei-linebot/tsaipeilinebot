@@ -211,38 +211,38 @@ def fetch_recent_log_events(hours: int) -> list:
 # 主流程：由 Cloud Scheduler 觸發的端點呼叫
 # ==========================================
 def run_daily_report(line_bot_api) -> dict:
+    """`config.py` 對第二層門檻的說明是「過去 24（或週報時 7*24）小時內」——週報
+    當天的健康狀況檢查，範圍要用過去 7 天，不是只看過去 24 小時，這樣才會跟
+    週報一起顯示的 FAQ 候選清單／建議關鍵字涵蓋同一段期間。用同一批撈回來的
+    log 事件同時算健康狀況跟（週報當天才需要的）FAQ 關鍵字缺口，不用分兩次
+    呼叫 Cloud Logging。"""
     summary = {"health": None, "faq_candidate_count": 0, "keyword_gap_count": 0, "line_pushed": False, "errors": []}
 
-    try:
-        daily_events = fetch_recent_log_events(hours=24)
-    except Exception as e:
-        print(f"[每日/週報告] 讀取過去 24 小時 log 失敗: {e}")
-        summary["errors"].append(f"fetch_daily_logs_failed: {e}")
-        daily_events = []
+    is_weekly = is_weekly_report_day()
+    period_label = "週" if is_weekly else "日"
+    health_window_hours = 24 * 7 if is_weekly else 24
 
-    health = compute_health_summary(daily_events)
+    try:
+        health_events = fetch_recent_log_events(hours=health_window_hours)
+    except Exception as e:
+        print(f"[每日/週報告] 讀取過去 {health_window_hours} 小時 log 失敗: {e}")
+        summary["errors"].append(f"fetch_health_logs_failed: {e}")
+        health_events = []
+
+    health = compute_health_summary(health_events)
     summary["health"] = health
 
     faq_candidates, keyword_gaps, delivery_mode = [], [], None
-    period_label = "日"
 
-    if is_weekly_report_day():
-        period_label = "週"
-
+    if is_weekly:
         try:
             faq_candidates = fetch_pending_faq_candidates()
         except Exception as e:
             print(f"[每週報告] 讀取 FAQ 候選清單失敗: {e}")
             summary["errors"].append(f"faq_fetch_failed: {e}")
 
-        try:
-            weekly_events = fetch_recent_log_events(hours=24 * 7)
-        except Exception as e:
-            print(f"[每週報告] 讀取過去 7 天 log 失敗: {e}")
-            summary["errors"].append(f"fetch_weekly_logs_failed: {e}")
-            weekly_events = []
-        keyword_gaps = compute_keyword_gap_candidates(weekly_events)
-        delivery_mode = compute_delivery_mode_summary(weekly_events)
+        keyword_gaps = compute_keyword_gap_candidates(health_events)
+        delivery_mode = compute_delivery_mode_summary(health_events)
 
     summary["faq_candidate_count"] = len(faq_candidates)
     summary["keyword_gap_count"] = len(keyword_gaps)

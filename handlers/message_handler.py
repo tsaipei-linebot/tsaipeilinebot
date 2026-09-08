@@ -230,7 +230,13 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                         matched_job = j
                         break
             
-            if not matched_job and active_jobs:
+            # 只有在使用者根本沒帶職缺名稱（單純傳「查看職缺詳情」）時，才用第一筆
+            # 現有職缺當預設值——如果使用者有指定名稱、只是剛好沒比對到（職缺已經
+            # 停招/改名/從 Notion 下架，這是常態會發生的事），不能就這樣隨便挑一筆
+            # 不相關的職缺硬塞給使用者、讓他們誤以為看到的是自己點的那筆。這種情況
+            # 讓 matched_job 保持 None，往下走一般對話流程（會進到 AI 決策，由 AI
+            # 判斷怎麼回覆），而不是給出一個看似正確、實則答非所問的職缺詳情。
+            if not matched_job and active_jobs and not target_title:
                 matched_job = active_jobs[0]
 
             if matched_job:
@@ -329,12 +335,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             detected_brand = ""
             brand_slot_update = CLEAR_SLOT if user_slots.get("brand", "") else ""
 
-        update_user_slots(
-            user_id, 
-            location=location_slot_update, 
-            category=category_slot_update, 
-            shift=detected_shift, 
-            leave=detected_leave, 
+        current_slots = update_user_slots(
+            user_id,
+            location=location_slot_update,
+            category=category_slot_update,
+            shift=detected_shift,
+            leave=detected_leave,
             brand=brand_slot_update
         )
 
@@ -379,10 +385,19 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 if not matched_show_all:
                     matched_show_all = active_jobs[:5]
 
-            reply_text = f"沒問題！沛沛馬上為您整理{current_location if current_location else ''}目前招募中的熱門職缺，歡迎點擊查看詳細說明或線上應徵喔 😊"
             append_user_history(user_id, "求職者", raw_msg)
-            append_user_history(user_id, "招募顧問沛沛", reply_text)
-            target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, current_location)])
+            if matched_show_all:
+                reply_text = f"沒問題！沛沛馬上為您整理{current_location if current_location else ''}目前招募中的熱門職缺，歡迎點擊查看詳細說明或線上應徵喔 😊"
+                append_user_history(user_id, "招募顧問沛沛", reply_text)
+                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, current_location)])
+            else:
+                # active_jobs 本身是空的（例如 Notion 職缺暫時全部停招，或剛好讀取失敗
+                # 沿用了空的快取）——這時候完全沒有職缺可以組成 Flex 卡片,LINE 的
+                # Carousel 格式要求至少要有 1 張卡片,傳空陣列會被 LINE API 拒絕。
+                # 改成老實跟使用者說目前沒有職缺,而不是送出一個會失敗的空卡片。
+                reply_text = "不好意思，沛沛這邊目前暫時沒有符合的職缺資料，麻煩稍後再試一次，或直接留言想找的地區/類型，我們會盡快為您確認喔 🙏"
+                append_user_history(user_id, "招募顧問沛沛", reply_text)
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text))
             log_ai_decision_event(
                 path="direct_intercept", intercept_type="show_all",
                 matched_category=_known_category_for_filter, matched_brand=_brand_for_filter,
@@ -500,10 +515,24 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         future = _AI_DECISION_EXECUTOR.submit(
             _compute_ai_decision_messages,
             user_id, raw_msg, active_jobs, faq_list, current_location, history_text, log_ctx,
+            current_slots,
         )
         try:
             messages = future.result(timeout=AI_DECISION_SYNC_TIMEOUT_SECONDS)
-            target_line_bot_api.reply_message(reply_token, messages)
+            try:
+                target_line_bot_api.reply_message(reply_token, messages)
+            except Exception:
+                # reply_token 這裡失敗，通常代表 token 已經過期（例如這次請求在
+                # 進到這段程式碼之前，已經因為排隊等執行緒等原因耗掉不少時間，
+                # 我們量不到那段延遲）。這條路徑原本沒有任何備援：answer 已經算
+                # 好了卻沒送出去、也沒有排進背景補發，使用者會完全收不到回覆。
+                # 改成失敗時直接改用不受 reply_token 時效限制的 push_message
+                # 補發，答案已經算好了，沒有理由白白浪費掉。
+                print(f"[同步回覆送出失敗 Traceback，改用 push_message 補發]: {traceback.format_exc()}")
+                try:
+                    target_line_bot_api.push_message(user_id, messages)
+                except Exception:
+                    print(f"[push_message 補發也失敗 Traceback]: {traceback.format_exc()}")
             log_ai_decision_event(
                 path="ai_decision", action=log_ctx.get("action", ""),
                 fallback_triggered=log_ctx.get("fallback_triggered", False),
@@ -576,6 +605,7 @@ def _compute_ai_decision_messages(
     current_location: str,
     history_text: str,
     log_ctx: dict = None,
+    known_slots: dict = None,
 ):
     """執行真正耗時的 AI 決策（候選集合建構 + Gemini 呼叫 + 解析），是
     process_user_message() 步驟 2 原本的內容搬過來的。這個函式故意只負責「算出
@@ -587,10 +617,16 @@ def _compute_ai_decision_messages(
     保底訊息」帶出去給呼叫端記錄結構化 log（見 HANDOFF.md「監控與告警機制」），
     不影響這個函式原本的回傳值（訊息內容）。
 
+    known_slots：呼叫端（process_user_message）呼叫 update_user_slots() 時，
+    其實已經拿到最新合併好的槽位，這裡直接沿用即可，不用再花一次 Firestore
+    讀取重新查一次一模一樣的資料——這個限時同步等待的時間窗口裡，每省一次
+    網路來回都對延遲有幫助。沒有傳入時（例如舊測試直接呼叫這個函式）才退回
+    原本自己查一次的行為，保持相容。
+
     保證不會往外拋出例外：任何步驟失敗都在這裡攔截並回傳保底訊息，讓呼叫端
     不需要再處理例外，只要送出這裡回傳的 messages 即可。"""
     try:
-        _current_slots_for_candidates = get_user_slots(user_id)
+        _current_slots_for_candidates = known_slots if known_slots is not None else get_user_slots(user_id)
         ai_job_candidates = build_ai_job_candidates(
             active_jobs,
             f"{history_text} {raw_msg}",
@@ -709,6 +745,14 @@ def _compute_ai_decision_messages(
             ]
             if not matched_jobs:
                 matched_jobs = ai_job_candidates[:4]
+
+            if not matched_jobs:
+                # ai_job_candidates 本身也是空的（例如 Notion 職缺暫時全部停招）——
+                # 沒有任何職缺可以組 Flex 卡片，LINE 的 Carousel 格式不接受空陣列，
+                # 改成純文字保底訊息，不要送出一定會被 LINE API 拒絕的空卡片。
+                no_job_text = "不好意思，沛沛這邊目前暫時沒有符合的職缺資料，麻煩稍後再試一次，或直接留言想找的地區/類型，我們會盡快為您確認喔 🙏"
+                append_user_history(user_id, "招募顧問沛沛", no_job_text)
+                return TextSendMessage(text=no_job_text)
 
             flex_card = create_job_flex_card(matched_jobs, user_id, current_location)
             return [TextSendMessage(text=reply_text), flex_card]

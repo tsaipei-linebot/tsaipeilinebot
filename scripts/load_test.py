@@ -105,6 +105,9 @@ def main():
     parser.add_argument("--yes", action="store_true", help="略過開始前的確認提示，直接執行")
     args = parser.parse_args()
 
+    if args.distinct_users < 1:
+        parser.error("--distinct-users 必須至少是 1（用來對 user_id 編號做 % 取餘數，設成 0 會導致除以零錯誤）")
+
     print(f"目標：{args.url}")
     print(f"併發：{args.concurrency}　總數：{args.total}　模擬使用者數：{args.distinct_users}")
     print("此測試會真的呼叫 Vertex AI Gemini（花錢、佔配額），請確認金額/配額在可接受範圍內。")

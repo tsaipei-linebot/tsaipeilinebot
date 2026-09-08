@@ -379,9 +379,14 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
             score += 40
 
     # 2. 廠商權重加分[cite: 1]
+    # brand_slot 一定要先經過 clean_text_for_search() 正規化再比對 search_text
+    # （search_text 已經是正規化過的文字，「台」一律轉成「臺」）。像「台積電」
+    # 這種 KNOWN_BRANDS 的 key 本身帶半形「台」字，先前只做 .lower() 沒有做
+    # 台/臺正規化，會導致 search_text 裡永遠比對不到、這 80 分加分形同虛設
+    # （sibling 函式 _brand_matches_text 有正確做這一步，這裡漏掉了）。
     vendor_clean = clean_text_for_search(job.get("系統廠商名稱", ""))
     brand_slot = slots.get("brand", "")
-    if brand_slot and brand_slot.lower() in search_text:
+    if brand_slot and clean_text_for_search(brand_slot) in search_text:
         score += 80
     elif vendor_clean and vendor_clean in query_clean:
         score += 70

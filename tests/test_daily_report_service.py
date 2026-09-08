@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("GEMINI_API_KEY", "dummy")
@@ -194,6 +195,40 @@ class IsWeeklyReportDayTests(unittest.TestCase):
     def test_other_weekday_is_false(self):
         tuesday = datetime(2026, 9, 8)
         self.assertFalse(dr.is_weekly_report_day(tuesday))
+
+
+class RunDailyReportTests(unittest.TestCase):
+    """config.py 明確寫著第二層門檻在週報當天要用「過去 7*24 小時」判斷，不是
+    只看 24 小時——這裡驗證 run_daily_report() 真的照這個規則走，且週報當天
+    只查一次 log（拿同一批資料同時算健康狀況跟 FAQ 關鍵字缺口），不會为了
+    健康狀況跟關鍵字缺口分別各查一次 Cloud Logging。"""
+
+    def test_weekly_day_uses_7day_window_for_health_and_only_fetches_once(self):
+        with patch("services.daily_report_service.is_weekly_report_day", return_value=True), \
+             patch("services.daily_report_service.fetch_recent_log_events", return_value=[]) as mock_fetch, \
+             patch("services.daily_report_service.fetch_pending_faq_candidates", return_value=[]):
+            dr.run_daily_report(line_bot_api=None)
+
+        mock_fetch.assert_called_once_with(hours=24 * 7)
+
+    def test_non_weekly_day_uses_24h_window(self):
+        with patch("services.daily_report_service.is_weekly_report_day", return_value=False), \
+             patch("services.daily_report_service.fetch_recent_log_events", return_value=[]) as mock_fetch:
+            dr.run_daily_report(line_bot_api=None)
+
+        mock_fetch.assert_called_once_with(hours=24)
+
+    def test_weekly_report_health_reflects_events_from_7day_fetch(self):
+        # 過去 24 小時（如果真的另外查）沒有任何 fallback，但過去 7 天（唯一真正
+        # 會被拿去用的那批資料）裡有 2 次——健康狀況要反映後者，不是誤用前者。
+        weekly_events_with_fallback = [_event(fallback=True), _event(fallback=True)]
+        with patch("services.daily_report_service.is_weekly_report_day", return_value=True), \
+             patch("services.daily_report_service.fetch_recent_log_events", return_value=weekly_events_with_fallback), \
+             patch("services.daily_report_service.fetch_pending_faq_candidates", return_value=[]):
+            summary = dr.run_daily_report(line_bot_api=None)
+
+        self.assertEqual(summary["health"]["fallback_count"], 2)
+        self.assertTrue(summary["health"]["level1_triggered"])
 
 
 if __name__ == "__main__":
