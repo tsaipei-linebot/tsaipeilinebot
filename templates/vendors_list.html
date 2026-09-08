@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}廠商管理 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">廠商管理</h1>
+    <a class="btn btn-primary" href="/vendors/new">新增廠商</a>
+</div>
+<p class="hint">記錄每個合作廠商的派遣員工要用哪家公司簽約加保。這份資料跟配送部系統既有的廠商清單是分開的，還沒有互相串接。</p>
+
+{% if error == "not_found" %}
+<p class="error">找不到這個廠商，可能已經被刪除了。</p>
+{% endif %}
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>代號</th>
+            <th>廠商名稱</th>
+            <th>簽約公司</th>
+            <th>備註</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for v in vendors %}
+        <tr>
+            <td>{{ v.code }}</td>
+            <td>{{ v.name }}</td>
+            <td>{{ v.company_name or "尚未設定" }}</td>
+            <td>{{ v.note or "-" }}</td>
+            <td>
+                <a href="/vendors/{{ v.id }}/edit">編輯</a>
+                <form method="post" action="/vendors/{{ v.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除廠商「{{ v.name }}」嗎？');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if not vendors %}
+<p class="empty">目前還沒有任何廠商資料。</p>
+{% endif %}
+{% endblock %}
