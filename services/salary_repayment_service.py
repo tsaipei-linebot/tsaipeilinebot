@@ -6,21 +6,29 @@ services/factory_watch_service.py／services/salesdev_sheet_service.py 一樣的
 Cloud Run 服務帳戶 ADC 連線。
 
 這份試算表有兩個相關分頁：
-- 「員工主管組織表」：材霈自己同仁（不是配送人員）對到誰是他的主管，
-  「主管姓名」欄位可能是逗號分隔的多個名字（例如同時受兩個主管管轄）。
-  用這份資料判斷誰能看到誰的補款紀錄。
+- 「員工主管組織表」：只用來把補款紀錄裡「核准主管」欄位存的 LINE ID
+  換算回看得懂的姓名（見 `build_line_id_name_lookup`）。**誰是誰的主管
+  這件事本身，不再讀這個分頁**——改成讀系統自己的帳號資料
+  （`platform_accounts` 的 `manager_usernames` 欄位，在 `/accounts` 網頁上
+  設定），比對用的是帳號本身，不是文字姓名，才不會有同名同姓或姓名打法
+  不一致誤判權限的問題（第一版曾經是讀這個分頁的「主管姓名」文字欄位，
+  改掉的原因見 `platform_accounts.py` 的說明；既有資料可以用
+  `scripts/import_account_managers.py` 批次匯入一次）。
 - 「薪資補款紀錄」：同仁在職缺維護表單送出的補款申請，「申請人姓名」是
   送出申請的同仁本人，「員工姓名」欄位反而是被補款的配送人員（不是同一個
   人），比對權限用的是「申請人姓名」。
 
-比對邏輯是文字姓名完全相同（跟 job_portal_sso.py 的比對方式一致）；姓名
-對不上的話，該筆資料就看不到，不會噴錯，只是查不到而已。
+「申請人姓名」跟系統帳號之間的比對，還是文字姓名完全相同（跟
+job_portal_sso.py 的比對方式一致）——這一段沒辦法避免，因為這筆資料是
+同仁在外部表單填的，不是這個系統產生的；姓名對不上的話，該筆資料就看不到，
+不會噴錯，只是查不到而已。
 """
 from config import (
     SALARY_REPAYMENT_ORG_SHEET_NAME,
     SALARY_REPAYMENT_RECORDS_SHEET_NAME,
     SALARY_REPAYMENT_SHEET_ID,
 )
+import platform_accounts
 
 _SERVICE_ACCOUNT_HINT = (
     "沒有權限讀取這份 Google Sheet，請把這份試算表分享「檢視者」權限給 "
@@ -47,7 +55,7 @@ def _get_sheets_service():
     return build("sheets", "v4", credentials=credentials, cache_discovery=False)
 
 
-def _rows_to_dicts(values: list) -> list:
+def rows_to_dicts(values: list) -> list:
     if not values:
         return []
     headers = values[0]
@@ -58,17 +66,22 @@ def _rows_to_dicts(values: list) -> list:
     return dicts
 
 
-def _parse_name_list(raw: str) -> list:
+def parse_name_list(raw: str) -> list:
     return [n.strip() for n in (raw or "").split(",") if n.strip()]
 
 
-def build_manager_lookup(org_rows: list) -> dict:
-    """回傳 {員工姓名: [主管姓名, ...]}，員工姓名空白的列會被忽略。"""
+def build_manager_lookup_from_accounts(accounts: list) -> dict:
+    """回傳 {員工姓名: [主管姓名, ...]}，資料來源是系統帳號的
+    `manager_usernames` 欄位（在 /accounts 網頁上設定，存的是帳號本身，不是
+    文字姓名），這裡轉換成姓名清單只是為了跟 `filter_visible_records()` 既有
+    的姓名比對邏輯相容。姓名重複（同名同姓）的帳號沒有特別處理，跟系統
+    帳號本身「用姓名顯示、用帳號比對」的既有限制一致。"""
+    name_by_username = {a["username"]: a["name"] for a in accounts}
     lookup = {}
-    for row in org_rows:
-        name = (row.get("員工姓名") or "").strip()
-        if name:
-            lookup[name] = _parse_name_list(row.get("主管姓名"))
+    for a in accounts:
+        lookup[a["name"]] = [
+            name_by_username[u] for u in a.get("manager_usernames", []) if u in name_by_username
+        ]
     return lookup
 
 
@@ -132,10 +145,10 @@ def get_my_repayment_records(viewer_name: str):
         return [], f"讀取 Google Sheet 時發生錯誤：{e}"
 
     value_ranges = result.get("valueRanges", [])
-    org_rows = _rows_to_dicts(value_ranges[0].get("values", [])) if len(value_ranges) > 0 else []
-    record_rows = _rows_to_dicts(value_ranges[1].get("values", [])) if len(value_ranges) > 1 else []
+    org_rows = rows_to_dicts(value_ranges[0].get("values", [])) if len(value_ranges) > 0 else []
+    record_rows = rows_to_dicts(value_ranges[1].get("values", [])) if len(value_ranges) > 1 else []
 
-    manager_lookup = build_manager_lookup(org_rows)
+    manager_lookup = build_manager_lookup_from_accounts(platform_accounts.list_accounts())
     line_id_name_lookup = build_line_id_name_lookup(org_rows)
 
     visible = filter_visible_records(record_rows, manager_lookup, viewer_name)

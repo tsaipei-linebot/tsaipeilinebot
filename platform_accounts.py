@@ -17,6 +17,16 @@ cookie）。
   操作。
 - 完全不在 modules 裡（也不是 is_platform_admin）：看不到該部門，連首頁
   都會被導去 /portal，不會看到權限錯誤訊息。
+
+除了模組權限，每個帳號還有兩個跟「部門模組」無關、給「我的專區」這類個人化
+功能共用的欄位：
+- manager_usernames：這個帳號的主管，存的是「別的帳號的 username」清單
+  （不是文字姓名），可以有多個。之所以存帳號而不是姓名，是為了避免同名
+  同姓或姓名打法不一致造成比對錯誤——之前 /me 的薪資補款紀錄就是靠外部
+  Google Sheet 的文字姓名比對主管關係，容易出這種問題，這裡改成參照系統
+  自己的帳號，資料由這個系統自己管理維護。
+- department：部門，自由文字，目前只是存起來備用，還沒有功能會用到，
+  之後如果要做「同部門互看」這類功能可以直接用。
 """
 import hashlib
 import hmac
@@ -71,6 +81,11 @@ def _to_account(username: str, data: dict) -> dict:
         "name": data.get("name", username),
         "modules": data.get("modules", {}) or {},
         "is_platform_admin": bool(data.get("is_platform_admin", False)),
+        # 所屬主管（帳號清單，不是文字姓名）跟部門：給「主管能看部屬資料」
+        # 這類跨模組功能共用（例如 /me 的薪資補款紀錄），比對用帳號本身，
+        # 不是靠文字姓名比對，才不會有同名同姓或姓名打法不一致的問題。
+        "manager_usernames": data.get("manager_usernames", []) or [],
+        "department": data.get("department", "") or "",
     }
 
 
@@ -106,25 +121,46 @@ def list_accounts() -> list:
     return result
 
 
-def create_account(username: str, password: str, name: str, modules: dict):
+def create_account(
+    username: str, password: str, name: str, modules: dict,
+    manager_usernames: list = None, department: str = "",
+):
     users_ref().document(username).set(
         {
             "password_hash": hash_password(password),
             "name": name,
             "modules": modules,
+            "manager_usernames": manager_usernames or [],
+            "department": department,
             "is_platform_admin": False,
             "created_at": time.time(),
         }
     )
 
 
-def update_account(username: str, name: str, modules: dict, password: str = ""):
-    """password 空字串代表不改密碼。modules 整包覆蓋（畫面上的表單一次會送出
-    所有模組的下拉選單值，包含「不開放」，所以用覆蓋而不是合併新增）。"""
-    payload = {"name": name, "modules": modules}
+def update_account(
+    username: str, name: str, modules: dict, password: str = "",
+    manager_usernames: list = None, department: str = "",
+):
+    """password 空字串代表不改密碼。modules／manager_usernames 整包覆蓋
+    （畫面上的表單一次會送出所有值，包含「不開放」/「沒有勾選」，所以用
+    覆蓋而不是合併新增）。"""
+    payload = {
+        "name": name,
+        "modules": modules,
+        "manager_usernames": manager_usernames or [],
+        "department": department,
+    }
     if password:
         payload["password_hash"] = hash_password(password)
     users_ref().document(username).update(payload)
+
+
+def set_manager_usernames(username: str, manager_usernames: list):
+    """只給一次性遷移腳本（例如 scripts/import_account_managers.py）呼叫的
+    窄範圍更新，只動 manager_usernames 這個欄位，不會不小心動到帳密／
+    modules／department 等其他資料。"""
+    users_ref().document(username).update({"manager_usernames": manager_usernames})
 
 
 def delete_account(username: str):

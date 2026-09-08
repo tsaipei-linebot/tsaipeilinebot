@@ -8,6 +8,7 @@ from tests import _env  # noqa: F401
 from tests import _stub_gcp
 _stub_gcp.install()
 
+import platform_accounts
 from platform_accounts import (
     ROLE_ADMIN,
     ROLE_STAFF,
@@ -66,6 +67,24 @@ class ModuleRoleTests(unittest.TestCase):
         self.assertEqual(module_role(account, "delivery"), ROLE_ADMIN)
         self.assertEqual(module_role(account, "management"), ROLE_ADMIN)
         self.assertEqual(module_role(account, "some_future_module"), ROLE_ADMIN)
+
+
+class ToAccountTests(unittest.TestCase):
+    """帳號資料多了 manager_usernames／department 兩個欄位（在 /accounts
+    網頁上設定），確認舊資料（沒有這兩個欄位）讀出來會是安全的預設值，不會
+    噴 KeyError。"""
+
+    def test_defaults_manager_usernames_and_department_when_missing(self):
+        account = platform_accounts._to_account("alice", {"name": "Alice"})
+        self.assertEqual(account["manager_usernames"], [])
+        self.assertEqual(account["department"], "")
+
+    def test_preserves_manager_usernames_and_department_when_present(self):
+        account = platform_accounts._to_account(
+            "alice", {"name": "Alice", "manager_usernames": ["bob"], "department": "業務部"}
+        )
+        self.assertEqual(account["manager_usernames"], ["bob"])
+        self.assertEqual(account["department"], "業務部")
 
 
 class ValidateAccountDeletionTests(unittest.TestCase):
