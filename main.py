@@ -25,6 +25,9 @@ from management.app import management_app
 from hr.app import hr_app
 from services.factory_watch_service import run_weekly_scan
 from services.daily_report_service import run_daily_report
+from services.session_service import db as _firestore_db, SESSIONS_COLLECTION as _SESSIONS_COLLECTION
+from services.notion_service import fetch_jobs_data, fetch_faqs_data
+from services.ai_service import query_gemini_ai
 
 app = FastAPI(
     title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine - V12 (Modular)",
@@ -68,6 +71,45 @@ def health_check():
         "status": "ok",
         "service": "Tsaipei AI Recruitment Consultant (PeiPei V12 Modular Engine) is running."
     }
+
+
+# ==========================================
+# 啟動時預熱招募機器人會用到的三個外部服務（Firestore／Notion／Vertex AI Gemini）
+#
+# 背景：這個 Cloud Run 服務是招募機器人跟配送部/管理部/人資等系統共用的，
+# 任何一個團隊推送到 main 都會讓整個服務重新部署、產生一支全新的執行版本。
+# 就算設定了 min-instances=1，新版本的容器裡，程式跟這三個外部服務之間的
+# 連線都還沒真的建立過（連線是「第一次真的要送資料時」才會去握手），所以
+# 「重新部署後、第一個真的傳訊息的求職者」會多負擔這段連線建立的時間，
+# 曾經在測試頻道實測到因此觸發 15 秒同步等待逾時、改用背景補發的情況
+# （詳見 HANDOFF.md「上線前流量/正確性盤點」章節）。
+#
+# 這裡在服務真正開始接受請求「之前」，就先把這三個連線都跑過一次：
+# FastAPI 的 startup 事件會在應用程式開始處理任何請求前執行完畢，所以無論
+# 是重新部署或是流量升載多開一台執行個體，第一個使用者都不會撞到冷連線。
+# 任何一步失敗都只記 log、不讓服務因此啟動失敗——最壞情況只是退回「沒有
+# 預熱」的舊行為，不會讓整個服務（包含其他子系統）掛掉。
+# ==========================================
+@app.on_event("startup")
+def _warmup_recruitment_bot_dependencies():
+    try:
+        _firestore_db.collection(_SESSIONS_COLLECTION).document("__warmup__").get()
+        print("[啟動預熱] Firestore 連線正常")
+    except Exception as e:
+        print(f"[啟動預熱] Firestore 連線失敗（不影響服務啟動）: {e}")
+
+    try:
+        fetch_jobs_data()
+        fetch_faqs_data()
+        print("[啟動預熱] Notion 連線正常，職缺／FAQ 快取已預先載入")
+    except Exception as e:
+        print(f"[啟動預熱] Notion 連線失敗（不影響服務啟動）: {e}")
+
+    try:
+        query_gemini_ai("你好，這是服務啟動時的暖機測試，請直接回覆「收到」即可。")
+        print("[啟動預熱] Vertex AI Gemini 連線正常")
+    except Exception as e:
+        print(f"[啟動預熱] Vertex AI Gemini 連線失敗（不影響服務啟動）: {e}")
 
 
 # ==========================================
