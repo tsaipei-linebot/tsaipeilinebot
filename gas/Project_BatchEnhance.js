@@ -153,6 +153,89 @@ const BatchEnhanceJobService = {
   },
 
   /**
+   * 一次性維護工具：掃描既有職缺的「精華亮點」「排版工作說明」，
+   * 把舊制度時期就已生成、卡在 Notion 裡的舊版地點文字「錄取後依居住地就近分發」
+   * 直接替換成「門市自選」。純文字取代，不呼叫 AI，不會動到其他內容，
+   * 也不會影響本來就沒有這句舊文字的職缺（直接跳過）。
+   */
+  fixLegacyDispatchWording: function() {
+    const OLD_PHRASE = '錄取後依居住地就近分發';
+    const NEW_PHRASE = '門市自選';
+    const startTime = Date.now();
+    const MAX_EXECUTION_TIME_MS = 270 * 1000; // 4.5 分鐘保護中斷，防範 GAS 6 分鐘超時
+
+    console.log('🔧 [FixLegacyWording] 開始掃描職缺，尋找含有舊版地點文字「' + OLD_PHRASE + '」的職缺...');
+
+    const jobs = this.fetchActiveJobsFromNotion();
+    let scannedCount = 0;
+    let fixedCount = 0;
+    let failedCount = 0;
+    let isTimeoutInterrupted = false;
+    const fixedTitles = [];
+
+    for (let i = 0; i < jobs.length; i++) {
+      if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+        console.warn('⏰ [FixLegacyWording] 接近執行上限，自動安全中斷。已掃描 ' + i + '/' + jobs.length + ' 筆，剩餘的請再執行一次同一個函式繼續處理。');
+        isTimeoutInterrupted = true;
+        break;
+      }
+
+      const job = jobs[i];
+      scannedCount++;
+
+      const highlight = job.existing_highlight || '';
+      const detail = job.existing_detail || '';
+      const highlightHasOld = highlight.indexOf(OLD_PHRASE) !== -1;
+      const detailHasOld = detail.indexOf(OLD_PHRASE) !== -1;
+
+      if (!highlightHasOld && !detailHasOld) continue;
+
+      const pageId = String(job.id || '').trim();
+      const jobLabel = job.title || job.external_title || pageId;
+      if (!pageId) continue;
+
+      const properties = {};
+      if (highlightHasOld) {
+        properties['精華亮點'] = NotionService.buildRichTextProp(highlight.split(OLD_PHRASE).join(NEW_PHRASE));
+      }
+      if (detailHasOld) {
+        properties['排版工作說明'] = NotionService.buildRichTextProp(detail.split(OLD_PHRASE).join(NEW_PHRASE));
+      }
+
+      try {
+        const response = UrlFetchApp.fetch('https://api.notion.com/v1/pages/' + pageId, {
+          method: 'patch',
+          headers: NotionService.getHeaders(),
+          payload: JSON.stringify({ properties: properties }),
+          muteHttpExceptions: true
+        });
+        if (response.getResponseCode() < 400) {
+          fixedCount++;
+          fixedTitles.push(jobLabel);
+          console.log('✅ [FixLegacyWording] 已修正：【' + jobLabel + '】');
+        } else {
+          failedCount++;
+          console.error('❌ [FixLegacyWording] 修正失敗：【' + jobLabel + '】- HTTP ' + response.getResponseCode() + ': ' + response.getContentText());
+        }
+      } catch (err) {
+        failedCount++;
+        console.error('❌ [FixLegacyWording] 修正發生例外：【' + jobLabel + '】', err);
+      }
+    }
+
+    const summary = {
+      totalJobs: jobs.length,
+      scannedCount: scannedCount,
+      fixedCount: fixedCount,
+      failedCount: failedCount,
+      isTimeoutInterrupted: isTimeoutInterrupted,
+      fixedTitles: fixedTitles
+    };
+    console.log('🏁 [FixLegacyWording] 執行完畢：' + JSON.stringify(summary));
+    return summary;
+  },
+
+  /**
    * 呼叫 Gemini 進行雙欄位結構化生成 (保證語句完整不切字 + 地點智慧聚合)
    */
   generateEnhancementWithGemini: function(job, smartLocation) {
@@ -341,4 +424,9 @@ function runBatchJobEnhancementResume() {
 
 function runBatchJobEnhancementForce() {
   return BatchEnhanceJobService.runBatchEnhancement(true);
+}
+
+// 一次性維護工具：修正舊版「錄取後依居住地就近分發」文字為「門市自選」
+function fixLegacyDispatchWordingRun() {
+  return BatchEnhanceJobService.fixLegacyDispatchWording();
 }
