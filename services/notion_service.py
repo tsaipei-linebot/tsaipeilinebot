@@ -215,6 +215,42 @@ def fetch_faqs_data() -> list:
         return _cached_faqs or []
 
 
+def fetch_pending_faq_candidates() -> list:
+    """取得 FAQ 資料庫中「標準回覆內容」空白、且「啟用狀態」沒有被同仁手動標記
+    「停用」的問句清單，供每週報告的 FAQ 候選清單使用（見 HANDOFF.md「監控與
+    告警機制」／「FAQ 週報」）。
+
+    「啟用狀態」欄位在這裡是重複使用、不是另外新增專用欄位：
+      - 空白 = 待審（同仁還沒看過，會出現在候選清單）
+      - 手動設「停用」= 已審核但決定不採用（即使還沒填答案，也不會再出現）
+      - 填了「標準回覆內容」= 已採用，會被 fetch_faqs_data() 撈去當正式 FAQ
+    同仁若決定不採用某個候選問題，記得手動把「啟用狀態」設成「停用」，
+    不然這題會因為「還沒答案」持續被判定為待審，每週都重複出現。
+
+    刻意不套用 CACHE_TTL 快取（跟 fetch_faqs_data() 不同）：這支只有每日/週報
+    的排程端點會呼叫，不是每次求職者訊息都會觸發，不需要快取。"""
+    results = query_notion_database_direct(NOTION_FAQ_DB_ID)
+    pending = []
+    for page in results:
+        props = page.get("properties", {})
+        q_text, a_text, status = "", "", ""
+
+        for k, v in props.items():
+            val = parse_notion_property(v)
+            k_lower = k.lower()
+            if any(x in k_lower for x in ["問", "題目", "問題", "question", "title"]):
+                q_text = val
+            elif any(x in k_lower for x in ["答", "回覆", "內容", "answer", "content"]):
+                a_text = val
+            elif any(x in k_lower for x in ["狀態", "啟用", "status"]):
+                status = val
+
+        if q_text and not a_text and "停用" not in status:
+            pending.append(q_text)
+
+    return pending
+
+
 def _fetch_all_faq_question_titles() -> list:
     """取得 FAQ 資料庫中所有頁面的『問題/關鍵字』標題文字，不篩選狀態或是否已有解答，
     供未收錄問題寫入前的去重比對使用（已寫入但尚未補答的問題，狀態/解答通常是空的，
