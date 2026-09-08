@@ -26,8 +26,8 @@
 ## 待辦事項（下一步優先處理）
 
 - **【上線前流量/正確性盤點，PR 待跑，見下方「已完成」第 27 項】**：使用者希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面盤點。找到並已在程式碼裡修好 4 個問題（見第 27 項細節），另外有幾項**需要使用者自己去 GCP 動手做，Claude 這邊沒辦法代勞**：
-  1. **Cloud Run 建議設定 `--min-instances=1`**：目前不確定有沒有設定最小執行個體數。如果是預設值 0，流量稀疏時第一則訊息可能因為容器冷啟動（拉取映像檔、啟動 Python、初始化 Vertex AI/Firestore 連線）疊加 AI 決策時間，逼近甚至超過 LINE 30 秒 reply token 時限。指令：`gcloud run services update recruitment-bot --region asia-east1 --min-instances=1`（會持續佔用一個執行個體的費用，屬於可靠度換成本的取捨，正式上線建議先開，穩定之後再視實際流量評估要不要調整）。
-  2. **正式上線前建議重新壓測一次，且併發數要接近實際預期流量**：目前只驗證過併發 15、總數 50、20 個不同使用者（見上方「Vertex AI 回應延遲」待辦事項）。正式頻道實際流量未知，建議上線前用 `scripts/load_test.py` 抓一個更接近預期上限的併發數（例如 30～50）重新測一次，同時觀察 Cloud Run 主控台的執行個體數有沒有正確地隨流量增加（如果沒有自動增加，代表 `--max-instances` 或並發設定可能限制到）。測完記得去 Cloud Run 環境變數把 `LOAD_TEST_SECRET` 清空或換掉，不要讓這個能觸發真的 Vertex AI 呼叫的內部端點長期留著有效密鑰。
+  1. ✅ **Cloud Run `--min-instances=1`：已完成**。用 `gcloud run services describe recruitment-bot --region asia-east1 --format="value(spec.template.metadata.annotations)"` 確認過，`autoscaling.knative.dev/minScale=1` 已生效，不會再有容器冷啟動疊加 AI 決策時間、逼近 LINE 30 秒時限的風險。同時確認 `run.googleapis.com/cpu-throttling=false`（CPU 一律配置，先前就設定過的仍在生效）、`run.googleapis.com/startup-cpu-boost=true`（額外加速容器啟動）。
+  2. **正式上線前建議重新壓測一次，且併發數要接近實際預期流量**：目前只驗證過併發 15、總數 50、20 個不同使用者（見上方「Vertex AI 回應延遲」待辦事項）。正式頻道實際流量未知，建議上線前用 `scripts/load_test.py` 抓一個更接近預期上限的併發數（例如 30～50）重新測一次，同時觀察 Cloud Run 主控台的執行個體數有沒有正確地隨流量增加。**這裡有個具體要留意的數字**：確認 min-instances 時順便看到 `autoscaling.knative.dev/maxScale=10`，也就是最多只會擴到 10 個執行個體——如果壓測時流量衝到需要超過 10 個執行個體才撐得住，會被這個上限卡住；壓測時建議留意執行個體數有沒有頂到 10，頂到的話再考慮用 `gcloud run services update recruitment-bot --region asia-east1 --max-instances=20`（或更高）調高。測完記得去 Cloud Run 環境變數把 `LOAD_TEST_SECRET` 清空或換掉，不要讓這個能觸發真的 Vertex AI 呼叫的內部端點長期留著有效密鑰。
   3. **服務帳戶權限過寬（已有的舊待辦，這裡追加一項）**：下方「服務帳戶權限過寬」待辦原本只提到要加「Cloud Datastore 使用者」，這次盤點監控機制時發現，等之後拿掉「編輯者」角色時，也要記得加「記錄檢視者」（`roles/logging.viewer`），不然每日/週報告會讀不到 Cloud Run 的 log。
   - 這幾項都是流量/GCP 設定層面，Claude 沒有這個專案的 `gcloud` 執行權限，需要使用者自己在 Cloud Shell 跑。
 
