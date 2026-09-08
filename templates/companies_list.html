@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}公司管理 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">公司管理</h1>
+    <a class="btn btn-primary" href="/companies/new">新增公司</a>
+</div>
+<p class="hint">材霈旗下的派遣公司牌照主檔，之後加保/退保、面試安排等功能會用到。跟配送部系統的「廠商」（蝦皮、UD…）是不同概念，這裡是材霈自己的牌照。</p>
+
+{% if error == "not_found" %}
+<p class="error">找不到這家公司，可能已經被刪除了。</p>
+{% endif %}
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>簡稱</th>
+            <th>公司名稱</th>
+            <th>負責人</th>
+            <th>電話</th>
+            <th>統一編號</th>
+            <th>勞工保險證號</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in companies %}
+        <tr>
+            <td>{{ c.short_name }}</td>
+            <td>{{ c.name }}{% if c.name_en %}<br><span class="hint" style="margin:0;">{{ c.name_en }}</span>{% endif %}</td>
+            <td>{{ c.responsible_person or "-" }}</td>
+            <td>{{ c.phone or "-" }}</td>
+            <td>{{ c.tax_id }}</td>
+            <td>{{ c.labor_insurance_no or "-" }}</td>
+            <td>
+                <a href="/companies/{{ c.id }}/edit">編輯</a>
+                <form method="post" action="/companies/{{ c.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除公司「{{ c.name }}」嗎？');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if not companies %}
+<p class="empty">目前還沒有任何公司資料。</p>
+{% endif %}
+{% endblock %}
