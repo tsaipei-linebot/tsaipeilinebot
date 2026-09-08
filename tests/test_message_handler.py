@@ -255,6 +255,26 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         self.assertEqual(messages[0].text, "推薦這個職缺給你")
         self.assertEqual(messages[1], "FLEX_CARD")
 
+    def test_recommend_with_no_candidates_returns_plain_text_not_empty_carousel(self):
+        # AI 決策出 action="RECOMMEND"，但候選職缺清單剛好是空的（例如 Notion
+        # 職缺暫時全部停招）——LINE 的 Flex Carousel 不接受 0 張卡片的空陣列，
+        # 這裡要老實回覆「目前沒有職缺」的純文字，不能送出一定會被 LINE API
+        # 拒絕的空卡片。
+        fake_decision = json.dumps({
+            "action": "RECOMMEND", "reply": "推薦這個職缺給你", "ids": [], "buttons": []
+        })
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision), \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            message = h._compute_ai_decision_messages(
+                "test-user", "有推薦的職缺嗎", [], [], "新莊", ""
+            )
+
+        self.assertIsInstance(message, TextSendMessage)
+        self.assertIn("沒有符合的職缺", message.text)
+
     def test_compute_ai_decision_messages_returns_fallback_on_internal_exception(self):
         # 就算計算過程整個爆炸（例如 Firestore/Notion/Gemini 任何一個環節出問題），
         # 也一定要回傳保底訊息，不能讓例外往外拋出、導致呼叫端完全沒有東西可送
@@ -319,6 +339,29 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         args, _ = line_bot_api.push_message.call_args
         self.assertEqual(args[0], "test-user")
         self.assertIn("延遲", args[1].text)
+
+    def test_sync_reply_failure_falls_back_to_push_message(self):
+        # AI 決策在時限內就算完了（走「同步成功」這條路），但 reply_message()
+        # 本身失敗（例如 reply_token 因為排隊延遲已經過期）——已經算好的正式
+        # 答案不能因此被丟掉，要改用不受時效限制的 push_message 補發，不能讓
+        # 使用者完全收不到任何回覆。
+        event = self._make_event()
+        line_bot_api = MagicMock()
+        line_bot_api.reply_message.side_effect = RuntimeError("reply token expired")
+        fast_message = TextSendMessage(text="這是即時算完的正式答案")
+
+        with patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots"), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=fast_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.push_message.assert_called_once()
+        args, _ = line_bot_api.push_message.call_args
+        self.assertEqual(args[0], "test-user-async")
+        self.assertEqual(args[1], fast_message)
 
 
 class StaffedHoursGuardTests(unittest.TestCase):
@@ -424,6 +467,69 @@ class StaffedHoursGuardTests(unittest.TestCase):
             h.process_image_message(event, line_bot_api)
 
         line_bot_api.reply_message.assert_not_called()
+
+
+class DirectInterceptEdgeCaseTests(unittest.TestCase):
+    """涵蓋兩個修過的邊界情境：
+    1.「都給我看看」這類全部瀏覽意圖，但 active_jobs 剛好是空的（Notion 職缺
+       暫時全部停招、或快取讀取失敗）——不能組出空的 LINE Flex Carousel（會被
+       LINE API 拒絕），要老實回覆文字說明。
+    2.「查看職缺詳情」帶了一個現有職缺庫裡完全比對不到的舊職缺名稱（職缺已經
+       下架/改名）——不能因為 active_jobs 非空就隨便塞第一筆不相關的職缺給
+       使用者，要落到一般對話流程（AI 決策）由 AI 判斷怎麼回覆。
+    """
+
+    def test_show_all_with_empty_active_jobs_replies_plain_text_not_empty_carousel(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-empty-jobs"
+        event.message.text = "都給我看看"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots"), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[0], "valid-reply-token")
+        # 不能是 [文字, flex_card] 這種 list，只能是單純一則文字訊息
+        self.assertIsInstance(args[1], TextSendMessage)
+        self.assertIn("沒有符合的職缺資料", args[1].text)
+
+    def test_stale_job_title_falls_through_to_ai_decision_instead_of_wrong_job(self):
+        stale_job = {
+            "職缺名稱": "美光(桃園)作業員",
+            "_internal_title": "美光(桃園)作業員",
+            "_parsed_title": "美光(桃園)作業員",
+            "_search_text": "美光桃園週休二日早班",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-stale-title"
+        event.message.text = "查看職缺詳情已經下架找不到的舊職缺ZZZ"
+        line_bot_api = MagicMock()
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[stale_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots"), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        # 一定要是走到 AI 決策的控制組回覆，不能是把不相關的 stale_job 詳情塞給使用者
+        self.assertEqual(args[1], control_message)
 
 
 if __name__ == "__main__":

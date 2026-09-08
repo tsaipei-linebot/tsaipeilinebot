@@ -1,17 +1,25 @@
 import os
 import requests
+import threading
 import time
 import json
 import re
 import urllib.request
 import urllib.parse
 from config import (
-    NOTION_API_KEY, NOTION_JOBS_DB_ID, NOTION_FAQ_DB_ID, 
+    NOTION_API_KEY, NOTION_JOBS_DB_ID, NOTION_FAQ_DB_ID,
     ALLOWED_PROPERTIES, CACHE_TTL
 )
 
 _cached_jobs, _last_jobs_fetch = None, 0
 _cached_faqs, _last_faqs_fetch = None, 0
+# 高併發下，快取剛好在同一瞬間過期時，如果不鎖，會有很多筆並發請求同時判斷
+# 「快取過期了」、各自獨立觸發一次完整的 Notion 查詢（明明只需要其中一個成功
+# 更新快取就夠了）——多出來的重複查詢會增加 Notion API 負擔、也拖慢那些本來
+# 不需要真的等 Notion 回應的請求。用一把鎖確保同一時間只有一個請求真的去查，
+# 其他請求等它查完直接共用結果。
+_jobs_cache_lock = threading.Lock()
+_faqs_cache_lock = threading.Lock()
 
 def clean_text_for_search(text: str) -> str:
     """清理文字以便進行精準搜尋與特徵比對"""
@@ -109,75 +117,85 @@ def fetch_jobs_data() -> list:
     if _cached_jobs is not None and (now - _last_jobs_fetch < CACHE_TTL):
         return _cached_jobs
 
-    active_jobs = []
-    try:
-        results = query_notion_database_direct(NOTION_JOBS_DB_ID)
+    # 快取剛好過期的那一刻，高併發下可能有很多筆請求同時通過上面那個檢查、
+    # 各自都想觸發一次完整的 Notion 查詢。用鎖確保只有第一個真的去查，其他
+    # 請求會在這裡等（通常很快，Notion 查詢本身也不慢），拿到鎖之後再檢查
+    # 一次快取是否已經被別人更新過（double-checked locking），是的話就直接
+    # 共用結果，不必重複查詢。
+    with _jobs_cache_lock:
+        now = time.time()
+        if _cached_jobs is not None and (now - _last_jobs_fetch < CACHE_TTL):
+            return _cached_jobs
 
-        for page in results:
-            props = page.get("properties", {})
-            page_id = page.get("id", "")
-            job_dict = {"_page_id": page_id}
-            raw_text_parts = []
+        active_jobs = []
+        try:
+            results = query_notion_database_direct(NOTION_JOBS_DB_ID)
 
-            # 1. 職缺名稱 (Title)
-            title_val = ""
-            for p_name, p_val in props.items():
-                if isinstance(p_val, dict) and p_val.get("type") == "title":
-                    title_val = parse_notion_property(p_val)
-                    break
-            job_dict["職缺名稱"] = title_val
+            for page in results:
+                props = page.get("properties", {})
+                page_id = page.get("id", "")
+                job_dict = {"_page_id": page_id}
+                raw_text_parts = []
 
-            # 2. 職務類別 (Multi-Select)
-            category_val = ""
-            for p_name, p_val in props.items():
-                if "類別" in p_name or "職務" in p_name:
-                    category_val = parse_notion_property(p_val)
-                    break
-            job_dict["職務類別"] = category_val
+                # 1. 職缺名稱 (Title)
+                title_val = ""
+                for p_name, p_val in props.items():
+                    if isinstance(p_val, dict) and p_val.get("type") == "title":
+                        title_val = parse_notion_property(p_val)
+                        break
+                job_dict["職缺名稱"] = title_val
 
-            # 3. 讀取其餘白名單屬性 (含 休假方式、系統廠商名稱、精華亮點、排版工作說明)
-            for field_name in ALLOWED_PROPERTIES:
-                if field_name in props and field_name not in ["職缺名稱", "職務類別"]:
-                    val_str = parse_notion_property(props[field_name])
-                    job_dict[field_name] = val_str
+                # 2. 職務類別 (Multi-Select)
+                category_val = ""
+                for p_name, p_val in props.items():
+                    if "類別" in p_name or "職務" in p_name:
+                        category_val = parse_notion_property(p_val)
+                        break
+                job_dict["職務類別"] = category_val
 
-            # 4. 嚴格過濾「停招」
-            status = str(job_dict.get("狀態", "")).strip()
-            if status == "停招":
-                continue
+                # 3. 讀取其餘白名單屬性 (含 休假方式、系統廠商名稱、精華亮點、排版工作說明)
+                for field_name in ALLOWED_PROPERTIES:
+                    if field_name in props and field_name not in ["職缺名稱", "職務類別"]:
+                        val_str = parse_notion_property(props[field_name])
+                        job_dict[field_name] = val_str
 
-            for k, v in job_dict.items():
-                if isinstance(v, str) and v and k != "狀態" and not k.startswith("_"):
-                    raw_text_parts.append(v)
+                # 4. 嚴格過濾「停招」
+                status = str(job_dict.get("狀態", "")).strip()
+                if status == "停招":
+                    continue
 
-            public_title = job_dict.get("職缺名稱(對外)") or ""
-            internal_title = job_dict.get("職缺名稱") or ""
-            job_category = job_dict.get("職務類別") or ""
-            vendor_name = job_dict.get("系統廠商名稱") or ""
-            leave_type = job_dict.get("休假方式") or ""
-            display_title = public_title or internal_title or job_category
-            
-            if display_title:
-                job_dict["_parsed_title"] = display_title
-                job_dict["_internal_title"] = internal_title
-                job_dict["_internal_title_clean"] = clean_text_for_search(internal_title)
-                job_dict["_job_category"] = job_category
-                job_dict["_job_category_clean"] = clean_text_for_search(job_category)
-                job_dict["_vendor_name"] = vendor_name
-                job_dict["_vendor_name_clean"] = clean_text_for_search(vendor_name)
-                job_dict["_leave_type"] = leave_type
-                job_dict["_leave_type_clean"] = clean_text_for_search(leave_type)
-                job_dict["_raw_row_text"] = " ".join(raw_text_parts)
-                job_dict["_search_text"] = clean_text_for_search(" ".join(raw_text_parts))
-                active_jobs.append(job_dict)
+                for k, v in job_dict.items():
+                    if isinstance(v, str) and v and k != "狀態" and not k.startswith("_"):
+                        raw_text_parts.append(v)
 
-        print(f"[Notion 職缺載入成功] 共載入 {len(active_jobs)} 筆招募中職缺！")
-        _cached_jobs = active_jobs
-        _last_jobs_fetch = now
-        return active_jobs
-    except Exception as e:
-        print(f"[Notion 職缺讀取失敗]: {e}")
-        return _cached_jobs or []
+                public_title = job_dict.get("職缺名稱(對外)") or ""
+                internal_title = job_dict.get("職缺名稱") or ""
+                job_category = job_dict.get("職務類別") or ""
+                vendor_name = job_dict.get("系統廠商名稱") or ""
+                leave_type = job_dict.get("休假方式") or ""
+                display_title = public_title or internal_title or job_category
+
+                if display_title:
+                    job_dict["_parsed_title"] = display_title
+                    job_dict["_internal_title"] = internal_title
+                    job_dict["_internal_title_clean"] = clean_text_for_search(internal_title)
+                    job_dict["_job_category"] = job_category
+                    job_dict["_job_category_clean"] = clean_text_for_search(job_category)
+                    job_dict["_vendor_name"] = vendor_name
+                    job_dict["_vendor_name_clean"] = clean_text_for_search(vendor_name)
+                    job_dict["_leave_type"] = leave_type
+                    job_dict["_leave_type_clean"] = clean_text_for_search(leave_type)
+                    job_dict["_raw_row_text"] = " ".join(raw_text_parts)
+                    job_dict["_search_text"] = clean_text_for_search(" ".join(raw_text_parts))
+                    active_jobs.append(job_dict)
+
+            print(f"[Notion 職缺載入成功] 共載入 {len(active_jobs)} 筆招募中職缺！")
+            _cached_jobs = active_jobs
+            _last_jobs_fetch = now
+            return active_jobs
+        except Exception as e:
+            print(f"[Notion 職缺讀取失敗]: {e}")
+            return _cached_jobs or []
 
 def fetch_faqs_data() -> list:
     """取得常見問答 FAQ 資料"""
@@ -186,33 +204,40 @@ def fetch_faqs_data() -> list:
     if _cached_faqs is not None and (now - _last_faqs_fetch < CACHE_TTL):
         return _cached_faqs
 
-    faqs = []
-    try:
-        results = query_notion_database_direct(NOTION_FAQ_DB_ID)
-        for page in results:
-            props = page.get("properties", {})
-            q_text, a_text, status = "", "", "啟用"
-            
-            for k, v in props.items():
-                val = parse_notion_property(v)
-                k_lower = k.lower()
-                if any(x in k_lower for x in ["問", "題目", "問題", "question", "title"]):
-                    q_text = val
-                elif any(x in k_lower for x in ["答", "回覆", "內容", "answer", "content"]):
-                    a_text = val
-                elif any(x in k_lower for x in ["狀態", "啟用", "status"]):
-                    status = val
+    # 理由同 fetch_jobs_data()：避免快取過期那一刻，高併發下多筆請求同時各自
+    # 觸發一次重複的 Notion 查詢。
+    with _faqs_cache_lock:
+        now = time.time()
+        if _cached_faqs is not None and (now - _last_faqs_fetch < CACHE_TTL):
+            return _cached_faqs
 
-            if status not in ["停用", "關閉", "false"] and q_text and a_text:
-                faqs.append({"question": q_text, "answer": a_text})
+        faqs = []
+        try:
+            results = query_notion_database_direct(NOTION_FAQ_DB_ID)
+            for page in results:
+                props = page.get("properties", {})
+                q_text, a_text, status = "", "", "啟用"
 
-        print(f"[Notion FAQ 載入成功] 共載入 {len(faqs)} 筆常見問答！")
-        _cached_faqs = faqs
-        _last_faqs_fetch = now
-        return faqs
-    except Exception as e:
-        print(f"[Notion FAQ 讀取失敗]: {e}")
-        return _cached_faqs or []
+                for k, v in props.items():
+                    val = parse_notion_property(v)
+                    k_lower = k.lower()
+                    if any(x in k_lower for x in ["問", "題目", "問題", "question", "title"]):
+                        q_text = val
+                    elif any(x in k_lower for x in ["答", "回覆", "內容", "answer", "content"]):
+                        a_text = val
+                    elif any(x in k_lower for x in ["狀態", "啟用", "status"]):
+                        status = val
+
+                if status not in ["停用", "關閉", "false"] and q_text and a_text:
+                    faqs.append({"question": q_text, "answer": a_text})
+
+            print(f"[Notion FAQ 載入成功] 共載入 {len(faqs)} 筆常見問答！")
+            _cached_faqs = faqs
+            _last_faqs_fetch = now
+            return faqs
+        except Exception as e:
+            print(f"[Notion FAQ 讀取失敗]: {e}")
+            return _cached_faqs or []
 
 
 def fetch_pending_faq_candidates() -> list:

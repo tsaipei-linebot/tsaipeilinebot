@@ -143,5 +143,23 @@ class HighConfidenceFaqTests(unittest.TestCase):
         self.assertIsNone(m.find_high_confidence_faq_match(self.faq_list, ""))
 
 
+class ScoreJobForAiBrandBonusTests(unittest.TestCase):
+    def test_brand_slot_with_halfwidth_tai_matches_normalized_search_text(self):
+        # job 的 _search_text 是 clean_text_for_search() 處理過的結果，「台」一律
+        # 轉成「臺」；KNOWN_BRANDS 的 key「台積電」本身是半形台，比對前沒有先
+        # 正規化的話會永遠對不到 _search_text 裡的「臺積電」，80 分品牌加分形同
+        # 虛設（這是修過的 bug，_brand_matches_text 一直都有做對這件事）。
+        job = _job(search_text="臺積電新竹廠作業員")
+        score_with_brand = m._score_job_for_ai(job, "有台積電的工作嗎", slots={"brand": "台積電"})
+        score_without_brand = m._score_job_for_ai(job, "有台積電的工作嗎", slots={"brand": ""})
+        self.assertGreaterEqual(score_with_brand - score_without_brand, 80)
+
+    def test_brand_slot_without_special_characters_still_works(self):
+        job = _job(search_text="美光桃園廠作業員")
+        score_with_brand = m._score_job_for_ai(job, "有美光的工作嗎", slots={"brand": "美光"})
+        score_without_brand = m._score_job_for_ai(job, "有美光的工作嗎", slots={"brand": ""})
+        self.assertGreaterEqual(score_with_brand - score_without_brand, 80)
+
+
 if __name__ == "__main__":
     unittest.main()

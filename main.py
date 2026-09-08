@@ -97,11 +97,9 @@ async def _handle_webhook(request: Request, x_line_signature: str, webhook_handl
 async def test_callback(request: Request, x_line_signature: str = Header(None)):
     return await _handle_webhook(request, x_line_signature, test_handler)
 
-@test_handler.add(MessageEvent, message=TextMessage)
 def handle_test_message(event):
     process_user_message(event, test_line_bot_api)
 
-@test_handler.add(MessageEvent, message=ImageMessage)
 def handle_test_image_message(event):
     process_image_message(event, test_line_bot_api)
 
@@ -112,13 +110,27 @@ def handle_test_image_message(event):
 async def callback(request: Request, x_line_signature: str = Header(None)):
     return await _handle_webhook(request, x_line_signature, handler)
 
-@handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     process_user_message(event, line_bot_api)
 
-@handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     process_image_message(event, line_bot_api)
+
+# 用 .add(...) 手動註冊事件處理函式，而不是用 @handler.add(...) 裝飾器語法：
+# handler/test_handler 在對應的 LINE_CHANNEL_SECRET／TEST_LINE_CHANNEL_SECRET
+# 環境變數沒設定時會是 None（見上面的實例化），裝飾器語法在「模組匯入當下」
+# 就會呼叫 None.add(...) 而丟出 AttributeError，導致整個 Cloud Run 服務（不只
+# 招募機器人，這個 app 上還掛了 delivery/management/hr 等其他子系統）啟動失敗、
+# 整個服務起不來。改成先定義好函式，匯入時才檢查 handler 是否存在再註冊，
+# 就算漏設某個 LINE 密鑰，也只會讓對應的 webhook 路由收不到訊息，不會拖垮
+# 整個服務。
+if test_handler:
+    test_handler.add(MessageEvent, message=TextMessage)(handle_test_message)
+    test_handler.add(MessageEvent, message=ImageMessage)(handle_test_image_message)
+
+if handler:
+    handler.add(MessageEvent, message=TextMessage)(handle_message)
+    handler.add(MessageEvent, message=ImageMessage)(handle_image_message)
 
 # ==========================================
 # 內部壓力測試端點（預設關閉，僅供壓力測試腳本使用）
