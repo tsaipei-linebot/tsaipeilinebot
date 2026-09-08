@@ -13,39 +13,50 @@ from services import salary_repayment_service as svc
 
 class RowsToDictsTests(unittest.TestCase):
     def test_empty_values_returns_empty_list(self):
-        self.assertEqual(svc._rows_to_dicts([]), [])
+        self.assertEqual(svc.rows_to_dicts([]), [])
 
     def test_header_only_returns_empty_list(self):
-        self.assertEqual(svc._rows_to_dicts([["姓名", "主管"]]), [])
+        self.assertEqual(svc.rows_to_dicts([["姓名", "主管"]]), [])
 
     def test_short_row_padded_with_empty_strings(self):
         rows = [["姓名", "主管"], ["王小明"]]
-        self.assertEqual(svc._rows_to_dicts(rows), [{"姓名": "王小明", "主管": ""}])
+        self.assertEqual(svc.rows_to_dicts(rows), [{"姓名": "王小明", "主管": ""}])
 
 
 class ParseNameListTests(unittest.TestCase):
     def test_splits_and_strips_comma_separated_names(self):
-        self.assertEqual(svc._parse_name_list("王小明, 李小華"), ["王小明", "李小華"])
+        self.assertEqual(svc.parse_name_list("王小明, 李小華"), ["王小明", "李小華"])
 
     def test_empty_string_returns_empty_list(self):
-        self.assertEqual(svc._parse_name_list(""), [])
+        self.assertEqual(svc.parse_name_list(""), [])
 
     def test_single_name_returns_one_item_list(self):
-        self.assertEqual(svc._parse_name_list("王小明"), ["王小明"])
+        self.assertEqual(svc.parse_name_list("王小明"), ["王小明"])
 
 
-class BuildManagerLookupTests(unittest.TestCase):
-    def test_maps_employee_to_manager_list(self):
-        org_rows = [{"員工姓名": "王小明", "主管姓名": "李小華,張大同"}]
-        self.assertEqual(svc.build_manager_lookup(org_rows), {"王小明": ["李小華", "張大同"]})
+class BuildManagerLookupFromAccountsTests(unittest.TestCase):
+    """主管關係現在讀系統帳號的 manager_usernames 欄位（在 /accounts 網頁上
+    設定），不再讀外部試算表的「主管姓名」文字欄位——這裡驗證帳號資料轉換
+    成姓名清單的邏輯正確。"""
 
-    def test_row_missing_employee_name_is_skipped(self):
-        org_rows = [{"員工姓名": "", "主管姓名": "李小華"}]
-        self.assertEqual(svc.build_manager_lookup(org_rows), {})
+    def test_maps_employee_to_manager_names(self):
+        accounts = [
+            {"username": "wang", "name": "王小明", "manager_usernames": ["li", "chang"]},
+            {"username": "li", "name": "李小華", "manager_usernames": []},
+            {"username": "chang", "name": "張大同", "manager_usernames": []},
+        ]
+        self.assertEqual(
+            svc.build_manager_lookup_from_accounts(accounts),
+            {"王小明": ["李小華", "張大同"], "李小華": [], "張大同": []},
+        )
 
-    def test_self_managed_employee(self):
-        org_rows = [{"員工姓名": "李小華", "主管姓名": "李小華"}]
-        self.assertEqual(svc.build_manager_lookup(org_rows), {"李小華": ["李小華"]})
+    def test_manager_username_with_no_matching_account_is_dropped(self):
+        accounts = [{"username": "wang", "name": "王小明", "manager_usernames": ["ghost"]}]
+        self.assertEqual(svc.build_manager_lookup_from_accounts(accounts), {"王小明": []})
+
+    def test_missing_manager_usernames_key_defaults_to_empty(self):
+        accounts = [{"username": "wang", "name": "王小明"}]
+        self.assertEqual(svc.build_manager_lookup_from_accounts(accounts), {"王小明": []})
 
 
 class BuildLineIdNameLookupTests(unittest.TestCase):

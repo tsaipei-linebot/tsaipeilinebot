@@ -72,6 +72,10 @@ FastAPI（Python）＋ line-bot-sdk（LINE 官方帳號串接）＋ Notion API
   管理員，**不能透過任何網頁表單修改**，只能用指令碼或直接改資料庫。
 - `modules`：一個帳號在每個模組各自的角色（`admin` 主管 / `staff`
   專員），沒列出的模組代表完全沒有權限。
+- `manager_usernames`：這個帳號的主管（存的是別的帳號的 username，可以
+  有多個），在 `/accounts` 網頁上設定，給「主管能看部屬資料」這類跨模組
+  功能共用（目前是 `/me` 的薪資補款紀錄在用）。
+- `department`：部門，自由文字，目前只是存起來備用，還沒有功能會用到。
 
 `platform_accounts.py` 統一管理這個邏輯，`MODULES` 清單列出目前掛載的
 部門，新增部門只要在這裡多加一筆，`/accounts` 頁面就會自動多一欄可勾選。
@@ -139,14 +143,17 @@ cookie，還是要分開登入。
 11. 把薪資補款那份 Google Sheet 分享「檢視者」權限給 Cloud Run 服務帳戶
     （否則畫面會顯示「沒有權限讀取」）——不需要到 `/accounts` 開通，`/me`
     人人都有，只是內容依姓名比對結果而定。
+12. 跑一次 `python -m scripts.import_account_managers`，把既有的主管關係
+    批次匯入到帳號的 `manager_usernames` 欄位（之後要調整直接在
+    `/accounts` 網頁上改即可，不用重跑）。
 
 **整體維運：**
-12. CI/CD 自動部署的一次性設定（Workload Identity Federation、`clasp`
+13. CI/CD 自動部署的一次性設定（Workload Identity Federation、`clasp`
     登入憑證存成 GitHub Secret）尚未完成，見上方第 4 節。
-13. 考慮加 Cloud Monitoring 錯誤告警（目前例外只靠 `print()` 寫進
+14. 考慮加 Cloud Monitoring 錯誤告警（目前例外只靠 `print()` 寫進
     Cloud Run log，沒有主動通知）。
-14. 考慮加 Firestore TTL 自動清除過期 session。
-15. 考慮把各項金鑰（Notion／Gemini／LINE channel secret 等）搬到
+15. 考慮加 Firestore TTL 自動清除過期 session。
+16. 考慮把各項金鑰（Notion／Gemini／LINE channel secret 等）搬到
     Secret Manager，取代目前明文環境變數的做法。
 
 ## 6. 想知道更多細節，去哪裡查
