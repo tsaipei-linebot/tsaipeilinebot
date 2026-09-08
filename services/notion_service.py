@@ -215,10 +215,62 @@ def fetch_faqs_data() -> list:
         return _cached_faqs or []
 
 
+def fetch_pending_faq_candidates() -> list:
+    """取得 FAQ 資料庫中「標準回覆內容」空白、且「啟用狀態」沒有被同仁手動標記
+    「停用」的問句清單，供每週報告的 FAQ 候選清單使用（見 HANDOFF.md「監控與
+    告警機制」／「FAQ 週報」）。
+
+    「啟用狀態」欄位在這裡是重複使用、不是另外新增專用欄位：
+      - 空白 = 待審（同仁還沒看過，會出現在候選清單）
+      - 手動設「停用」= 已審核但決定不採用（即使還沒填答案，也不會再出現）
+      - 填了「標準回覆內容」= 已採用，會被 fetch_faqs_data() 撈去當正式 FAQ
+    同仁若決定不採用某個候選問題，記得手動把「啟用狀態」設成「停用」，
+    不然這題會因為「還沒答案」持續被判定為待審，每週都重複出現。
+
+    刻意不套用 CACHE_TTL 快取（跟 fetch_faqs_data() 不同）：這支只有每日/週報
+    的排程端點會呼叫，不是每次求職者訊息都會觸發，不需要快取。"""
+    results = query_notion_database_direct(NOTION_FAQ_DB_ID)
+    pending = []
+    for page in results:
+        props = page.get("properties", {})
+        q_text, a_text, status = "", "", ""
+
+        for k, v in props.items():
+            val = parse_notion_property(v)
+            k_lower = k.lower()
+            if any(x in k_lower for x in ["問", "題目", "問題", "question", "title"]):
+                q_text = val
+            elif any(x in k_lower for x in ["答", "回覆", "內容", "answer", "content"]):
+                a_text = val
+            elif any(x in k_lower for x in ["狀態", "啟用", "status"]):
+                status = val
+
+        if q_text and not a_text and "停用" not in status:
+            pending.append(q_text)
+
+    return pending
+
+
+_cached_faq_titles, _last_faq_titles_fetch = None, 0
+
+
 def _fetch_all_faq_question_titles() -> list:
     """取得 FAQ 資料庫中所有頁面的『問題/關鍵字』標題文字，不篩選狀態或是否已有解答，
     供未收錄問題寫入前的去重比對使用（已寫入但尚未補答的問題，狀態/解答通常是空的，
-    不會出現在 fetch_faqs_data() 篩選過的結果裡，所以這裡另外直接查一次原始資料）。"""
+    不會出現在 fetch_faqs_data() 篩選過的結果裡，所以這裡另外直接查一次原始資料）。
+
+    這支每次有人問到未收錄的規章類問題（action="UNKNOWN_FAQ"）就會被呼叫一次，
+    跟 fetch_faqs_data() 一樣套 CACHE_TTL 快取（原本沒有快取，正式上線流量一大、
+    加上我們刻意讓 FAQ 候選問句量快速增加之後，這支每次都整份掃描 FAQ 資料庫，
+    會變慢也可能撞到 Notion API 速率限制）。快取視窗內如果剛好有兩題非常相似的
+    未收錄問題前後腳出現，去重可能會晚一輪才生效（下一則訊息才會抓到），這跟
+    先前沒有快取時「兩個並發請求同時讀到同一份舊資料」本來就會發生的情況一樣，
+    不是這次改動新增的風險。"""
+    global _cached_faq_titles, _last_faq_titles_fetch
+    now = time.time()
+    if _cached_faq_titles is not None and (now - _last_faq_titles_fetch < CACHE_TTL):
+        return _cached_faq_titles
+
     results = query_notion_database_direct(NOTION_FAQ_DB_ID)
     titles = []
     for page in results:
@@ -227,6 +279,9 @@ def _fetch_all_faq_question_titles() -> list:
             title_text = parse_notion_property(title_prop)
             if title_text:
                 titles.append(title_text)
+
+    _cached_faq_titles = titles
+    _last_faq_titles_fetch = now
     return titles
 
 
@@ -278,6 +333,11 @@ def append_unresolved_faq_to_notion(question_text: str) -> bool:
         res = requests.post(url, headers=headers, json=payload, timeout=5)
         if res.status_code in [200, 201]:
             print(f"[Notion FAQ 自動擴充成功] 已記錄新問題至『問題/關鍵字』: 「{question_text}」")
+            # 寫入成功就順手把這題加進快取，不用等快取過期才看得到——避免快取視窗內
+            # 幾乎一樣的問題被連續問兩次時，第二次因為讀到快取裡還沒反映最新寫入
+            # 的舊資料而重複寫入（見 _fetch_all_faq_question_titles() 的快取說明）。
+            if _cached_faq_titles is not None:
+                _cached_faq_titles.append(question_text.strip())
             return True
         else:
             print(f"[Notion FAQ 寫入失敗 {res.status_code}]: {res.text}")

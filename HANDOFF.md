@@ -25,6 +25,12 @@
 
 ## 待辦事項（下一步優先處理）
 
+- **【上線前流量/正確性盤點，PR 待跑，見下方「已完成」第 27 項】**：使用者希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面盤點。找到並已在程式碼裡修好 4 個問題（見第 27 項細節），另外有幾項**需要使用者自己去 GCP 動手做，Claude 這邊沒辦法代勞**：
+  1. ✅ **Cloud Run `--min-instances=1`：已完成**。用 `gcloud run services describe recruitment-bot --region asia-east1 --format="value(spec.template.metadata.annotations)"` 確認過，`autoscaling.knative.dev/minScale=1` 已生效，不會再有容器冷啟動疊加 AI 決策時間、逼近 LINE 30 秒時限的風險。同時確認 `run.googleapis.com/cpu-throttling=false`（CPU 一律配置，先前就設定過的仍在生效）、`run.googleapis.com/startup-cpu-boost=true`（額外加速容器啟動）。
+  2. **正式上線前建議重新壓測一次，且併發數要接近實際預期流量**：目前只驗證過併發 15、總數 50、20 個不同使用者（見上方「Vertex AI 回應延遲」待辦事項）。正式頻道實際流量未知，建議上線前用 `scripts/load_test.py` 抓一個更接近預期上限的併發數（例如 30～50）重新測一次，同時觀察 Cloud Run 主控台的執行個體數有沒有正確地隨流量增加。**這裡有個具體要留意的數字**：確認 min-instances 時順便看到 `autoscaling.knative.dev/maxScale=10`，也就是最多只會擴到 10 個執行個體——如果壓測時流量衝到需要超過 10 個執行個體才撐得住，會被這個上限卡住；壓測時建議留意執行個體數有沒有頂到 10，頂到的話再考慮用 `gcloud run services update recruitment-bot --region asia-east1 --max-instances=20`（或更高）調高。測完記得去 Cloud Run 環境變數把 `LOAD_TEST_SECRET` 清空或換掉，不要讓這個能觸發真的 Vertex AI 呼叫的內部端點長期留著有效密鑰。
+  3. **服務帳戶權限過寬（已有的舊待辦，這裡追加一項）**：下方「服務帳戶權限過寬」待辦原本只提到要加「Cloud Datastore 使用者」，這次盤點監控機制時發現，等之後拿掉「編輯者」角色時，也要記得加「記錄檢視者」（`roles/logging.viewer`），不然每日/週報告會讀不到 Cloud Run 的 log。
+  - 這幾項都是流量/GCP 設定層面，Claude 沒有這個專案的 `gcloud` 執行權限，需要使用者自己在 Cloud Shell 跑。
+
 - **【新功能，需完成 GCP 設定才會實際運作】每週新工廠登記監控**：`services/factory_watch_service.py` + `main.py` 的 `POST /internal/factory-watch/run` 端點已完成，邏輯是每次執行去抓政府資料開放平台《[登記工廠名錄](https://data.gov.tw/dataset/6569)》（經濟部產業發展署），篩出近期新登記、且 Firestore 裡沒推播過的工廠，寫入 Google Sheet 明細，並視情況推播 LINE 摘要通知業務。要正式上線還缺以下設定（環境變數留空時，程式仍會安全跳過對應步驟並印出提示，不會噴錯）：
   1. 建一個 Google Sheet 當明細清單，分享編輯權限給 Cloud Run 服務帳戶（`tsaipei-505807` 專案的預設運算服務帳戶，或另外指定的服務帳戶信箱），把試算表 ID 設進 `FACTORY_WATCH_SHEET_ID`
   2. 決定 LINE 推播對象（業務同仁個人帳號或內部群組），取得 LINE user ID / group ID 後設進 `FACTORY_WATCH_LINE_TARGET_ID`（沒設定時只會更新 Sheet，不會推播）
@@ -45,7 +51,22 @@
   - ⏸️ **目前刻意關閉**：整個機制受 `config.py` 的 `STAFFED_HOURS_GUARD_ENABLED` 總開關控制（讀環境變數，預設 `false`）。使用者目前仍在測試頻道，且打算等外部工程師完成「線上履歷填完自動跳轉回官方 LINE 帳號」（見上一則待辦事項）之後才切換到正式頻道，這段期間如果守門邏輯生效、剛好在白天測試，機器人會靜默不回覆、容易被誤以為故障，所以暫時不開。
   - **確定要正式啟用時，要做兩件事**：① 在 Cloud Run 設定環境變數 `STAFFED_HOURS_GUARD_ENABLED=true`（不需要改程式碼、重新部署）；② 到 LINE 官方帳號後台「設定」→「回應設定」→「回應時間設定」，排程 10:10–18:50 切到「聊天」模式（同仁手動回覆）、18:50–10:10 切到「Bot」模式（webhook 交給沛沛），這步無法用程式碼代勞。兩者建議一起設定：就算 LINE 後台沒設定或設錯，只要①開了，我們自己的守門邏輯還是會擋住白天的自動回覆（2022 年更新後「聊天」模式跟 Webhook 可以並存），算是雙重保險；但只做①不做②，白天的訊息會進到 LINE 後台一般收件匣，同仁要主動去那邊看才會發現。
   - 已知限制：真人在 LINE App／OA 後台手動回覆完全不會寫入 Firestore（LINE 平台沒有提供這類事件的 webhook），晚間沛沛接手時看不到白天談過什麼，屬於預期中的限制，非 bug。
-- **考慮加上錯誤告警機制**：目前所有例外只靠 `print()` 寫進 Cloud Run log，沒有主動通知。量小時人工看 log 還行，正式頻道建議至少設一個 Cloud Monitoring alert（例如 5xx 或例外次數異常）。
+- **【程式碼已完成，還缺外部設定才會真正生效】監控與告警機制＋FAQ 週報**：把原本分開討論的「監控告警」跟「FAQ 週報／職缺關鍵字缺口」合併成同一支每日／每週排程端點實作，見下方「已完成」第 26 項的完整說明。這裡只記還缺什麼設定：
+  1. **服務帳戶要能讀 Cloud Logging**：`run_daily_report()` 是直接查 Cloud Logging（`google-cloud-logging`），不是走 Cloud Monitoring 記錄型指標——這點跟原始設計草稿（「結構化 log → Cloud Monitoring 指標」）不同，是實作時的簡化：直接查 log 一樣能算出 p95／保底訊息次數，不用多一道設定記錄型指標的手續。目前服務帳戶靠「編輯者」角色能讀 log，但下方安全性待辦要拿掉編輯者時，記得要另外加「記錄檢視者」（`roles/logging.viewer`），不然這個報告會讀不到 log。
+  2. **建 LINE 群組＋把沛沛加進去**，取得群組 ID 後設進 `DAILY_REPORT_LINE_TARGET_ID`（沒設定時只會印 log、不推播，可以先這樣測試觀察報告內容對不對）。
+  3. **設一個隨機字串當 `DAILY_REPORT_TRIGGER_SECRET`**，並在 GCP Cloud Scheduler 建一個每天一次的排程 job，用 HTTP POST 呼叫 Cloud Run 的 `/internal/daily-report/run`，帶上 header `X-Daily-Report-Secret: <同一組密鑰>`（跟每週工廠監控端點的做法完全一樣）。
+  4. **確定要正式生效時，設定環境變數 `DAILY_REPORT_ENABLED=true`**（預設關閉，即使 Cloud Scheduler 已經照排程在打這支端點，沒開這個總開關只會回傳「尚未啟用」、不會真的去讀 log／推播），比照「日夜接力」`STAFFED_HOURS_GUARD_ENABLED` 的做法。
+  5. **「Claude 對話串」這個通知管道目前沒有做**：跟使用者討論後的結論是，正式生效的通知只走 LINE 群組（見上面第 2 點），比較不會因為某個 Claude Code session／排程沒有活著而漏發，這點是實作時額外的判斷，跟原始定案設計（雙管道都發）不同，請知悉。
+  6. **原生 Cloud Monitoring alert（完全掛掉時 5 分鐘內就通知，不用等每日報告）尚未設定**：這是每日報告以外，另一層獨立的緊急備援，設定方式：
+     ```bash
+     gcloud logging metrics create ai_decision_fallback_count \
+       --project=tsaipei-505807 \
+       --description="沛沛 AI 決策保底訊息觸發次數" \
+       --log-filter='resource.type="cloud_run_revision" AND textPayload:"[AI_DECISION_LOG]" AND textPayload:"\"fallback_triggered\": true"'
+     ```
+     建好這個記錄型指標後，到 Cloud Console「監控 (Monitoring) → Alerting」用這個指標建一個提醒（門檻設「5 分鐘內出現次數 ≥ 1」），通知管道選「Email」填自己的信箱即可，不需要再寫任何程式——這步驟用 Console 點選比用 gcloud 打指令更簡單，所以沒有另外寫 gcloud 指令。
+  7. **FAQ 週報目前是「先列清單、不做 AI 語意分群」的簡化版**：`run_daily_report()` 在每週設定的那天（預設週一，`FAQ_WEEKLY_REPORT_WEEKDAY`）會把 Notion FAQ 資料庫裡「標準回覆內容」空白、且「啟用狀態」沒被手動設「停用」的問句原樣列出來（見下方「已完成」第 26 項），沒有像原本討論那樣額外呼叫 Gemini 做語意分群／建議答案草稿——因為目前候選問句量還不大（十幾筆），原樣列出已經堪用，等同仁實際用過、真的覺得候選清單太長太亂再考慮加 AI 分群，不是現在優先要做的事。
+  - **FAQ 候選清單審核方式不變**：同仁看到週報列出的候選問句後，決定採用就去 Notion 填「標準回覆內容」（會自動生效）；決定不採用，記得手動把該筆的「啟用狀態」設成「停用」，不然下週還會重複出現在清單裡（見下方第 26 項的詳細說明）。
 - **服務帳戶權限過寬，需要重新調整（安全性）**：確認過 `recruitment-bot` 服務目前使用的服務帳戶掛的角色是：服務帳戶使用者、記錄寫入者、**編輯者**、Aiplatform 編輯者、Artifact Registry 寫入者、Cloud Run 管理員。「編輯者 (Editor)」範圍過大（幾乎整個專案的資源都能讀寫），而且清單裡**沒有任何 Firestore/Datastore 相關角色**——代表目前機器人能讀寫 Firestore，其實完全是靠「編輯者」在撐著，這代表直接移除「編輯者」會讓機器人立刻壞掉。修正時**順序一定要對**，避免服務中斷：
   1. 先新增「Cloud Datastore 使用者」（`roles/datastore.user`）角色給同一個服務帳戶
   2. 找 LINE 測試頻道傳幾句話，確認機器人（尤其是需要 Firestore 讀寫的槽位記憶功能）一切正常
@@ -103,6 +124,19 @@
     - **緩衝時間的取捨**：機器人比同仁實際下班（19:00）提早 10 分鐘於 18:50 啟動、比同仁實際上班（10:00）延後 10 分鐘於 10:10 才停止，寧可緩衝時段內偶爾跟同仁重複回覆（無害），也不要讓求職者在交接空檔完全沒人接（比重複回覆嚴重很多）。
     - **仍待使用者完成**：LINE 官方帳號後台的「回應時間設定」排程仍需手動設定，見上方待辦事項。
 25. **日夜接力加上總開關，預設關閉（PR #44）**：PR #42 合併後這個守門邏輯原本會無條件生效、不分測試/正式頻道，但使用者當時仍在測試頻道、還沒設定 LINE 後台排程，也還打算等外部工程師完成履歷跳轉功能才切換正式頻道，如果守門邏輯已經生效，白天測試時機器人會靜默、容易被誤以為故障。新增 `config.py` 的 `STAFFED_HOURS_GUARD_ENABLED`（讀環境變數，**預設 `false`**），`process_user_message()`／`process_image_message()` 的守門判斷改成同時檢查這個開關，關閉時維持「不管幾點都照舊回覆」的舊行為。確定要正式啟用時只需要在 Cloud Run 設定 `STAFFED_HOURS_GUARD_ENABLED=true`，不用再改程式碼、重新部署。**目前這個環境變數尚未設定（等同關閉），日夜接力功能實際上還沒生效**，等使用者確認要切換正式頻道時再一併開啟（見上方待辦事項）。
+26. **監控與告警機制＋FAQ 週報：結構化 log＋每日/週報告端點**：對應上方待辦事項「監控與告警機制＋FAQ 週報」的程式碼部分，**預設關閉、還缺外部設定**（見上方待辦事項的完整清單）。
+    - **結構化 log**：新增 `services/monitoring_service.py`，`log_ai_decision_event()` 把每次請求的處理結果印成一行 `[AI_DECISION_LOG] {...}` 開頭的 JSON（走的路徑、判斷出的職缺類別/廠商、action、有沒有觸發保底訊息、耗費秒數、是同步回覆還是逾時後背景補發）；`parse_log_line()` 是反向還原。`message_handler.py` 在 5 個會回覆使用者的地方都掛了這行 log：3 種精準工種直達攔截（外送/門市/momo）、全部瀏覽攔截、FAQ 高信心比對，以及 AI 決策路徑（同步成功／逾時後背景補發兩條路徑都有）。AI 決策路徑為了不更動 `_compute_ai_decision_messages()` 原本「只回傳訊息內容」的回傳值型別，改用新增的選填參數 `log_ctx: dict` 當共用小信箱，讓函式內部把 `action`／`fallback_triggered` 寫進去，呼叫端讀出來記 log，不影響原本呼叫端只需要處理回傳訊息的邏輯。
+    - **每日/週報告服務**：新增 `services/daily_report_service.py`——`compute_health_summary()` 算第一層（保底訊息出現 1 次算異常）／第二層（過去期間依固定時間區塊分組，任一區塊 p95 延遲超過門檻算變慢，用固定區塊取代「任一 3 分鐘滑動窗口」，邏輯簡單很多、效果差異不大）；`compute_keyword_gap_candidates()` 統計繞去問 AI、但目前沒有專屬直達路徑（`外送`/`門市`/`momo` 以外）的職缺類別/廠商，被問到一定次數（預設 5 次，見 `FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT`）就列入建議清單；`fetch_recent_log_events()` 是實際連 Cloud Logging 查詢過去 N 小時的 log（跟 `factory_watch_service.py` 的網路呼叫一樣，開發環境測不到，只做過純邏輯單元測試）。`services/notion_service.py` 新增 `fetch_pending_faq_candidates()`，重複使用既有的「啟用狀態」欄位分辨「待審」（空白）跟「已審核但不採用」（同仁手動設「停用」），不用新增 Notion 欄位。
+    - **端點**：`main.py` 新增 `POST /internal/daily-report/run`，比照 `/internal/factory-watch/run` 的做法，用共用密鑰 `DAILY_REPORT_TRIGGER_SECRET` 驗證，交給 Cloud Scheduler 每天呼叫一次；`DAILY_REPORT_ENABLED` 總開關預設關閉，沒開之前呼叫這支端點只會回「尚未啟用」，不會真的去讀 log／推播（比照 `STAFFED_HOURS_GUARD_ENABLED` 的做法）。每週報告只在 `FAQ_WEEKLY_REPORT_WEEKDAY`（預設週一）當天才會多附加 FAQ 候選清單＋建議新增的職缺關鍵字兩段，其餘日子只有健康狀況。
+    - **跟原始定案設計的兩個差異**（實作時的簡化，理由見上方待辦事項）：① 讀 log 的方式改成直接查 Cloud Logging，不是先設定 Cloud Monitoring 記錄型指標；② 只有 LINE 群組會收到報告，沒有另外接「Claude 對話串」這個通知管道；③ FAQ 候選清單目前是原樣列出 Notion 裡的待審問句，沒有加 Gemini 語意分群/建議答案草稿（候選量還小，先不做）。
+    - **新增依賴**：`requirements.txt` 加了 `google-cloud-logging`（讀 Cloud Logging 用，`google-auth`/`google-api-python-client` 之前就有）。
+    - **新增測試**：`tests/test_monitoring_service.py`（log 格式印出/還原 round-trip）、`tests/test_daily_report_service.py`（兩層門檻判斷、關鍵字缺口統計、報告文字組裝、週報日判斷，共 23 個測試）、`tests/test_notion_service.py` 補了 `FetchPendingFaqCandidatesTests`。
+27. **上線前全面盤點：找到並修好 4 個流量/正確性問題**：使用者表示希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面檢查。逐一讀過 `session_service.py`／`matcher_service.py`／`notion_service.py`／`flex_service.py`／`ai_service.py`／`message_handler.py`／`main.py`／`Dockerfile`／`scripts/load_test.py`，發現並修正以下問題（其餘屬於 GCP 設定/流量層面、需要使用者自己動手的項目，列在上方待辦事項）：
+    - **Firestore 讀-改-寫並發遺失更新（`session_service.py`，影響最大）**：原本 `update_user_slots()`／`append_user_history()`／`clear_user_slots()` 都是「獨立讀一次 → 在 Python 記憶體改 → 寫回」，如果同一個使用者短時間內有兩筆並發請求（例如連續快速傳兩則訊息、或第一則訊息的 AI 決策還在背景算的時候又傳了第二則——這在「限時同步等待＋逾時後背景補發」的架構下並不罕見），兩筆都讀到同一份舊資料，後寫入的會整份覆蓋掉先寫入的，可能造成剛設定的地區/班別條件、或某一則對話沒有被記錄下來就憑空消失。**現有的 `scripts/load_test.py` 其實一直都有機會觸發這個情境**（預設把多個模擬請求分配到同一批 `--distinct-users` 循環使用），只是原本的壓測只看回應時間跟狀態碼，沒有另外檢查 Firestore 資料本身有沒有遺失，所以先前沒被抓到。修正方式：把這三個函式的讀-改-寫包進 Firestore transaction（`db.transaction()` + `@firestore.transactional`），保證同一個使用者的並發更新不會互相蓋掉，Firestore 遇到衝突會自動重試。同時把三態合併、歷史紀錄裁切這兩段純邏輯拆成 `_merge_slot_updates()`／`_append_history_entry()`，方便不接真的 Firestore 也能單元測試（原本這個檔案完全沒有單元測試，新增 `tests/test_session_service.py`）。
+    - **監控機制自己的盲點：Gemini 呼叫「優雅降級」時抓不到（`ai_service.py`／`message_handler.py`／`daily_report_service.py`）**：`query_gemini_ai()` 在 `MODEL_FALLBACK_LIST` 每個模型都失敗（例如配額用盡）時，會吞掉例外、安靜地回傳空字串，不會讓 `_compute_ai_decision_messages()` 走到 `except Exception:` 那個會標記 `fallback_triggered=True` 的分支——使用者只會收到「單一焦點引導」或預設問候語，感覺像正常對話，但這句話其實完全沒有被 Gemini 真的判斷過，而剛做好的每日健康報告卻會顯示一切正常。這是本次上線前盤點自己發現、屬於這次新加的監控功能本身的漏洞，已經一併修正：`log_ctx` 新增 `ai_decision_empty` 欄位（`action` 解析出來是空字串時設為 `True`），`log_ai_decision_event()`／`compute_health_summary()` 的第一層門檻改成 `fallback_triggered` 或 `ai_decision_empty` 任一個出現 1 次都算異常，報告文字也分開列出兩種次數方便判斷根因。
+    - **FAQ 未收錄問題去重查詢完全沒有快取（`notion_service.py`）**：`_fetch_all_faq_question_titles()`（每次求職者問到未收錄的政策類問題就會呼叫一次，寫入前用來判斷是否重複）原本沒有快取，每次都整份掃描 FAQ 資料庫。這次盤點特別留意到一個時間點上的巧合：我們才剛決定「FAQ 候選內容先求量」（見上方 FAQ 週報待辦事項），加上正式頻道流量一多，這支路徑會同時變慢，也可能撞到 Notion API 速率限制——兩件事疊加起來風險比單看任一件事都大。修正方式：比照 `fetch_faqs_data()` 加上 `CACHE_TTL`（30 秒）快取；為了不讓快取視窗內的重複寫入去重失準，寫入成功後直接把新問題併入記憶體快取，不用整份重查。
+    - **`/internal/load-test-message` 密鑰比對沒有用固定時間比較（`main.py`）**：這支端點會真的觸發 Vertex AI/Notion/Firestore 呼叫，原本用 `!=` 比較密鑰，跟其餘兩個內部端點（`/internal/factory-watch/run`、`/internal/daily-report/run`）用 `hmac.compare_digest` 不一致，理論上有時間旁道攻擊風險（密鑰外流或被猜到的話，可以拿去打真的 Vertex AI 燒帳單）。已改成一致用 `hmac.compare_digest`。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 441 個測試，OK。
 
 ## 目前所有檔案的狀態
 

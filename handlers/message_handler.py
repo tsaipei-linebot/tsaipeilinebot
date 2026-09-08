@@ -1,6 +1,7 @@
 import concurrent.futures
 import json
 import re
+import time
 import traceback
 from datetime import datetime
 from linebot import LineBotApi
@@ -27,6 +28,7 @@ from services.matcher_service import (
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
+from services.monitoring_service import log_ai_decision_event
 
 
 def _is_staffed_hours(now: datetime = None) -> bool:
@@ -138,6 +140,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 測試時機器人看起來像故障。
         return
 
+    _request_start = time.monotonic()
     raw_msg = event.message.text.strip()
     user_id = getattr(event.source, 'user_id', 'USER')
     source_type = getattr(event.source, 'type', 'unknown')
@@ -376,6 +379,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             append_user_history(user_id, "求職者", raw_msg)
             append_user_history(user_id, "招募顧問沛沛", reply_text)
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, current_location)])
+            log_ai_decision_event(
+                path="direct_intercept", intercept_type="show_all",
+                matched_category=_known_category_for_filter, matched_brand=_brand_for_filter,
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
             return
 
         # ---------------- 步驟 1：精準工種直達攔截（含否定語氣防呆）[cite: 6] ----------------
@@ -428,6 +436,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             append_user_history(user_id, "求職者", raw_msg)
             append_user_history(user_id, "招募顧問沛沛", reply_text)
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:4], user_id, current_location)])
+            _intercept_type = "delivery" if is_delivery_intent else ("store" if is_store_intent else "momo")
+            log_ai_decision_event(
+                path="direct_intercept", intercept_type=_intercept_type,
+                matched_brand="momo" if is_momo_intent else "",
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
             return
 
         # ---------------- 步驟 1-5：FAQ 高信心比對，直接回傳 Notion 原文（不經 AI 改寫）----------------
@@ -446,6 +460,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                     QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
                 ])
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=faq_reply_text, quick_reply=quick_reply))
+                log_ai_decision_event(
+                    path="high_confidence_faq", action="ASK",
+                    latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                )
                 return
 
         # ---------------- 步驟 2：限時同步等待 AI 決策，只有長尾請求才改走背景 push ----------------
@@ -468,13 +486,27 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # CPU」），否則超過時限、真的走到背景 push 這條路的請求不保證能可靠跑完。
         append_user_history(user_id, "求職者", raw_msg)
 
+        # log_ctx：讓 _compute_ai_decision_messages() 把「決策出的 action」「是否
+        # 觸發保底訊息」這兩個內部才知道的資訊，透過這個共用 dict 帶出來給下面的
+        # 結構化 log 使用，不用改變函式原本「回傳訊息內容」的回傳值型別（見
+        # services/monitoring_service.py、HANDOFF.md「監控與告警機制」）。
+        # 這個 dict 只會被背景執行緒寫入一次、主執行緒在 future 完成後才讀取，
+        # 順序上不會有競爭寫入的問題。
+        log_ctx = {}
         future = _AI_DECISION_EXECUTOR.submit(
             _compute_ai_decision_messages,
-            user_id, raw_msg, active_jobs, faq_list, current_location, history_text,
+            user_id, raw_msg, active_jobs, faq_list, current_location, history_text, log_ctx,
         )
         try:
             messages = future.result(timeout=AI_DECISION_SYNC_TIMEOUT_SECONDS)
             target_line_bot_api.reply_message(reply_token, messages)
+            log_ai_decision_event(
+                path="ai_decision", action=log_ctx.get("action", ""),
+                fallback_triggered=log_ctx.get("fallback_triggered", False),
+                ai_decision_empty=log_ctx.get("ai_decision_empty", False),
+                matched_category=detected_category_from_text, matched_brand=detected_brand,
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
         except concurrent.futures.TimeoutError:
             ack_text = "收到您的訊息了！沛沛正在為您查詢最合適的資訊，請稍等一下下 🔍😊"
             # 刻意不把 ack_text 寫入對話歷史：這只是系統層級的「稍等」提示，不是真正
@@ -483,7 +515,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             # 正式答案」。
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ack_text))
             future.add_done_callback(
-                lambda fut: _push_ai_decision_messages(fut, user_id, target_line_bot_api)
+                lambda fut: _push_ai_decision_messages(
+                    fut, user_id, target_line_bot_api, log_ctx,
+                    _request_start, detected_category_from_text, detected_brand,
+                )
             )
         return
 
@@ -526,12 +561,17 @@ def _compute_ai_decision_messages(
     faq_list: list,
     current_location: str,
     history_text: str,
+    log_ctx: dict = None,
 ):
     """執行真正耗時的 AI 決策（候選集合建構 + Gemini 呼叫 + 解析），是
     process_user_message() 步驟 2 原本的內容搬過來的。這個函式故意只負責「算出
     答案」，不負責「怎麼送出去」——送出方式（免費的 reply_message 還是逾時後才
     用的 push_message）由呼叫端決定，這樣同一份決策邏輯才能同時給「限時同步等待」
     跟「逾時後背景補發」兩條路徑共用，不必重複兩份。
+
+    log_ctx：選填的共用 dict，用來把這裡才知道的「決策出的 action」「是否觸發
+    保底訊息」帶出去給呼叫端記錄結構化 log（見 HANDOFF.md「監控與告警機制」），
+    不影響這個函式原本的回傳值（訊息內容）。
 
     保證不會往外拋出例外：任何步驟失敗都在這裡攔截並回傳保底訊息，讓呼叫端
     不需要再處理例外，只要送出這裡回傳的 messages 即可。"""
@@ -617,6 +657,15 @@ def _compute_ai_decision_messages(
             decision = {}
 
         action = str(decision.get("action") or "").strip().upper()
+        if log_ctx is not None:
+            log_ctx["action"] = action
+            if not action:
+                # Gemini「優雅降級」回傳空字串或非預期格式時（例如 MODEL_FALLBACK_LIST
+                # 每個模型都失敗、配額用盡），不會走到下面的 except Exception，而是
+                # 直接落到後面的保底引導/預設問候語，使用者看起來像正常對話，但其實
+                # 這句話完全沒有被 Gemini 真的判斷過——這是監控要抓的「安靜失敗」，
+                # 見 services/monitoring_service.py 的說明。
+                log_ctx["ai_decision_empty"] = True
         ai_reply_text = str(decision.get("reply") or "").strip()
         ai_buttons = decision.get("buttons") if isinstance(decision.get("buttons"), list) else []
         ai_ids = decision.get("ids") if isinstance(decision.get("ids"), list) else []
@@ -682,25 +731,46 @@ def _compute_ai_decision_messages(
 
     except Exception:
         print(f"[AI 決策異常 Traceback]: {traceback.format_exc()}")
+        if log_ctx is not None:
+            log_ctx["fallback_triggered"] = True
         return _fallback_messages()
 
 
-def _push_ai_decision_messages(future: concurrent.futures.Future, user_id: str, target_line_bot_api: LineBotApi) -> None:
+def _push_ai_decision_messages(
+    future: concurrent.futures.Future,
+    user_id: str,
+    target_line_bot_api: LineBotApi,
+    log_ctx: dict = None,
+    request_start: float = None,
+    matched_category: str = "",
+    matched_brand: str = "",
+) -> None:
     """限時同步等待逾時後的補發路徑：process_user_message() 已經先用 reply_token
     回過「查詢中」的 ack，這裡是 future 算完後的 done-callback，改用沒有時間限制
     的 push_message(user_id, ...) 補發正式答案。_compute_ai_decision_messages()
     內部已經把所有例外都轉成保底訊息、保證不會往外拋例外，這裡的 try/except
     純粹是最後一道防線，避免使用者只收到 ack 就沒有下文。"""
+    log_ctx = log_ctx if log_ctx is not None else {}
     try:
         messages = future.result()
     except Exception:
         print(f"[限時等待逾時後取得 AI 決策結果失敗 Traceback]: {traceback.format_exc()}")
         messages = _fallback_messages()
+        log_ctx["fallback_triggered"] = True
 
     try:
         target_line_bot_api.push_message(user_id, messages)
     except Exception:
         print(f"[限時等待逾時後 push_message 補發失敗 Traceback]: {traceback.format_exc()}")
+
+    log_ai_decision_event(
+        path="ai_decision", action=log_ctx.get("action", ""),
+        fallback_triggered=log_ctx.get("fallback_triggered", False),
+        ai_decision_empty=log_ctx.get("ai_decision_empty", False),
+        matched_category=matched_category, matched_brand=matched_brand,
+        latency_seconds=(time.monotonic() - request_start) if request_start is not None else 0.0,
+        delivery_mode="push",
+    )
 
 
 def process_image_message(event, target_line_bot_api: LineBotApi):

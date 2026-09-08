@@ -18,7 +18,7 @@ import salesdev_routes
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
-    LOAD_TEST_SECRET, FACTORY_WATCH_TRIGGER_SECRET
+    LOAD_TEST_SECRET, FACTORY_WATCH_TRIGGER_SECRET, DAILY_REPORT_TRIGGER_SECRET, DAILY_REPORT_ENABLED
 )
 from delivery.config import SESSION_SECRET_KEY
 from handlers.message_handler import process_user_message, process_image_message
@@ -26,6 +26,7 @@ from delivery.app import delivery_app
 from management.app import management_app
 from hr.app import hr_app
 from services.factory_watch_service import run_weekly_scan
+from services.daily_report_service import run_daily_report
 
 app = FastAPI(
     title="Tsaipei AI Recruitment Consultant - Legal & Formatted Detail Engine - V12 (Modular)",
@@ -210,7 +211,13 @@ def _summarize_reply(messages) -> list:
 
 @app.post("/internal/load-test-message")
 async def load_test_message(payload: LoadTestMessageRequest, x_load_test_secret: str = Header(None)):
-    if not LOAD_TEST_SECRET or x_load_test_secret != LOAD_TEST_SECRET:
+    # 比照 /internal/factory-watch/run、/internal/daily-report/run 改用
+    # hmac.compare_digest 做固定時間比對，避免用 != 直接比較字串時，理論上
+    # 能被拿來做時間旁道攻擊猜出密鑰（這支端點一旦密鑰外流，任何人都能拿去
+    # 呼叫真正的 Vertex AI/Notion/Firestore，等於免費幫別人燒你的帳單）。
+    if not LOAD_TEST_SECRET or not x_load_test_secret or not hmac.compare_digest(
+        x_load_test_secret, LOAD_TEST_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     fake_event = _FakeEvent(payload.user_id, payload.text)
@@ -241,4 +248,25 @@ async def trigger_factory_watch(x_factory_watch_secret: str = Header(None)):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     summary = await run_in_threadpool(run_weekly_scan, line_bot_api)
+    return summary
+
+
+# ==========================================
+# 每日健康報告／FAQ 週報：由 Cloud Scheduler 每天呼叫一次觸發，不對外公開，
+# 用共用密鑰驗證避免被任意觸發（見 HANDOFF.md「監控與告警機制」）。
+# DAILY_REPORT_ENABLED 是總開關，預設關閉：就算 Cloud Scheduler 已經設定好、
+# 每天照樣會打這支端點，只要沒開這個環境變數，就只回傳「功能尚未啟用」、
+# 不會真的去讀 log／推播，等使用者確定要切換到正式頻道才手動打開。
+# ==========================================
+@app.post("/internal/daily-report/run")
+async def trigger_daily_report(x_daily_report_secret: str = Header(None)):
+    if not DAILY_REPORT_TRIGGER_SECRET or not x_daily_report_secret or not hmac.compare_digest(
+        x_daily_report_secret, DAILY_REPORT_TRIGGER_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if not DAILY_REPORT_ENABLED:
+        return {"enabled": False, "message": "DAILY_REPORT_ENABLED 尚未開啟，本次不執行"}
+
+    summary = await run_in_threadpool(run_daily_report, line_bot_api)
     return summary

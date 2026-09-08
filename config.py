@@ -129,3 +129,25 @@ SALARY_REPAYMENT_SHEET_ID = os.getenv(
 )
 SALARY_REPAYMENT_ORG_SHEET_NAME = os.getenv("SALARY_REPAYMENT_ORG_SHEET_NAME", "員工主管組織表")
 SALARY_REPAYMENT_RECORDS_SHEET_NAME = os.getenv("SALARY_REPAYMENT_RECORDS_SHEET_NAME", "薪資補款紀錄")
+
+# ==========================================
+# 12. 每日健康報告／FAQ 週報（監控與告警機制，見 HANDOFF.md）
+# 只有一個機制：Cloud Scheduler 每天呼叫一次 /internal/daily-report/run。
+# 週報部分（FAQ 候選清單＋建議新增的職缺關鍵字）只在 FAQ_WEEKLY_REPORT_WEEKDAY
+# 當天才會附加在當日報告後面，不是另外開一個排程。
+# DAILY_REPORT_ENABLED 預設關閉：程式碼合併進 main 後不會立刻生效，等使用者
+# 確定要切換到正式頻道才手動開啟（作法比照 STAFFED_HOURS_GUARD_ENABLED）。
+# ==========================================
+DAILY_REPORT_ENABLED = os.getenv("DAILY_REPORT_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+# Cloud Scheduler 呼叫 /internal/daily-report/run 時要帶的共用密鑰
+DAILY_REPORT_TRIGGER_SECRET = os.getenv("DAILY_REPORT_TRIGGER_SECRET", "")
+# 目前尚未決定要推播給哪個 LINE 群組，先留空；設定後即可自動開始推播（沒設定只會印 log）
+DAILY_REPORT_LINE_TARGET_ID = os.getenv("DAILY_REPORT_LINE_TARGET_ID", "")
+# 第二層門檻：過去 24（或週報時 7*24）小時內，任一固定時間區塊的 p95 延遲超過這個秒數就算變慢
+DAILY_REPORT_LATENCY_P95_THRESHOLD_SECONDS = float(os.getenv("DAILY_REPORT_LATENCY_P95_THRESHOLD_SECONDS", "12"))
+# 區塊大小（分鐘）：用固定區塊取代「任一 3 分鐘滑動窗口」，判斷邏輯簡單很多、效果差異不大
+DAILY_REPORT_LATENCY_BUCKET_MINUTES = int(os.getenv("DAILY_REPORT_LATENCY_BUCKET_MINUTES", "5"))
+# 每週報告要附加在哪一天的每日報告後面（0=一, 6=日，Python datetime.weekday() 定義）
+FAQ_WEEKLY_REPORT_WEEKDAY = int(os.getenv("FAQ_WEEKLY_REPORT_WEEKDAY", "0"))
+# 職缺類問句「這個類別/廠商本週被問幾次、但沒有專屬直達路徑」達到這個次數才列入建議清單
+FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT = int(os.getenv("FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT", "5"))

@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -68,6 +69,99 @@ class DuplicateFaqQuestionTests(unittest.TestCase):
 
     def test_empty_question_is_not_duplicate(self):
         self.assertFalse(n._is_duplicate_faq_question("", self.existing_titles))
+
+
+def _faq_page(question: str, answer: str = "", status: str = "") -> dict:
+    return {
+        "properties": {
+            "問題/關鍵字": {"type": "title", "title": [{"plain_text": question}]},
+            "標準回覆內容": {"type": "rich_text", "rich_text": [{"plain_text": answer}] if answer else []},
+            "啟用狀態": {"type": "multi_select", "multi_select": [{"name": status}] if status else []},
+        }
+    }
+
+
+class FetchPendingFaqCandidatesTests(unittest.TestCase):
+    def test_blank_answer_and_blank_status_is_pending(self):
+        pages = [_faq_page("加班費怎麼計算？")]
+        with patch("services.notion_service.query_notion_database_direct", return_value=pages):
+            self.assertEqual(n.fetch_pending_faq_candidates(), ["加班費怎麼計算？"])
+
+    def test_answered_question_is_not_pending(self):
+        pages = [_faq_page("發薪日是哪天", answer="每月5號")]
+        with patch("services.notion_service.query_notion_database_direct", return_value=pages):
+            self.assertEqual(n.fetch_pending_faq_candidates(), [])
+
+    def test_manually_marked_disabled_is_not_pending_even_without_answer(self):
+        # 同仁審核後決定不採用，即使還沒填答案也手動設「停用」，不該再出現在候選清單
+        pages = [_faq_page("照片", status="停用")]
+        with patch("services.notion_service.query_notion_database_direct", return_value=pages):
+            self.assertEqual(n.fetch_pending_faq_candidates(), [])
+
+    def test_multiple_pages_only_pending_ones_returned(self):
+        pages = [
+            _faq_page("加班費怎麼計算？"),
+            _faq_page("發薪日是哪天", answer="每月5號"),
+            _faq_page("照片", status="停用"),
+            _faq_page("颱風天上班算加班嗎"),
+        ]
+        with patch("services.notion_service.query_notion_database_direct", return_value=pages):
+            self.assertEqual(
+                n.fetch_pending_faq_candidates(),
+                ["加班費怎麼計算？", "颱風天上班算加班嗎"],
+            )
+
+
+def _title_page(title: str) -> dict:
+    return {"properties": {"問題/關鍵字": {"type": "title", "title": [{"plain_text": title}]}}}
+
+
+class FetchAllFaqQuestionTitlesCacheTests(unittest.TestCase):
+    """`_fetch_all_faq_question_titles()` 是 append_unresolved_faq_to_notion() 每次
+    寫入未收錄問題前都會呼叫的去重比對，原本沒有快取、每次都整份掃描 FAQ 資料庫，
+    正式上線流量一大＋FAQ 候選題量刻意快速增加，會變慢也可能撞到 Notion API
+    速率限制，所以補上跟 fetch_faqs_data() 一樣的 CACHE_TTL 快取。"""
+
+    def setUp(self):
+        n._cached_faq_titles, n._last_faq_titles_fetch = None, 0
+
+    def tearDown(self):
+        n._cached_faq_titles, n._last_faq_titles_fetch = None, 0
+
+    def test_second_call_within_ttl_does_not_refetch(self):
+        with patch("services.notion_service.query_notion_database_direct", return_value=[_title_page("加班費怎麼計算？")]) as mock_fetch:
+            first = n._fetch_all_faq_question_titles()
+            second = n._fetch_all_faq_question_titles()
+
+        self.assertEqual(first, ["加班費怎麼計算？"])
+        self.assertEqual(second, ["加班費怎麼計算？"])
+        mock_fetch.assert_called_once()
+
+    def test_refetches_after_ttl_expires(self):
+        with patch("services.notion_service.query_notion_database_direct", return_value=[_title_page("加班費怎麼計算？")]) as mock_fetch:
+            n._fetch_all_faq_question_titles()
+            n._last_faq_titles_fetch -= (n.CACHE_TTL + 1)  # 模擬時間已經過了快取視窗
+            n._fetch_all_faq_question_titles()
+
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    def test_successful_write_appends_to_cache_without_extra_fetch(self):
+        with patch("services.notion_service.query_notion_database_direct", return_value=[_title_page("加班費怎麼計算？")]) as mock_fetch:
+            n._fetch_all_faq_question_titles()  # 先讓快取有東西
+
+            mock_response = type("_Resp", (), {"status_code": 201, "text": ""})()
+            with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+                 patch("services.notion_service.NOTION_FAQ_DB_ID", "dummy-db-id"), \
+                 patch("services.notion_service.requests.post", return_value=mock_response):
+                self.assertTrue(n.append_unresolved_faq_to_notion("颱風天上班算加班嗎"))
+
+            # 寫入成功後不用重新整份查詢 Notion，直接把新問題併入快取
+            self.assertEqual(mock_fetch.call_count, 1)
+            self.assertEqual(
+                n._fetch_all_faq_question_titles(),
+                ["加班費怎麼計算？", "颱風天上班算加班嗎"],
+            )
+            self.assertEqual(mock_fetch.call_count, 1)
 
 
 if __name__ == "__main__":
