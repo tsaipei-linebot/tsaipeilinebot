@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯廠商' if vendor else '新增廠商' }} - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ '編輯廠商：' + vendor.name if vendor else '新增廠商' }}</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="{{ '/vendors/' + vendor.id + '/edit' if vendor and vendor.id else '/vendors/new' }}" class="form-stack form-narrow">
+    <label>代號{% if vendor and vendor.id %}（建立後不能修改）{% endif %}
+        <input type="text" name="code" value="{{ vendor.code if vendor else '' }}" required
+               {% if vendor and vendor.id %}readonly{% else %}autofocus{% endif %}>
+    </label>
+    <label>廠商名稱
+        <input type="text" name="name" value="{{ vendor.name if vendor else '' }}" required>
+    </label>
+    <label>簽約公司（選填，之後補上即可）
+        <select name="company_id">
+            <option value="" {% if not (vendor and vendor.company_id) %}selected{% endif %}>尚未設定</option>
+            {% for c in companies %}
+            <option value="{{ c.id }}" {% if vendor and vendor.company_id == c.id %}selected{% endif %}>{{ c.name }}（{{ c.short_name }}）</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>備註
+        <textarea name="note" rows="3">{{ vendor.note if vendor else '' }}</textarea>
+    </label>
+
+    <button type="submit" class="btn btn-primary">{{ '儲存' if vendor else '建立廠商' }}</button>
+</form>
+<p class="back-link"><a href="/vendors">&larr; 回廠商管理</a></p>
+{% endblock %}

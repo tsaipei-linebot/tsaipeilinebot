@@ -1,11 +1,18 @@
-"""所有部門模組共用的使用者帳號資料表，以及公司牌照主檔。
+"""所有部門模組共用的使用者帳號資料表、公司牌照主檔、廠商主檔。
 
 獨立成這支檔案（不放在 delivery/db.py 底下），是因為使用者帳號從這次多
 模組改版開始就是「全平台共用」的概念——一個帳號可能同時對應配送部、管理部
 …等好幾個模組，不屬於任何單一模組，之後每加一個新部門也不需要另外開一份
-帳號資料。公司牌照主檔（`companies_ref()`）道理一樣：材霈旗下有好幾張
-派遣公司牌照，之後加保/退保、面試安排這些功能都會需要知道「這筆資料屬於
-哪家公司」，不屬於任何單一部門模組，所以也放在這裡集中管理。
+帳號資料。公司牌照主檔（`companies_ref()`）／廠商主檔（`vendors_ref()`）
+道理一樣：之後加保/退保、面試安排這些功能都會需要知道「這筆資料屬於哪家
+公司」「這個廠商簽約哪家公司」，不屬於任何單一部門模組，所以也放在這裡
+集中管理。
+
+**`vendors_ref()` 是全新、獨立的一份資料，跟配送部系統 `delivery/config.py`
+裡寫死的 `VENDORS`／`VENDOR_MAP` 清單完全沒有關聯**——那份清單牽涉配送部
+好幾個既有功能（報到文件規則、意外事件回報白名單…），這次刻意不去動它，
+只是剛好兩邊都在講「廠商」這個詞，注意別搞混，見 `platform_vendors.py`
+開頭的說明。
 
 Collection 名稱沿用歷史上的 delivery_users（這個系統最早只有配送部一個
 模組時取的名字），刻意不为了改名而搬移既有正式環境資料，純粹是命名上的
@@ -17,6 +24,7 @@ from config import GCP_PROJECT_ID
 
 USERS_COLLECTION = "delivery_users"
 COMPANIES_COLLECTION = "companies"
+VENDORS_COLLECTION = "platform_vendors"
 
 _client = None
 
@@ -34,3 +42,7 @@ def users_ref():
 
 def companies_ref():
     return get_db().collection(COMPANIES_COLLECTION)
+
+
+def vendors_ref():
+    return get_db().collection(VENDORS_COLLECTION)

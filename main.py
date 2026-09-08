@@ -16,6 +16,7 @@ import login_routes
 import me_routes
 import portal_routes
 import salesdev_routes
+import vendors_routes
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
@@ -51,6 +52,10 @@ app.include_router(accounts_routes.router, prefix="/accounts")
 # /companies：材霈旗下派遣公司牌照主檔，只有全平台管理員看得到，跟
 # /accounts 一樣直接掛在根 app（見 company_routes.py）。
 app.include_router(company_routes.router, prefix="/companies")
+# /vendors：合作廠商主檔（記錄簽約公司），只有全平台管理員看得到，跟
+# /companies 一樣直接掛在根 app（見 vendors_routes.py，注意跟
+# delivery/routes/vendor_routes.py 是完全不同的兩個東西）。
+app.include_router(vendors_routes.router, prefix="/vendors")
 # /login、/logout：全平台共用的登入頁（見 login_routes.py）。
 app.include_router(login_routes.router)
 # /portal：登入後才看得到的內部系統入口頁，加上職缺維護系統的免登入銜接
