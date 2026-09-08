@@ -201,6 +201,41 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         self.assertEqual(args[0], "test-user-async")
         self.assertEqual(args[1], slow_message)
 
+    def test_ack_send_failure_still_schedules_background_push(self):
+        # 「查詢中」ack 送出失敗（例如 reply_token 剛好過期）不能讓程式就此放棄——
+        # 背景算完的正式答案還是要想辦法透過 push_message 送出，不然使用者會完全
+        # 收不到任何回覆（見 handlers/message_handler.py 這段的說明）。
+        import threading
+        import time
+
+        event = self._make_event()
+        line_bot_api = MagicMock()
+        line_bot_api.reply_message.side_effect = RuntimeError("reply token expired")
+        release_compute = threading.Event()
+        slow_message = TextSendMessage(text="這是算比較久才算完的正式答案")
+
+        def _slow_compute(*args, **kwargs):
+            release_compute.wait(timeout=5)
+            return slow_message
+
+        with patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots"), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler.AI_DECISION_SYNC_TIMEOUT_SECONDS", 0.05), \
+             patch("handlers.message_handler._compute_ai_decision_messages", side_effect=_slow_compute):
+            h.process_user_message(event, line_bot_api)
+
+            release_compute.set()
+            deadline = time.monotonic() + 5
+            while not line_bot_api.push_message.called and time.monotonic() < deadline:
+                time.sleep(0.02)
+
+        line_bot_api.push_message.assert_called_once()
+        args, _ = line_bot_api.push_message.call_args
+        self.assertEqual(args[1], slow_message)
+
     def test_compute_ai_decision_messages_returns_recommend_result(self):
         fake_decision = json.dumps({
             "action": "RECOMMEND", "reply": "推薦這個職缺給你", "ids": [0], "buttons": []

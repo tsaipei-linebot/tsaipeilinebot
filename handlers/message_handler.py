@@ -8,7 +8,10 @@ from linebot import LineBotApi
 from linebot.models import (
     TextSendMessage, QuickReply, QuickReplyButton, MessageAction
 )
-from config import STAFFED_HOURS_START, STAFFED_HOURS_END, STAFFED_HOURS_GUARD_ENABLED, TAIPEI_TZ
+from config import (
+    STAFFED_HOURS_START, STAFFED_HOURS_END, STAFFED_HOURS_GUARD_ENABLED, TAIPEI_TZ,
+    AI_DECISION_SYNC_TIMEOUT_SECONDS,
+)
 from services.session_service import (
     get_user_history, append_user_history, get_user_slots, update_user_slots, clear_user_slots, CLEAR_SLOT
 )
@@ -102,7 +105,8 @@ AI_DECISION_SCHEMA = {
 _AI_DECISION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=32, thread_name_prefix="ai-decision"
 )
-AI_DECISION_SYNC_TIMEOUT_SECONDS = 8
+# AI_DECISION_SYNC_TIMEOUT_SECONDS 改成從 config.py 讀（環境變數可調，預設 15，
+# 見 config.py 該常數的說明），不再是這裡寫死的常數。
 
 
 def _build_quick_reply_buttons(labels: list, fallback: list) -> list:
@@ -513,7 +517,17 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             # 的對話內容，寫進去會佔用歷史視窗（只留最後 10 則）、也會讓下一輪 AI
             # 看到的對話紀錄被這句話打斷，變成「求職者提問」後面接的不是「沛沛的
             # 正式答案」。
-            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ack_text))
+            try:
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ack_text))
+            except Exception:
+                # reply_token 這時可能已經過期（尤其高併發、或這個限時同步等待秒數
+                # 設得比較接近 LINE 30 秒上限時更容易發生——從 LINE 送出訊息到這裡
+                # 開始計時，中間可能已經有排隊延遲，我們量不到）。就算「查詢中」這句
+                # 安慰訊息送失敗，也絕對不能放棄：下面 push_message 補發正式答案不
+                # 受 reply_token 時效限制，一定要繼續排進去，不然使用者會完全收不到
+                # 任何回覆（原本這裡沒有 try/except，安慰訊息送失敗會導致整個函式
+                # 例外中斷、根本沒機會排進背景補發，見 HANDOFF.md 的說明）。
+                print(f"[逾時 ack 訊息送出失敗 Traceback]: {traceback.format_exc()}")
             future.add_done_callback(
                 lambda fut: _push_ai_decision_messages(
                     fut, user_id, target_line_bot_api, log_ctx,

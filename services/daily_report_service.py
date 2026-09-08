@@ -112,9 +112,29 @@ def compute_keyword_gap_candidates(events: list, min_count: int = None) -> list:
 
 
 # ==========================================
+# 純邏輯：週報——同步回覆／背景補發比例
+# ==========================================
+def compute_delivery_mode_summary(events: list) -> dict:
+    """統計 path=="ai_decision" 事件裡，同步回覆（免費 `reply_message`）跟逾時後
+    背景補發（計費 `push_message`）各自的次數與比例。供每週檢視
+    `AI_DECISION_SYNC_TIMEOUT_SECONDS`（限時同步等待秒數）這個設定值調得好不
+    好用：push 比例如果持續偏高，代表現在的秒數接不住多數請求、成本會偏高；
+    調高這個秒數雖然能降低 push 比例，但也會壓縮跟 LINE 30 秒 reply_token
+    上限之間的安全緩衝，兩者要一起看（見 HANDOFF.md 的壓測討論）。"""
+    sync_count = sum(1 for e in events if e.get("path") == "ai_decision" and e.get("delivery_mode") == "sync")
+    push_count = sum(1 for e in events if e.get("path") == "ai_decision" and e.get("delivery_mode") == "push")
+    total = sync_count + push_count
+    push_ratio_percent = round(push_count / total * 100, 1) if total else 0.0
+    return {"sync_count": sync_count, "push_count": push_count, "push_ratio_percent": push_ratio_percent}
+
+
+# ==========================================
 # 報告文字組裝
 # ==========================================
-def build_report_text(health: dict, faq_candidates: list, keyword_gaps: list, period_label: str) -> str:
+def build_report_text(
+    health: dict, faq_candidates: list, keyword_gaps: list, period_label: str,
+    delivery_mode: dict = None,
+) -> str:
     lines = [f"📊 沛沛{period_label}報告", ""]
 
     lines.append("【健康狀況】")
@@ -145,6 +165,15 @@ def build_report_text(health: dict, faq_candidates: list, keyword_gaps: list, pe
         lines.append("【建議新增的職缺關鍵字】（職缺類，可加快回覆速度）")
         for i, kw in enumerate(keyword_gaps[:10], 1):
             lines.append(f"{i}. {kw['label']} — 本期被問 {kw['count']} 次，目前沒有直達路徑")
+
+    if delivery_mode and (delivery_mode.get("sync_count", 0) + delivery_mode.get("push_count", 0)) > 0:
+        lines.append("")
+        lines.append("【同步回覆／背景補發比例】（AI_DECISION_SYNC_TIMEOUT_SECONDS 調整參考）")
+        lines.append(
+            f"同步（免費）{delivery_mode['sync_count']} 次／"
+            f"背景補發（計費）{delivery_mode['push_count']} 次"
+            f"，push 比例 {delivery_mode['push_ratio_percent']}%"
+        )
 
     return "\n".join(lines).strip()
 
@@ -194,7 +223,7 @@ def run_daily_report(line_bot_api) -> dict:
     health = compute_health_summary(daily_events)
     summary["health"] = health
 
-    faq_candidates, keyword_gaps = [], []
+    faq_candidates, keyword_gaps, delivery_mode = [], [], None
     period_label = "日"
 
     if is_weekly_report_day():
@@ -213,11 +242,13 @@ def run_daily_report(line_bot_api) -> dict:
             summary["errors"].append(f"fetch_weekly_logs_failed: {e}")
             weekly_events = []
         keyword_gaps = compute_keyword_gap_candidates(weekly_events)
+        delivery_mode = compute_delivery_mode_summary(weekly_events)
 
     summary["faq_candidate_count"] = len(faq_candidates)
     summary["keyword_gap_count"] = len(keyword_gaps)
+    summary["delivery_mode"] = delivery_mode
 
-    report_text = build_report_text(health, faq_candidates, keyword_gaps, period_label)
+    report_text = build_report_text(health, faq_candidates, keyword_gaps, period_label, delivery_mode)
     print(f"[每日/週報告]\n{report_text}")
 
     if not DAILY_REPORT_LINE_TARGET_ID:

@@ -12,7 +12,7 @@ _stub_gcp.install()
 from services import daily_report_service as dr
 
 
-def _event(path="ai_decision", offset_minutes=0, latency=1.0, fallback=False, ai_empty=False, category="", brand=""):
+def _event(path="ai_decision", offset_minutes=0, latency=1.0, fallback=False, ai_empty=False, category="", brand="", delivery_mode=""):
     ts = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc) + timedelta(minutes=offset_minutes)
     return {
         "ts": ts.isoformat(),
@@ -22,6 +22,7 @@ def _event(path="ai_decision", offset_minutes=0, latency=1.0, fallback=False, ai
         "ai_decision_empty": ai_empty,
         "matched_category": category,
         "matched_brand": brand,
+        "delivery_mode": delivery_mode,
     }
 
 
@@ -110,12 +111,49 @@ class ComputeKeywordGapCandidatesTests(unittest.TestCase):
         self.assertEqual(candidates[1], {"label": "類別:理貨", "count": 5})
 
 
+class ComputeDeliveryModeSummaryTests(unittest.TestCase):
+    def test_counts_sync_and_push_separately(self):
+        events = (
+            [_event(delivery_mode="sync") for _ in range(7)]
+            + [_event(delivery_mode="push") for _ in range(3)]
+        )
+        summary = dr.compute_delivery_mode_summary(events)
+        self.assertEqual(summary, {"sync_count": 7, "push_count": 3, "push_ratio_percent": 30.0})
+
+    def test_no_ai_decision_events_returns_zero_ratio(self):
+        summary = dr.compute_delivery_mode_summary([])
+        self.assertEqual(summary, {"sync_count": 0, "push_count": 0, "push_ratio_percent": 0.0})
+
+    def test_non_ai_decision_path_events_are_ignored(self):
+        events = [_event(path="direct_intercept", delivery_mode="sync") for _ in range(5)]
+        summary = dr.compute_delivery_mode_summary(events)
+        self.assertEqual(summary["sync_count"], 0)
+
+
 class BuildReportTextTests(unittest.TestCase):
     def test_healthy_report_has_check_marks_no_warning(self):
         health = {"level1_triggered": False, "fallback_count": 0, "level2_triggered": False, "worst_bucket_p95_seconds": 3.2}
         text = dr.build_report_text(health, [], [], "日")
         self.assertIn("✅", text)
         self.assertNotIn("⚠️", text)
+
+    def test_delivery_mode_section_shown_only_when_provided_and_non_empty(self):
+        health = {"level1_triggered": False, "fallback_count": 0, "level2_triggered": False, "worst_bucket_p95_seconds": 1.0}
+        delivery_mode = {"sync_count": 60, "push_count": 40, "push_ratio_percent": 40.0}
+        text = dr.build_report_text(health, [], [], "週", delivery_mode)
+        self.assertIn("同步回覆／背景補發比例", text)
+        self.assertIn("40.0%", text)
+
+    def test_delivery_mode_section_omitted_when_none(self):
+        health = {"level1_triggered": False, "fallback_count": 0, "level2_triggered": False, "worst_bucket_p95_seconds": 1.0}
+        text = dr.build_report_text(health, [], [], "日", None)
+        self.assertNotIn("同步回覆／背景補發比例", text)
+
+    def test_delivery_mode_section_omitted_when_no_events(self):
+        health = {"level1_triggered": False, "fallback_count": 0, "level2_triggered": False, "worst_bucket_p95_seconds": 1.0}
+        empty_delivery_mode = {"sync_count": 0, "push_count": 0, "push_ratio_percent": 0.0}
+        text = dr.build_report_text(health, [], [], "週", empty_delivery_mode)
+        self.assertNotIn("同步回覆／背景補發比例", text)
 
     def test_unhealthy_report_includes_warnings(self):
         health = {"level1_triggered": True, "fallback_count": 2, "level2_triggered": True, "worst_bucket_p95_seconds": 15.0}
