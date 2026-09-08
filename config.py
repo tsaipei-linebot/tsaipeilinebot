@@ -127,3 +127,18 @@ DAILY_REPORT_LATENCY_BUCKET_MINUTES = int(os.getenv("DAILY_REPORT_LATENCY_BUCKET
 FAQ_WEEKLY_REPORT_WEEKDAY = int(os.getenv("FAQ_WEEKLY_REPORT_WEEKDAY", "0"))
 # 職缺類問句「這個類別/廠商本週被問幾次、但沒有專屬直達路徑」達到這個次數才列入建議清單
 FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT = int(os.getenv("FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT", "5"))
+
+# ==========================================
+# 11. AI 決策限時同步等待秒數（見 HANDOFF.md「監控與告警機制」壓測章節）
+# 主執行緒最多同步等這麼多秒：時限內算完就用免費的 reply_token 回覆；超過
+# 時限才先回「查詢中」的 ack、改用計費的 push_message 補發正式答案（見
+# handlers/message_handler.py 的 _AI_DECISION_EXECUTOR 說明）。
+# 這個數字離 LINE reply_token 30 秒硬性上限的緩衝要留夠——從 LINE 送出訊息
+# 到我們的程式碼真正開始計時，中間可能已經有排隊等執行緒的延遲（尤其高併發
+# 時），這段時間我們量不到，所以不能把這個數字設得太接近 30 秒，否則「查詢中」
+# 這句安慰訊息本身都有可能因為 reply_token 已過期而送出失敗。原本是寫死在
+# handlers/message_handler.py 裡的常數（預設 8），改成環境變數是因為這個數字
+# 已經因為實測結果調整過不只一次，改用環境變數之後之後要再調整不用改程式碼、
+# 重新部署。
+# ==========================================
+AI_DECISION_SYNC_TIMEOUT_SECONDS = int(os.getenv("AI_DECISION_SYNC_TIMEOUT_SECONDS", "15"))

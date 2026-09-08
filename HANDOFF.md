@@ -28,11 +28,21 @@
 - **【上線前流量/正確性盤點，PR 待跑，見下方「已完成」第 27 項】**：使用者希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面盤點。找到並已在程式碼裡修好 4 個問題（見第 27 項細節），另外有幾項**需要使用者自己去 GCP 動手做，Claude 這邊沒辦法代勞**：
   1. ✅ **Cloud Run `--min-instances=1`：已完成**。用 `gcloud run services describe recruitment-bot --region asia-east1 --format="value(spec.template.metadata.annotations)"` 確認過，`autoscaling.knative.dev/minScale=1` 已生效，不會再有容器冷啟動疊加 AI 決策時間、逼近 LINE 30 秒時限的風險。同時確認 `run.googleapis.com/cpu-throttling=false`（CPU 一律配置，先前就設定過的仍在生效）、`run.googleapis.com/startup-cpu-boost=true`（額外加速容器啟動）。
   2. ✅ **正式上線前重新壓測：已完成，結果健康**。合併＋部署上方第 27 項的修正後，用 `scripts/load_test.py --concurrency 30 --total 100 --distinct-users 20` 實測：100 筆全部成功（無失敗），wall time p50=6.40s／p95=12.32s／p99=13.50s／max=13.50s，伺服器端純處理 p99=11.97s／max=11.97s——安全落在 LINE 30 秒 reply token 上限內（超過 2 倍餘裕）。**跟先前併發 15 的舊紀錄（見上方「Vertex AI 回應延遲」待辦事項）幾乎持平**（舊：wall p99/max=13.31s／伺服器 p99/max=10.78s），代表併發數翻倍後，`min-instances=1`＋CPU 一律配置＋這次修的 Firestore 並發問題，撐住了兩倍流量沒有明顯劣化。p50 落在 5-6 秒區間（一半以上請求要等 5 秒以上才有回覆），不是這次測試才有的新現象，是 Vertex AI 中高併發下既有的排隊現象；如果正式流量長時間維持併發 20-30 這個量級，可以考慮把「去 Vertex AI 主控台申請調高配額」這項低優先待辦往前提。
-     - ⚠️ **還有一項無法從程式這邊確認，需要使用者自己去 Cloud Run 主控台看一眼**：壓測當下 Cloud Run 執行個體數有沒有頂到 `maxScale=10` 這個上限（去「指標」分頁看執行個體數曲線）。沒頂到的話目前上限還很夠用；頂到的話再考慮用 `gcloud run services update recruitment-bot --region asia-east1 --max-instances=20`（或更高）調高。
      - ✅ 壓測已經順便驗證了新加的監控結構化 log（`[AI_DECISION_LOG]`）在真正部署環境下有沒有正常印出來，如果要進一步確認可以去 Cloud Logging 篩選這個關鍵字看一眼。
      - **測完記得去 Cloud Run 環境變數把 `LOAD_TEST_SECRET` 清空或換掉**，不要讓這個能觸發真的 Vertex AI 呼叫的內部端點長期留著有效密鑰。
-  3. **服務帳戶權限過寬（已有的舊待辦，這裡追加一項）**：下方「服務帳戶權限過寬」待辦原本只提到要加「Cloud Datastore 使用者」，這次盤點監控機制時發現，等之後拿掉「編輯者」角色時，也要記得加「記錄檢視者」（`roles/logging.viewer`），不然每日/週報告會讀不到 Cloud Run 的 log。
+  3. ✅ **「幾百人同時對話」規模的壓測：已完成，過程中真的撞到並修正了容量上限**。使用者確認正式頻道預期併發規模是「最多幾百人同時對話」，實測過程：
+     - 第一次 `--concurrency 200 --total 400 --distinct-users 100`：**16 筆（4%）直接被 Cloud Run 回傳 503 Service Unavailable**（不是我們程式碼的保底邏輯在回應，是 Cloud Run 基礎設施本身回絕），成功的請求 wall p99=24.09s／max=26.97s，明顯比併發 30 時差。判斷是撞到 `maxScale=10` 這個執行個體數上限。
+     - 調高上限：`gcloud run services update recruitment-bot --region asia-east1 --max-instances=20`
+     - 第二次 `--concurrency 200 --total 400 --distinct-users 300`（同時把不同使用者數拉高、降低同一人並發互搶 Firestore 文件的干擾）：**400 筆全部成功，503 消失**，證實 `max-instances=10→20` 是關鍵修正。延遲沒有因為拉高 distinct-users 而變好（伺服器端 p99 從 15.89s→19.76s，反而微幅上升）——代表延遲的主因不是這次修的 Firestore 並發問題，是 **Vertex AI Gemini 本身在高併發下的排隊效應**（HANDOFF 既有的「雪崩效應」現象，非新問題）。
+     - **目前 `max-instances` 已經是 20**，如果之後正式流量長期維持在「幾百人同時」這個量級，建議把下面第 4 項提到的 Vertex AI 配額申請往前提，這是延遲的真正瓶頸。
+  4. **服務帳戶權限過寬（已有的舊待辦，這裡追加一項）**：下方「服務帳戶權限過寬」待辦原本只提到要加「Cloud Datastore 使用者」，這次盤點監控機制時發現，等之後拿掉「編輯者」角色時，也要記得加「記錄檢視者」（`roles/logging.viewer`），不然每日/週報告會讀不到 Cloud Run 的 log。
   - 這幾項都是流量/GCP 設定層面，Claude 沒有這個專案的 `gcloud` 執行權限，需要使用者自己在 Cloud Shell 跑。
+
+- ✅ **【已完成】`AI_DECISION_SYNC_TIMEOUT_SECONDS` 從 8 秒調高到 15 秒，並修好一個連帶發現的安全網缺口**：使用者反映 8 秒門檻太保守、太多請求落到計費的 `push_message`，成本偏高。討論後：
+  - **沒有採用使用者原先提議的 25 秒**：這個數字離 LINE 30 秒 reply_token 硬性上限的緩衝太小——從 LINE 送出訊息到我們的程式碼真正開始計時，中間可能已經有排隊延遲（尤其高併發時，見上面第 3 項壓測的觀察），這段時間我們的程式完全量不到，25 秒的安全餘裕不夠。改成 15 秒，抓一個折衷值。
+  - **這個數字改成可以用環境變數調整**（`config.py` 新增 `AI_DECISION_SYNC_TIMEOUT_SECONDS = int(os.getenv("AI_DECISION_SYNC_TIMEOUT_SECONDS", "15"))`，取代原本寫死在 `handlers/message_handler.py` 裡的常數 8），之後如果要再調整不用改程式碼、重新部署，直接在 Cloud Run 改環境變數即可。
+  - **順便發現並修好一個連帶的安全網缺口**：原本「超過時限先送出『查詢中』的 ack」這段程式碼，如果 `reply_message()` 本身失敗（例如 reply_token 剛好已經過期——時限設得越接近 30 秒，這個情況越容易發生），會導致整個函式例外中斷、**根本沒機會把背景算完的正式答案排進 `push_message` 補發**，使用者會完全收不到任何回覆（比原本設計的「多等幾秒」嚴重很多）。已經把這段包進 `try/except`：就算 ack 送失敗，還是會繼續把正式答案排進背景補發，不受 ack 失敗影響。
+  - **新增每週報告區塊：「同步回覆／背景補發比例」**，讓使用者可以每週檢視這個時限值設得好不好用——`services/daily_report_service.py` 新增 `compute_delivery_mode_summary()`，統計過去 7 天 `path=="ai_decision"` 事件裡，同步（免費）跟背景補發（計費）的次數與比例，只在週報那天附加顯示。push 比例持續偏高的話，代表現在的秒數接不住多數請求，可以考慮：① 調高這個環境變數（但要注意上面提到的安全緩衡）；② 更根本地去申請調高 Vertex AI 配額，讓 Gemini 本身回得夠快、自然就會落在免費的同步路徑內。
 
 - **【新功能，需完成 GCP 設定才會實際運作】每週新工廠登記監控**：`services/factory_watch_service.py` + `main.py` 的 `POST /internal/factory-watch/run` 端點已完成，邏輯是每次執行去抓政府資料開放平台《[登記工廠名錄](https://data.gov.tw/dataset/6569)》（經濟部產業發展署），篩出近期新登記、且 Firestore 裡沒推播過的工廠，寫入 Google Sheet 明細，並視情況推播 LINE 摘要通知業務。要正式上線還缺以下設定（環境變數留空時，程式仍會安全跳過對應步驟並印出提示，不會噴錯）：
   1. 建一個 Google Sheet 當明細清單，分享編輯權限給 Cloud Run 服務帳戶（`tsaipei-505807` 專案的預設運算服務帳戶，或另外指定的服務帳戶信箱），把試算表 ID 設進 `FACTORY_WATCH_SHEET_ID`
