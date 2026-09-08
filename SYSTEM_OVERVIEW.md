@@ -35,6 +35,7 @@
 | 管理部系統 | `/management` | 管理部/業務主管 | 公告/會議記錄/SOP、業績報表、客戶拜訪紀錄、員工名冊組織圖、資產設備（含門號繳費提醒） |
 | 人資專區 | `/hr` | 人資 | 意外通報彙整、員工體檢報告、員工關懷彙整、公司證照彙整、教育訓練彙整 |
 | 少凱業務開發專區 | `/salesdev` | 業務開發（需 `/accounts` 開通） | 唯讀顯示派遣客戶開發名單、新登記工廠監控彙整（讀自 Google Sheet） |
+| 我的專區 | `/me` | 所有已登入同仁（無需開通，人人都有） | 個人化資訊，目前只有薪資補款紀錄（依「申請人/主管」邏輯篩選，讀自 Google Sheet） |
 | 帳號權限管理 | `/accounts` | 平台管理員（老闆） | 新增/刪除帳號、設定每個帳號在各模組的角色 |
 | 統一入口頁 | `/portal` | 所有已登入同仁 | 依帳號權限顯示看得到的模組卡片 |
 | 登入頁 | `/login` | 所有同仁 | 統一登入，也銜接職缺維護系統免登入 SSO |
@@ -75,7 +76,16 @@ FastAPI（Python）＋ line-bot-sdk（LINE 官方帳號串接）＋ Notion API
 `platform_accounts.py` 統一管理這個邏輯，`MODULES` 清單列出目前掛載的
 部門，新增部門只要在這裡多加一筆，`/accounts` 頁面就會自動多一欄可勾選。
 
-### 3.4 單一登入（SSO）機制
+### 3.4 兩種不同的權限維度：部門模組 vs. 個人專區
+
+- **部門模組**（3.3 說的那一套）：控制「這個帳號能不能打開這個頁面」，
+  同一個部門/角色的人看到的東西完全一樣，要在 `/accounts` 手動開通。
+- **`/me`（我的專區）**：任何登入的帳號都能打開，不需要在 `/accounts`
+  開通；控制的是「頁面裡的資料哪些是這個人可以看的」，由各個小工具自己
+  的邏輯決定（目前只有薪資補款紀錄，依「申請人本人或其主管」過濾）。之後
+  要加其他個人化資訊，走這個模式，不要誤用部門模組的權限開通流程。
+
+### 3.5 單一登入（SSO）機制
 
 `delivery`、`management`、根 `app` 三邊的 session 都用同一組密鑰、同一個
 cookie 名稱（`delivery_session`），瀏覽器端其實是同一顆 cookie，效果上
@@ -125,13 +135,18 @@ cookie，還是要分開登入。
 10. 到 `/accounts` 幫需要看這份資料的帳號開通「少凱業務開發專區」權限
     ——改成權限控管之後，除了老闆本人，沒有人會自動看到。
 
+**我的專區（`/me`）上線前還缺：**
+11. 把薪資補款那份 Google Sheet 分享「檢視者」權限給 Cloud Run 服務帳戶
+    （否則畫面會顯示「沒有權限讀取」）——不需要到 `/accounts` 開通，`/me`
+    人人都有，只是內容依姓名比對結果而定。
+
 **整體維運：**
-11. CI/CD 自動部署的一次性設定（Workload Identity Federation、`clasp`
+12. CI/CD 自動部署的一次性設定（Workload Identity Federation、`clasp`
     登入憑證存成 GitHub Secret）尚未完成，見上方第 4 節。
-12. 考慮加 Cloud Monitoring 錯誤告警（目前例外只靠 `print()` 寫進
+13. 考慮加 Cloud Monitoring 錯誤告警（目前例外只靠 `print()` 寫進
     Cloud Run log，沒有主動通知）。
-13. 考慮加 Firestore TTL 自動清除過期 session。
-14. 考慮把各項金鑰（Notion／Gemini／LINE channel secret 等）搬到
+14. 考慮加 Firestore TTL 自動清除過期 session。
+15. 考慮把各項金鑰（Notion／Gemini／LINE channel secret 等）搬到
     Secret Manager，取代目前明文環境變數的做法。
 
 ## 6. 想知道更多細節，去哪裡查

@@ -114,3 +114,18 @@ FACTORY_WATCH_TRIGGER_SECRET = os.getenv("FACTORY_WATCH_TRIGGER_SECRET", "")
 # （見 services/salesdev_sheet_service.py）。
 # ==========================================
 SALESDEV_SHEET_ID = os.getenv("SALESDEV_SHEET_ID", "1DdkW0eOP8PrvXlioVYY6LYzpswHTrIJotgvCMe-oS-Q")
+
+# ==========================================
+# 11. 我的專區（/me）：薪資補款紀錄
+# 資料來源是「職缺維護表單」（Netlify + Apps Script，跟這個 repo 完全獨立，
+# 見 CLAUDE.md）背後的 Google Sheet，這裡只讀，不寫回。
+# 「員工主管組織表」分頁：同仁姓名對到主管姓名（可能是逗號分隔的多個主管），
+# 用來判斷誰能看到誰的補款紀錄。「薪資補款紀錄」分頁：實際送出的申請，
+# 「申請人姓名」是送出申請的同仁本人（不是被補款的配送人員，配送人員記在
+# 「員工姓名」欄位）。
+# ==========================================
+SALARY_REPAYMENT_SHEET_ID = os.getenv(
+    "SALARY_REPAYMENT_SHEET_ID", "1rys_WkW2qZmqm9NFovlDWb_PXL_80seDTxelFTd9xSk"
+)
+SALARY_REPAYMENT_ORG_SHEET_NAME = os.getenv("SALARY_REPAYMENT_ORG_SHEET_NAME", "員工主管組織表")
+SALARY_REPAYMENT_RECORDS_SHEET_NAME = os.getenv("SALARY_REPAYMENT_RECORDS_SHEET_NAME", "薪資補款紀錄")

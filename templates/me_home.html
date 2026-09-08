@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}我的專區 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">我的專區</h1>
+</div>
+<p class="hint">這裡只會顯示跟你有關的資料：你自己送出的申請，或是你身為主管、同仁送出的申請。</p>
+
+<h2 class="section-title">薪資補款紀錄</h2>
+{% if salary_repayment_error %}
+<p class="warning">{{ salary_repayment_error }}</p>
+{% elif not salary_repayment_records %}
+<p class="empty">目前沒有跟你相關的補款紀錄。</p>
+{% else %}
+<input type="text" class="sheet-search" data-search-for="salary-repayment-table" placeholder="搜尋補款紀錄...">
+<div class="table-scroll">
+    <table class="data-table sticky-head" id="salary-repayment-table">
+        <thead>
+            <tr>
+                {% for col in salary_repayment_columns %}<th>{{ col }}</th>{% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for record in salary_repayment_records %}
+            <tr>
+                {% for col in salary_repayment_columns %}<td>{{ record.get(col, "") }}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<script>
+document.querySelectorAll('.sheet-search').forEach(function (input) {
+    input.addEventListener('input', function () {
+        var table = document.getElementById(input.dataset.searchFor);
+        var keyword = input.value.trim().toLowerCase();
+        table.querySelectorAll('tbody tr').forEach(function (tr) {
+            tr.hidden = keyword.length > 0 && tr.textContent.toLowerCase().indexOf(keyword) === -1;
+        });
+    });
+});
+</script>
+{% endif %}
+{% endblock %}

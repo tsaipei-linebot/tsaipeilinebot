@@ -7,6 +7,21 @@
 </div>
 
 <div class="home-grid">
+    <a class="home-panel" href="/me" style="text-decoration: none; display: block;">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+            </svg>
+        </span>
+        <h2>我的專區</h2>
+        <p class="hint">跟你有關的個人化資訊，例如薪資補款紀錄</p>
+        <span style="color: var(--brand-dark); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+            前往
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </span>
+    </a>
+
     {% for c in cards %}
     <a class="home-panel" href="{{ c.href }}" style="text-decoration: none; display: block;">
         <span class="home-panel-icon">

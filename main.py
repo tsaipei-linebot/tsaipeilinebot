@@ -12,6 +12,7 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage
 
 import accounts_routes
 import login_routes
+import me_routes
 import portal_routes
 import salesdev_routes
 from config import (
@@ -50,6 +51,9 @@ app.include_router(portal_routes.router)
 # /salesdev：少凱業務開發專區，唯讀顯示 Google Sheet 內容，跟 /accounts、
 # /portal 一樣直接掛在根 app（見 salesdev_routes.py）。
 app.include_router(salesdev_routes.router)
+# /me：我的專區，登入後每個帳號都自動有，內容依申請人/主管邏輯個人化篩選
+# （見 me_routes.py）。
+app.include_router(me_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，
