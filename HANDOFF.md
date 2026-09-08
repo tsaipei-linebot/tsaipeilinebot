@@ -19,7 +19,7 @@
 - 專案性質：材霈有限公司的 LINE 招募聊天機器人「沛沛」
 - 技術棧：FastAPI + line-bot-sdk + Notion API（職缺/FAQ 資料庫）+ Vertex AI Gemini（決策與回覆生成）+ Firestore（session/槽位儲存）
 - GCP 專案 ID：`tsaipei-505807`
-- 部署方式：接 GitHub，push 後由 Cloud Build 自動建置、部署到 Cloud Run（服務名稱 `recruitment-bot`，地區 `asia-east1`）
+- 部署方式：接 GitHub，push 到 `main` 後由 GitHub Actions 工作流程（`.github/workflows/deploy.yml`，「Deploy to Cloud Run」）自動建置、部署到 Cloud Run（服務名稱 `recruitment-bot`，地區 `asia-east1`），細節見下方「CI/CD 自動部署」章節。單次部署歷史紀錄大約 2-3 分鐘跑完。
 - Cloud Run 服務有 `/callback`（正式環境）與 `/test-callback`（測試環境）兩條 webhook 路由
 - 檔案結構：`main.py`、`config.py`、`handlers/message_handler.py`、`services/session_service.py`、`services/matcher_service.py`、`services/notion_service.py`、`services/flex_service.py`、`services/ai_service.py`、`tests/`
 
@@ -27,7 +27,10 @@
 
 - **【上線前流量/正確性盤點，PR 待跑，見下方「已完成」第 27 項】**：使用者希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面盤點。找到並已在程式碼裡修好 4 個問題（見第 27 項細節），另外有幾項**需要使用者自己去 GCP 動手做，Claude 這邊沒辦法代勞**：
   1. ✅ **Cloud Run `--min-instances=1`：已完成**。用 `gcloud run services describe recruitment-bot --region asia-east1 --format="value(spec.template.metadata.annotations)"` 確認過，`autoscaling.knative.dev/minScale=1` 已生效，不會再有容器冷啟動疊加 AI 決策時間、逼近 LINE 30 秒時限的風險。同時確認 `run.googleapis.com/cpu-throttling=false`（CPU 一律配置，先前就設定過的仍在生效）、`run.googleapis.com/startup-cpu-boost=true`（額外加速容器啟動）。
-  2. **正式上線前建議重新壓測一次，且併發數要接近實際預期流量**：目前只驗證過併發 15、總數 50、20 個不同使用者（見上方「Vertex AI 回應延遲」待辦事項）。正式頻道實際流量未知，建議上線前用 `scripts/load_test.py` 抓一個更接近預期上限的併發數（例如 30～50）重新測一次，同時觀察 Cloud Run 主控台的執行個體數有沒有正確地隨流量增加。**這裡有個具體要留意的數字**：確認 min-instances 時順便看到 `autoscaling.knative.dev/maxScale=10`，也就是最多只會擴到 10 個執行個體——如果壓測時流量衝到需要超過 10 個執行個體才撐得住，會被這個上限卡住；壓測時建議留意執行個體數有沒有頂到 10，頂到的話再考慮用 `gcloud run services update recruitment-bot --region asia-east1 --max-instances=20`（或更高）調高。測完記得去 Cloud Run 環境變數把 `LOAD_TEST_SECRET` 清空或換掉，不要讓這個能觸發真的 Vertex AI 呼叫的內部端點長期留著有效密鑰。
+  2. ✅ **正式上線前重新壓測：已完成，結果健康**。合併＋部署上方第 27 項的修正後，用 `scripts/load_test.py --concurrency 30 --total 100 --distinct-users 20` 實測：100 筆全部成功（無失敗），wall time p50=6.40s／p95=12.32s／p99=13.50s／max=13.50s，伺服器端純處理 p99=11.97s／max=11.97s——安全落在 LINE 30 秒 reply token 上限內（超過 2 倍餘裕）。**跟先前併發 15 的舊紀錄（見上方「Vertex AI 回應延遲」待辦事項）幾乎持平**（舊：wall p99/max=13.31s／伺服器 p99/max=10.78s），代表併發數翻倍後，`min-instances=1`＋CPU 一律配置＋這次修的 Firestore 並發問題，撐住了兩倍流量沒有明顯劣化。p50 落在 5-6 秒區間（一半以上請求要等 5 秒以上才有回覆），不是這次測試才有的新現象，是 Vertex AI 中高併發下既有的排隊現象；如果正式流量長時間維持併發 20-30 這個量級，可以考慮把「去 Vertex AI 主控台申請調高配額」這項低優先待辦往前提。
+     - ⚠️ **還有一項無法從程式這邊確認，需要使用者自己去 Cloud Run 主控台看一眼**：壓測當下 Cloud Run 執行個體數有沒有頂到 `maxScale=10` 這個上限（去「指標」分頁看執行個體數曲線）。沒頂到的話目前上限還很夠用；頂到的話再考慮用 `gcloud run services update recruitment-bot --region asia-east1 --max-instances=20`（或更高）調高。
+     - ✅ 壓測已經順便驗證了新加的監控結構化 log（`[AI_DECISION_LOG]`）在真正部署環境下有沒有正常印出來，如果要進一步確認可以去 Cloud Logging 篩選這個關鍵字看一眼。
+     - **測完記得去 Cloud Run 環境變數把 `LOAD_TEST_SECRET` 清空或換掉**，不要讓這個能觸發真的 Vertex AI 呼叫的內部端點長期留著有效密鑰。
   3. **服務帳戶權限過寬（已有的舊待辦，這裡追加一項）**：下方「服務帳戶權限過寬」待辦原本只提到要加「Cloud Datastore 使用者」，這次盤點監控機制時發現，等之後拿掉「編輯者」角色時，也要記得加「記錄檢視者」（`roles/logging.viewer`），不然每日/週報告會讀不到 Cloud Run 的 log。
   - 這幾項都是流量/GCP 設定層面，Claude 沒有這個專案的 `gcloud` 執行權限，需要使用者自己在 Cloud Shell 跑。
 
