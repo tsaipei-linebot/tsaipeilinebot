@@ -103,9 +103,18 @@ class ValidateTaiwanIdTests(unittest.TestCase):
 
 class SubmitSalaryRepaymentTests(unittest.TestCase):
     """submit_salary_repayment() 呼叫 GAS 那支 Web App，這裡涵蓋：沒設定網址、
-    連線失敗、回應不是合法 JSON、回應是 JSON 但格式不對、正常成功／GAS 自己
-    擋下來（例如尚未完成 LINE 綁定）這幾種情況——每一種都要回傳結構一致的
-    dict，呼叫端（me_routes.py）不用另外接例外。"""
+    連線失敗、逾時、回應不是合法 JSON、回應是 JSON 但格式不對、正常成功／
+    GAS 自己擋下來（例如尚未完成 LINE 綁定）這幾種情況——每一種都要回傳
+    結構一致的 dict，呼叫端（me_routes.py）不用另外接例外。
+
+    2026-09-09 使用者實測回報：GAS 那支網頁應用程式偶爾會出現「其實已經
+    處理完這筆申請，但回傳執行結果給呼叫端這一步卡住」的情況（HTTP 404、
+    回應不是合法 JSON），這種「不確定到底有沒有處理完」的狀況要回傳
+    status="unknown"，不能當成 status="error" 處理——呼叫端看到 "error"
+    才可以放心讓同仁重新送出，"unknown" 時絕對不能，否則會有重複申請
+    的風險（見 me_routes.py 的說明）。只有「送出請求前就確定失敗」（例如
+    網址沒設定、DNS 解析失敗、連線被拒絕）這種 GAS 一定沒收到請求的情況
+    才回傳 "error"。"""
 
     def test_not_configured_returns_error_without_network_call(self):
         with mock.patch.object(submit_service, "GAS_WEBAPP_URL", ""):
@@ -126,24 +135,35 @@ class SubmitSalaryRepaymentTests(unittest.TestCase):
         self.assertEqual(result["status"], "error")
         self.assertIn("連線", result["message"])
 
-    def test_non_json_response_returns_error_dict(self):
-        fake_response = mock.Mock(status_code=500)
+    def test_timeout_returns_unknown_not_error(self):
+        import requests as requests_module
+
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(
+                submit_service.requests, "post", side_effect=requests_module.Timeout("boom")
+            ):
+                result = submit_service.submit_salary_repayment({"type": "SUBMIT_SALARY"})
+        self.assertEqual(result["status"], "unknown")
+        self.assertIn("我的專區", result["message"])
+
+    def test_non_json_response_returns_unknown_not_error(self):
+        fake_response = mock.Mock(status_code=404)
         fake_response.json.side_effect = ValueError("not json")
 
         with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
             with mock.patch.object(submit_service.requests, "post", return_value=fake_response):
                 result = submit_service.submit_salary_repayment({"type": "SUBMIT_SALARY"})
-        self.assertEqual(result["status"], "error")
-        self.assertIn("500", result["message"])
+        self.assertEqual(result["status"], "unknown")
+        self.assertIn("我的專區", result["message"])
 
-    def test_json_response_missing_status_returns_error_dict(self):
+    def test_json_response_missing_status_returns_unknown_not_error(self):
         fake_response = mock.Mock(status_code=200)
         fake_response.json.return_value = {"unexpected": "shape"}
 
         with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
             with mock.patch.object(submit_service.requests, "post", return_value=fake_response):
                 result = submit_service.submit_salary_repayment({"type": "SUBMIT_SALARY"})
-        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["status"], "unknown")
 
     def test_success_response_passed_through(self):
         fake_response = mock.Mock(status_code=200)
