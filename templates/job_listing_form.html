@@ -1,11 +1,23 @@
 {% extends "base.html" %}
-{% macro multiselect_field(key, options) %}
+{# 可見的標籤選取元件（放在 <label> 裡面，靠 .form-stack label 的排版樣式）
+   跟實際負責表單送出資料的 hidden <select multiple>，故意拆成兩個巨集、
+   分開輸出（不是同一包一起塞進 <label> 裡）——瀏覽器對 <label> 有個原生
+   行為：點擊 <label> 裡任何地方，都會「順便」對它裡面的表單控制項也
+   補送一次 click 事件，就算那個控制項是 hidden 的也一樣。如果把
+   hidden 的 <select> 也包在同一個 <label> 裡，點擊自訂選取框時就會
+   多觸發一次 <select> 的 click，冒泡到 document 的「點擊外面就關閉
+   選單」判斷會誤判成「點在元件外面」，選單開了又馬上被關掉，變成看起來
+   完全點不開——這就是 2026-09-09 使用者實測回報「所有選單功能都是壞的」
+   的真正原因，用 Playwright 實際載入畫面點擊才抓到。#}
+{% macro multiselect_widget(key) %}
 <div class="multiselect" data-field="{{ key }}">
     <div class="multiselect-box" id="box_{{ key }}" onclick="toggleDropdown('{{ key }}')">
         <div class="multiselect-tags" id="tags_{{ key }}"></div>
     </div>
     <div class="multiselect-menu" id="menu_{{ key }}" hidden></div>
 </div>
+{% endmacro %}
+{% macro multiselect_native_select(key, options) %}
 <select name="{{ key }}" id="native_{{ key }}" multiple hidden>
     {% for opt in options %}<option value="{{ opt }}">{{ opt }}</option>{% endfor %}
 </select>
@@ -84,17 +96,22 @@
             <label class="full-width">職缺名稱(對外) *
                 <input type="text" name="external_title" value="{{ form.external_title or '' }}" placeholder="如：大廠高薪日班技術員/供宿/高錄取" required>
             </label>
-            <label>行業別 *（可複選，Notion 多選）{{ multiselect_field('industry', industry_options) }}</label>
-            <label>職務類別 *（可複選，Notion 多選）{{ multiselect_field('category', category_options) }}</label>
+            <div class="field-block">行業別 *（可複選，Notion 多選）{{ multiselect_widget('industry') }}</div>
+            {{ multiselect_native_select('industry', industry_options) }}
+            <div class="field-block">職務類別 *（可複選，Notion 多選）{{ multiselect_widget('category') }}</div>
+            {{ multiselect_native_select('category', category_options) }}
         </div>
     </div>
 
     <div class="repayment-section">
         <div class="repayment-section-title">二、職務屬性與工作條件</div>
         <div class="repayment-basic-grid">
-            <label>全/兼職{{ multiselect_field('job_type', job_type_options) }}</label>
-            <label>外籍生{{ multiselect_field('foreign_student', foreign_student_options) }}</label>
-            <label>職缺週期 *（可複選）{{ multiselect_field('job_cycle', job_cycle_options) }}</label>
+            <div class="field-block">全/兼職{{ multiselect_widget('job_type') }}</div>
+            {{ multiselect_native_select('job_type', job_type_options) }}
+            <div class="field-block">外籍生{{ multiselect_widget('foreign_student') }}</div>
+            {{ multiselect_native_select('foreign_student', foreign_student_options) }}
+            <div class="field-block">職缺週期 *（可複選）{{ multiselect_widget('job_cycle') }}</div>
+            {{ multiselect_native_select('job_cycle', job_cycle_options) }}
             <label class="full-width">工作內容(對內) *
                 <textarea name="internal_desc" rows="3" placeholder="內部專員招募備忘、機台操作規範..." required>{{ form.internal_desc or '' }}</textarea>
             </label>
@@ -107,21 +124,27 @@
     <div class="repayment-section">
         <div class="repayment-section-title">三、地點與負責所別</div>
         <div class="repayment-basic-grid">
-            <label>縣市 *（可複選，選了才會出現對應行政區）{{ multiselect_field('city', taiwan_cities) }}</label>
-            <label>行政區 *（可複選，含縣市名稱，可搜尋）{{ multiselect_field('district', []) }}</label>
-            <label>負責所別{{ multiselect_field('branch', branch_options) }}</label>
+            <div class="field-block">縣市 *（可複選，選了才會出現對應行政區）{{ multiselect_widget('city') }}</div>
+            {{ multiselect_native_select('city', taiwan_cities) }}
+            <div class="field-block">行政區 *（可複選，含縣市名稱，可搜尋）{{ multiselect_widget('district') }}</div>
+            {{ multiselect_native_select('district', []) }}
+            <div class="field-block">負責所別{{ multiselect_widget('branch') }}</div>
+            {{ multiselect_native_select('branch', branch_options) }}
         </div>
     </div>
 
     <div class="repayment-section">
         <div class="repayment-section-title">四、班別、薪酬與面試安排</div>
         <div class="repayment-basic-grid">
-            <label>班別{{ multiselect_field('shift', shift_options) }}</label>
-            <label>休假方式{{ multiselect_field('leave_type', leave_type_options) }}</label>
+            <div class="field-block">班別{{ multiselect_widget('shift') }}</div>
+            {{ multiselect_native_select('shift', shift_options) }}
+            <div class="field-block">休假方式{{ multiselect_widget('leave_type') }}</div>
+            {{ multiselect_native_select('leave_type', leave_type_options) }}
             <label>薪資待遇 *
                 <input type="text" name="salary" value="{{ form.salary or '' }}" placeholder="如：月薪 38,000~45,000 / 時薪 210" required>
             </label>
-            <label>領薪方式{{ multiselect_field('pay_method', pay_method_options) }}</label>
+            <div class="field-block">領薪方式{{ multiselect_widget('pay_method') }}</div>
+            {{ multiselect_native_select('pay_method', pay_method_options) }}
             <label>面試方式 *
                 <input type="text" name="interview_method" value="{{ form.interview_method or '' }}" placeholder="如：線上視訊面試 / 廠區面談" required>
             </label>
@@ -354,6 +377,20 @@ function onCitySelectionChanged() {
     });
     FIELD_OPTIONS.district = available;
     selectedValues.district = (selectedValues.district || []).filter(function (d) { return available.indexOf(d) > -1; });
+
+    // native_district 這個 hidden <select> 伺服器端渲染時是空的（行政區
+    // 選項要看縣市選了什麼才知道，不是固定清單），syncNativeSelect() 只會
+    // 切換「已經存在的」<option> 的 selected 屬性，不會自己生出新的
+    // <option>——所以縣市一變動，這裡要重新生成 native_district 底下的
+    // <option> 清單，不然行政區不管選了什麼，表單送出時永遠是空的。
+    var nativeDistrictSelect = document.getElementById('native_district');
+    nativeDistrictSelect.innerHTML = '';
+    available.forEach(function (d) {
+        var opt = document.createElement('option');
+        opt.value = d;
+        nativeDistrictSelect.appendChild(opt);
+    });
+
     renderTags('district');
     renderMenu('district');
     syncNativeSelect('district');

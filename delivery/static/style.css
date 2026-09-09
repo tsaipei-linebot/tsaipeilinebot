@@ -492,6 +492,25 @@ body {
     color: var(--muted);
 }
 
+/* 跟 .form-stack label 排版完全一樣，但故意用 <div> 不用 <label>——瀏覽器
+   對 <label> 有個原生行為：點擊 <label> 裡任何地方，都會「順便」對它裡面
+   第一個可以當「標籤對象」的表單控制項（label、button、select、input…）
+   補送一次 click。職缺維護表單的多選標籤選取元件（見
+   templates/job_listing_form.html 的 multiselect_widget()）選了選項後
+   會動態生成帶有 <button>（標籤上的 × 移除鈕）的內容，如果整包元件包在
+   <label> 裡，每次點選單選項，瀏覽器都會「順便」對剛長出來的那顆
+   × 按鈕補送一次 click，等於選了又立刻被移除——這是 2026-09-09
+   使用者實測回報「所有選單功能都是壞的」的真正原因，用 Playwright
+   實際載入畫面點擊、比對「直接呼叫函式」跟「模擬真的點擊」兩種結果的
+   差異才抓到。這個 class 就是繞開這個原生行為用的。 */
+.field-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
 .form-stack input,
 .form-stack select,
 .form-stack textarea,
