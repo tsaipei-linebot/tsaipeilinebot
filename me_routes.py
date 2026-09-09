@@ -41,7 +41,7 @@ def _require_login(request: Request):
 
 
 @router.get("/me")
-def my_zone(request: Request, submitted: str = "", redirect=Depends(_require_login)):
+def my_zone(request: Request, submitted: str = "", submit_unknown: str = "", redirect=Depends(_require_login)):
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
@@ -55,6 +55,7 @@ def my_zone(request: Request, submitted: str = "", redirect=Depends(_require_log
             "salary_repayment_records": records,
             "salary_repayment_error": error,
             "submitted_salary_id": submitted,
+            "submit_unknown": submit_unknown,
         },
     )
 
@@ -194,12 +195,19 @@ async def create_salary_repayment_submit(
     )
     result = submit_salary_repayment(payload)
 
-    if result.get("status") != "success":
-        return templates.TemplateResponse(
-            request,
-            "salary_repayment_form.html",
-            _salary_repayment_form_context(account, result.get("message") or "送出失敗，請稍後再試。", form_values),
-            status_code=400,
-        )
+    if result.get("status") == "success":
+        return RedirectResponse(url="/me?submitted=" + result.get("salaryId", ""), status_code=303)
 
-    return RedirectResponse(url="/me?submitted=" + result.get("salaryId", ""), status_code=303)
+    if result.get("status") == "unknown":
+        # 這種情況代表「不確定 GAS 到底有沒有處理完這筆申請」（見
+        # submit_salary_repayment() 的說明），絕對不能讓同仁停在原本填好
+        # 的表單上、誘使他再按一次送出——會有重複申請的風險。改成導去
+        # 「我的專區」，讓同仁自己確認這筆申請有沒有出現在紀錄裡。
+        return RedirectResponse(url="/me?submit_unknown=1", status_code=303)
+
+    return templates.TemplateResponse(
+        request,
+        "salary_repayment_form.html",
+        _salary_repayment_form_context(account, result.get("message") or "送出失敗，請稍後再試。", form_values),
+        status_code=400,
+    )

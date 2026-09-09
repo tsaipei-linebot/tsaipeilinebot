@@ -130,13 +130,41 @@ def build_payload(
     return payload
 
 
+# 2026-09-09 使用者實測回報：GAS 那支網頁應用程式偶爾會出現「其實已經
+# 把申請整個處理完（試算表寫進去了、LINE 也推播了），但回傳執行結果給
+# 呼叫端這最後一步卡住，回傳一個看不懂的內容（例如 HTTP 404、不是合法
+# JSON）」的怪癖——這是 Google Apps Script 網頁應用程式已知的行為，不是
+# 材霈平台這邊的程式錯誤，也不是網址或權限設定錯誤。
+#
+# 這種情況絕對不能直接顯示「送出失敗，請重試」：同仁一看到失敗字樣，
+# 很自然會想再送一次，但實際上申請早就送出去了，重送一次就會產生兩筆
+# 重複的申請，比原本「畫面沒反應被誤按兩次」那個問題更嚴重——因為畫面
+# 這次會很肯定地說「失敗」，同仁更沒理由懷疑。所以這種「送出去了、但
+# 看不懂對方回了什麼」的情況，回傳 status="unknown"（不是 "success" 也
+# 不是 "error"），呼叫端（me_routes.py）看到這個 status 時不能讓同仁
+# 直接在原本填好的表單上再按一次送出，而是要導去「我的專區」提醒同仁
+# 先確認這筆申請是否已經出現在紀錄裡。
+_AMBIGUOUS_OUTCOME_MESSAGE = (
+    "這筆申請很可能其實已經送出成功了，只是材霈平台這邊沒辦法確認職缺維護系統的回應內容"
+    "（這是對方系統偶爾會出現的已知狀況，不是這邊的程式錯誤）。請先到「我的專區」確認這筆"
+    "申請有沒有出現在薪資補款紀錄裡，如果沒有看到才需要重新送出一次，避免不小心送出兩筆"
+    "重複的申請。"
+)
+
+
 def submit_salary_repayment(payload: dict) -> dict:
     """把 payload 轉送給 GAS 的 SUBMIT_SALARY 端點，回傳 GAS 回應的
     dict（成功時至少有 "status": "success" 跟 "salaryId"；GAS 那邊擋下來的
     情況，例如尚未完成 LINE 綁定、找不到核准主管，也會回傳結構一樣的
     dict，只是 status 不是 "success"，message 是可以直接顯示給同仁看的
-    中文說明）。連線失敗、逾時、回應不是預期的 JSON 格式，都在這裡轉成
-    同樣結構的 dict 回傳，呼叫端不需要另外接例外。"""
+    中文說明）。
+
+    連線在送出請求前就失敗（例如 DNS 解析失敗、連線被拒絕），這種情況
+    可以確定 GAS 完全沒收到這筆申請，回傳 status="error"，可以放心請
+    同仁重新送出。但如果請求逾時、或收到回應但看不懂內容（HTTP 狀態碼
+    異常、回應不是合法 JSON），代表無法確定 GAS 到底有沒有處理完這筆
+    申請，回傳 status="unknown"，呼叫端不能當成單純的失敗處理（見上方
+    模組層級註解）。"""
     if not GAS_WEBAPP_URL:
         return {
             "status": "error",
@@ -144,16 +172,15 @@ def submit_salary_repayment(payload: dict) -> dict:
         }
     try:
         response = requests.post(GAS_WEBAPP_URL, json=payload, timeout=_REQUEST_TIMEOUT_SECONDS)
+    except requests.Timeout:
+        return {"status": "unknown", "message": _AMBIGUOUS_OUTCOME_MESSAGE}
     except requests.RequestException as e:
         return {"status": "error", "message": f"連線到職缺維護系統失敗，請稍後再試：{e}"}
 
     try:
         data = response.json()
     except ValueError:
-        return {
-            "status": "error",
-            "message": f"職缺維護系統回應格式異常（HTTP {response.status_code}），請稍後再試或聯絡系統管理員。",
-        }
+        return {"status": "unknown", "message": _AMBIGUOUS_OUTCOME_MESSAGE}
     if not isinstance(data, dict) or "status" not in data:
-        return {"status": "error", "message": "職缺維護系統回應格式異常，請稍後再試或聯絡系統管理員。"}
+        return {"status": "unknown", "message": _AMBIGUOUS_OUTCOME_MESSAGE}
     return data

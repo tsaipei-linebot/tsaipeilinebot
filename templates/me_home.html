@@ -10,6 +10,15 @@
 <p class="success">申請已送出（單號：{{ submitted_salary_id }}），已通知主管審核，核准結果會出現在下方紀錄裡。</p>
 {% endif %}
 
+{% if submit_unknown %}
+<p class="warning">
+    剛才那筆薪資補款申請，很可能其實已經送出成功了，只是材霈平台這邊沒辦法確認職缺維護系統的
+    回應（這是對方系統偶爾會出現的已知狀況）。請先確認下方紀錄裡有沒有看到這筆申請——如果看到了，
+    就不用再送一次；如果暫時沒看到，過一下重新整理這頁再確認一次，還是沒有才需要重新送出，
+    避免不小心送出兩筆重複的申請。
+</p>
+{% endif %}
+
 <h2 class="section-title">薪資補款紀錄</h2>
 <p><a href="/me/salary-repayment/new" class="btn btn-primary">+ 送出新的薪資補款申請</a></p>
 {% if salary_repayment_error %}
