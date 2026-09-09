@@ -10,11 +10,22 @@
 整體運作分兩段：
 1. 排程把 Google Sheet 的姓名/PIN 定期同步進 Firestore（見
    sync_identities_from_sheet()），我們自己的請求路徑只讀 Firestore，
-   不會即時去打 Google Sheets API。Sheet 裡的 PIN 欄位存的其實是無鹽
-   SHA-256 雜湊值（不是明文），同步時會先換算回明文 PIN 再存進 Firestore
-   （見 _resolve_plaintext_pin()），因為 VERIFY_LOGIN 端點要收明文 PIN。
+   不會即時去打 Google Sheets API。Sheet 裡的 PIN 欄位存的其實是雜湊值
+   （不是明文），同步時會先換算回明文 PIN 再存進 Firestore（見
+   _resolve_plaintext_pin()），因為 VERIFY_LOGIN 端點要收明文 PIN。
    順便把 Sheet 裡的「員工 LINE ID」也一起存進 Firestore，目前沒有任何
    功能會用到，只是幫「以後可能的個人提醒功能」預先鋪路。
+
+   2026-09 補充：對方系統的 PIN 雜湊格式其實有三種並存（明文、無鹽
+   SHA-256、加鹽 SHA-256），而且對方每次登入成功都會把該筆資料「自動
+   升級」成加鹽格式（見那個系統主程式 OrgService.verifyEmployeePin()
+   裡命中比對後的自動升級寫回邏輯）。這裡原本只查得懂無鹽雜湊，導致
+   同仁只要在對方系統登入過一次、PIN 被升級成加鹽格式，這裡的反查表
+   就會突然查不到、免登入跳轉悄悄失效——不是這邊壞掉，是資料格式被
+   對方升級了。修法是額外設定 JOB_PIN_PEPPER 環境變數（值跟對方
+   「指令碼屬性」裡的 PIN_PEPPER 一致），讓反查表同時涵蓋加鹽格式；
+   沒設定這個環境變數時行為跟修之前完全一樣（不會出錯，只是加鹽格式
+   那些人暫時還是查不到，等設定好環境變數之後下一次同步就會自動修好）。
 2. 同仁在 /portal 點「職缺維護系統」卡片時（見 portal_routes.py），拿他
    帳號的姓名去 Firestore 查對應的 PIN，查得到就簽發一組幾十秒後失效、
    一次性用途的代碼放在網址上帶過去；查不到就直接導去原本的網址，同仁
@@ -60,21 +71,46 @@ IDENTITIES_COLLECTION = "job_system_identities"
 SSO_TOKEN_MAX_AGE_SECONDS = 45
 _serializer = URLSafeTimedSerializer(SESSION_SECRET_KEY, salt="job-portal-sso")
 
-# 職缺系統的組織表 PIN 欄位存的不是明文 PIN，而是 sha256Hash(pin)（見那個
-# 系統主程式的 EmployeeRegistrationService.processRegistration()：對純
-# 4 碼數字字串做「無鹽」SHA-256，沒有加任何鹽或姓名混入）。但 VERIFY_LOGIN
-# 端點收到的 pin 參數必須是明文——它自己會再雜湊一次去跟 Sheet 裡的值比對
+# 職缺系統的組織表 PIN 欄位存的不是明文 PIN，而是雜湊值（見那個系統主程式
+# sha256Hash()/hashPinWithPepper()）。但 VERIFY_LOGIN 端點收到的 pin 參數
+# 必須是明文——它自己會再雜湊一次去跟 Sheet 裡的值比對
 # （OrgService.verifyEmployeePin()），把雜湊值原封不動送過去等於雜湊了
 # 兩次，一定對不上。
 #
 # 因為 PIN 只有 4 位數字、只有 10000 種可能組合，這裡預先算好這 10000 種
 # 雜湊值對照回明文 PIN 的表，同步時直接反查——這不是在破解對方系統，這份
 # 資料本來就是我們已經被授權讀取的同一份 Sheet，只是換成 VERIFY_LOGIN 看
-# 得懂的形式（明文）而已。舊資料如果還是明文 4 碼（那支程式碼相容舊資料、
-# 一旦驗證通過會自動升級成雜湊值），直接原樣使用即可，不需要查表。
-_PIN_HASH_TO_PLAINTEXT = {
-    hashlib.sha256(f"{i:04d}".encode("utf-8")).hexdigest(): f"{i:04d}" for i in range(10000)
-}
+# 得懂的形式（明文）而已。舊資料如果還是明文 4 碼，直接原樣使用即可，不需
+# 要查表（見 _resolve_plaintext_pin() 的正規表示式分支）。
+#
+# 對方系統其實同時存在「無鹽 SHA-256」（sha256(pin)）跟「加鹽 SHA-256」
+# （sha256(pin + PIN_PEPPER)）兩種雜湊格式，登入成功會自動把資料升級成
+# 加鹽格式（見上方模組說明 2026-09 補充）。JOB_PIN_PEPPER 沒設定時只反查
+# 無鹽格式（回到修這個問題之前的行為，不會出錯）；設定之後才會一併反查
+# 加鹽格式。PIN_PEPPER 本身是對方系統「指令碼屬性」裡的一段隨機亂碼，不
+# 是我們自己選的，要跟對方系統同一組值，兩邊的雜湊才算得出一樣的結果。
+JOB_PIN_PEPPER = os.getenv("JOB_PIN_PEPPER", "").strip()
+
+
+def _build_pin_hash_table(pepper: str) -> dict:
+    """算出「PIN 雜湊值 -> 明文 PIN」反查表：一定包含無鹽格式，pepper 有
+    值時才額外加上加鹽格式（見上方模組層級註解）。獨立成函式方便測試——
+    不用真的設定環境變數、重新匯入整個模組，就能驗證加鹽格式的反查邏輯。
+    """
+    table = {
+        hashlib.sha256(f"{i:04d}".encode("utf-8")).hexdigest(): f"{i:04d}" for i in range(10000)
+    }
+    if pepper:
+        table.update(
+            {
+                hashlib.sha256(f"{i:04d}{pepper}".encode("utf-8")).hexdigest(): f"{i:04d}"
+                for i in range(10000)
+            }
+        )
+    return table
+
+
+_PIN_HASH_TO_PLAINTEXT = _build_pin_hash_table(JOB_PIN_PEPPER)
 
 
 def _resolve_plaintext_pin(raw_value: str):
