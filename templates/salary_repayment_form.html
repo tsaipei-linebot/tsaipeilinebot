@@ -11,90 +11,194 @@
 <p class="error">{{ error }}</p>
 {% endif %}
 
-<form method="post" action="/me/salary-repayment/new" enctype="multipart/form-data" class="form-stack form-narrow" id="salary-repayment-form">
-    <label>員工姓名（實際補款對象，不一定是您自己）
-        <input type="text" name="name" value="{{ form.name or '' }}" required autofocus>
-    </label>
-    <label>身分證字號（選填）
-        <input type="text" name="id_card" value="{{ form.id_card or '' }}">
-    </label>
-    <label>廠商/店家
-        <input type="text" name="vendor" value="{{ form.vendor or '' }}">
-    </label>
-    <label>申請日
-        <input type="date" name="apply_date" value="{{ form.apply_date or '' }}" required>
-    </label>
-    <label>付款日（選填）
-        <input type="date" name="pay_date" value="{{ form.pay_date or '' }}">
-    </label>
-    <label>扣款月份（選填，例如 2026-08）
-        <input type="text" name="deduct_month" value="{{ form.deduct_month or '' }}">
-    </label>
-    <label>補請款月份（例如 2026-09）
-        <input type="text" name="compensate_month" value="{{ form.compensate_month or '' }}">
-    </label>
-    <label>是否可請款
-        <select name="is_claimable">
-            <option value="是" {{ 'selected' if form.is_claimable == '是' }}>是</option>
-            <option value="否" {{ 'selected' if form.is_claimable == '否' }}>否</option>
-        </select>
-    </label>
-    <label>補款方式（例如：現金、轉帳）
-        <input type="text" name="pay_type" value="{{ form.pay_type or '' }}">
-    </label>
+<form method="post" action="/me/salary-repayment/new" enctype="multipart/form-data" id="salary-repayment-form" class="form-stack">
 
-    <fieldset class="form-fieldset">
-        <legend>加項明細（選填，例如加班費、獎金）</legend>
-        <div id="earning-rows"></div>
-        <button type="button" class="btn btn-small" data-add-row="earning-rows" data-label-name="earning_label" data-amount-name="earning_amount">+ 新增一筆加項</button>
-    </fieldset>
+    <div class="repayment-section">
+        <div class="repayment-section-title">📋 一、基本資料與請款設定</div>
+        <div class="repayment-basic-grid">
+            <label class="full-width">申請同仁姓名 *（送審同仁，已由系統登入自動帶入且不可修改）
+                <div class="applicant-readonly">{{ user.name }}</div>
+            </label>
+            <label>申請日 *
+                <input type="date" name="apply_date" value="{{ form.apply_date or '' }}" required>
+            </label>
+            <label>付款日（選填）
+                <input type="date" name="pay_date" value="{{ form.pay_date or '' }}">
+            </label>
+            <label>員工姓名 *（被補款之員工/作業員）
+                <input type="text" name="name" value="{{ form.name or '' }}" placeholder="如：王大明" required>
+            </label>
+            <label>身分證字號 *
+                <input type="text" name="id_card" value="{{ form.id_card or '' }}" placeholder="如：A123456789" required>
+            </label>
+            <label>廠商/店家 *
+                <input type="text" name="vendor" value="{{ form.vendor or '' }}" placeholder="如：欣興電子-山鶯廠" required>
+            </label>
+            <label>扣分鐘月份
+                <input type="month" name="deduct_month" value="{{ form.deduct_month or '' }}">
+            </label>
+            <label>補請款月份 *
+                <input type="month" name="compensate_month" value="{{ form.compensate_month or '' }}" required>
+            </label>
+            <label>是否可請款 *
+                <select name="is_claimable" required>
+                    <option value="" disabled {{ 'selected' if not form.is_claimable }}>請選擇</option>
+                    {% for opt in is_claimable_options %}
+                    <option value="{{ opt }}" {{ 'selected' if form.is_claimable == opt }}>{{ opt }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>補款方式 *
+                <select name="pay_type" required>
+                    <option value="" disabled {{ 'selected' if not form.pay_type }}>請選擇</option>
+                    {% for opt in pay_type_options %}
+                    <option value="{{ opt }}" {{ 'selected' if form.pay_type == opt }}>{{ opt }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="full-width">備註說明 *
+                <input type="text" name="notes" value="{{ form.notes or '' }}" placeholder="如：7月份少計加班費 4小時補發(必填)" required>
+            </label>
+        </div>
+    </div>
 
-    <fieldset class="form-fieldset">
-        <legend>扣項明細（選填，例如誤餐費、代墊款）</legend>
-        <div id="deduction-rows"></div>
-        <button type="button" class="btn btn-small" data-add-row="deduction-rows" data-label-name="deduction_label" data-amount-name="deduction_amount">+ 新增一筆扣項</button>
-    </fieldset>
+    <div class="repayment-section">
+        <div class="repayment-section-title">
+            <span>➕ 二、加項明細 (應領項目)</span>
+            <span class="repayment-subtotal repayment-subtotal-earning" id="earning-subtotal">加項小計：NT$ 0</span>
+        </div>
+        <div class="amount-grid">
+            {% for slug, label in earning_fields %}
+            <label>{{ loop.index }}. {{ label }}
+                <input type="number" step="1" min="0" name="earning_{{ slug }}" value="0" class="repayment-amount-input" data-group="earning">
+            </label>
+            {% endfor %}
+        </div>
+    </div>
 
-    <label>備註說明（必填）
-        <textarea name="notes" rows="3" required>{{ form.notes or '' }}</textarea>
-    </label>
-    <label>補款佐證照片（選填）
-        <input type="file" name="image" accept="image/*">
-    </label>
+    <div class="repayment-section">
+        <div class="repayment-section-title">
+            <span>➖ 三、扣項明細 (應扣項目)</span>
+            <span class="repayment-subtotal repayment-subtotal-deduction" id="deduction-subtotal">扣項小計：NT$ 0</span>
+        </div>
+        <div class="amount-grid">
+            {% for slug, label in deduction_fields %}
+            <label>{{ loop.index }}. {{ label }}
+                <input type="number" step="1" min="0" name="deduction_{{ slug }}" value="0" class="repayment-amount-input" data-group="deduction">
+            </label>
+            {% endfor %}
+        </div>
+    </div>
 
-    <button type="submit" class="btn btn-primary" id="salary-repayment-submit-btn">送出申請</button>
+    <div class="repayment-section">
+        <div class="repayment-section-title">💰 四、補款佐證圖檔上傳 (選填)</div>
+        <div class="upload-row">
+            <label class="upload-zone" id="upload-zone">
+                <input type="file" name="image" accept="image/png,image/jpeg" id="image-input" hidden>
+                <span class="upload-zone-icon">⬆</span>
+                <span><strong>點擊選取圖片</strong> 或拖曳至此</span>
+                <span>PNG, JPG, JPEG（佐證如出勤紀錄、計算截圖等）</span>
+            </label>
+            <div class="upload-preview" id="upload-preview">尚未選取圖檔</div>
+        </div>
+    </div>
+
+    <div class="repayment-summary-bar">
+        <div class="repayment-summary-cell">
+            <div class="repayment-summary-label">應領小計 (+)</div>
+            <div class="repayment-summary-value ok" id="summary-earning">NT$ 0</div>
+        </div>
+        <div class="repayment-summary-cell">
+            <div class="repayment-summary-label">應扣小計 (-)</div>
+            <div class="repayment-summary-value danger" id="summary-deduction">NT$ 0</div>
+        </div>
+        <div class="repayment-summary-cell repayment-summary-cell-net">
+            <div class="repayment-summary-label">實補金額 (總計)</div>
+            <div class="repayment-summary-value net" id="summary-net">NT$ 0</div>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block" id="salary-repayment-submit-btn">送出申請 (推播主管審核發信)</button>
 </form>
 <p class="back-link"><a href="/me">&larr; 回我的專區</a></p>
 
 <script>
-function addAmountRow(containerId, labelName, amountName) {
-    var container = document.getElementById(containerId);
-    var row = document.createElement('div');
-    row.className = 'amount-row';
-    row.innerHTML =
-        '<input type="text" name="' + labelName + '" placeholder="名稱">' +
-        '<input type="number" name="' + amountName + '" placeholder="金額" step="1">' +
-        '<button type="button" class="btn btn-small" data-remove-row>移除</button>';
-    row.querySelector('[data-remove-row]').addEventListener('click', function () {
-        row.remove();
-    });
-    container.appendChild(row);
-}
-document.querySelectorAll('[data-add-row]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-        addAmountRow(btn.dataset.addRow, btn.dataset.labelName, btn.dataset.amountName);
-    });
-});
+(function () {
+    function formatNT(n) { return 'NT$ ' + Math.round(n).toLocaleString('zh-TW'); }
 
-// 送出後要等 GAS 那邊把存照片、寫試算表、推播 LINE 都做完才會收到回應、
-// 才會跳轉畫面，這中間可能有幾秒鐘畫面看起來像沒反應——鎖住按鈕、換成
-// 「送出中」的文字，避免同仁誤以為沒送出、手滑按了第二次變成送兩筆重複
-// 的申請。表單本身的必填欄位驗證（required）會在瀏覽器允許送出前就擋下
-// 來，所以這裡不用另外檢查欄位。
-document.getElementById('salary-repayment-form').addEventListener('submit', function () {
-    var btn = document.getElementById('salary-repayment-submit-btn');
-    btn.disabled = true;
-    btn.textContent = '送出中，請稍候…（可能需要幾秒鐘）';
-});
+    function recalcSubtotals() {
+        var earningTotal = 0, deductionTotal = 0;
+        document.querySelectorAll('.repayment-amount-input').forEach(function (input) {
+            var value = parseFloat(input.value) || 0;
+            if (input.dataset.group === 'earning') earningTotal += value;
+            else deductionTotal += value;
+        });
+        document.getElementById('earning-subtotal').textContent = '加項小計：' + formatNT(earningTotal);
+        document.getElementById('deduction-subtotal').textContent = '扣項小計：' + formatNT(deductionTotal);
+        document.getElementById('summary-earning').textContent = formatNT(earningTotal);
+        document.getElementById('summary-deduction').textContent = formatNT(deductionTotal);
+        document.getElementById('summary-net').textContent = formatNT(earningTotal - deductionTotal);
+    }
+    document.querySelectorAll('.repayment-amount-input').forEach(function (input) {
+        input.addEventListener('input', recalcSubtotals);
+    });
+    recalcSubtotals();
+
+    // 佐證圖檔上傳：點擊或拖曳都可以選檔，選好之後左邊預覽小圖，跟現有
+    // Netlify 表單的操作方式一致。
+    var uploadZone = document.getElementById('upload-zone');
+    var imageInput = document.getElementById('image-input');
+    var preview = document.getElementById('upload-preview');
+
+    function showPreview(file) {
+        if (!file) {
+            preview.textContent = '尚未選取圖檔';
+            return;
+        }
+        var reader = new FileReader();
+        reader.onload = function (e) {
+            preview.innerHTML = '';
+            var img = document.createElement('img');
+            img.src = e.target.result;
+            preview.appendChild(img);
+        };
+        reader.readAsDataURL(file);
+    }
+
+    imageInput.addEventListener('change', function () {
+        showPreview(imageInput.files[0]);
+    });
+
+    ['dragenter', 'dragover'].forEach(function (evt) {
+        uploadZone.addEventListener(evt, function (e) {
+            e.preventDefault();
+            uploadZone.classList.add('drag-over');
+        });
+    });
+    ['dragleave', 'drop'].forEach(function (evt) {
+        uploadZone.addEventListener(evt, function (e) {
+            e.preventDefault();
+            uploadZone.classList.remove('drag-over');
+        });
+    });
+    uploadZone.addEventListener('drop', function (e) {
+        var file = e.dataTransfer.files[0];
+        if (file) {
+            imageInput.files = e.dataTransfer.files;
+            showPreview(file);
+        }
+    });
+
+    // 送出後要等 GAS 那邊把存照片、寫試算表、推播 LINE 都做完才會收到
+    // 回應、才會跳轉畫面，這中間可能有幾秒鐘畫面看起來像沒反應——鎖住
+    // 按鈕、換成「送出中」的文字，避免同仁誤以為沒送出、手滑按了第二次
+    // 變成送兩筆重複的申請。表單本身的必填欄位驗證（required）會在瀏覽器
+    // 允許送出前就擋下來，所以這裡不用另外檢查欄位。
+    document.getElementById('salary-repayment-form').addEventListener('submit', function () {
+        var btn = document.getElementById('salary-repayment-submit-btn');
+        btn.disabled = true;
+        btn.textContent = '送出中，請稍候…（可能需要幾秒鐘）';
+    });
+})();
 </script>
 {% endblock %}

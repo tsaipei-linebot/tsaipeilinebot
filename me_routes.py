@@ -16,7 +16,14 @@ from fastapi.responses import RedirectResponse
 import platform_accounts
 from platform_templating import templates
 from services.salary_repayment_service import DISPLAY_COLUMNS, get_my_repayment_records
-from services.salary_repayment_submit_service import build_payload, submit_salary_repayment
+from services.salary_repayment_submit_service import (
+    DEDUCTION_FIELDS,
+    EARNING_FIELDS,
+    IS_CLAIMABLE_OPTIONS,
+    PAY_TYPE_OPTIONS,
+    build_payload,
+    submit_salary_repayment,
+)
 
 router = APIRouter()
 
@@ -51,29 +58,32 @@ def my_zone(request: Request, submitted: str = "", redirect=Depends(_require_log
     )
 
 
-def _earnings_and_deductions_from_form(form) -> tuple:
-    """把表單裡動態新增的加項/扣項明細列（同一個 name 出現多次）組成
-    {名稱: 金額} 的字典。名稱空白或金額打錯（不是數字）的列直接跳過，不當
-    成錯誤擋下整張表單——同仁可能就是手滑多按了一次「新增」又沒填。"""
+def _amounts_from_form(form, fields: list, prefix: str) -> dict:
+    """把加項/扣項固定十個欄位（field 的 name 屬性是 "{prefix}_{代號}"）
+    組成 {中文名稱: 金額} 的字典，同仁沒填或打錯（不是數字）的欄位當成 0，
+    不當成錯誤擋下整張表單——這些欄位本來就是選填。"""
+    result = {}
+    for slug, label in fields:
+        raw = form.get(f"{prefix}_{slug}", "")
+        try:
+            amount = float(raw) if str(raw).strip() else 0.0
+        except (TypeError, ValueError):
+            amount = 0.0
+        if amount:
+            result[label] = amount
+    return result
 
-    def _rows_to_dict(label_key: str, amount_key: str) -> dict:
-        labels = form.getlist(label_key)
-        amounts = form.getlist(amount_key)
-        result = {}
-        for label, amount in zip(labels, amounts):
-            label = (label or "").strip()
-            if not label:
-                continue
-            try:
-                result[label] = float(amount)
-            except (TypeError, ValueError):
-                continue
-        return result
 
-    return (
-        _rows_to_dict("earning_label", "earning_amount"),
-        _rows_to_dict("deduction_label", "deduction_amount"),
-    )
+def _salary_repayment_form_context(user: dict, error: str, form: dict) -> dict:
+    return {
+        "user": user,
+        "error": error,
+        "form": form,
+        "earning_fields": EARNING_FIELDS,
+        "deduction_fields": DEDUCTION_FIELDS,
+        "is_claimable_options": IS_CLAIMABLE_OPTIONS,
+        "pay_type_options": PAY_TYPE_OPTIONS,
+    }
 
 
 @router.get("/me/salary-repayment/new")
@@ -83,7 +93,7 @@ def new_salary_repayment_form(request: Request, redirect=Depends(_require_login)
     return templates.TemplateResponse(
         request,
         "salary_repayment_form.html",
-        {"user": platform_accounts.current_account(request), "error": "", "form": {}},
+        _salary_repayment_form_context(platform_accounts.current_account(request), "", {}),
     )
 
 
@@ -119,16 +129,21 @@ async def create_salary_repayment_submit(
         "notes": notes,
     }
 
-    if not name.strip() or not apply_date.strip() or not notes.strip():
+    # 必填欄位跟現有 Netlify 表單畫面上的紅色 * 一致（2026-09-09 使用者
+    # 提供畫面截圖比對）：申請日/員工姓名/身分證字號/廠商店家/補請款月份/
+    # 是否可請款/補款方式/備註說明都是必填，付款日跟扣分鐘月份選填。
+    if not all([name.strip(), apply_date.strip(), id_card.strip(), vendor.strip(),
+                compensate_month.strip(), is_claimable.strip(), pay_type.strip(), notes.strip()]):
         return templates.TemplateResponse(
             request,
             "salary_repayment_form.html",
-            {"user": account, "error": "「員工姓名」「申請日」「備註說明」都是必填欄位。", "form": form_values},
+            _salary_repayment_form_context(account, "「員工姓名」「身分證字號」「廠商/店家」「申請日」「補請款月份」「是否可請款」「補款方式」「備註說明」都是必填欄位。", form_values),
             status_code=400,
         )
 
     form = await request.form()
-    earnings, deductions = _earnings_and_deductions_from_form(form)
+    earnings = _amounts_from_form(form, EARNING_FIELDS, "earning")
+    deductions = _amounts_from_form(form, DEDUCTION_FIELDS, "deduction")
 
     image_base64, image_filename = "", ""
     if image is not None and image.filename:
@@ -137,7 +152,7 @@ async def create_salary_repayment_submit(
             return templates.TemplateResponse(
                 request,
                 "salary_repayment_form.html",
-                {"user": account, "error": "佐證照片超過 20MB 上限，請換一張檔案較小的照片。", "form": form_values},
+                _salary_repayment_form_context(account, "佐證照片超過 20MB 上限，請換一張檔案較小的照片。", form_values),
                 status_code=400,
             )
         image_base64 = base64.b64encode(content).decode("ascii")
@@ -166,7 +181,7 @@ async def create_salary_repayment_submit(
         return templates.TemplateResponse(
             request,
             "salary_repayment_form.html",
-            {"user": account, "error": result.get("message") or "送出失敗，請稍後再試。", "form": form_values},
+            _salary_repayment_form_context(account, result.get("message") or "送出失敗，請稍後再試。", form_values),
             status_code=400,
         )
 

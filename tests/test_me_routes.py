@@ -66,40 +66,39 @@ class RequireLoginDependencyTests(unittest.TestCase):
         self.assertIsNone(result)
 
 
-class EarningsAndDeductionsFromFormTests(unittest.TestCase):
-    """_earnings_and_deductions_from_form() 把表單裡動態新增的加項/扣項列
-    （同一個 name 出現多次）組成 {名稱: 金額} 字典，見
-    templates/salary_repayment_form.html 的「+ 新增一筆」按鈕。"""
+class AmountsFromFormTests(unittest.TestCase):
+    """_amounts_from_form() 把加項/扣項固定十個欄位（名稱照抄現有 Netlify
+    表單畫面，見 services/salary_repayment_submit_service.py 的
+    EARNING_FIELDS/DEDUCTION_FIELDS）組成 {中文名稱: 金額} 字典，0 或空白
+    或打錯的欄位不列進字典（該項目本來就是選填，同仁不用每格都填 0）。"""
 
     class _FakeForm(dict):
-        def getlist(self, key):
-            return dict.get(self, key, [])
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
 
-    def test_pairs_labels_with_amounts(self):
-        form = self._FakeForm(
-            earning_label=["加班費", "獎金"],
-            earning_amount=["500", "1000"],
-            deduction_label=["誤餐費"],
-            deduction_amount=["100"],
-        )
-        earnings, deductions = me_routes._earnings_and_deductions_from_form(form)
-        self.assertEqual(earnings, {"加班費": 500.0, "獎金": 1000.0})
-        self.assertEqual(deductions, {"誤餐費": 100.0})
+    def test_only_nonzero_fields_included(self):
+        form = self._FakeForm({"earning_hours": "500", "earning_salary": "0"})
+        result = me_routes._amounts_from_form(form, me_routes.EARNING_FIELDS, "earning")
+        self.assertEqual(result, {"工時/天數": 500.0})
 
-    def test_blank_label_row_is_skipped(self):
-        form = self._FakeForm(earning_label=["", "獎金"], earning_amount=["999", "1000"])
-        earnings, _ = me_routes._earnings_and_deductions_from_form(form)
-        self.assertEqual(earnings, {"獎金": 1000.0})
+    def test_blank_field_treated_as_zero(self):
+        form = self._FakeForm({"earning_hours": ""})
+        result = me_routes._amounts_from_form(form, me_routes.EARNING_FIELDS, "earning")
+        self.assertEqual(result, {})
 
-    def test_non_numeric_amount_row_is_skipped(self):
-        form = self._FakeForm(earning_label=["加班費"], earning_amount=["不是數字"])
-        earnings, _ = me_routes._earnings_and_deductions_from_form(form)
-        self.assertEqual(earnings, {})
+    def test_non_numeric_field_treated_as_zero(self):
+        form = self._FakeForm({"earning_hours": "不是數字"})
+        result = me_routes._amounts_from_form(form, me_routes.EARNING_FIELDS, "earning")
+        self.assertEqual(result, {})
 
-    def test_no_rows_returns_empty_dicts(self):
-        earnings, deductions = me_routes._earnings_and_deductions_from_form(self._FakeForm())
-        self.assertEqual(earnings, {})
-        self.assertEqual(deductions, {})
+    def test_missing_fields_default_to_zero(self):
+        result = me_routes._amounts_from_form(self._FakeForm(), me_routes.EARNING_FIELDS, "earning")
+        self.assertEqual(result, {})
+
+    def test_deduction_fields_use_deduction_prefix(self):
+        form = self._FakeForm({"deduction_labor_insurance": "300"})
+        result = me_routes._amounts_from_form(form, me_routes.DEDUCTION_FIELDS, "deduction")
+        self.assertEqual(result, {"勞保費": 300.0})
 
 
 if __name__ == "__main__":
