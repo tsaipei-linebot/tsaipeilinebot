@@ -1,4 +1,15 @@
 {% extends "base.html" %}
+{% macro multiselect_field(key, options) %}
+<div class="multiselect" data-field="{{ key }}">
+    <div class="multiselect-box" id="box_{{ key }}" onclick="toggleDropdown('{{ key }}')">
+        <div class="multiselect-tags" id="tags_{{ key }}"></div>
+    </div>
+    <div class="multiselect-menu" id="menu_{{ key }}" hidden></div>
+</div>
+<select name="{{ key }}" id="native_{{ key }}" multiple hidden>
+    {% for opt in options %}<option value="{{ opt }}">{{ opt }}</option>{% endfor %}
+</select>
+{% endmacro %}
 {% block title %}職缺維護 - 材霈有限公司{% endblock %}
 {% block content %}
 <h1 class="page-title">職缺維護</h1>
@@ -73,37 +84,17 @@
             <label class="full-width">職缺名稱(對外) *
                 <input type="text" name="external_title" value="{{ form.external_title or '' }}" placeholder="如：大廠高薪日班技術員/供宿/高錄取" required>
             </label>
-            <label>行業別 *（可複選，Notion 多選）
-                <select name="industry" id="msel_industry" multiple required size="6">
-                    {% for opt in industry_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.industry }}>{{ opt }}</option>{% endfor %}
-                </select>
-            </label>
-            <label>職務類別 *（可複選，Notion 多選）
-                <select name="category" id="msel_category" multiple required size="6">
-                    {% for opt in category_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.category }}>{{ opt }}</option>{% endfor %}
-                </select>
-            </label>
+            <label>行業別 *（可複選，Notion 多選）{{ multiselect_field('industry', industry_options) }}</label>
+            <label>職務類別 *（可複選，Notion 多選）{{ multiselect_field('category', category_options) }}</label>
         </div>
     </div>
 
     <div class="repayment-section">
         <div class="repayment-section-title">二、職務屬性與工作條件</div>
         <div class="repayment-basic-grid">
-            <label>全/兼職
-                <select name="job_type" id="msel_job_type" multiple size="4">
-                    {% for opt in job_type_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.job_type }}>{{ opt }}</option>{% endfor %}
-                </select>
-            </label>
-            <label>外籍生
-                <select name="foreign_student" id="msel_foreign_student" multiple size="4">
-                    {% for opt in foreign_student_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.foreign_student }}>{{ opt }}</option>{% endfor %}
-                </select>
-            </label>
-            <label>職缺週期 *（可複選）
-                <select name="job_cycle" id="msel_job_cycle" multiple required size="4">
-                    {% for opt in job_cycle_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.job_cycle }}>{{ opt }}</option>{% endfor %}
-                </select>
-            </label>
+            <label>全/兼職{{ multiselect_field('job_type', job_type_options) }}</label>
+            <label>外籍生{{ multiselect_field('foreign_student', foreign_student_options) }}</label>
+            <label>職缺週期 *（可複選）{{ multiselect_field('job_cycle', job_cycle_options) }}</label>
             <label class="full-width">工作內容(對內) *
                 <textarea name="internal_desc" rows="3" placeholder="內部專員招募備忘、機台操作規範..." required>{{ form.internal_desc or '' }}</textarea>
             </label>
@@ -116,43 +107,21 @@
     <div class="repayment-section">
         <div class="repayment-section-title">三、地點與負責所別</div>
         <div class="repayment-basic-grid">
-            <label>縣市 *（可複選，選了才會出現對應行政區）
-                <select name="city" id="msel_city" multiple required size="8" onchange="onCitySelectionChanged()">
-                    {% for c in taiwan_cities %}<option value="{{ c }}" {{ 'selected' if c in form.city }}>{{ c }}</option>{% endfor %}
-                </select>
-            </label>
-            <label>行政區 *（可複選，含縣市名稱）
-                <select name="district" id="msel_district" multiple required size="8"></select>
-            </label>
-            <label>負責所別
-                <select name="branch" id="msel_branch" multiple size="6">
-                    {% for opt in branch_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.branch }}>{{ opt }}</option>{% endfor %}
-                </select>
-            </label>
+            <label>縣市 *（可複選，選了才會出現對應行政區）{{ multiselect_field('city', taiwan_cities) }}</label>
+            <label>行政區 *（可複選，含縣市名稱，可搜尋）{{ multiselect_field('district', []) }}</label>
+            <label>負責所別{{ multiselect_field('branch', branch_options) }}</label>
         </div>
     </div>
 
     <div class="repayment-section">
         <div class="repayment-section-title">四、班別、薪酬與面試安排</div>
         <div class="repayment-basic-grid">
-            <label>班別
-                <select name="shift" id="msel_shift" multiple size="6">
-                    {% for opt in shift_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.shift }}>{{ opt }}</option>{% endfor %}
-                </select>
-            </label>
-            <label>休假方式
-                <select name="leave_type" id="msel_leave_type" multiple size="6">
-                    {% for opt in leave_type_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.leave_type }}>{{ opt }}</option>{% endfor %}
-                </select>
-            </label>
+            <label>班別{{ multiselect_field('shift', shift_options) }}</label>
+            <label>休假方式{{ multiselect_field('leave_type', leave_type_options) }}</label>
             <label>薪資待遇 *
                 <input type="text" name="salary" value="{{ form.salary or '' }}" placeholder="如：月薪 38,000~45,000 / 時薪 210" required>
             </label>
-            <label>領薪方式
-                <select name="pay_method" id="msel_pay_method" multiple size="6">
-                    {% for opt in pay_method_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.pay_method }}>{{ opt }}</option>{% endfor %}
-                </select>
-            </label>
+            <label>領薪方式{{ multiselect_field('pay_method', pay_method_options) }}</label>
             <label>面試方式 *
                 <input type="text" name="interview_method" value="{{ form.interview_method or '' }}" placeholder="如：線上視訊面試 / 廠區面談" required>
             </label>
@@ -181,36 +150,215 @@
 
 <script>
 var TAIWAN_CITY_DISTRICTS = {{ taiwan_city_districts | tojson }};
+var INITIAL_FORM = {{ form | tojson }};
 var cachedJobs = [];
+var districtFilterKeyword = '';
 
-function multiSelectValues(id) {
-    return Array.from(document.getElementById(id).selectedOptions).map(function (o) { return o.value; });
+// FIELD_OPTIONS 是每個多選欄位目前「可以選的完整清單」；district 一開始
+//是空的，選了縣市之後才會由 onCitySelectionChanged() 填入，跟現有表單
+// 的 NOTION_OPTIONS.district 做法一致。
+var FIELD_OPTIONS = {
+    industry: {{ industry_options | tojson }},
+    category: {{ category_options | tojson }},
+    job_type: {{ job_type_options | tojson }},
+    foreign_student: {{ foreign_student_options | tojson }},
+    job_cycle: {{ job_cycle_options | tojson }},
+    city: {{ taiwan_cities | tojson }},
+    district: [],
+    branch: {{ branch_options | tojson }},
+    shift: {{ shift_options | tojson }},
+    leave_type: {{ leave_type_options | tojson }},
+    pay_method: {{ pay_method_options | tojson }}
+};
+
+var selectedValues = {
+    industry: INITIAL_FORM.industry || [],
+    category: INITIAL_FORM.category || [],
+    job_type: INITIAL_FORM.job_type || [],
+    foreign_student: INITIAL_FORM.foreign_student || [],
+    job_cycle: INITIAL_FORM.job_cycle || [],
+    city: INITIAL_FORM.city || [],
+    district: INITIAL_FORM.district || [],
+    branch: INITIAL_FORM.branch || [],
+    shift: INITIAL_FORM.shift || [],
+    leave_type: INITIAL_FORM.leave_type || [],
+    pay_method: INITIAL_FORM.pay_method || []
+};
+
+function escapeHtml(text) {
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
-function setMultiSelectValues(id, values) {
-    values = Array.isArray(values) ? values : (values ? [values] : []);
-    var valueSet = new Set(values);
-    Array.from(document.getElementById(id).options).forEach(function (o) {
-        o.selected = valueSet.has(o.value);
-    });
+function escapeJs(text) {
+    return String(text).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function closeAllDropdowns() {
+    document.querySelectorAll('.multiselect-menu').forEach(function (el) { el.hidden = true; });
+}
+document.addEventListener('click', function (e) {
+    if (!e.target.closest('.multiselect')) closeAllDropdowns();
+});
+
+function toggleDropdown(key) {
+    var menu = document.getElementById('menu_' + key);
+    if (key === 'district' && FIELD_OPTIONS.district.length === 0) return;
+    var wasHidden = menu.hidden;
+    closeAllDropdowns();
+    if (wasHidden) {
+        menu.hidden = false;
+        if (key === 'district') {
+            districtFilterKeyword = '';
+            renderMenu('district');
+            setTimeout(function () {
+                var input = document.getElementById('district-search-input');
+                if (input) { input.value = ''; input.focus(); }
+            }, 30);
+        }
+    }
+}
+
+function syncNativeSelect(key) {
+    var select = document.getElementById('native_' + key);
+    var valueSet = new Set(selectedValues[key] || []);
+    Array.from(select.options).forEach(function (o) { o.selected = valueSet.has(o.value); });
+}
+
+function renderTags(key) {
+    var container = document.getElementById('tags_' + key);
+    var cur = selectedValues[key] || [];
+    if (cur.length === 0) {
+        var placeholder = (key === 'district' && (selectedValues.city || []).length === 0) ? '請先選擇縣市...' : '請點選以選擇...';
+        container.innerHTML = '<span class="multiselect-placeholder">' + placeholder + '</span>';
+        return;
+    }
+    container.innerHTML = cur.map(function (val) {
+        return '<span class="multiselect-tag">' + escapeHtml(val) +
+            '<button type="button" onclick="removeTag(\'' + key + '\', \'' + escapeJs(val) + '\', event)">&times;</button></span>';
+    }).join('');
+}
+
+function renderMenu(key) {
+    var menu = document.getElementById('menu_' + key);
+    var options = FIELD_OPTIONS[key] || [];
+    var cur = selectedValues[key] || [];
+
+    if (key === 'district') {
+        if (options.length === 0) {
+            menu.innerHTML = '<div class="multiselect-empty">請先選擇縣市以載入行政區</div>';
+            return;
+        }
+        menu.innerHTML =
+            '<div class="multiselect-menu-header">' +
+            '<input type="text" id="district-search-input" placeholder="搜尋行政區 (如：新莊、板橋)..." value="' + escapeHtml(districtFilterKeyword) + '" onclick="event.stopPropagation()">' +
+            '<div class="multiselect-menu-controls"><span id="district-count-display"></span>' +
+            '<span><button type="button" onclick="selectAllOptions(\'district\', event)">全選</button>' +
+            '<button type="button" onclick="clearAllOptions(\'district\', event)">清除</button></span></div></div>' +
+            '<div id="district-options-container"></div>';
+        var input = document.getElementById('district-search-input');
+        input.addEventListener('input', function (e) {
+            districtFilterKeyword = e.target.value.trim().toLowerCase();
+            renderDistrictOptions();
+        });
+        renderDistrictOptions();
+        return;
+    }
+
+    if (options.length === 0) {
+        menu.innerHTML = '<div class="multiselect-empty">無可用選項</div>';
+        return;
+    }
+    menu.innerHTML = options.map(function (opt) {
+        var isSelected = cur.indexOf(opt) > -1;
+        return '<div class="multiselect-option' + (isSelected ? ' selected' : '') + '" onclick="toggleOption(\'' + key + '\', \'' + escapeJs(opt) + '\')">' +
+            '<span>' + escapeHtml(opt) + '</span>' + (isSelected ? '<span>&check;</span>' : '') + '</div>';
+    }).join('');
+}
+
+function renderDistrictOptions() {
+    var container = document.getElementById('district-options-container');
+    if (!container) return;
+    var options = FIELD_OPTIONS.district || [];
+    var cur = selectedValues.district || [];
+    var display = options;
+    if (districtFilterKeyword) {
+        display = options.filter(function (o) { return o.toLowerCase().indexOf(districtFilterKeyword) > -1; });
+    }
+    var countEl = document.getElementById('district-count-display');
+    if (countEl) countEl.textContent = '已選 ' + cur.length + ' / 共 ' + options.length + ' 個';
+    if (display.length === 0) {
+        container.innerHTML = '<div class="multiselect-empty">查無符合搜尋條件的項目</div>';
+        return;
+    }
+    container.innerHTML = display.map(function (opt) {
+        var isSelected = cur.indexOf(opt) > -1;
+        return '<div class="multiselect-option' + (isSelected ? ' selected' : '') + '" onclick="toggleOption(\'district\', \'' + escapeJs(opt) + '\')">' +
+            '<span>' + escapeHtml(opt) + '</span>' + (isSelected ? '<span>&check;</span>' : '') + '</div>';
+    }).join('');
+}
+
+function toggleOption(key, val) {
+    var cur = selectedValues[key] || [];
+    var idx = cur.indexOf(val);
+    if (idx > -1) cur.splice(idx, 1); else cur.push(val);
+    selectedValues[key] = cur;
+    renderTags(key);
+    if (key === 'district') { renderDistrictOptions(); } else { renderMenu(key); }
+    syncNativeSelect(key);
+    if (key === 'city') onCitySelectionChanged();
+}
+
+function removeTag(key, val, e) {
+    if (e) e.stopPropagation();
+    var cur = selectedValues[key] || [];
+    var idx = cur.indexOf(val);
+    if (idx > -1) {
+        cur.splice(idx, 1);
+        selectedValues[key] = cur;
+        renderTags(key);
+        if (key === 'district') { renderDistrictOptions(); } else { renderMenu(key); }
+        syncNativeSelect(key);
+        if (key === 'city') onCitySelectionChanged();
+    }
+}
+
+function selectAllOptions(key, e) {
+    if (e) e.stopPropagation();
+    selectedValues[key] = (FIELD_OPTIONS[key] || []).slice();
+    renderTags(key);
+    if (key === 'district') renderDistrictOptions(); else renderMenu(key);
+    syncNativeSelect(key);
+}
+function clearAllOptions(key, e) {
+    if (e) e.stopPropagation();
+    selectedValues[key] = [];
+    renderTags(key);
+    if (key === 'district') renderDistrictOptions(); else renderMenu(key);
+    syncNativeSelect(key);
+}
+
+function setFieldValues(key, values) {
+    selectedValues[key] = Array.isArray(values) ? values.slice() : (values ? [values] : []);
+    renderTags(key);
+    renderMenu(key);
+    syncNativeSelect(key);
 }
 
 function onCitySelectionChanged() {
-    var selectedCities = multiSelectValues('msel_city');
-    var districtSelect = document.getElementById('msel_district');
-    var previouslySelected = new Set(multiSelectValues('msel_district'));
-    districtSelect.innerHTML = '';
-    var seen = new Set();
+    var selectedCities = selectedValues.city || [];
+    var available = [];
+    var seen = {};
     selectedCities.forEach(function (city) {
-        (TAIWAN_CITY_DISTRICTS[city] || []).forEach(function (district) {
-            if (seen.has(district)) return;
-            seen.add(district);
-            var opt = document.createElement('option');
-            opt.value = district;
-            opt.textContent = district;
-            opt.selected = previouslySelected.has(district);
-            districtSelect.appendChild(opt);
+        (TAIWAN_CITY_DISTRICTS[city] || []).forEach(function (d) {
+            if (!seen[d]) { seen[d] = true; available.push(d); }
         });
     });
+    FIELD_OPTIONS.district = available;
+    selectedValues.district = (selectedValues.district || []).filter(function (d) { return available.indexOf(d) > -1; });
+    renderTags('district');
+    renderMenu('district');
+    syncNativeSelect('district');
+    var box = document.getElementById('box_district');
+    if (selectedCities.length === 0) { box.classList.add('disabled'); } else { box.classList.remove('disabled'); }
 }
 
 function onJobModeChange() {
@@ -273,18 +421,18 @@ function populateJobForm(d) {
     document.querySelector('textarea[name="external_desc"]').value = d.external_desc || '';
     document.querySelector('input[name="notes"]').value = d.notes || '';
 
-    setMultiSelectValues('msel_industry', d.industry);
-    setMultiSelectValues('msel_category', d.category);
-    setMultiSelectValues('msel_job_type', d.job_type);
-    setMultiSelectValues('msel_foreign_student', d.foreign_student);
-    setMultiSelectValues('msel_job_cycle', d.job_cycle);
-    setMultiSelectValues('msel_city', d.city);
+    setFieldValues('industry', d.industry);
+    setFieldValues('category', d.category);
+    setFieldValues('job_type', d.job_type);
+    setFieldValues('foreign_student', d.foreign_student);
+    setFieldValues('job_cycle', d.job_cycle);
+    setFieldValues('city', d.city);
     onCitySelectionChanged();
-    setMultiSelectValues('msel_district', d.district);
-    setMultiSelectValues('msel_branch', d.branch);
-    setMultiSelectValues('msel_shift', d.shift);
-    setMultiSelectValues('msel_leave_type', d.leave_type);
-    setMultiSelectValues('msel_pay_method', d.pay_method);
+    setFieldValues('district', d.district);
+    setFieldValues('branch', d.branch);
+    setFieldValues('shift', d.shift);
+    setFieldValues('leave_type', d.leave_type);
+    setFieldValues('pay_method', d.pay_method);
 
     var preview = document.getElementById('job-upload-preview');
     if (d.image_url) {
@@ -294,8 +442,17 @@ function populateJobForm(d) {
     }
 }
 
-loadMaintainableJobs();
+// 頁面載入時（含表單驗證失敗重新整理回來的情況）先把每個多選欄位的畫面
+// 跟底下的原生 <select> 同步一次；行政區要等縣市的可選清單算出來之後
+// 才能決定「目前選的這幾個行政區還算不算數」，所以放最後處理。
+['industry', 'category', 'job_type', 'foreign_student', 'job_cycle', 'city', 'branch', 'shift', 'leave_type', 'pay_method'].forEach(function (key) {
+    renderTags(key);
+    renderMenu(key);
+    syncNativeSelect(key);
+});
 onCitySelectionChanged();
+
+loadMaintainableJobs();
 
 (function () {
     var uploadZone = document.getElementById('job-upload-zone');
