@@ -186,6 +186,13 @@
     - **同仁怎麼用**：招募專員定期（建議至少每天）打開這個新的 Notion 資料庫，看 `已回覆` 沒打勾的列，去 LINE 官方帳號後台（聊天列表）用「求職者暱稱」搜尋找到那個人的對話串，手動回覆完之後回來把 `已回覆` 打勾即可。**「LINE User ID」這欄不是給搜尋用的**（LINE 官方帳號後台沒辦法用這串 ID 搜尋，只能用暱稱）——保留這欄只是技術上的備用識別碼，用來因應多個求職者剛好用同一個顯示名稱、暱稱無法唯一區分的情況（使用者確認要保留，非必要不拿掉）。**要讓這個功能真的生效，使用者需要自己建立這個 Notion 資料庫並設定環境變數**，完整步驟見上方待辦事項；沒設定之前這個功能會安全跳過（只印 log），不影響其他功能。
     - **新增測試**：`tests/test_notion_service.py` 新增 `AppendUnresolvedQuestionForFollowupTests`（5 個，含「同一問題不同人問不會被去重」的關鍵行為）；`tests/test_message_handler.py` 新增 3 個測試（正常記錄暱稱、`get_profile()` 失敗時退回 user_id、沒傳 `target_line_bot_api` 時也不出錯）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 465 個測試，OK。
+31. **FAQ 候選清單改成上線初期每天顯示（不用等到週一）**：使用者希望上線初期流量還小、需要密切觀察，FAQ 候選清單／建議新增的職缺關鍵字不要等到每週一才出現。新增環境變數 `FAQ_REPORT_DAILY_MODE`（`config.py`，預設 `false`）：開啟後不管星期幾，`run_daily_report()` 都會附加 FAQ 候選清單／建議關鍵字這兩段。**刻意只影響這兩段，不影響其他部分**：
+    - 健康狀況檢查的時間窗口不受影響——只有真正的「週報日」（`FAQ_WEEKLY_REPORT_WEEKDAY`）才會用過去 7 天，其餘每天都還是過去 24 小時，避免視窗被連帶拉長而讓健康狀況誤判。
+    - 「同步回覆／背景補發比例」那段（給 `AI_DECISION_SYNC_TIMEOUT_SECONDS` 調整參考用）維持只在真正的週報日才顯示，沒有跟著每天出現——使用者這次只要求 FAQ 候選清單提前，範圍沒有連帶擴大。
+    - **這是給上線初期用的臨時開關，等流量穩定、同仁熟悉每天要看這份清單之後，可以考慮把 `FAQ_REPORT_DAILY_MODE` 關掉，改回原本每週一次的頻率**（在 Cloud Run 環境變數改成 `false` 或直接刪除即可，不用改程式碼、重新部署）。
+    - **要讓這個切換生效，使用者需要自己在 Cloud Run 設定環境變數 `FAQ_REPORT_DAILY_MODE=true`**（前提是上方第 26 項「監控與告警機制」的 Cloud Scheduler／`DAILY_REPORT_ENABLED` 都已經設定好、每日健康報告已經在正常運作，這只是調整既有機制裡 FAQ 段落出現的頻率，不是獨立的新機制）。
+    - **新增測試**：`tests/test_daily_report_service.py` 新增 `FaqReportDailyModeOverrideTests`（4 個，涵蓋開關開/關、健康視窗不受影響、同步/背景補發比例段落不受影響）。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 469 個測試，OK。
 
 ## 目前所有檔案的狀態
 

@@ -133,6 +133,13 @@ DAILY_REPORT_LATENCY_BUCKET_MINUTES = int(os.getenv("DAILY_REPORT_LATENCY_BUCKET
 FAQ_WEEKLY_REPORT_WEEKDAY = int(os.getenv("FAQ_WEEKLY_REPORT_WEEKDAY", "0"))
 # 職缺類問句「這個類別/廠商本週被問幾次、但沒有專屬直達路徑」達到這個次數才列入建議清單
 FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT = int(os.getenv("FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT", "5"))
+# 上線初期使用：FAQ 候選清單／建議新增的職缺關鍵字原本只在 FAQ_WEEKLY_REPORT_WEEKDAY
+# 那天出現（預設週一）。剛上線這段期間流量還小、需要密切觀察，開啟這個開關後，
+# 不管星期幾，FAQ 候選清單都會每天出現在日報裡，方便招募專員更即時掌握求職者
+# 問到哪些還沒收錄的問題。健康狀況檢查的時間窗口不受影響（只有真正的「週報日」
+# 才會是過去 7 天，其餘每天都還是過去 24 小時），避免健康狀況因為視窗被拉長而
+# 誤判。上線穩定後可以再把這個環境變數關掉，改回原本每週一次的頻率。
+FAQ_REPORT_DAILY_MODE = os.getenv("FAQ_REPORT_DAILY_MODE", "false").strip().lower() in ("1", "true", "yes")
 
 # ==========================================
 # 11. AI 決策限時同步等待秒數（見 HANDOFF.md「監控與告警機制」壓測章節）
