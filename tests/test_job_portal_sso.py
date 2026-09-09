@@ -87,5 +87,44 @@ class ResolvePlaintextPinTests(unittest.TestCase):
         self.assertIsNone(job_portal_sso._resolve_plaintext_pin(None))
 
 
+class PepperedPinHashTableTests(unittest.TestCase):
+    """對方系統把 PIN 雜湊格式從「無鹽 SHA-256」升級成「加鹽 SHA-256」
+    （sha256(pin + PIN_PEPPER)）之後，_build_pin_hash_table() 要能同時
+    反查兩種格式，且沒有設定 pepper 時要跟修之前的行為完全一樣（不能
+    因為這次修改就讓原本查得到的資料反而查不到）。"""
+
+    def test_no_pepper_only_resolves_legacy_unsalted_hash(self):
+        table = job_portal_sso._build_pin_hash_table("")
+        legacy_hash = hashlib.sha256(b"5678").hexdigest()
+        self.assertEqual(table.get(legacy_hash), "5678")
+        peppered_hash = hashlib.sha256("5678some-pepper".encode("utf-8")).hexdigest()
+        self.assertNotIn(peppered_hash, table)
+
+    def test_pepper_resolves_peppered_hash(self):
+        table = job_portal_sso._build_pin_hash_table("some-pepper")
+        peppered_hash = hashlib.sha256("5678some-pepper".encode("utf-8")).hexdigest()
+        self.assertEqual(table.get(peppered_hash), "5678")
+
+    def test_pepper_still_resolves_legacy_unsalted_hash(self):
+        # 加了 pepper 之後,舊資料(還沒被對方系統升級過的無鹽雜湊)還是要
+        # 查得到,不能因為多了加鹽格式就漏掉舊格式。
+        table = job_portal_sso._build_pin_hash_table("some-pepper")
+        legacy_hash = hashlib.sha256(b"5678").hexdigest()
+        self.assertEqual(table.get(legacy_hash), "5678")
+
+    def test_resolve_plaintext_pin_uses_peppered_table_when_configured(self):
+        peppered_table = job_portal_sso._build_pin_hash_table("some-pepper")
+        peppered_hash = hashlib.sha256("9012some-pepper".encode("utf-8")).hexdigest()
+        with mock.patch.object(job_portal_sso, "_PIN_HASH_TO_PLAINTEXT", peppered_table):
+            self.assertEqual(job_portal_sso._resolve_plaintext_pin(peppered_hash), "9012")
+
+    def test_wrong_pepper_does_not_resolve_and_does_not_crash(self):
+        # pepper 設定錯誤(跟對方系統對不上)時,只是查不到、回傳 None,
+        # 不能整個掛掉——這是「先求不出錯」的最低標準。
+        table = job_portal_sso._build_pin_hash_table("wrong-pepper")
+        peppered_hash = hashlib.sha256("5678some-pepper".encode("utf-8")).hexdigest()
+        self.assertIsNone(table.get(peppered_hash))
+
+
 if __name__ == "__main__":
     unittest.main()
