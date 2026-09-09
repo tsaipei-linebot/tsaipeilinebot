@@ -20,6 +20,50 @@ from config import JOB_PORTAL_GAS_WEBAPP_URL as GAS_WEBAPP_URL
 
 _REQUEST_TIMEOUT_SECONDS = 30
 
+# 加項/扣項明細固定十個項目，照抄現有 Netlify 表單畫面上的名稱跟順序
+# （2026-09-09 使用者提供畫面截圖比對），不是同仁自己自由新增的欄位——
+# 這些名稱只會用來組 GAS SUBMIT_SALARY 的 earnings/deductions 物件
+# （GAS 那邊只把它們加總、不會把個別項目寫進試算表，見
+# SalaryFlexMessageBuilder.buildSalaryApprovalCard() 只顯示小計，不逐項
+# 列出），所以這裡的中文名稱只影響同仁填表單時看到的畫面，不影響資料
+# 正確性；但畫面上文字還是要跟原本一致，同仁才不會覺得表單「換了一套」。
+# 每個 tuple 是 (表單欄位 name 屬性用的英文代號, 畫面上顯示的中文名稱)。
+EARNING_FIELDS = [
+    ("hours", "工時/天數"),
+    ("salary", "薪資"),
+    ("hour_bonus", "工時獎金"),
+    ("uniform_refund", "制服退費"),
+    ("labor_insurance_refund", "勞保退費"),
+    ("health_insurance_refund", "健保退費"),
+    ("referral_bonus", "推薦獎金"),
+    ("severance", "資遣費"),
+    ("annual_leave_cash", "年假代金"),
+    ("other", "其他加項"),
+]
+
+DEDUCTION_FIELDS = [
+    ("labor_insurance", "勞保費"),
+    ("health_insurance", "健保費"),
+    ("dependent_health_insurance", "眷屬健保"),
+    ("second_gen_health_insurance", "二代健保"),
+    ("group_insurance", "團保費"),
+    ("deposit", "補扣押金"),
+    ("legal_deduction", "法扣"),
+    ("debt", "欠款"),
+    ("remittance_fee", "匯費"),
+    ("other", "其他扣項"),
+]
+
+# 「是否可請款」下拉選單的選項——畫面截圖只看得到目前選取的「可」，還沒
+# 跟使用者確認完整選項清單，這裡先假設是「可」/「不可」這組最常見的相反
+# 配對，需要使用者比對現有表單確認是否正確。
+IS_CLAIMABLE_OPTIONS = ["可", "不可"]
+
+# 「補款方式」下拉選單的選項——畫面截圖只看得到目前選取的「立即補款」，
+# 完整選項清單還沒跟使用者確認，先只放這一個已知的選項，避免自己亂猜
+# 其他選項名稱、跟同仁原本熟悉的用詞不一致。
+PAY_TYPE_OPTIONS = ["立即補款"]
+
 
 def build_payload(
     *,
