@@ -44,18 +44,17 @@ MODULE_CODE = "job_listings"
 # 整包 base64 JSON 太大讓請求逾時或被 GAS 那邊拒絕。
 _MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
-# 這幾個多選欄位在現有 Netlify 表單畫面上都有紅色 *（看起來必填），但
-# 實際送出前的 JS 檢查（handleJobSubmit()）只真的擋了下面這五個欄位是否
-# 至少選一項，其餘欄位（全/兼職、外籍生、負責所別、班別、休假方式、
-# 領薪方式）雖然畫面標了 *，實際上沒有真的被擋——這是現有系統本來就有的
-# 行為（不是這邊的疏漏），這裡照原樣複製，不會「順手」幫忙修正成真的必填，
-# 避免跟使用者要求的「完全比照、不要有任何異動」牴觸。
-_REQUIRED_MULTI_SELECT_FIELDS = ["industry", "category", "job_cycle", "city", "district"]
-
 _MULTI_SELECT_FIELD_NAMES = [
     "industry", "category", "job_type", "foreign_student", "job_cycle",
     "city", "district", "branch", "shift", "leave_type", "pay_method",
 ]
+
+# 原本這裡只照抄現有 Netlify 表單「畫面標 * 但其實沒真的擋」的行為，只有
+# industry/category/job_cycle/city/district 五個欄位會真的擋。使用者
+# 2026-09-09 明確要求：除了「備註說明」跟「職缺圖檔上傳」，其餘欄位都要
+# 改成真的必填、沒填不能送出——這是使用者主動要求的行為變更，不是本系統
+# 自己加的簡化，所以這裡改成涵蓋全部多選欄位。
+_REQUIRED_MULTI_SELECT_FIELDS = list(_MULTI_SELECT_FIELD_NAMES)
 
 _TEXT_FIELD_NAMES = [
     "vendor", "title", "internal_title", "external_title", "salary",

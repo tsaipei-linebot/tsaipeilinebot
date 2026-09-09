@@ -93,5 +93,21 @@ class EmptyFormValuesTests(unittest.TestCase):
             self.assertEqual(result[name], [])
 
 
+class RequiredFieldsTests(unittest.TestCase):
+    """2026-09-09 使用者明確要求：職缺維護表單裡除了「備註說明」跟「職缺
+    圖檔上傳」，其餘欄位都要真的必填、沒填不能送出——不再照抄原本 Netlify
+    表單「畫面標 * 但其實沒真的擋」的行為。這裡驗證必填清單真的涵蓋全部
+    多選欄位（不是只有原本真的有擋的那五個）。"""
+
+    def test_all_multi_select_fields_are_required(self):
+        self.assertEqual(
+            sorted(job_listing_routes._REQUIRED_MULTI_SELECT_FIELDS),
+            sorted(job_listing_routes._MULTI_SELECT_FIELD_NAMES),
+        )
+
+    def test_notes_stays_optional(self):
+        self.assertNotIn("notes", job_listing_routes._REQUIRED_TEXT_FIELD_NAMES)
+
+
 if __name__ == "__main__":
     unittest.main()

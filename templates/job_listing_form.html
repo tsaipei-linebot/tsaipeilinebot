@@ -81,24 +81,24 @@
             <span class="repayment-subtotal" id="publisher-badge" style="background: var(--bg); color: var(--muted);">刊登人：{{ user.name }}</span>
         </div>
         <div class="repayment-basic-grid">
-            <label>申請送審同仁 *（目前登入者，鎖定不可更改）
+            <label><span class="field-caption">申請送審同仁 *（目前登入者，鎖定不可更改）</span>
                 <div class="applicant-readonly">{{ user.name }}</div>
             </label>
-            <label>系統廠商名稱 *
+            <label><span class="field-caption">系統廠商名稱 *</span>
                 <input type="text" name="vendor" value="{{ form.vendor or '' }}" placeholder="如：欣興電子-山鶯廠" required>
             </label>
-            <label>廠商名稱（主要識別）*
+            <label><span class="field-caption">廠商名稱（主要識別）*</span>
                 <input type="text" name="title" value="{{ form.title or '' }}" placeholder="如：製程技術員" required>
             </label>
-            <label>職缺名稱(對內) *
+            <label><span class="field-caption">職缺名稱(對內) *</span>
                 <input type="text" name="internal_title" value="{{ form.internal_title or '' }}" placeholder="如：【山鶯】製程技術員(日班)" required>
             </label>
-            <label class="full-width">職缺名稱(對外) *
+            <label class="full-width"><span class="field-caption">職缺名稱(對外) *</span>
                 <input type="text" name="external_title" value="{{ form.external_title or '' }}" placeholder="如：大廠高薪日班技術員/供宿/高錄取" required>
             </label>
-            <div class="field-block">行業別 *（可複選，Notion 多選）{{ multiselect_widget('industry') }}</div>
+            <div class="field-block"><span class="field-caption">行業別 *（可複選，Notion 多選）</span>{{ multiselect_widget('industry') }}</div>
             {{ multiselect_native_select('industry', industry_options) }}
-            <div class="field-block">職務類別 *（可複選，Notion 多選）{{ multiselect_widget('category') }}</div>
+            <div class="field-block"><span class="field-caption">職務類別 *（可複選，Notion 多選）</span>{{ multiselect_widget('category') }}</div>
             {{ multiselect_native_select('category', category_options) }}
         </div>
     </div>
@@ -106,16 +106,16 @@
     <div class="repayment-section">
         <div class="repayment-section-title">二、職務屬性與工作條件</div>
         <div class="repayment-basic-grid">
-            <div class="field-block">全/兼職{{ multiselect_widget('job_type') }}</div>
+            <div class="field-block"><span class="field-caption">全/兼職 *</span>{{ multiselect_widget('job_type') }}</div>
             {{ multiselect_native_select('job_type', job_type_options) }}
-            <div class="field-block">外籍生{{ multiselect_widget('foreign_student') }}</div>
+            <div class="field-block"><span class="field-caption">外籍生 *</span>{{ multiselect_widget('foreign_student') }}</div>
             {{ multiselect_native_select('foreign_student', foreign_student_options) }}
-            <div class="field-block">職缺週期 *（可複選）{{ multiselect_widget('job_cycle') }}</div>
+            <div class="field-block"><span class="field-caption">職缺週期 *（可複選）</span>{{ multiselect_widget('job_cycle') }}</div>
             {{ multiselect_native_select('job_cycle', job_cycle_options) }}
-            <label class="full-width">工作內容(對內) *
+            <label class="full-width"><span class="field-caption">工作內容(對內) *</span>
                 <textarea name="internal_desc" rows="3" placeholder="內部專員招募備忘、機台操作規範..." required>{{ form.internal_desc or '' }}</textarea>
             </label>
-            <label class="full-width">工作內容(對外) *
+            <label class="full-width"><span class="field-caption">工作內容(對外) *</span>
                 <textarea name="external_desc" rows="3" placeholder="對外公開刊登文案、工作項目..." required>{{ form.external_desc or '' }}</textarea>
             </label>
         </div>
@@ -124,11 +124,11 @@
     <div class="repayment-section">
         <div class="repayment-section-title">三、地點與負責所別</div>
         <div class="repayment-basic-grid">
-            <div class="field-block">縣市 *（可複選，選了才會出現對應行政區）{{ multiselect_widget('city') }}</div>
+            <div class="field-block"><span class="field-caption">縣市 *（可複選，選了才會出現對應行政區）</span>{{ multiselect_widget('city') }}</div>
             {{ multiselect_native_select('city', taiwan_cities) }}
-            <div class="field-block">行政區 *（可複選，含縣市名稱，可搜尋）{{ multiselect_widget('district') }}</div>
+            <div class="field-block"><span class="field-caption">行政區 *（可複選，含縣市名稱，可搜尋）</span>{{ multiselect_widget('district') }}</div>
             {{ multiselect_native_select('district', []) }}
-            <div class="field-block">負責所別{{ multiselect_widget('branch') }}</div>
+            <div class="field-block"><span class="field-caption">負責所別 *</span>{{ multiselect_widget('branch') }}</div>
             {{ multiselect_native_select('branch', branch_options) }}
         </div>
     </div>
@@ -136,19 +136,19 @@
     <div class="repayment-section">
         <div class="repayment-section-title">四、班別、薪酬與面試安排</div>
         <div class="repayment-basic-grid">
-            <div class="field-block">班別{{ multiselect_widget('shift') }}</div>
+            <div class="field-block"><span class="field-caption">班別 *</span>{{ multiselect_widget('shift') }}</div>
             {{ multiselect_native_select('shift', shift_options) }}
-            <div class="field-block">休假方式{{ multiselect_widget('leave_type') }}</div>
+            <div class="field-block"><span class="field-caption">休假方式 *</span>{{ multiselect_widget('leave_type') }}</div>
             {{ multiselect_native_select('leave_type', leave_type_options) }}
-            <label>薪資待遇 *
+            <label><span class="field-caption">薪資待遇 *</span>
                 <input type="text" name="salary" value="{{ form.salary or '' }}" placeholder="如：月薪 38,000~45,000 / 時薪 210" required>
             </label>
-            <div class="field-block">領薪方式{{ multiselect_widget('pay_method') }}</div>
+            <div class="field-block"><span class="field-caption">領薪方式 *</span>{{ multiselect_widget('pay_method') }}</div>
             {{ multiselect_native_select('pay_method', pay_method_options) }}
-            <label>面試方式 *
+            <label><span class="field-caption">面試方式 *</span>
                 <input type="text" name="interview_method" value="{{ form.interview_method or '' }}" placeholder="如：線上視訊面試 / 廠區面談" required>
             </label>
-            <label>備註說明（選填）
+            <label><span class="field-caption">備註說明（選填）</span>
                 <input type="text" name="notes" value="{{ form.notes or '' }}" placeholder="如：供宿舍、免費供餐、介紹獎金">
             </label>
         </div>
@@ -192,6 +192,21 @@ var FIELD_OPTIONS = {
     shift: {{ shift_options | tojson }},
     leave_type: {{ leave_type_options | tojson }},
     pay_method: {{ pay_method_options | tojson }}
+};
+
+// 多選欄位背後的 <select multiple> 是 hidden 的，瀏覽器內建的 required
+// 檢查對「不會顯示出來」的欄位不會生效（就算加了 required 屬性也一樣，
+// 瀏覽器根本不會擋、也不會跳提示），所以這些欄位是否必填要自己在送出前
+// 用 JS 檢查，不能只靠 <select required>。2026-09-09 使用者要求除了
+// 「備註說明」跟「職缺圖檔上傳」以外全部欄位都要必填、沒填不能送出。
+var REQUIRED_MULTISELECT_FIELDS = [
+    'industry', 'category', 'job_type', 'foreign_student', 'job_cycle',
+    'city', 'district', 'branch', 'shift', 'leave_type', 'pay_method'
+];
+var MULTISELECT_FIELD_LABELS = {
+    industry: '行業別', category: '職務類別', job_type: '全/兼職', foreign_student: '外籍生',
+    job_cycle: '職缺週期', city: '縣市', district: '行政區', branch: '負責所別',
+    shift: '班別', leave_type: '休假方式', pay_method: '領薪方式'
 };
 
 var selectedValues = {
@@ -516,7 +531,16 @@ loadMaintainableJobs();
         if (file) { imageInput.files = e.dataTransfer.files; showPreview(file); }
     });
 
-    document.getElementById('job-listing-form').addEventListener('submit', function () {
+    document.getElementById('job-listing-form').addEventListener('submit', function (e) {
+        var missing = REQUIRED_MULTISELECT_FIELDS.filter(function (key) {
+            return (selectedValues[key] || []).length === 0;
+        });
+        if (missing.length > 0) {
+            e.preventDefault();
+            var names = missing.map(function (key) { return MULTISELECT_FIELD_LABELS[key]; }).join('、');
+            alert('還有必填欄位沒有選擇，請檢查：' + names);
+            return;
+        }
         var btn = document.getElementById('job-listing-submit-btn');
         btn.disabled = true;
         btn.textContent = '送出中，請稍候…（可能需要幾秒鐘）';
