@@ -368,6 +368,122 @@ body {
 .repayment-summary-value.danger { color: #fb7185; }
 .repayment-summary-value.net { color: #fbbf24; }
 
+/* 職缺維護表單（templates/job_listing_form.html）的多選下拉選單：點擊
+   後彈出選單、選了變成一顆一顆的標籤，照抄現有 Netlify 表單的操作方式
+   （不是瀏覽器內建的多選清單），底下實際負責表單送出資料的是一個
+   `hidden` 的原生 `<select multiple>`，這裡看到的都只是疊在上面的
+   顯示層，見 job_listing_form.html 的 JS 說明。 */
+.multiselect { position: relative; }
+
+.multiselect-box {
+    min-height: 40px;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.multiselect-box.disabled { background: var(--bg); cursor: not-allowed; opacity: 0.7; }
+
+.multiselect-placeholder { color: var(--muted); font-size: 13px; }
+
+.multiselect-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px 2px 8px;
+    border-radius: 999px;
+    background: var(--brand-bg);
+    color: var(--brand-dark);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.multiselect-tag button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: inherit;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px;
+}
+
+.multiselect-menu {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow-md);
+    max-height: 260px;
+    overflow-y: auto;
+    z-index: 50;
+    padding: 6px;
+}
+
+.multiselect-menu[hidden] { display: none; }
+
+.multiselect-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.multiselect-option:hover { background: var(--bg); }
+.multiselect-option.selected { background: var(--brand-bg); color: var(--brand-dark); font-weight: 600; }
+
+.multiselect-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 10px; }
+
+.multiselect-menu-header {
+    position: sticky;
+    top: -6px;
+    background: var(--panel);
+    padding: 6px 2px 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+.multiselect-menu-header input {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 6px;
+    box-sizing: border-box;
+}
+
+.multiselect-menu-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.multiselect-menu-controls button {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    cursor: pointer;
+    margin-left: 4px;
+}
+
 .form-stack label {
     display: flex;
     flex-direction: column;
