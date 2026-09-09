@@ -11,7 +11,7 @@
 <p class="error">{{ error }}</p>
 {% endif %}
 
-<form method="post" action="/me/salary-repayment/new" enctype="multipart/form-data" class="form-stack form-narrow">
+<form method="post" action="/me/salary-repayment/new" enctype="multipart/form-data" class="form-stack form-narrow" id="salary-repayment-form">
     <label>員工姓名（實際補款對象，不一定是您自己）
         <input type="text" name="name" value="{{ form.name or '' }}" required autofocus>
     </label>
@@ -62,7 +62,7 @@
         <input type="file" name="image" accept="image/*">
     </label>
 
-    <button type="submit" class="btn btn-primary">送出申請</button>
+    <button type="submit" class="btn btn-primary" id="salary-repayment-submit-btn">送出申請</button>
 </form>
 <p class="back-link"><a href="/me">&larr; 回我的專區</a></p>
 
@@ -84,6 +84,17 @@ document.querySelectorAll('[data-add-row]').forEach(function (btn) {
     btn.addEventListener('click', function () {
         addAmountRow(btn.dataset.addRow, btn.dataset.labelName, btn.dataset.amountName);
     });
+});
+
+// 送出後要等 GAS 那邊把存照片、寫試算表、推播 LINE 都做完才會收到回應、
+// 才會跳轉畫面，這中間可能有幾秒鐘畫面看起來像沒反應——鎖住按鈕、換成
+// 「送出中」的文字，避免同仁誤以為沒送出、手滑按了第二次變成送兩筆重複
+// 的申請。表單本身的必填欄位驗證（required）會在瀏覽器允許送出前就擋下
+// 來，所以這裡不用另外檢查欄位。
+document.getElementById('salary-repayment-form').addEventListener('submit', function () {
+    var btn = document.getElementById('salary-repayment-submit-btn');
+    btn.disabled = true;
+    btn.textContent = '送出中，請稍候…（可能需要幾秒鐘）';
 });
 </script>
 {% endblock %}
