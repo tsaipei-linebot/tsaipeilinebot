@@ -6,7 +6,12 @@
 </div>
 <p class="hint">這裡只會顯示跟你有關的資料：你自己送出的申請，或是你身為主管、同仁送出的申請。</p>
 
+{% if submitted_salary_id %}
+<p class="success">申請已送出（單號：{{ submitted_salary_id }}），已通知主管審核，核准結果會出現在下方紀錄裡。</p>
+{% endif %}
+
 <h2 class="section-title">薪資補款紀錄</h2>
+<p><a href="/me/salary-repayment/new" class="btn btn-primary">+ 送出新的薪資補款申請</a></p>
 {% if salary_repayment_error %}
 <p class="warning">{{ salary_repayment_error }}</p>
 {% elif not salary_repayment_records %}

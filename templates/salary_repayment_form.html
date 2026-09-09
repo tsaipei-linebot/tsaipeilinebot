@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}薪資補款申請 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">薪資補款申請</h1>
+<p class="hint">
+    填好送出後，會直接轉給現有的核准流程處理：您的主管會收到 LINE 通知，核准或退回都會在 LINE 上完成，
+    這裡不用等待、也不用重新整理查看——核准結果之後可以在「我的專區」的薪資補款紀錄裡查到。
+</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/me/salary-repayment/new" enctype="multipart/form-data" class="form-stack form-narrow">
+    <label>員工姓名（實際補款對象，不一定是您自己）
+        <input type="text" name="name" value="{{ form.name or '' }}" required autofocus>
+    </label>
+    <label>身分證字號（選填）
+        <input type="text" name="id_card" value="{{ form.id_card or '' }}">
+    </label>
+    <label>廠商/店家
+        <input type="text" name="vendor" value="{{ form.vendor or '' }}">
+    </label>
+    <label>申請日
+        <input type="date" name="apply_date" value="{{ form.apply_date or '' }}" required>
+    </label>
+    <label>付款日（選填）
+        <input type="date" name="pay_date" value="{{ form.pay_date or '' }}">
+    </label>
+    <label>扣款月份（選填，例如 2026-08）
+        <input type="text" name="deduct_month" value="{{ form.deduct_month or '' }}">
+    </label>
+    <label>補請款月份（例如 2026-09）
+        <input type="text" name="compensate_month" value="{{ form.compensate_month or '' }}">
+    </label>
+    <label>是否可請款
+        <select name="is_claimable">
+            <option value="是" {{ 'selected' if form.is_claimable == '是' }}>是</option>
+            <option value="否" {{ 'selected' if form.is_claimable == '否' }}>否</option>
+        </select>
+    </label>
+    <label>補款方式（例如：現金、轉帳）
+        <input type="text" name="pay_type" value="{{ form.pay_type or '' }}">
+    </label>
+
+    <fieldset class="form-fieldset">
+        <legend>加項明細（選填，例如加班費、獎金）</legend>
+        <div id="earning-rows"></div>
+        <button type="button" class="btn btn-small" data-add-row="earning-rows" data-label-name="earning_label" data-amount-name="earning_amount">+ 新增一筆加項</button>
+    </fieldset>
+
+    <fieldset class="form-fieldset">
+        <legend>扣項明細（選填，例如誤餐費、代墊款）</legend>
+        <div id="deduction-rows"></div>
+        <button type="button" class="btn btn-small" data-add-row="deduction-rows" data-label-name="deduction_label" data-amount-name="deduction_amount">+ 新增一筆扣項</button>
+    </fieldset>
+
+    <label>備註說明（必填）
+        <textarea name="notes" rows="3" required>{{ form.notes or '' }}</textarea>
+    </label>
+    <label>補款佐證照片（選填）
+        <input type="file" name="image" accept="image/*">
+    </label>
+
+    <button type="submit" class="btn btn-primary">送出申請</button>
+</form>
+<p class="back-link"><a href="/me">&larr; 回我的專區</a></p>
+
+<script>
+function addAmountRow(containerId, labelName, amountName) {
+    var container = document.getElementById(containerId);
+    var row = document.createElement('div');
+    row.className = 'amount-row';
+    row.innerHTML =
+        '<input type="text" name="' + labelName + '" placeholder="名稱">' +
+        '<input type="number" name="' + amountName + '" placeholder="金額" step="1">' +
+        '<button type="button" class="btn btn-small" data-remove-row>移除</button>';
+    row.querySelector('[data-remove-row]').addEventListener('click', function () {
+        row.remove();
+    });
+    container.appendChild(row);
+}
+document.querySelectorAll('[data-add-row]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+        addAmountRow(btn.dataset.addRow, btn.dataset.labelName, btn.dataset.amountName);
+    });
+});
+</script>
+{% endblock %}
