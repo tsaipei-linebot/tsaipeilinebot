@@ -25,6 +25,18 @@
 
 ## 待辦事項（下一步優先處理）
 
+- **【程式碼已完成，需要使用者手動建立 Notion 資料庫才會生效】求職者提問追蹤（給招募專員回頭手動回覆用）**：程式碼部分見下方「已完成」第 30 項。使用者發現求職者問到 FAQ 沒收錄的問題時，機器人雖然回覆「已記錄、會由招募專員確認」，但實際上完全沒有留下「是誰問的」，招募專員根本無從回覆——這是這次補上的功能。**要讓它真的開始運作，需要使用者自己做以下事情（Claude 這邊沒辦法代勞，因為不知道使用者的 Notion 工作區結構、也沒有權限）**：
+  1. 在跟現有「FAQ 資料庫」同一個 Notion 工作區裡，**新建一個資料庫**（隨便取名，例如「求職者提問追蹤」），需要包含以下四個欄位（欄位名稱要完全一致，型態也要選對）：
+     - `求職者暱稱`：型態選「標題 (Title)」（每個 Notion 資料庫都必須有一個標題欄位，用這個當標題）
+     - `LINE User ID`：型態選「文字 (Text)」
+     - `提問內容`：型態選「文字 (Text)」
+     - `已回覆`：型態選「勾選方塊 (Checkbox)」——招募專員手動回覆完那個人之後，來這裡打勾即可，方便同仁篩選「還沒處理」的清單
+     - 建議再加一個 `Created time`（型態選「建立時間」，Notion 內建型態，不用自己填）：這樣就能看到每一筆是什麼時候記錄的，不用另外寫程式碼處理
+  2. **把這個新資料庫分享給現有的 Notion 整合（跟 FAQ／職缺資料庫用的是同一個）**：資料庫頁面右上角「⋯」→「連結」（Connections）→選擇目前這個機器人在用的那個整合名稱（跟當初設定 `NOTION_FAQ_DB_ID` 時分享的是同一個整合，不需要另外申請新的 API 金鑰）
+  3. **取得這個新資料庫的 ID**：打開資料庫頁面，網址列會像 `https://www.notion.so/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?v=...`，中間那串 32 位英數字（`xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` 那段）就是資料庫 ID
+  4. **在 Cloud Run 設定新的環境變數 `NOTION_UNRESOLVED_QUESTIONS_DB_ID`**，值就是上一步拿到的資料庫 ID——設定完不需要重新部署，Cloud Run 環境變數改完會自動生效於下一次容器啟動（如果想立刻生效，可以手動觸發一次部署，或等下次有人推送程式碼觸發自動部署）
+  - **沒有設定這個環境變數之前，這個功能會安全跳過**（只印一行 log，不會出錯、也不影響其他功能），FAQ 候選資料庫的既有功能完全不受影響。
+
 - **【上線前流量/正確性盤點，PR 待跑，見下方「已完成」第 27 項】**：使用者希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面盤點。找到並已在程式碼裡修好 4 個問題（見第 27 項細節），另外有幾項**需要使用者自己去 GCP 動手做，Claude 這邊沒辦法代勞**：
   1. ✅ **Cloud Run `--min-instances=1`：已完成**。用 `gcloud run services describe recruitment-bot --region asia-east1 --format="value(spec.template.metadata.annotations)"` 確認過，`autoscaling.knative.dev/minScale=1` 已生效，不會再有容器冷啟動疊加 AI 決策時間、逼近 LINE 30 秒時限的風險。同時確認 `run.googleapis.com/cpu-throttling=false`（CPU 一律配置，先前就設定過的仍在生效）、`run.googleapis.com/startup-cpu-boost=true`（額外加速容器啟動）。
   2. ✅ **正式上線前重新壓測：已完成，結果健康**。合併＋部署上方第 27 項的修正後，用 `scripts/load_test.py --concurrency 30 --total 100 --distinct-users 20` 實測：100 筆全部成功（無失敗），wall time p50=6.40s／p95=12.32s／p99=13.50s／max=13.50s，伺服器端純處理 p99=11.97s／max=11.97s——安全落在 LINE 30 秒 reply token 上限內（超過 2 倍餘裕）。**跟先前併發 15 的舊紀錄（見上方「Vertex AI 回應延遲」待辦事項）幾乎持平**（舊：wall p99/max=13.31s／伺服器 p99/max=10.78s），代表併發數翻倍後，`min-instances=1`＋CPU 一律配置＋這次修的 Firestore 並發問題，撐住了兩倍流量沒有明顯劣化。p50 落在 5-6 秒區間（一半以上請求要等 5 秒以上才有回覆），不是這次測試才有的新現象，是 Vertex AI 中高併發下既有的排隊現象；如果正式流量長時間維持併發 20-30 這個量級，可以考慮把「去 Vertex AI 主控台申請調高配額」這項低優先待辦往前提。
@@ -168,6 +180,12 @@
     - **成本說明**：這個機制會讓每一次新的執行個體啟動時，多消耗一次很小的 Gemini 呼叫額度（暖機測試訊息很短，成本可忽略），不是持續性的背景保活，只在「真的有新容器啟動」時才會跑一次。
     - **有考慮過、但沒有採用的替代方案**：把 `AI_DECISION_SYNC_TIMEOUT_SECONDS` 從 15 秒再往上加 2-3 秒。沒有採用的原因：這個時限只是決定「用免費的 reply_message 同步回覆」還是「先回查詢中、改用計費的 push_message 補發」的分界，就算調高，使用者最終還是收得到答案，並沒有真正解決「重新部署後第一則訊息本來就會變慢」這個根本原因；而且會進一步壓縮到 LINE 30 秒 reply_token 硬性上限的安全緩衝（前一輪已經因為同樣理由，把使用者原本想要的 25 秒改成 15 秒）。啟動預熱是處理根因，不需要再動這個時限。
     - ✅ **已合併部署並實測驗證**：部署完成後 4 分鐘，在測試頻道傳訊息確認沒有再觸發 15 秒背景補發機制，符合預期。
+30. **求職者提問追蹤：讓招募專員回頭找得到人**：使用者發現一個既有的落差——求職者問到 FAQ 沒收錄的問題（`action == "UNKNOWN_FAQ"`）時，機器人會回覆「已記錄、會由招募專員確認」，但原本的 `append_unresolved_faq_to_notion()` 只把「問題文字」寫進 Notion FAQ 資料庫（給未來的求職者累積常見問答庫用，且**有去重**），完全沒有留下「是誰問的」，加上這筆紀錄要等到每週一的週報才會被同仁看到——招募專員實際上完全沒有辦法真的回頭去回覆那個當下正在問的人，機器人等於是開了一張兌現不了的支票。討論後使用者選擇「補上追蹤能力」（而不是單純把話術改得比較保守，也先不做「即時推播到 LINE 群組通知」）：
+    - **新增獨立的「求職者提問追蹤」資料庫**（跟既有 FAQ 候選資料庫分開，`config.py` 新增 `NOTION_UNRESOLVED_QUESTIONS_DB_ID`）：`services/notion_service.py` 新增 `append_unresolved_question_for_followup(question_text, user_id, display_name="")`，寫入求職者暱稱、LINE User ID、提問內容，`已回覆` 勾選方塊預設未勾。**故意不做去重**——跟 `append_unresolved_faq_to_notion()` 的設計目的不同：那邊要的是「這個問題只需要留一筆候選」，這裡要的是「每一次真人事件都要能找到當事人」，同一個問題如果有 5 個人各自問過，就要留 5 筆紀錄，去重反而會讓後面 4 個人的身分資訊憑空消失。
+    - **`handlers/message_handler.py`**：`UNKNOWN_FAQ` 分支在原本呼叫 `append_unresolved_faq_to_notion()` 之後，另外呼叫 `target_line_bot_api.get_profile(user_id)` 取得求職者的 LINE 暱稱（包一層 `try/except`，使用者已封鎖官方帳號等情況會失敗，失敗時退回只記錄 user_id，不影響其他功能），再呼叫新的 `append_unresolved_question_for_followup()`。`target_line_bot_api` 因此新增為 `_compute_ai_decision_messages()` 的第 9 個參數（選填，預設 `None`，沒傳入時只記錄 user_id、不查暱稱，向下相容舊的直接呼叫方式）。
+    - **同仁怎麼用**：招募專員定期（建議至少每天）打開這個新的 Notion 資料庫，看 `已回覆` 沒打勾的列，去 LINE 官方帳號後台（聊天列表）用「求職者暱稱」或直接用「LINE User ID」搜尋找到那個人的對話串，手動回覆完之後回來把 `已回覆` 打勾即可。**要讓這個功能真的生效，使用者需要自己建立這個 Notion 資料庫並設定環境變數**，完整步驟見上方待辦事項；沒設定之前這個功能會安全跳過（只印 log），不影響其他功能。
+    - **新增測試**：`tests/test_notion_service.py` 新增 `AppendUnresolvedQuestionForFollowupTests`（5 個，含「同一問題不同人問不會被去重」的關鍵行為）；`tests/test_message_handler.py` 新增 3 個測試（正常記錄暱稱、`get_profile()` 失敗時退回 user_id、沒傳 `target_line_bot_api` 時也不出錯）。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 465 個測試，OK。
 
 ## 目前所有檔案的狀態
 

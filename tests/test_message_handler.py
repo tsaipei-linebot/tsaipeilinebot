@@ -275,6 +275,68 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         self.assertIsInstance(message, TextSendMessage)
         self.assertIn("沒有符合的職缺", message.text)
 
+    def test_unknown_faq_records_asker_identity_for_followup(self):
+        # 求職者問到 FAQ 沒收錄的問題時，除了寫進 FAQ 候選資料庫（給未來的
+        # 求職者累積常見問答庫），也要另外留一筆「這次是誰問的」紀錄，讓招募
+        # 專員能回頭去 LINE 官方帳號後台找到這個人手動回覆。
+        fake_decision = json.dumps({
+            "action": "UNKNOWN_FAQ", "reply": "已記錄您的問題", "ids": [], "buttons": []
+        })
+        line_bot_api = MagicMock()
+        line_bot_api.get_profile.return_value = MagicMock(display_name="小明")
+
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision), \
+             patch("handlers.message_handler.append_unresolved_faq_to_notion") as mock_faq_db, \
+             patch("handlers.message_handler.append_unresolved_question_for_followup") as mock_followup:
+            h._compute_ai_decision_messages(
+                "U1234", "颱風天上班算加班嗎", [], [], "新莊", "",
+                target_line_bot_api=line_bot_api,
+            )
+
+        mock_faq_db.assert_called_once_with("颱風天上班算加班嗎")
+        line_bot_api.get_profile.assert_called_once_with("U1234")
+        mock_followup.assert_called_once_with("颱風天上班算加班嗎", "U1234", "小明")
+
+    def test_unknown_faq_falls_back_to_user_id_when_profile_lookup_fails(self):
+        # get_profile() 可能失敗（例如使用者已封鎖官方帳號），這時候追蹤紀錄
+        # 還是要留下來，只是暱稱欄位退回用 user_id，不能因此整個追蹤都不寫。
+        fake_decision = json.dumps({
+            "action": "UNKNOWN_FAQ", "reply": "已記錄您的問題", "ids": [], "buttons": []
+        })
+        line_bot_api = MagicMock()
+        line_bot_api.get_profile.side_effect = RuntimeError("使用者已封鎖官方帳號")
+
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision), \
+             patch("handlers.message_handler.append_unresolved_faq_to_notion"), \
+             patch("handlers.message_handler.append_unresolved_question_for_followup") as mock_followup:
+            h._compute_ai_decision_messages(
+                "U1234", "颱風天上班算加班嗎", [], [], "新莊", "",
+                target_line_bot_api=line_bot_api,
+            )
+
+        mock_followup.assert_called_once_with("颱風天上班算加班嗎", "U1234", "")
+
+    def test_unknown_faq_without_line_bot_api_still_records_user_id(self):
+        # 沒有傳入 target_line_bot_api（例如舊測試直接呼叫這個函式）時，
+        # 不該噴例外，只是沒辦法查暱稱，追蹤紀錄改用 user_id。
+        fake_decision = json.dumps({
+            "action": "UNKNOWN_FAQ", "reply": "已記錄您的問題", "ids": [], "buttons": []
+        })
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision), \
+             patch("handlers.message_handler.append_unresolved_faq_to_notion"), \
+             patch("handlers.message_handler.append_unresolved_question_for_followup") as mock_followup:
+            h._compute_ai_decision_messages(
+                "U1234", "颱風天上班算加班嗎", [], [], "新莊", ""
+            )
+
+        mock_followup.assert_called_once_with("颱風天上班算加班嗎", "U1234", "")
+
     def test_compute_ai_decision_messages_returns_fallback_on_internal_exception(self):
         # 就算計算過程整個爆炸（例如 Firestore/Notion/Gemini 任何一個環節出問題），
         # 也一定要回傳保底訊息，不能讓例外往外拋出、導致呼叫端完全沒有東西可送

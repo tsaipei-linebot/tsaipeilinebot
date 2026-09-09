@@ -22,6 +22,12 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_JOBS_DB_ID = os.getenv("NOTION_JOBS_DB_ID")
 NOTION_FAQ_DB_ID = os.getenv("NOTION_FAQ_DB_ID")
+# 求職者提問追蹤資料庫（選填）：求職者問到 FAQ 沒收錄的問題時，除了寫進上面
+# NOTION_FAQ_DB_ID（給未來的求職者累積常見問答庫用，會去重），也會在這個獨立
+# 資料庫留一筆「這次是誰問的」的紀錄（不去重，每個人都要各自留一筆），讓招募
+# 專員能回頭去 LINE 官方帳號後台找到這個人手動回覆。沒設定時只會印 log 跳過，
+# 不影響其他功能（見 HANDOFF.md）。
+NOTION_UNRESOLVED_QUESTIONS_DB_ID = os.getenv("NOTION_UNRESOLVED_QUESTIONS_DB_ID", "")
 OFFICIAL_WEBSITE_BASE = os.getenv("OFFICIAL_WEBSITE_BASE", "https://tsaipei.netlify.app")
 
 # ==========================================
