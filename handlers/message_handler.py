@@ -17,7 +17,7 @@ from services.session_service import (
 )
 from services.notion_service import (
     fetch_jobs_data, fetch_faqs_data, clean_text_for_search, sanitize_uri,
-    append_unresolved_faq_to_notion
+    append_unresolved_faq_to_notion, append_unresolved_question_for_followup
 )
 from services.flex_service import (
     create_job_flex_card, format_clean_location, resolve_apply_url_by_industry
@@ -515,7 +515,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         future = _AI_DECISION_EXECUTOR.submit(
             _compute_ai_decision_messages,
             user_id, raw_msg, active_jobs, faq_list, current_location, history_text, log_ctx,
-            current_slots,
+            current_slots, target_line_bot_api,
         )
         try:
             messages = future.result(timeout=AI_DECISION_SYNC_TIMEOUT_SECONDS)
@@ -606,6 +606,7 @@ def _compute_ai_decision_messages(
     history_text: str,
     log_ctx: dict = None,
     known_slots: dict = None,
+    target_line_bot_api: LineBotApi = None,
 ):
     """執行真正耗時的 AI 決策（候選集合建構 + Gemini 呼叫 + 解析），是
     process_user_message() 步驟 2 原本的內容搬過來的。這個函式故意只負責「算出
@@ -622,6 +623,11 @@ def _compute_ai_decision_messages(
     讀取重新查一次一模一樣的資料——這個限時同步等待的時間窗口裡，每省一次
     網路來回都對延遲有幫助。沒有傳入時（例如舊測試直接呼叫這個函式）才退回
     原本自己查一次的行為，保持相容。
+
+    target_line_bot_api：只在決策結果是 UNKNOWN_FAQ 時才會用到，呼叫 LINE
+    的 get_profile() 取得求職者的暱稱，連同 user_id 一起記錄到「求職者提問
+    追蹤」資料庫，讓招募專員能回頭去 LINE 官方帳號後台找到這個人手動回覆
+    （見 HANDOFF.md）。沒有傳入時（例如舊測試）就只記錄 user_id，不會出錯。
 
     保證不會往外拋出例外：任何步驟失敗都在這裡攔截並回傳保底訊息，讓呼叫端
     不需要再處理例外，只要送出這裡回傳的 messages 即可。"""
@@ -723,6 +729,17 @@ def _compute_ai_decision_messages(
         if action == "UNKNOWN_FAQ":
             # 自動將未收錄問題寫入 Notion FAQ 資料庫（寫入前已在 notion_service 做過去重）[cite: 6]
             append_unresolved_faq_to_notion(raw_msg)
+
+            # 另外在「求職者提問追蹤」資料庫留一筆這次是誰問的紀錄（不去重），
+            # 讓招募專員能回頭去 LINE 官方帳號後台找到這個人手動回覆——上面那筆
+            # 只是給未來的求職者累積常見問答庫用，不會留下是誰問的。
+            display_name = ""
+            if target_line_bot_api is not None:
+                try:
+                    display_name = target_line_bot_api.get_profile(user_id).display_name
+                except Exception as e:
+                    print(f"[取得 LINE 顯示名稱失敗，追蹤紀錄改用 user_id]: {e}")
+            append_unresolved_question_for_followup(raw_msg, user_id, display_name)
 
             reply_text = ai_reply_text or "謝謝您的提問！沛沛已先幫您把這個問題記錄下來回報給招募專員囉 😊 請問您目前想先看看哪個地區或班別的工作呢？"
             append_user_history(user_id, "招募顧問沛沛", reply_text)

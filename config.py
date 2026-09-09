@@ -22,6 +22,12 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_JOBS_DB_ID = os.getenv("NOTION_JOBS_DB_ID")
 NOTION_FAQ_DB_ID = os.getenv("NOTION_FAQ_DB_ID")
+# 求職者提問追蹤資料庫（選填）：求職者問到 FAQ 沒收錄的問題時，除了寫進上面
+# NOTION_FAQ_DB_ID（給未來的求職者累積常見問答庫用，會去重），也會在這個獨立
+# 資料庫留一筆「這次是誰問的」的紀錄（不去重，每個人都要各自留一筆），讓招募
+# 專員能回頭去 LINE 官方帳號後台找到這個人手動回覆。沒設定時只會印 log 跳過，
+# 不影響其他功能（見 HANDOFF.md）。
+NOTION_UNRESOLVED_QUESTIONS_DB_ID = os.getenv("NOTION_UNRESOLVED_QUESTIONS_DB_ID", "")
 OFFICIAL_WEBSITE_BASE = os.getenv("OFFICIAL_WEBSITE_BASE", "https://tsaipei.netlify.app")
 
 # ==========================================
@@ -151,6 +157,13 @@ DAILY_REPORT_LATENCY_BUCKET_MINUTES = int(os.getenv("DAILY_REPORT_LATENCY_BUCKET
 FAQ_WEEKLY_REPORT_WEEKDAY = int(os.getenv("FAQ_WEEKLY_REPORT_WEEKDAY", "0"))
 # 職缺類問句「這個類別/廠商本週被問幾次、但沒有專屬直達路徑」達到這個次數才列入建議清單
 FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT = int(os.getenv("FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT", "5"))
+# 上線初期使用：FAQ 候選清單／建議新增的職缺關鍵字原本只在 FAQ_WEEKLY_REPORT_WEEKDAY
+# 那天出現（預設週一）。剛上線這段期間流量還小、需要密切觀察，開啟這個開關後，
+# 不管星期幾，FAQ 候選清單都會每天出現在日報裡，方便招募專員更即時掌握求職者
+# 問到哪些還沒收錄的問題。健康狀況檢查的時間窗口不受影響（只有真正的「週報日」
+# 才會是過去 7 天，其餘每天都還是過去 24 小時），避免健康狀況因為視窗被拉長而
+# 誤判。上線穩定後可以再把這個環境變數關掉，改回原本每週一次的頻率。
+FAQ_REPORT_DAILY_MODE = os.getenv("FAQ_REPORT_DAILY_MODE", "false").strip().lower() in ("1", "true", "yes")
 
 # ==========================================
 # 13. AI 決策限時同步等待秒數（見 HANDOFF.md「監控與告警機制」壓測章節）

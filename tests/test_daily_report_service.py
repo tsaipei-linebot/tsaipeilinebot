@@ -231,5 +231,51 @@ class RunDailyReportTests(unittest.TestCase):
         self.assertTrue(summary["health"]["level1_triggered"])
 
 
+class FaqReportDailyModeOverrideTests(unittest.TestCase):
+    """FAQ_REPORT_DAILY_MODE（上線初期使用，見 config.py）開啟時，FAQ 候選清單／
+    建議關鍵字要不管星期幾都出現，但健康狀況檢查的時間窗口不能被連帶拉長——
+    只有真正的「週報日」才用過去 7 天，其餘每天都還是過去 24 小時。"""
+
+    def test_daily_mode_shows_faq_section_on_non_weekly_day(self):
+        with patch("services.daily_report_service.is_weekly_report_day", return_value=False), \
+             patch("services.daily_report_service.FAQ_REPORT_DAILY_MODE", True), \
+             patch("services.daily_report_service.fetch_recent_log_events", return_value=[]), \
+             patch("services.daily_report_service.fetch_pending_faq_candidates", return_value=["颱風天上班算加班嗎"]) as mock_faq:
+            summary = dr.run_daily_report(line_bot_api=None)
+
+        mock_faq.assert_called_once()
+        self.assertEqual(summary["faq_candidate_count"], 1)
+
+    def test_daily_mode_off_hides_faq_section_on_non_weekly_day(self):
+        with patch("services.daily_report_service.is_weekly_report_day", return_value=False), \
+             patch("services.daily_report_service.FAQ_REPORT_DAILY_MODE", False), \
+             patch("services.daily_report_service.fetch_recent_log_events", return_value=[]), \
+             patch("services.daily_report_service.fetch_pending_faq_candidates", return_value=["颱風天上班算加班嗎"]) as mock_faq:
+            summary = dr.run_daily_report(line_bot_api=None)
+
+        mock_faq.assert_not_called()
+        self.assertEqual(summary["faq_candidate_count"], 0)
+
+    def test_daily_mode_does_not_widen_health_window_on_non_weekly_day(self):
+        with patch("services.daily_report_service.is_weekly_report_day", return_value=False), \
+             patch("services.daily_report_service.FAQ_REPORT_DAILY_MODE", True), \
+             patch("services.daily_report_service.fetch_recent_log_events", return_value=[]) as mock_fetch, \
+             patch("services.daily_report_service.fetch_pending_faq_candidates", return_value=[]):
+            dr.run_daily_report(line_bot_api=None)
+
+        mock_fetch.assert_called_once_with(hours=24)
+
+    def test_daily_mode_does_not_enable_delivery_mode_section_on_non_weekly_day(self):
+        # FAQ_REPORT_DAILY_MODE 只影響 FAQ 候選清單／建議關鍵字，不影響
+        # 同步回覆／背景補發比例——那個只在真正的週報日才顯示，範圍沒有擴大。
+        with patch("services.daily_report_service.is_weekly_report_day", return_value=False), \
+             patch("services.daily_report_service.FAQ_REPORT_DAILY_MODE", True), \
+             patch("services.daily_report_service.fetch_recent_log_events", return_value=[]), \
+             patch("services.daily_report_service.fetch_pending_faq_candidates", return_value=[]):
+            summary = dr.run_daily_report(line_bot_api=None)
+
+        self.assertIsNone(summary["delivery_mode"])
+
+
 if __name__ == "__main__":
     unittest.main()

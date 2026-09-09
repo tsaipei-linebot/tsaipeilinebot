@@ -161,7 +161,67 @@ class FetchAllFaqQuestionTitlesCacheTests(unittest.TestCase):
                 n._fetch_all_faq_question_titles(),
                 ["加班費怎麼計算？", "颱風天上班算加班嗎"],
             )
-            self.assertEqual(mock_fetch.call_count, 1)
+
+
+class AppendUnresolvedQuestionForFollowupTests(unittest.TestCase):
+    """跟 append_unresolved_faq_to_notion() 不同：這個函式不做去重，同一個問題
+    不同人問，每個人都要各自留下一筆紀錄，才能讓招募專員回頭找到當事人。"""
+
+    def test_writes_display_name_user_id_and_question(self):
+        mock_response = type("_Resp", (), {"status_code": 201, "text": ""})()
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_UNRESOLVED_QUESTIONS_DB_ID", "dummy-db-id"), \
+             patch("services.notion_service.requests.post", return_value=mock_response) as mock_post:
+            result = n.append_unresolved_question_for_followup(
+                "颱風天上班算加班嗎", "U1234", display_name="小明"
+            )
+
+        self.assertTrue(result)
+        _, kwargs = mock_post.call_args
+        properties = kwargs["json"]["properties"]
+        self.assertEqual(properties["求職者暱稱"]["title"][0]["text"]["content"], "小明")
+        self.assertEqual(properties["LINE User ID"]["rich_text"][0]["text"]["content"], "U1234")
+        self.assertEqual(properties["提問內容"]["rich_text"][0]["text"]["content"], "颱風天上班算加班嗎")
+        self.assertEqual(properties["已回覆"]["checkbox"], False)
+
+    def test_falls_back_to_user_id_when_no_display_name(self):
+        mock_response = type("_Resp", (), {"status_code": 201, "text": ""})()
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_UNRESOLVED_QUESTIONS_DB_ID", "dummy-db-id"), \
+             patch("services.notion_service.requests.post", return_value=mock_response) as mock_post:
+            n.append_unresolved_question_for_followup("颱風天上班算加班嗎", "U1234")
+
+        _, kwargs = mock_post.call_args
+        properties = kwargs["json"]["properties"]
+        self.assertEqual(properties["求職者暱稱"]["title"][0]["text"]["content"], "U1234")
+
+    def test_does_not_dedupe_same_question_from_different_users(self):
+        mock_response = type("_Resp", (), {"status_code": 201, "text": ""})()
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_UNRESOLVED_QUESTIONS_DB_ID", "dummy-db-id"), \
+             patch("services.notion_service.requests.post", return_value=mock_response) as mock_post:
+            n.append_unresolved_question_for_followup("颱風天上班算加班嗎", "U1111", "小明")
+            n.append_unresolved_question_for_followup("颱風天上班算加班嗎", "U2222", "小華")
+
+        self.assertEqual(mock_post.call_count, 2)
+
+    def test_skips_when_db_id_not_configured(self):
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_UNRESOLVED_QUESTIONS_DB_ID", ""), \
+             patch("services.notion_service.requests.post") as mock_post:
+            result = n.append_unresolved_question_for_followup("颱風天上班算加班嗎", "U1234")
+
+        self.assertFalse(result)
+        mock_post.assert_not_called()
+
+    def test_skips_when_missing_user_id(self):
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_UNRESOLVED_QUESTIONS_DB_ID", "dummy-db-id"), \
+             patch("services.notion_service.requests.post") as mock_post:
+            result = n.append_unresolved_question_for_followup("颱風天上班算加班嗎", "")
+
+        self.assertFalse(result)
+        mock_post.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import urllib.request
 import urllib.parse
 from config import (
     NOTION_API_KEY, NOTION_JOBS_DB_ID, NOTION_FAQ_DB_ID,
-    ALLOWED_PROPERTIES, CACHE_TTL
+    NOTION_UNRESOLVED_QUESTIONS_DB_ID, ALLOWED_PROPERTIES, CACHE_TTL
 )
 
 _cached_jobs, _last_jobs_fetch = None, 0
@@ -369,4 +369,45 @@ def append_unresolved_faq_to_notion(question_text: str) -> bool:
             return False
     except Exception as e:
         print(f"[Notion FAQ 寫入異常]: {e}")
+        return False
+
+
+def append_unresolved_question_for_followup(question_text: str, user_id: str, display_name: str = "") -> bool:
+    """在『求職者提問追蹤』資料庫新增一筆紀錄，讓招募專員能回頭找到這個人手動回覆。
+
+    刻意不做去重（跟 append_unresolved_faq_to_notion() 不同）：那邊是為了累積
+    「未來的常見問答庫」，同一個問題只需要留一筆候選；這裡要的是「每一次真人
+    事件」都要能找到當事人，同一個問題如果有 5 個人各自問過，就要留 5 筆紀錄，
+    去重反而會讓後面 4 個人的身分資訊憑空消失、變成再也找不到人回覆。"""
+    if not NOTION_API_KEY or not NOTION_UNRESOLVED_QUESTIONS_DB_ID or not question_text or not user_id:
+        return False
+
+    title_text = display_name.strip() if display_name else user_id
+
+    url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+    payload = {
+        "parent": {"database_id": NOTION_UNRESOLVED_QUESTIONS_DB_ID},
+        "properties": {
+            "求職者暱稱": {"title": [{"text": {"content": title_text}}]},
+            "LINE User ID": {"rich_text": [{"text": {"content": user_id}}]},
+            "提問內容": {"rich_text": [{"text": {"content": question_text.strip()}}]},
+            "已回覆": {"checkbox": False},
+        }
+    }
+
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=5)
+        if res.status_code in [200, 201]:
+            print(f"[求職者提問追蹤] 已記錄「{title_text}」的提問，待招募專員回覆")
+            return True
+        else:
+            print(f"[求職者提問追蹤寫入失敗 {res.status_code}]: {res.text}")
+            return False
+    except Exception as e:
+        print(f"[求職者提問追蹤寫入異常]: {e}")
         return False

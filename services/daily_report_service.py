@@ -6,7 +6,8 @@ from linebot.models import TextSendMessage
 from config import (
     GCP_PROJECT_ID, DAILY_REPORT_LINE_TARGET_ID,
     DAILY_REPORT_LATENCY_P95_THRESHOLD_SECONDS, DAILY_REPORT_LATENCY_BUCKET_MINUTES,
-    FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT, FAQ_WEEKLY_REPORT_WEEKDAY, TAIPEI_TZ,
+    FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT, FAQ_WEEKLY_REPORT_WEEKDAY, FAQ_REPORT_DAILY_MODE,
+    TAIPEI_TZ,
 )
 from services.monitoring_service import AI_DECISION_LOG_MARKER, parse_log_line
 from services.notion_service import fetch_pending_faq_candidates
@@ -219,6 +220,10 @@ def run_daily_report(line_bot_api) -> dict:
     summary = {"health": None, "faq_candidate_count": 0, "keyword_gap_count": 0, "line_pushed": False, "errors": []}
 
     is_weekly = is_weekly_report_day()
+    # FAQ_REPORT_DAILY_MODE（上線初期使用）開啟時，FAQ 候選清單／建議關鍵字
+    # 不管星期幾都會出現，但健康狀況檢查的視窗大小不受影響——只有真正的
+    # 「週報日」才會是過去 7 天，避免視窗被拉長而讓健康狀況誤判（見 config.py）。
+    show_faq_section = is_weekly or FAQ_REPORT_DAILY_MODE
     period_label = "週" if is_weekly else "日"
     health_window_hours = 24 * 7 if is_weekly else 24
 
@@ -234,14 +239,16 @@ def run_daily_report(line_bot_api) -> dict:
 
     faq_candidates, keyword_gaps, delivery_mode = [], [], None
 
-    if is_weekly:
+    if show_faq_section:
         try:
             faq_candidates = fetch_pending_faq_candidates()
         except Exception as e:
-            print(f"[每週報告] 讀取 FAQ 候選清單失敗: {e}")
+            print(f"[每日/週報告] 讀取 FAQ 候選清單失敗: {e}")
             summary["errors"].append(f"faq_fetch_failed: {e}")
 
         keyword_gaps = compute_keyword_gap_candidates(health_events)
+
+    if is_weekly:
         delivery_mode = compute_delivery_mode_summary(health_events)
 
     summary["faq_candidate_count"] = len(faq_candidates)
