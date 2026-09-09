@@ -36,6 +36,12 @@ _MODULE_CARD_INFO = {
         # 登入頁，卡片直接連過去即可。
         "href": "/salesdev",
     },
+    "job_listings": {
+        "description": "新增/維護職缺，送審後同步 Notion 職缺資料庫、官網與招募機器人",
+        # 跟 salesdev 一樣直接掛在根 app（見 job_listing_routes.py），
+        # 沒有獨立的登入頁。
+        "href": "/job-listings",
+    },
 }
 
 
