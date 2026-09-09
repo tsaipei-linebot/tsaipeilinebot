@@ -23,6 +23,7 @@ from services.salary_repayment_submit_service import (
     PAY_TYPE_OPTIONS,
     build_payload,
     submit_salary_repayment,
+    validate_taiwan_id,
 )
 
 router = APIRouter()
@@ -60,17 +61,19 @@ def my_zone(request: Request, submitted: str = "", redirect=Depends(_require_log
 
 def _amounts_from_form(form, fields: list, prefix: str) -> dict:
     """把加項/扣項固定十個欄位（field 的 name 屬性是 "{prefix}_{代號}"）
-    組成 {中文名稱: 金額} 的字典，同仁沒填或打錯（不是數字）的欄位當成 0，
+    組成 {英文代號: 金額} 的字典——代號照抄現有 Netlify 表單原始碼實際送給
+    GAS 的 earnings/deductions 物件 key（見 EARNING_FIELDS/DEDUCTION_FIELDS
+    的說明），不是用中文名稱。同仁沒填或打錯（不是數字）的欄位當成 0，
     不當成錯誤擋下整張表單——這些欄位本來就是選填。"""
     result = {}
-    for slug, label in fields:
+    for slug, _label in fields:
         raw = form.get(f"{prefix}_{slug}", "")
         try:
             amount = float(raw) if str(raw).strip() else 0.0
         except (TypeError, ValueError):
             amount = 0.0
         if amount:
-            result[label] = amount
+            result[slug] = amount
     return result
 
 
@@ -129,8 +132,8 @@ async def create_salary_repayment_submit(
         "notes": notes,
     }
 
-    # 必填欄位跟現有 Netlify 表單畫面上的紅色 * 一致（2026-09-09 使用者
-    # 提供畫面截圖比對）：申請日/員工姓名/身分證字號/廠商店家/補請款月份/
+    # 必填欄位跟現有 Netlify 表單原始碼一致（2026-09-09 使用者提供原始碼
+    # index_6.html 比對）：申請日/員工姓名/身分證字號/廠商店家/補請款月份/
     # 是否可請款/補款方式/備註說明都是必填，付款日跟扣分鐘月份選填。
     if not all([name.strip(), apply_date.strip(), id_card.strip(), vendor.strip(),
                 compensate_month.strip(), is_claimable.strip(), pay_type.strip(), notes.strip()]):
@@ -138,6 +141,20 @@ async def create_salary_repayment_submit(
             request,
             "salary_repayment_form.html",
             _salary_repayment_form_context(account, "「員工姓名」「身分證字號」「廠商/店家」「申請日」「補請款月份」「是否可請款」「補款方式」「備註說明」都是必填欄位。", form_values),
+            status_code=400,
+        )
+
+    # 身分證字號一律轉大寫、檢查檢查碼是否合法，照抄現有表單
+    # validateTaiwanId() 的行為（見 services/salary_repayment_submit_service.py
+    # 的 validate_taiwan_id() 說明），同仁在這裡被擋下來的時機/原因跟原本
+    # 表單一致，不是這次才新增的額外限制。
+    id_card = id_card.strip().upper()
+    form_values["id_card"] = id_card
+    if not validate_taiwan_id(id_card):
+        return templates.TemplateResponse(
+            request,
+            "salary_repayment_form.html",
+            _salary_repayment_form_context(account, "身分證格式錯誤，請輸入有效的台灣身分證字號。", form_values),
             status_code=400,
         )
 
@@ -161,7 +178,7 @@ async def create_salary_repayment_submit(
     payload = build_payload(
         applicant_name=account["name"],
         employee_name=name.strip(),
-        id_card=id_card.strip(),
+        id_card=id_card,
         vendor=vendor.strip(),
         apply_date=apply_date.strip(),
         pay_date=pay_date.strip(),

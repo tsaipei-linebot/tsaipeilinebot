@@ -14,55 +14,69 @@
 SalaryWorkflowService.processSalarySubmission() 現有的樣子照抄，沒有另外
 新增或修改對方看得懂的欄位。
 """
+import re
+
 import requests
 
 from config import JOB_PORTAL_GAS_WEBAPP_URL as GAS_WEBAPP_URL
 
 _REQUEST_TIMEOUT_SECONDS = 30
 
-# 加項/扣項明細固定十個項目，照抄現有 Netlify 表單畫面上的名稱跟順序
-# （2026-09-09 使用者提供畫面截圖比對），不是同仁自己自由新增的欄位——
-# 這些名稱只會用來組 GAS SUBMIT_SALARY 的 earnings/deductions 物件
-# （GAS 那邊只把它們加總、不會把個別項目寫進試算表，見
-# SalaryFlexMessageBuilder.buildSalaryApprovalCard() 只顯示小計，不逐項
-# 列出），所以這裡的中文名稱只影響同仁填表單時看到的畫面，不影響資料
-# 正確性；但畫面上文字還是要跟原本一致，同仁才不會覺得表單「換了一套」。
-# 每個 tuple 是 (表單欄位 name 屬性用的英文代號, 畫面上顯示的中文名稱)。
+# 加項/扣項明細固定十個項目、下拉選單選項、英文代號，全部照抄使用者
+# 2026-09-09 提供的現有 Netlify 表單原始碼（index_6.html）——包含
+# handleSalarySubmit() 組 earnings/deductions 物件時實際用的英文 key
+# 名稱（例如 work_hours、labor_ins），不是我方自己另外取名，這樣送去
+# GAS 的 payload 才會跟現有表單完全一致，不只是畫面看起來一樣。
+# 每個 tuple 是 (英文代號，同時是表單欄位 name 屬性跟送給 GAS 的
+# earnings/deductions 物件 key, 畫面上顯示的中文名稱)。
 EARNING_FIELDS = [
-    ("hours", "工時/天數"),
+    ("work_hours", "工時/天數"),
     ("salary", "薪資"),
-    ("hour_bonus", "工時獎金"),
+    ("hours_bonus", "工時獎金"),
     ("uniform_refund", "制服退費"),
-    ("labor_insurance_refund", "勞保退費"),
-    ("health_insurance_refund", "健保退費"),
+    ("labor_refund", "勞保退費"),
+    ("health_refund", "健保退費"),
     ("referral_bonus", "推薦獎金"),
     ("severance", "資遣費"),
-    ("annual_leave_cash", "年假代金"),
+    ("annual_leave", "年假代金"),
     ("other", "其他加項"),
 ]
 
 DEDUCTION_FIELDS = [
-    ("labor_insurance", "勞保費"),
-    ("health_insurance", "健保費"),
-    ("dependent_health_insurance", "眷屬健保"),
-    ("second_gen_health_insurance", "二代健保"),
-    ("group_insurance", "團保費"),
+    ("labor_ins", "勞保費"),
+    ("health_ins", "健保費"),
+    ("dependents", "眷屬健保"),
+    ("health_2nd", "二代健保"),
+    ("group_ins", "團保費"),
     ("deposit", "補扣押金"),
-    ("legal_deduction", "法扣"),
+    ("court", "法扣"),
     ("debt", "欠款"),
-    ("remittance_fee", "匯費"),
+    ("remit_fee", "匯費"),
     ("other", "其他扣項"),
 ]
 
-# 「是否可請款」下拉選單的選項——畫面截圖只看得到目前選取的「可」，還沒
-# 跟使用者確認完整選項清單，這裡先假設是「可」/「不可」這組最常見的相反
-# 配對，需要使用者比對現有表單確認是否正確。
 IS_CLAIMABLE_OPTIONS = ["可", "不可"]
+PAY_TYPE_OPTIONS = ["立即補款", "同次月薪"]
 
-# 「補款方式」下拉選單的選項——畫面截圖只看得到目前選取的「立即補款」，
-# 完整選項清單還沒跟使用者確認，先只放這一個已知的選項，避免自己亂猜
-# 其他選項名稱、跟同仁原本熟悉的用詞不一致。
-PAY_TYPE_OPTIONS = ["立即補款"]
+# 台灣身分證字號檢查碼演算法，照抄現有表單 index_6.html 的
+# validateTaiwanId()：現有表單送出前會先擋掉格式錯誤的身分證字號，這裡
+# 照做同樣的檢查，讓材霈平台這邊的表單體驗（什麼時候會被擋、擋下來的
+# 訊息時機）跟同仁原本熟悉的一致，不是為了額外加驗證。
+_TAIWAN_ID_LETTERS = "ABCDEFGHJKLMNPQRSTUVXYWZIO"
+_TAIWAN_ID_PATTERN = re.compile(r"^[A-Z][1289]\d{8}$")
+
+
+def validate_taiwan_id(id_card: str) -> bool:
+    id_card = (id_card or "").strip().upper()
+    if not _TAIWAN_ID_PATTERN.match(id_card):
+        return False
+    letter_code = _TAIWAN_ID_LETTERS.index(id_card[0]) + 10
+    d0, d1 = divmod(letter_code, 10)
+    total = d0 + d1 * 9
+    for i in range(1, 9):
+        total += int(id_card[i]) * (9 - i)
+    total += int(id_card[9])
+    return total % 10 == 0
 
 
 def build_payload(
@@ -108,6 +122,7 @@ def build_payload(
         "summary": {
             "total_earnings": sum(earnings.values()),
             "total_deductions": sum(deductions.values()),
+            "net_total": sum(earnings.values()) - sum(deductions.values()),
         },
     }
     if image_base64:
