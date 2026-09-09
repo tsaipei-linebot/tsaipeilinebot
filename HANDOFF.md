@@ -25,18 +25,6 @@
 
 ## 待辦事項（下一步優先處理）
 
-- **【程式碼已完成，需要使用者手動建立 Notion 資料庫才會生效】求職者提問追蹤（給招募專員回頭手動回覆用）**：程式碼部分見下方「已完成」第 30 項。使用者發現求職者問到 FAQ 沒收錄的問題時，機器人雖然回覆「已記錄、會由招募專員確認」，但實際上完全沒有留下「是誰問的」，招募專員根本無從回覆——這是這次補上的功能。**要讓它真的開始運作，需要使用者自己做以下事情（Claude 這邊沒辦法代勞，因為不知道使用者的 Notion 工作區結構、也沒有權限）**：
-  1. 在跟現有「FAQ 資料庫」同一個 Notion 工作區裡，**新建一個資料庫**（隨便取名，例如「求職者提問追蹤」），需要包含以下四個欄位（欄位名稱要完全一致，型態也要選對）：
-     - `求職者暱稱`：型態選「標題 (Title)」（每個 Notion 資料庫都必須有一個標題欄位，用這個當標題）
-     - `LINE User ID`：型態選「文字 (Text)」
-     - `提問內容`：型態選「文字 (Text)」
-     - `已回覆`：型態選「勾選方塊 (Checkbox)」——招募專員手動回覆完那個人之後，來這裡打勾即可，方便同仁篩選「還沒處理」的清單
-     - 建議再加一個 `Created time`（型態選「建立時間」，Notion 內建型態，不用自己填）：這樣就能看到每一筆是什麼時候記錄的，不用另外寫程式碼處理
-  2. **把這個新資料庫分享給現有的 Notion 整合（跟 FAQ／職缺資料庫用的是同一個）**：資料庫頁面右上角「⋯」→「連結」（Connections）→選擇目前這個機器人在用的那個整合名稱（跟當初設定 `NOTION_FAQ_DB_ID` 時分享的是同一個整合，不需要另外申請新的 API 金鑰）
-  3. **取得這個新資料庫的 ID**：打開資料庫頁面，網址列會像 `https://www.notion.so/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?v=...`，中間那串 32 位英數字（`xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` 那段）就是資料庫 ID
-  4. **在 Cloud Run 設定新的環境變數 `NOTION_UNRESOLVED_QUESTIONS_DB_ID`**，值就是上一步拿到的資料庫 ID——設定完不需要重新部署，Cloud Run 環境變數改完會自動生效於下一次容器啟動（如果想立刻生效，可以手動觸發一次部署，或等下次有人推送程式碼觸發自動部署）
-  - **沒有設定這個環境變數之前，這個功能會安全跳過**（只印一行 log，不會出錯、也不影響其他功能），FAQ 候選資料庫的既有功能完全不受影響。
-
 - **【上線前流量/正確性盤點，PR 待跑，見下方「已完成」第 27 項】**：使用者希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面盤點。找到並已在程式碼裡修好 4 個問題（見第 27 項細節），另外有幾項**需要使用者自己去 GCP 動手做，Claude 這邊沒辦法代勞**：
   1. ✅ **Cloud Run `--min-instances=1`：已完成**。用 `gcloud run services describe recruitment-bot --region asia-east1 --format="value(spec.template.metadata.annotations)"` 確認過，`autoscaling.knative.dev/minScale=1` 已生效，不會再有容器冷啟動疊加 AI 決策時間、逼近 LINE 30 秒時限的風險。同時確認 `run.googleapis.com/cpu-throttling=false`（CPU 一律配置，先前就設定過的仍在生效）、`run.googleapis.com/startup-cpu-boost=true`（額外加速容器啟動）。
   2. ✅ **正式上線前重新壓測：已完成，結果健康**。合併＋部署上方第 27 項的修正後，用 `scripts/load_test.py --concurrency 30 --total 100 --distinct-users 20` 實測：100 筆全部成功（無失敗），wall time p50=6.40s／p95=12.32s／p99=13.50s／max=13.50s，伺服器端純處理 p99=11.97s／max=11.97s——安全落在 LINE 30 秒 reply token 上限內（超過 2 倍餘裕）。**跟先前併發 15 的舊紀錄（見上方「Vertex AI 回應延遲」待辦事項）幾乎持平**（舊：wall p99/max=13.31s／伺服器 p99/max=10.78s），代表併發數翻倍後，`min-instances=1`＋CPU 一律配置＋這次修的 Firestore 並發問題，撐住了兩倍流量沒有明顯劣化。p50 落在 5-6 秒區間（一半以上請求要等 5 秒以上才有回覆），不是這次測試才有的新現象，是 Vertex AI 中高併發下既有的排隊現象；如果正式流量長時間維持併發 20-30 這個量級，可以考慮把「去 Vertex AI 主控台申請調高配額」這項低優先待辦往前提。
@@ -186,6 +174,7 @@
     - **同仁怎麼用**：招募專員定期（建議至少每天）打開這個新的 Notion 資料庫，看 `已回覆` 沒打勾的列，去 LINE 官方帳號後台（聊天列表）用「求職者暱稱」搜尋找到那個人的對話串，手動回覆完之後回來把 `已回覆` 打勾即可。**「LINE User ID」這欄不是給搜尋用的**（LINE 官方帳號後台沒辦法用這串 ID 搜尋，只能用暱稱）——保留這欄只是技術上的備用識別碼，用來因應多個求職者剛好用同一個顯示名稱、暱稱無法唯一區分的情況（使用者確認要保留，非必要不拿掉）。**要讓這個功能真的生效，使用者需要自己建立這個 Notion 資料庫並設定環境變數**，完整步驟見上方待辦事項；沒設定之前這個功能會安全跳過（只印 log），不影響其他功能。
     - **新增測試**：`tests/test_notion_service.py` 新增 `AppendUnresolvedQuestionForFollowupTests`（5 個，含「同一問題不同人問不會被去重」的關鍵行為）；`tests/test_message_handler.py` 新增 3 個測試（正常記錄暱稱、`get_profile()` 失敗時退回 user_id、沒傳 `target_line_bot_api` 時也不出錯）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 465 個測試，OK。
+    - ✅ **已合併部署並實測驗證**：使用者已建好 Notion 資料庫、設定好 `NOTION_UNRESOLVED_QUESTIONS_DB_ID`，部署後傳送 FAQ 未收錄問題實測確認有正確寫入「求職者提問追蹤」資料庫（含暱稱、提問內容）。
 31. **FAQ 候選清單改成上線初期每天顯示（不用等到週一）**：使用者希望上線初期流量還小、需要密切觀察，FAQ 候選清單／建議新增的職缺關鍵字不要等到每週一才出現。新增環境變數 `FAQ_REPORT_DAILY_MODE`（`config.py`，預設 `false`）：開啟後不管星期幾，`run_daily_report()` 都會附加 FAQ 候選清單／建議關鍵字這兩段。**刻意只影響這兩段，不影響其他部分**：
     - 健康狀況檢查的時間窗口不受影響——只有真正的「週報日」（`FAQ_WEEKLY_REPORT_WEEKDAY`）才會用過去 7 天，其餘每天都還是過去 24 小時，避免視窗被連帶拉長而讓健康狀況誤判。
     - 「同步回覆／背景補發比例」那段（給 `AI_DECISION_SYNC_TIMEOUT_SECONDS` 調整參考用）維持只在真正的週報日才顯示，沒有跟著每天出現——使用者這次只要求 FAQ 候選清單提前，範圍沒有連帶擴大。
@@ -193,6 +182,17 @@
     - **要讓這個切換生效，使用者需要自己在 Cloud Run 設定環境變數 `FAQ_REPORT_DAILY_MODE=true`**（前提是上方第 26 項「監控與告警機制」的 Cloud Scheduler／`DAILY_REPORT_ENABLED` 都已經設定好、每日健康報告已經在正常運作，這只是調整既有機制裡 FAQ 段落出現的頻率，不是獨立的新機制）。
     - **新增測試**：`tests/test_daily_report_service.py` 新增 `FaqReportDailyModeOverrideTests`（4 個，涵蓋開關開/關、健康視窗不受影響、同步/背景補發比例段落不受影響）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 469 個測試，OK。
+32. **正式上線試營運前最後一次全面檢查（邏輯＋安全性）**：使用者確認明天晚上要切換到正式頻道開始試營運，請 Claude 做最全面、詳細的邏輯與安全漏洞檢查。用 `code-review` Skill（max 強度，掃 `main.py`／`config.py`／`handlers/`／`services/`／`scripts/`／`tests/`，排除 `services/factory_watch_service.py` 等其他子系統範圍）找出 7 個發現，逐一讀原始碼驗證後，修正以下確認為真的問題：
+    - **`config.py` 多個環境變數用 `int()`/`float()` 直接轉型，沒有防呆（風險最高）**：`os.getenv(name, default)` 只有在變數「完全沒設定」時才會用到預設值——如果使用者在 Cloud Run 主控台把值清空但沒刪掉那一列，變數會是空字串，`int("")` 會直接拋例外，讓 `import config` 失敗，導致整個 Cloud Run 服務（招募機器人＋配送部/管理部/人資等共用同一個服務的其他子系統）啟動失敗。HANDOFF.md 這幾天的紀錄顯示 `AI_DECISION_SYNC_TIMEOUT_SECONDS` 等好幾個數值都已經被手動調整過不只一次，使用者也才剛設定完好幾個新的環境變數，誤觸的風險並非理論上的假設。新增 `_int_env()`／`_float_env()` 兩個安全讀取函式（值缺漏或格式錯誤都安全退回預設值、印警告，不會讓服務掛掉），取代 `FACTORY_WATCH_LOOKBACK_DAYS`、`DAILY_REPORT_LATENCY_P95_THRESHOLD_SECONDS`、`DAILY_REPORT_LATENCY_BUCKET_MINUTES`、`FAQ_WEEKLY_REPORT_WEEKDAY`、`FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT`、`AI_DECISION_SYNC_TIMEOUT_SECONDS` 這 6 處原本的裸 `int()`/`float()`。
+    - **`message_handler.py` 最外層保底 except 沒有補發機制**：跟這次會期稍早修過的同步路徑／逾時 ack 路徑不同，最外層那個「任何非預期例外都會落到這裡」的保底 `except Exception` 區塊，原本呼叫 `reply_message()` 時完全沒有包 `try/except`——如果這個當下 reply_token 剛好已經過期（很可能，因為前面已經因為某個例外處理耗時），這次 `reply_message()` 失敗會直接讓例外原封不動往外拋，使用者這一輪完全收不到任何回覆（不是「多等幾秒」，是「什麼都沒有」）。已比照其他分支的做法，包一層 `try/except`，失敗時改用不受時效限制的 `push_message` 補發保底訊息。
+    - **「查看職缺詳情」比對成功、跟就業服務法年齡/性別合規攔截這兩個分支，漏了寫入求職者這輪的對話歷史**：這個檔案裡其餘所有會回覆使用者的分支（全域重置、單一維度調整、禮貌收尾、全部瀏覽、精準工種直達、高信心 FAQ、AI 決策路徑）都會同時寫入「求職者」跟「招募顧問沛沛」兩則歷史，只有這兩個分支只寫了沛沛自己的回覆——下一輪 AI 讀到的對話歷史會變成「沛沛憑空開口」，缺了使用者實際問了什麼，可能讓 AI 誤判上下文或重複問已經問過的問題。已補上遺漏的 `求職者` 歷史紀錄。
+    - **`matcher_service.py` 的 `detect_category_label()` 只檢查文字裡「第一個」符合的同義關鍵字有沒有被否定，跟它的對稱函式 `detect_negated_category()`（逐一檢查所有關鍵字）寫法不一致**：例如「外送」類別底下同時有「外送」跟「司機」兩個同義詞，句子「不要外送，我想要司機的工作」裡第一個比對到的關鍵字是被否定的「外送」，原本的寫法會讓整個類別直接判定成沒命中，白白漏掉後面明確肯定的「司機」訊號。已修正成逐一檢查該類別底下每個關鍵字，只要有任一個沒被否定就算命中。
+    - **`handlers/message_handler.py` 全部瀏覽（「都給我看看」）分支還有一處多餘的 Firestore 讀取**：`update_user_slots()` 已經回傳寫回後的最新合併槽位（`current_slots`），這裡卻又呼叫一次 `get_user_slots()` 重新查一次一模一樣的資料——這正是這幾天已經在別處修過的「多餘 Firestore 讀取」同一類問題，這次盤點又抓到一處漏網的。已改成直接沿用 `current_slots`。
+    - **`main.py` 啟動預熱機制的三個連線改成同時跑，而不是依序執行**：原本 Firestore／Notion／Vertex AI 三個預熱步驟是一個接一個依序呼叫，總預熱時間是三個時間加總；這段程式碼存在的目的就是要縮短容器啟動後「第一個真人使用者撞到冷連線」的風險窗口，讓三步依序執行反而拉長了這個窗口。已改用 `ThreadPoolExecutor` 讓三步同時跑，總時間只取決於最慢的那一個。
+    - **安全性檢查結論**：webhook 簽章驗證（`/callback`、`/test-callback`）跟三個內部端點（`/internal/load-test-message`、`/internal/factory-watch/run`、`/internal/daily-report/run`）的密鑰比對都正確使用 `hmac.compare_digest`，沒有找到可被繞過的簽章驗證漏洞；沒有找到使用者輸入未經清理就用於 Notion 查詢／外部 URL／log 或直接回傳給使用者的注入風險；沒有找到 API 金鑰／密鑰被印進 log 或洩漏給外部使用者的情況。
+    - **本輪發現但刻意不在這次處理的項目**：① `@app.on_event("startup")` 是 FastAPI 已標記淘汰的寫法，且 `requirements.txt` 完全沒有釘住任何套件版本——這代表未來任何一次重新部署（不管是招募機器人自己的變更，還是配送部/管理部/人資等其他子系統推送到 main 連帶觸發的重新部署）都可能意外抓到某個套件的新版本、行為跟現在不一樣。這個問題比較適合另外挑一個時間，先確認清楚目前線上實際跑的每個套件版本、逐一驗證過相容性之後再一次性釘住，不適合在上線前這麼緊迫的時間點倉促處理，避免因為版本釘錯反而製造新的相容性問題；② `delivery/routes/reminder_routes.py` 有一處密鑰比對用 `!=` 而非 `hmac.compare_digest`（時間旁道風險）——這是配送部系統的檔案，不屬於招募機器人負責的範圍，這裡只記錄下來，不會主動處理，需要的話請提醒負責配送部系統的 session 處理。
+    - **新增測試**：`tests/test_config.py`（新檔案，7 個，涵蓋 `_int_env`/`_float_env` 空字串／格式錯誤／正常值三種情況）；`tests/test_message_handler.py` 新增 `DirectInterceptHistoryTests`（2 個）、`OuterExceptionFallbackTests`（1 個）；`tests/test_matcher_service.py` 新增 1 個混合同義詞否定測試。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 480 個測試，OK。
 
 ## 目前所有檔案的狀態
 

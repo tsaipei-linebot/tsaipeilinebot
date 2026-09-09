@@ -144,11 +144,18 @@ CATEGORY_KEYWORDS = {
 
 
 def detect_category_label(clean_input: str) -> str:
-    """從文字中判斷求職者偏好的工作類別（完整支援製造業與多元工種，並跳過被否定的類別）[cite: 1]"""
+    """從文字中判斷求職者偏好的工作類別（完整支援製造業與多元工種，並跳過被否定的類別）[cite: 1]
+
+    同一個類別可能有多個同義關鍵字（例如「外送」類別底下同時有「外送」跟
+    「司機」），要逐一檢查每個關鍵字、只要其中任一個有出現且沒被否定就算
+    命中；不能只挑第一個出現的關鍵字來判斷，否則「不要外送，我想要司機的
+    工作」這種句子會因為第一個匹配到的「外送」被否定，就整個類別判斷成
+    沒命中，白白漏掉後面「司機」這個明確的正向訊號（詳見 detect_negated_category()
+    的對稱寫法，這裡原本沒有跟它一致）。"""
     for label, keywords in CATEGORY_KEYWORDS.items():
-        matched_kw = next((k for k in keywords if k in clean_input), None)
-        if matched_kw and not _keyword_is_negated(clean_input, matched_kw):
-            return label
+        for kw in keywords:
+            if kw in clean_input and not _keyword_is_negated(clean_input, kw):
+                return label
     return ""
 
 

@@ -65,6 +65,14 @@ class CategoryAndBrandTests(unittest.TestCase):
         self.assertEqual(m.detect_category_label(clean), "")
         self.assertEqual(m.detect_negated_category(clean), "外送")
 
+    def test_detect_category_still_matches_when_only_first_synonym_is_negated(self):
+        # 「外送」類別底下同時有「外送」跟「司機」兩個同義關鍵字。原本的寫法只挑
+        # 文字裡「第一個出現」的關鍵字判斷有沒有被否定，這句話第一個匹配到的是
+        # 被否定的「外送」，整個類別就會誤判成沒命中，白白漏掉後面明確肯定的
+        # 「司機」——修正後要能找到任一個沒被否定的同義詞就算命中。
+        clean = m.clean_text_for_search("不要外送，我想要司機的工作")
+        self.assertEqual(m.detect_category_label(clean), "外送")
+
     def test_detect_brand_label_core_name_across_regions(self):
         active_jobs = [
             _job(vendor="美光(桃園)", search_text="美光桃園週休二日"),

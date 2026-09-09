@@ -552,7 +552,7 @@ class DirectInterceptEdgeCaseTests(unittest.TestCase):
              patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
              patch("handlers.message_handler.get_user_history", return_value=[]), \
              patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
-             patch("handlers.message_handler.update_user_slots"), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
              patch("handlers.message_handler.append_user_history"), \
              patch("handlers.message_handler._is_staffed_hours", return_value=False):
             h.process_user_message(event, line_bot_api)
@@ -592,6 +592,80 @@ class DirectInterceptEdgeCaseTests(unittest.TestCase):
         args, _ = line_bot_api.reply_message.call_args
         # 一定要是走到 AI 決策的控制組回覆，不能是把不相關的 stale_job 詳情塞給使用者
         self.assertEqual(args[1], control_message)
+
+
+class DirectInterceptHistoryTests(unittest.TestCase):
+    """「查看職缺詳情」比對成功、跟就業服務法年齡/性別合規攔截這兩個分支，
+    原本只把沛沛自己的回覆寫進對話歷史，漏了求職者這輪自己說的話——這樣下一輪
+    AI 看到的歷史會變成「沛沛憑空開口」，缺了使用者實際問了什麼。修正後兩者
+    都要各自寫入一則「求職者」跟一則「招募顧問沛沛」。"""
+
+    def test_job_detail_match_records_both_sides_of_history(self):
+        matched_job = {
+            "職缺名稱": "美光(桃園)作業員",
+            "_internal_title": "美光(桃園)作業員",
+            "_parsed_title": "美光(桃園)作業員",
+            "_search_text": "美光桃園週休二日早班",
+            "職務類別": "作業員",
+            "排版工作說明": "",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-job-detail"
+        event.message.text = "查看職缺詳情美光(桃園)作業員"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[matched_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.format_full_job_detail_with_ai", return_value="職缺詳情內容"), \
+             patch("handlers.message_handler.append_user_history") as mock_history, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False):
+            h.process_user_message(event, line_bot_api)
+
+        calls = [c.args for c in mock_history.call_args_list]
+        self.assertIn(("test-user-job-detail", "求職者", "查看職缺詳情美光(桃園)作業員"), calls)
+        self.assertTrue(any(c[0] == "test-user-job-detail" and c[1] == "招募顧問沛沛" for c in calls))
+
+    def test_age_gender_compliance_records_both_sides_of_history(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-legal"
+        event.message.text = "請問這個工作有年齡限制嗎"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.append_user_history") as mock_history, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False):
+            h.process_user_message(event, line_bot_api)
+
+        calls = [c.args for c in mock_history.call_args_list]
+        self.assertIn(("test-user-legal", "求職者", "請問這個工作有年齡限制嗎"), calls)
+        self.assertTrue(any(c[0] == "test-user-legal" and c[1] == "招募顧問沛沛" for c in calls))
+
+
+class OuterExceptionFallbackTests(unittest.TestCase):
+    """process_user_message() 最外層的保底 except 區塊：能走到這裡代表已經發生
+    非預期的例外，這個當下 reply_token 也可能已經因為前面處理耗時而過期。跟
+    其他分支一樣，reply_message() 失敗時要改用不受時效限制的 push_message
+    補發，不能讓使用者這一輪完全收不到任何回覆（原本這裡沒有補發機制）。"""
+
+    def test_reply_failure_in_outer_handler_falls_back_to_push_message(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-outer-exception"
+        event.message.text = "有沒有工作"
+        line_bot_api = MagicMock()
+        line_bot_api.reply_message.side_effect = RuntimeError("reply token expired")
+
+        with patch("handlers.message_handler.fetch_jobs_data", side_effect=RuntimeError("Firestore/Notion 一時異常")), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.push_message.assert_called_once()
+        args, _ = line_bot_api.push_message.call_args
+        self.assertEqual(args[0], "test-user-outer-exception")
+        self.assertIn("延遲", args[1].text)
 
 
 if __name__ == "__main__":
