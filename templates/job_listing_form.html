@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}職缺維護 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">職缺維護</h1>
+<p class="hint">
+    填好送出後，會直接轉給現有的核准流程處理：您的主管會收到 LINE 通知，系統也會自動幫忙潤飾對外文案。
+    這裡不用等待、也不用重新整理查看——核准結果會反映在 Notion 職缺資料庫跟官網上。
+</p>
+
+{% if submitted %}
+<p class="success">職缺已送出審核，已通知主管處理。</p>
+{% endif %}
+{% if submit_unknown %}
+<p class="warning">
+    這筆職缺很可能其實已經送出成功了，只是材霈平台這邊沒辦法確認職缺維護系統的回應
+    （這是對方系統偶爾會出現的已知狀況）。請先用下方「維護既有職缺」搜尋看看這筆職缺有沒有出現，
+    如果沒有看到才需要重新送出，避免不小心送出兩筆重複的職缺。
+</p>
+{% endif %}
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<div class="repayment-section">
+    <div class="repayment-section-title">操作模式設定</div>
+    <p class="hint" style="margin-top: 0;">新增全新職缺，或維護個人與轄下同仁之職缺（主管具修改權限）</p>
+    <label style="display: inline-flex; align-items: center; gap: 6px; margin-right: 20px;">
+        <input type="radio" name="jobModeRadio" value="create" checked onchange="onJobModeChange()"> 新增全新職缺
+    </label>
+    <label style="display: inline-flex; align-items: center; gap: 6px;">
+        <input type="radio" name="jobModeRadio" value="update" onchange="onJobModeChange()"> 維護既有職缺
+    </label>
+
+    <div id="existing-job-search-box" hidden style="margin-top: 14px;">
+        <label>搜尋既有職缺 *（顯示廠商名稱主要識別，已自動依權限篩選只顯示您能維護的職缺）
+            <input type="text" id="job-search-input" list="job-datalist" placeholder="請輸入廠商名稱搜尋或選取..." autocomplete="off">
+            <datalist id="job-datalist"></datalist>
+        </label>
+        <div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 16px;">
+            <label style="display: inline-flex; align-items: center; gap: 6px;">
+                <input type="radio" name="updateActionType" value="active_update" checked> 內容更新（核准後狀態為「一週內有更新」）
+            </label>
+            <label style="display: inline-flex; align-items: center; gap: 6px;">
+                <input type="radio" name="updateActionType" value="stop_recruiting"> 指定停招（核准後狀態為「停招」）
+            </label>
+        </div>
+    </div>
+</div>
+
+<form method="post" action="/job-listings" enctype="multipart/form-data" id="job-listing-form" class="form-stack">
+    <input type="hidden" name="mode" id="field-mode" value="create">
+    <input type="hidden" name="page_id" id="field-page-id" value="">
+    <input type="hidden" name="update_action" id="field-update-action" value="create">
+    <input type="hidden" name="existing_image_url" id="field-existing-image-url" value="{{ form.existing_image_url or '' }}">
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">一、基本與廠商資訊
+            <span class="repayment-subtotal" id="publisher-badge" style="background: var(--bg); color: var(--muted);">刊登人：{{ user.name }}</span>
+        </div>
+        <div class="repayment-basic-grid">
+            <label>申請送審同仁 *（目前登入者，鎖定不可更改）
+                <div class="applicant-readonly">{{ user.name }}</div>
+            </label>
+            <label>系統廠商名稱 *
+                <input type="text" name="vendor" value="{{ form.vendor or '' }}" placeholder="如：欣興電子-山鶯廠" required>
+            </label>
+            <label>廠商名稱（主要識別）*
+                <input type="text" name="title" value="{{ form.title or '' }}" placeholder="如：製程技術員" required>
+            </label>
+            <label>職缺名稱(對內) *
+                <input type="text" name="internal_title" value="{{ form.internal_title or '' }}" placeholder="如：【山鶯】製程技術員(日班)" required>
+            </label>
+            <label class="full-width">職缺名稱(對外) *
+                <input type="text" name="external_title" value="{{ form.external_title or '' }}" placeholder="如：大廠高薪日班技術員/供宿/高錄取" required>
+            </label>
+            <label>行業別 *（可複選，Notion 多選）
+                <select name="industry" id="msel_industry" multiple required size="6">
+                    {% for opt in industry_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.industry }}>{{ opt }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>職務類別 *（可複選，Notion 多選）
+                <select name="category" id="msel_category" multiple required size="6">
+                    {% for opt in category_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.category }}>{{ opt }}</option>{% endfor %}
+                </select>
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">二、職務屬性與工作條件</div>
+        <div class="repayment-basic-grid">
+            <label>全/兼職
+                <select name="job_type" id="msel_job_type" multiple size="4">
+                    {% for opt in job_type_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.job_type }}>{{ opt }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>外籍生
+                <select name="foreign_student" id="msel_foreign_student" multiple size="4">
+                    {% for opt in foreign_student_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.foreign_student }}>{{ opt }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>職缺週期 *（可複選）
+                <select name="job_cycle" id="msel_job_cycle" multiple required size="4">
+                    {% for opt in job_cycle_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.job_cycle }}>{{ opt }}</option>{% endfor %}
+                </select>
+            </label>
+            <label class="full-width">工作內容(對內) *
+                <textarea name="internal_desc" rows="3" placeholder="內部專員招募備忘、機台操作規範..." required>{{ form.internal_desc or '' }}</textarea>
+            </label>
+            <label class="full-width">工作內容(對外) *
+                <textarea name="external_desc" rows="3" placeholder="對外公開刊登文案、工作項目..." required>{{ form.external_desc or '' }}</textarea>
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">三、地點與負責所別</div>
+        <div class="repayment-basic-grid">
+            <label>縣市 *（可複選，選了才會出現對應行政區）
+                <select name="city" id="msel_city" multiple required size="8" onchange="onCitySelectionChanged()">
+                    {% for c in taiwan_cities %}<option value="{{ c }}" {{ 'selected' if c in form.city }}>{{ c }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>行政區 *（可複選，含縣市名稱）
+                <select name="district" id="msel_district" multiple required size="8"></select>
+            </label>
+            <label>負責所別
+                <select name="branch" id="msel_branch" multiple size="6">
+                    {% for opt in branch_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.branch }}>{{ opt }}</option>{% endfor %}
+                </select>
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">四、班別、薪酬與面試安排</div>
+        <div class="repayment-basic-grid">
+            <label>班別
+                <select name="shift" id="msel_shift" multiple size="6">
+                    {% for opt in shift_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.shift }}>{{ opt }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>休假方式
+                <select name="leave_type" id="msel_leave_type" multiple size="6">
+                    {% for opt in leave_type_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.leave_type }}>{{ opt }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>薪資待遇 *
+                <input type="text" name="salary" value="{{ form.salary or '' }}" placeholder="如：月薪 38,000~45,000 / 時薪 210" required>
+            </label>
+            <label>領薪方式
+                <select name="pay_method" id="msel_pay_method" multiple size="6">
+                    {% for opt in pay_method_options %}<option value="{{ opt }}" {{ 'selected' if opt in form.pay_method }}>{{ opt }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>面試方式 *
+                <input type="text" name="interview_method" value="{{ form.interview_method or '' }}" placeholder="如：線上視訊面試 / 廠區面談" required>
+            </label>
+            <label>備註說明（選填）
+                <input type="text" name="notes" value="{{ form.notes or '' }}" placeholder="如：供宿舍、免費供餐、介紹獎金">
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">五、職缺圖檔上傳（選填）</div>
+        <div class="upload-row">
+            <label class="upload-zone" id="job-upload-zone">
+                <input type="file" name="image" accept="image/png,image/jpeg" id="job-image-input" hidden>
+                <span class="upload-zone-icon">⬆</span>
+                <span><strong>點擊選取圖片</strong> 或拖曳至此</span>
+                <span>PNG, JPG, JPEG（將自動縮小為最佳尺寸）</span>
+            </label>
+            <div class="upload-preview" id="job-upload-preview">尚未選取圖檔</div>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block" id="job-listing-submit-btn">送出審核（同步推播主管群與群組）</button>
+</form>
+<p class="back-link"><a href="/portal">&larr; 回內部系統入口</a></p>
+
+<script>
+var TAIWAN_CITY_DISTRICTS = {{ taiwan_city_districts | tojson }};
+var cachedJobs = [];
+
+function multiSelectValues(id) {
+    return Array.from(document.getElementById(id).selectedOptions).map(function (o) { return o.value; });
+}
+function setMultiSelectValues(id, values) {
+    values = Array.isArray(values) ? values : (values ? [values] : []);
+    var valueSet = new Set(values);
+    Array.from(document.getElementById(id).options).forEach(function (o) {
+        o.selected = valueSet.has(o.value);
+    });
+}
+
+function onCitySelectionChanged() {
+    var selectedCities = multiSelectValues('msel_city');
+    var districtSelect = document.getElementById('msel_district');
+    var previouslySelected = new Set(multiSelectValues('msel_district'));
+    districtSelect.innerHTML = '';
+    var seen = new Set();
+    selectedCities.forEach(function (city) {
+        (TAIWAN_CITY_DISTRICTS[city] || []).forEach(function (district) {
+            if (seen.has(district)) return;
+            seen.add(district);
+            var opt = document.createElement('option');
+            opt.value = district;
+            opt.textContent = district;
+            opt.selected = previouslySelected.has(district);
+            districtSelect.appendChild(opt);
+        });
+    });
+}
+
+function onJobModeChange() {
+    var mode = document.querySelector('input[name="jobModeRadio"]:checked').value;
+    document.getElementById('field-mode').value = mode;
+    document.getElementById('existing-job-search-box').hidden = (mode !== 'update');
+    if (mode === 'create') {
+        document.getElementById('field-page-id').value = '';
+        document.getElementById('field-update-action').value = 'create';
+        document.getElementById('publisher-badge').textContent = '刊登人：{{ user.name }}';
+    }
+}
+
+document.querySelectorAll('input[name="updateActionType"]').forEach(function (r) {
+    r.addEventListener('change', function () {
+        document.getElementById('field-update-action').value = r.value;
+    });
+});
+
+function loadMaintainableJobs() {
+    fetch('/job-listings/api/jobs').then(function (r) { return r.json(); }).then(function (data) {
+        cachedJobs = data.jobs || [];
+        var datalist = document.getElementById('job-datalist');
+        var input = document.getElementById('job-search-input');
+        datalist.innerHTML = '';
+        if (cachedJobs.length === 0) {
+            input.placeholder = '您目前無可維護之職缺（需為原刊登人或其主管）';
+            return;
+        }
+        input.placeholder = '請輸入廠商名稱搜尋 (可維護共 ' + cachedJobs.length + ' 筆)...';
+        cachedJobs.forEach(function (j) {
+            var opt = document.createElement('option');
+            opt.value = j.title || j.label || '';
+            datalist.appendChild(opt);
+        });
+    }).catch(function () {});
+}
+
+document.getElementById('job-search-input').addEventListener('input', function (e) {
+    var val = e.target.value.trim();
+    if (!val) return;
+    var matched = cachedJobs.find(function (j) {
+        return (j.title && j.title.trim() === val) || (j.internal_title && j.internal_title.trim() === val);
+    });
+    if (matched) populateJobForm(matched);
+});
+
+function populateJobForm(d) {
+    document.getElementById('field-page-id').value = d.id || '';
+    document.getElementById('field-existing-image-url').value = d.image_url || '';
+    document.getElementById('publisher-badge').textContent = '刊登人：' + (d.publisher || '{{ user.name }}');
+
+    document.querySelector('input[name="vendor"]').value = d.vendor || '';
+    document.querySelector('input[name="title"]').value = d.title || '';
+    document.querySelector('input[name="internal_title"]').value = d.internal_title || '';
+    document.querySelector('input[name="external_title"]').value = d.external_title || '';
+    document.querySelector('input[name="salary"]').value = d.salary || '';
+    document.querySelector('input[name="interview_method"]').value = d.interview_method || '';
+    document.querySelector('textarea[name="internal_desc"]').value = d.internal_desc || '';
+    document.querySelector('textarea[name="external_desc"]').value = d.external_desc || '';
+    document.querySelector('input[name="notes"]').value = d.notes || '';
+
+    setMultiSelectValues('msel_industry', d.industry);
+    setMultiSelectValues('msel_category', d.category);
+    setMultiSelectValues('msel_job_type', d.job_type);
+    setMultiSelectValues('msel_foreign_student', d.foreign_student);
+    setMultiSelectValues('msel_job_cycle', d.job_cycle);
+    setMultiSelectValues('msel_city', d.city);
+    onCitySelectionChanged();
+    setMultiSelectValues('msel_district', d.district);
+    setMultiSelectValues('msel_branch', d.branch);
+    setMultiSelectValues('msel_shift', d.shift);
+    setMultiSelectValues('msel_leave_type', d.leave_type);
+    setMultiSelectValues('msel_pay_method', d.pay_method);
+
+    var preview = document.getElementById('job-upload-preview');
+    if (d.image_url) {
+        preview.innerHTML = '<img src="' + d.image_url + '" alt="既有圖檔">';
+    } else {
+        preview.textContent = '尚未選取圖檔';
+    }
+}
+
+loadMaintainableJobs();
+onCitySelectionChanged();
+
+(function () {
+    var uploadZone = document.getElementById('job-upload-zone');
+    var imageInput = document.getElementById('job-image-input');
+    var preview = document.getElementById('job-upload-preview');
+
+    function showPreview(file) {
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function (e) {
+            preview.innerHTML = '<img src="' + e.target.result + '" alt="預覽">';
+        };
+        reader.readAsDataURL(file);
+    }
+    imageInput.addEventListener('change', function () { showPreview(imageInput.files[0]); });
+    ['dragenter', 'dragover'].forEach(function (evt) {
+        uploadZone.addEventListener(evt, function (e) { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+    });
+    ['dragleave', 'drop'].forEach(function (evt) {
+        uploadZone.addEventListener(evt, function (e) { e.preventDefault(); uploadZone.classList.remove('drag-over'); });
+    });
+    uploadZone.addEventListener('drop', function (e) {
+        var file = e.dataTransfer.files[0];
+        if (file) { imageInput.files = e.dataTransfer.files; showPreview(file); }
+    });
+
+    document.getElementById('job-listing-form').addEventListener('submit', function () {
+        var btn = document.getElementById('job-listing-submit-btn');
+        btn.disabled = true;
+        btn.textContent = '送出中，請稍候…（可能需要幾秒鐘）';
+    });
+})();
+</script>
+{% endblock %}

@@ -12,6 +12,7 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage
 
 import accounts_routes
 import company_routes
+import job_listing_routes
 import login_routes
 import me_routes
 import portal_routes
@@ -67,6 +68,10 @@ app.include_router(salesdev_routes.router)
 # /me：我的專區，登入後每個帳號都自動有，內容依申請人/主管邏輯個人化篩選
 # （見 me_routes.py）。
 app.include_router(me_routes.router)
+# /job-listings：職缺維護，跟 /salesdev 一樣是獨立的部門模組（模組代碼
+# job_listings，見 platform_accounts.MODULES），直接掛在根 app（見
+# job_listing_routes.py）。
+app.include_router(job_listing_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，
