@@ -67,27 +67,28 @@ class RequireLoginDependencyTests(unittest.TestCase):
 
 
 class AmountsFromFormTests(unittest.TestCase):
-    """_amounts_from_form() 把加項/扣項固定十個欄位（名稱照抄現有 Netlify
-    表單畫面，見 services/salary_repayment_submit_service.py 的
-    EARNING_FIELDS/DEDUCTION_FIELDS）組成 {中文名稱: 金額} 字典，0 或空白
-    或打錯的欄位不列進字典（該項目本來就是選填，同仁不用每格都填 0）。"""
+    """_amounts_from_form() 把加項/扣項固定十個欄位組成 {英文代號: 金額}
+    字典——代號照抄現有 Netlify 表單原始碼實際送給 GAS 的 earnings/
+    deductions 物件 key（見 services/salary_repayment_submit_service.py 的
+    EARNING_FIELDS/DEDUCTION_FIELDS 說明），0 或空白或打錯的欄位不列進
+    字典（該項目本來就是選填，同仁不用每格都填 0）。"""
 
     class _FakeForm(dict):
         def get(self, key, default=None):
             return dict.get(self, key, default)
 
     def test_only_nonzero_fields_included(self):
-        form = self._FakeForm({"earning_hours": "500", "earning_salary": "0"})
+        form = self._FakeForm({"earning_work_hours": "500", "earning_salary": "0"})
         result = me_routes._amounts_from_form(form, me_routes.EARNING_FIELDS, "earning")
-        self.assertEqual(result, {"工時/天數": 500.0})
+        self.assertEqual(result, {"work_hours": 500.0})
 
     def test_blank_field_treated_as_zero(self):
-        form = self._FakeForm({"earning_hours": ""})
+        form = self._FakeForm({"earning_work_hours": ""})
         result = me_routes._amounts_from_form(form, me_routes.EARNING_FIELDS, "earning")
         self.assertEqual(result, {})
 
     def test_non_numeric_field_treated_as_zero(self):
-        form = self._FakeForm({"earning_hours": "不是數字"})
+        form = self._FakeForm({"earning_work_hours": "不是數字"})
         result = me_routes._amounts_from_form(form, me_routes.EARNING_FIELDS, "earning")
         self.assertEqual(result, {})
 
@@ -96,9 +97,9 @@ class AmountsFromFormTests(unittest.TestCase):
         self.assertEqual(result, {})
 
     def test_deduction_fields_use_deduction_prefix(self):
-        form = self._FakeForm({"deduction_labor_insurance": "300"})
+        form = self._FakeForm({"deduction_labor_ins": "300"})
         result = me_routes._amounts_from_form(form, me_routes.DEDUCTION_FIELDS, "deduction")
-        self.assertEqual(result, {"勞保費": 300.0})
+        self.assertEqual(result, {"labor_ins": 300.0})
 
 
 if __name__ == "__main__":

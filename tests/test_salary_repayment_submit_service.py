@@ -31,17 +31,20 @@ class BuildPayloadTests(unittest.TestCase):
             is_claimable="是",
             pay_type="轉帳",
             notes="測試備註",
-            earnings={"加班費": 500.0},
-            deductions={"誤餐費": 100.0},
+            earnings={"work_hours": 500.0},
+            deductions={"labor_ins": 100.0},
         )
         self.assertEqual(payload["type"], "SUBMIT_SALARY")
         self.assertEqual(payload["applicant"], {"displayName": "王小明"})
         self.assertEqual(payload["info"]["applicant_name"], "王小明")
         self.assertEqual(payload["info"]["name"], "李小華")
         self.assertEqual(payload["info"]["notes"], "測試備註")
-        self.assertEqual(payload["earnings"], {"加班費": 500.0})
-        self.assertEqual(payload["deductions"], {"誤餐費": 100.0})
-        self.assertEqual(payload["summary"], {"total_earnings": 500.0, "total_deductions": 100.0})
+        self.assertEqual(payload["earnings"], {"work_hours": 500.0})
+        self.assertEqual(payload["deductions"], {"labor_ins": 100.0})
+        self.assertEqual(
+            payload["summary"],
+            {"total_earnings": 500.0, "total_deductions": 100.0, "net_total": 400.0},
+        )
         self.assertNotIn("image", payload)
 
     def test_includes_image_only_when_base64_present(self):
@@ -70,7 +73,32 @@ class BuildPayloadTests(unittest.TestCase):
             apply_date="2026-09-09", pay_date="", deduct_month="", compensate_month="",
             is_claimable="", pay_type="", notes="備註", earnings={}, deductions={},
         )
-        self.assertEqual(payload["summary"], {"total_earnings": 0, "total_deductions": 0})
+        self.assertEqual(payload["summary"], {"total_earnings": 0, "total_deductions": 0, "net_total": 0})
+
+
+class ValidateTaiwanIdTests(unittest.TestCase):
+    """validate_taiwan_id() 照抄現有 Netlify 表單 index_6.html 的
+    validateTaiwanId()（格式 + 檢查碼演算法），"A123456789" 是那份原始碼
+    表單欄位的 placeholder 文字，剛好也是一組檢查碼合法的範例值。"""
+
+    def test_known_valid_id_passes(self):
+        self.assertTrue(submit_service.validate_taiwan_id("A123456789"))
+
+    def test_lowercase_input_is_normalized(self):
+        self.assertTrue(submit_service.validate_taiwan_id("a123456789"))
+
+    def test_wrong_checksum_digit_fails(self):
+        self.assertFalse(submit_service.validate_taiwan_id("A123456780"))
+
+    def test_wrong_format_fails(self):
+        self.assertFalse(submit_service.validate_taiwan_id("1234567890"))
+
+    def test_too_short_fails(self):
+        self.assertFalse(submit_service.validate_taiwan_id("A12345678"))
+
+    def test_empty_fails(self):
+        self.assertFalse(submit_service.validate_taiwan_id(""))
+        self.assertFalse(submit_service.validate_taiwan_id(None))
 
 
 class SubmitSalaryRepaymentTests(unittest.TestCase):

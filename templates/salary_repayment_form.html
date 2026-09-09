@@ -29,7 +29,7 @@
                 <input type="text" name="name" value="{{ form.name or '' }}" placeholder="如：王大明" required>
             </label>
             <label>身分證字號 *
-                <input type="text" name="id_card" value="{{ form.id_card or '' }}" placeholder="如：A123456789" required>
+                <input type="text" name="id_card" value="{{ form.id_card or '' }}" placeholder="如：A123456789" maxlength="10" style="text-transform: uppercase;" required>
             </label>
             <label>廠商/店家 *
                 <input type="text" name="vendor" value="{{ form.vendor or '' }}" placeholder="如：欣興電子-山鶯廠" required>
