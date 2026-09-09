@@ -165,6 +165,15 @@ SALARY_REPAYMENT_SHEET_ID = os.getenv(
 SALARY_REPAYMENT_ORG_SHEET_NAME = os.getenv("SALARY_REPAYMENT_ORG_SHEET_NAME", "員工主管組織表")
 SALARY_REPAYMENT_RECORDS_SHEET_NAME = os.getenv("SALARY_REPAYMENT_RECORDS_SHEET_NAME", "薪資補款紀錄")
 
+# 薪資補款「送出」表單（/me/salary-repayment/new，2026-09 新增，見 HANDOFF.md
+# 「方案 A」）：材霈平台這邊只收表單，送出時原封不動轉手給職缺維護表單背後
+# 那支 GAS 程式的 Web App 網址（type=SUBMIT_SALARY），推播/核准/寫紀錄/發信
+# 完全由那支 GAS 程式繼續處理，這裡沒有另外存一份。這個網址要到那個 Google
+# Apps Script 專案的「部署」>「管理部署作業」裡複製「網頁應用程式」的網址
+# （不是 Apps Script 編輯器本身的網址），沒設定時這個表單會直接顯示錯誤訊息、
+# 不會讓同仁誤以為送出成功了。
+JOB_PORTAL_GAS_WEBAPP_URL = os.getenv("JOB_PORTAL_GAS_WEBAPP_URL", "")
+
 # ==========================================
 # 12. 每日健康報告／FAQ 週報（監控與告警機制，見 HANDOFF.md）
 # 只有一個機制：Cloud Scheduler 每天呼叫一次 /internal/daily-report/run。

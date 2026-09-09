@@ -243,6 +243,28 @@ body {
 
 .form-narrow { max-width: 480px; }
 
+/* 動態新增列的表單區塊（例如薪資補款申請的加項/扣項明細），見
+   templates/salary_repayment_form.html */
+.form-fieldset {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+
+.form-fieldset legend {
+    font-size: 13px;
+    color: var(--muted);
+    padding: 0 6px;
+}
+
+.amount-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.amount-row input { flex: 1; }
+
 .form-stack label {
     display: flex;
     flex-direction: column;
@@ -427,6 +449,14 @@ body {
 .warning {
     background: var(--warn-bg);
     color: var(--warn);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.success {
+    background: var(--ok-bg);
+    color: var(--ok);
     padding: 8px 12px;
     border-radius: 6px;
     font-size: 13px;

@@ -27,6 +27,16 @@ class MeRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/me")
 
+    def test_new_salary_repayment_form_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/me/salary-repayment/new", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/me")
+
+    def test_create_salary_repayment_submit_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.post("/me/salary-repayment/new", data={"name": "李小華"}, follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/me")
+
 
 class RequireLoginDependencyTests(unittest.TestCase):
     """me_routes._require_login() 是 /me 的登入檢查，直接單元測試回傳值，
@@ -54,6 +64,42 @@ class RequireLoginDependencyTests(unittest.TestCase):
         account = {"username": "alice", "name": "Alice", "modules": {}, "is_platform_admin": False}
         result = me_routes._require_login(self._FakeRequest(account))
         self.assertIsNone(result)
+
+
+class EarningsAndDeductionsFromFormTests(unittest.TestCase):
+    """_earnings_and_deductions_from_form() 把表單裡動態新增的加項/扣項列
+    （同一個 name 出現多次）組成 {名稱: 金額} 字典，見
+    templates/salary_repayment_form.html 的「+ 新增一筆」按鈕。"""
+
+    class _FakeForm(dict):
+        def getlist(self, key):
+            return dict.get(self, key, [])
+
+    def test_pairs_labels_with_amounts(self):
+        form = self._FakeForm(
+            earning_label=["加班費", "獎金"],
+            earning_amount=["500", "1000"],
+            deduction_label=["誤餐費"],
+            deduction_amount=["100"],
+        )
+        earnings, deductions = me_routes._earnings_and_deductions_from_form(form)
+        self.assertEqual(earnings, {"加班費": 500.0, "獎金": 1000.0})
+        self.assertEqual(deductions, {"誤餐費": 100.0})
+
+    def test_blank_label_row_is_skipped(self):
+        form = self._FakeForm(earning_label=["", "獎金"], earning_amount=["999", "1000"])
+        earnings, _ = me_routes._earnings_and_deductions_from_form(form)
+        self.assertEqual(earnings, {"獎金": 1000.0})
+
+    def test_non_numeric_amount_row_is_skipped(self):
+        form = self._FakeForm(earning_label=["加班費"], earning_amount=["不是數字"])
+        earnings, _ = me_routes._earnings_and_deductions_from_form(form)
+        self.assertEqual(earnings, {})
+
+    def test_no_rows_returns_empty_dicts(self):
+        earnings, deductions = me_routes._earnings_and_deductions_from_form(self._FakeForm())
+        self.assertEqual(earnings, {})
+        self.assertEqual(deductions, {})
 
 
 if __name__ == "__main__":
