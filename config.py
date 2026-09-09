@@ -5,6 +5,35 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _int_env(name: str, default: int) -> int:
+    """安全讀取整數型環境變數。os.getenv(name, default) 只有在變數完全沒設定時
+    才會用到預設值——如果在 Cloud Run 主控台把值清空但沒刪掉那一列，變數會是
+    空字串，直接 int() 會拋例外、讓整個服務（跟招募機器人共用同一個 Cloud Run
+    服務的配送部/管理部/人資等子系統也會一起）啟動失敗。這裡改成值缺漏或格式
+    錯誤時都安全退回預設值，只印警告，不讓服務掛掉。"""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"[config.py 警告] 環境變數 {name} 的值「{raw}」不是合法整數，改用預設值 {default}")
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    """同 _int_env()，只是轉型成浮點數。"""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"[config.py 警告] 環境變數 {name} 的值「{raw}」不是合法數字，改用預設值 {default}")
+        return default
+
+
 # ==========================================
 # 1. LINE 官方帳號設定
 # ==========================================
@@ -104,7 +133,7 @@ TAIPEI_TZ = pytz.timezone("Asia/Taipei")
 # 資料源：政府資料開放平台《登記工廠名錄》(經濟部產業發展署，dataset id 6569)
 # ==========================================
 FACTORY_OPENDATA_DATASET_ID = os.getenv("FACTORY_OPENDATA_DATASET_ID", "6569")
-FACTORY_WATCH_LOOKBACK_DAYS = int(os.getenv("FACTORY_WATCH_LOOKBACK_DAYS", "10"))
+FACTORY_WATCH_LOOKBACK_DAYS = _int_env("FACTORY_WATCH_LOOKBACK_DAYS", 10)
 FACTORY_WATCH_SHEET_ID = os.getenv("FACTORY_WATCH_SHEET_ID", "")
 FACTORY_WATCH_SHEET_NAME = os.getenv("FACTORY_WATCH_SHEET_NAME", "新登記工廠")
 # 目前尚未決定要推播給哪個 LINE 帳號/群組，先留空；設定後即可自動開始推播
@@ -126,13 +155,13 @@ DAILY_REPORT_TRIGGER_SECRET = os.getenv("DAILY_REPORT_TRIGGER_SECRET", "")
 # 目前尚未決定要推播給哪個 LINE 群組，先留空；設定後即可自動開始推播（沒設定只會印 log）
 DAILY_REPORT_LINE_TARGET_ID = os.getenv("DAILY_REPORT_LINE_TARGET_ID", "")
 # 第二層門檻：過去 24（或週報時 7*24）小時內，任一固定時間區塊的 p95 延遲超過這個秒數就算變慢
-DAILY_REPORT_LATENCY_P95_THRESHOLD_SECONDS = float(os.getenv("DAILY_REPORT_LATENCY_P95_THRESHOLD_SECONDS", "12"))
+DAILY_REPORT_LATENCY_P95_THRESHOLD_SECONDS = _float_env("DAILY_REPORT_LATENCY_P95_THRESHOLD_SECONDS", 12)
 # 區塊大小（分鐘）：用固定區塊取代「任一 3 分鐘滑動窗口」，判斷邏輯簡單很多、效果差異不大
-DAILY_REPORT_LATENCY_BUCKET_MINUTES = int(os.getenv("DAILY_REPORT_LATENCY_BUCKET_MINUTES", "5"))
+DAILY_REPORT_LATENCY_BUCKET_MINUTES = _int_env("DAILY_REPORT_LATENCY_BUCKET_MINUTES", 5)
 # 每週報告要附加在哪一天的每日報告後面（0=一, 6=日，Python datetime.weekday() 定義）
-FAQ_WEEKLY_REPORT_WEEKDAY = int(os.getenv("FAQ_WEEKLY_REPORT_WEEKDAY", "0"))
+FAQ_WEEKLY_REPORT_WEEKDAY = _int_env("FAQ_WEEKLY_REPORT_WEEKDAY", 0)
 # 職缺類問句「這個類別/廠商本週被問幾次、但沒有專屬直達路徑」達到這個次數才列入建議清單
-FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT = int(os.getenv("FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT", "5"))
+FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT = _int_env("FAQ_CANDIDATE_KEYWORD_GAP_MIN_COUNT", 5)
 # 上線初期使用：FAQ 候選清單／建議新增的職缺關鍵字原本只在 FAQ_WEEKLY_REPORT_WEEKDAY
 # 那天出現（預設週一）。剛上線這段期間流量還小、需要密切觀察，開啟這個開關後，
 # 不管星期幾，FAQ 候選清單都會每天出現在日報裡，方便招募專員更即時掌握求職者
@@ -154,4 +183,4 @@ FAQ_REPORT_DAILY_MODE = os.getenv("FAQ_REPORT_DAILY_MODE", "false").strip().lowe
 # 已經因為實測結果調整過不只一次，改用環境變數之後之後要再調整不用改程式碼、
 # 重新部署。
 # ==========================================
-AI_DECISION_SYNC_TIMEOUT_SECONDS = int(os.getenv("AI_DECISION_SYNC_TIMEOUT_SECONDS", "15"))
+AI_DECISION_SYNC_TIMEOUT_SECONDS = _int_env("AI_DECISION_SYNC_TIMEOUT_SECONDS", 15)

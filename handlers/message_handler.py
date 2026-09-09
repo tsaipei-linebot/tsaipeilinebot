@@ -257,6 +257,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
 
                 final_reply_text = f"{formatted_detail}\n\n👉 立即填寫線上履歷：\n{apply_url}"
 
+                append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", final_reply_text)
                 quick_reply = QuickReply(items=[
                     QuickReplyButton(action=MessageAction(label="📄 立即線上應徵", text="我要應徵")),
@@ -275,6 +276,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 "各廠區主要評估實際工作內容的勝任度（例如：需配合走動作業、搬重或輪班需求）。只要體能與出勤狀況可配合，都非常歡迎線上填寫履歷喔！\n\n"
                 "👉 請問您目前希望在【哪個地區】找工作？偏好早班或夜班呢？"
             )
+            append_user_history(user_id, "求職者", raw_msg)
             append_user_history(user_id, "招募顧問沛沛", legal_reply)
             quick_reply = QuickReply(items=[
                 QuickReplyButton(action=MessageAction(label="📍 桃園工作", text="桃園工作")),
@@ -367,9 +369,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 else:
                     matched_show_all.append(j)
 
-            _slots_for_show_all = get_user_slots(user_id)
-            _known_category_for_filter = _slots_for_show_all.get("category", "")
-            _brand_for_filter = _slots_for_show_all.get("brand", "")
+            # current_slots 是上面 update_user_slots() 寫回後直接拿到的最新合併結果，
+            # 這裡不用再花一次 Firestore 讀取重新查一次一模一樣的資料（原本這裡另外
+            # 呼叫 get_user_slots() 是多餘的網路來回，也有極小機率讀到跟這輪計算不
+            # 一致的中間狀態，見 HANDOFF.md 說明）。
+            _known_category_for_filter = current_slots.get("category", "")
+            _brand_for_filter = current_slots.get("brand", "")
 
             if _known_category_for_filter and _known_category_for_filter != "不限":
                 matched_show_all = filter_jobs_by_category_tiered(
@@ -568,18 +573,27 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
     except Exception as e:
         print(f"[處理訊息嚴重異常 Traceback]: {traceback.format_exc()}")
         fallback_msg = "您好！我是招募顧問沛沛 😊 剛才系統稍有延遲，請問您想了解哪種類型的工作或發薪福利呢？"
-        target_line_bot_api.reply_message(
-            reply_token,
-            TextSendMessage(
-                text=fallback_msg,
-                quick_reply=QuickReply(items=[
-                    QuickReplyButton(action=MessageAction(label="📍 找新莊工作", text="新莊工作")),
-                    QuickReplyButton(action=MessageAction(label="📍 找桃園工作", text="桃園工作")),
-                    QuickReplyButton(action=MessageAction(label="💰 了解發薪日", text="發薪日是哪天")),
-                    QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
-                ])
-            )
+        fallback_message = TextSendMessage(
+            text=fallback_msg,
+            quick_reply=QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="📍 找新莊工作", text="新莊工作")),
+                QuickReplyButton(action=MessageAction(label="📍 找桃園工作", text="桃園工作")),
+                QuickReplyButton(action=MessageAction(label="💰 了解發薪日", text="發薪日是哪天")),
+                QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+            ])
         )
+        # 這裡是最外層的保底：能走到這裡代表前面已經出了非預期的例外（例如
+        # Firestore/Notion 一時連線異常），這個當下 reply_token 也可能已經因為
+        # 前面處理耗時而過期。跟其他分支一樣，reply_message() 失敗時改用不受
+        # 時效限制的 push_message 補發，不能讓使用者這一輪完全收不到任何回覆。
+        try:
+            target_line_bot_api.reply_message(reply_token, fallback_message)
+        except Exception:
+            print(f"[保底回覆送出失敗 Traceback，改用 push_message 補發]: {traceback.format_exc()}")
+            try:
+                target_line_bot_api.push_message(user_id, fallback_message)
+            except Exception:
+                print(f"[push_message 補發也失敗 Traceback]: {traceback.format_exc()}")
 
 
 def _fallback_messages() -> TextSendMessage:

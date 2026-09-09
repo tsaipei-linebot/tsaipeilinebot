@@ -1,6 +1,7 @@
 import hmac
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, Request, Header, HTTPException
 from pydantic import BaseModel
@@ -89,27 +90,43 @@ def health_check():
 # 是重新部署或是流量升載多開一台執行個體，第一個使用者都不會撞到冷連線。
 # 任何一步失敗都只記 log、不讓服務因此啟動失敗——最壞情況只是退回「沒有
 # 預熱」的舊行為，不會讓整個服務（包含其他子系統）掛掉。
+#
+# 三個連線彼此完全獨立，改用執行緒池同時跑，而不是依序一個接一個執行：
+# 這樣總預熱時間只取決於「最慢的那一個」，而不是三個時間加總——既然這段
+# 程式碼存在的目的就是要縮短容器啟動後、第一個真人使用者撞到冷連線的風險
+# 窗口，讓三步同時跑而不是排隊執行，才能把這個窗口壓到最小。
 # ==========================================
+def _warmup_firestore():
+    _firestore_db.collection(_SESSIONS_COLLECTION).document("__warmup__").get()
+    print("[啟動預熱] Firestore 連線正常")
+
+
+def _warmup_notion():
+    fetch_jobs_data()
+    fetch_faqs_data()
+    print("[啟動預熱] Notion 連線正常，職缺／FAQ 快取已預先載入")
+
+
+def _warmup_vertex_ai():
+    query_gemini_ai("你好，這是服務啟動時的暖機測試，請直接回覆「收到」即可。")
+    print("[啟動預熱] Vertex AI Gemini 連線正常")
+
+
 @app.on_event("startup")
 def _warmup_recruitment_bot_dependencies():
-    try:
-        _firestore_db.collection(_SESSIONS_COLLECTION).document("__warmup__").get()
-        print("[啟動預熱] Firestore 連線正常")
-    except Exception as e:
-        print(f"[啟動預熱] Firestore 連線失敗（不影響服務啟動）: {e}")
-
-    try:
-        fetch_jobs_data()
-        fetch_faqs_data()
-        print("[啟動預熱] Notion 連線正常，職缺／FAQ 快取已預先載入")
-    except Exception as e:
-        print(f"[啟動預熱] Notion 連線失敗（不影響服務啟動）: {e}")
-
-    try:
-        query_gemini_ai("你好，這是服務啟動時的暖機測試，請直接回覆「收到」即可。")
-        print("[啟動預熱] Vertex AI Gemini 連線正常")
-    except Exception as e:
-        print(f"[啟動預熱] Vertex AI Gemini 連線失敗（不影響服務啟動）: {e}")
+    warmup_steps = [
+        ("Firestore", _warmup_firestore),
+        ("Notion", _warmup_notion),
+        ("Vertex AI Gemini", _warmup_vertex_ai),
+    ]
+    with ThreadPoolExecutor(max_workers=len(warmup_steps)) as executor:
+        futures = {executor.submit(func): name for name, func in warmup_steps}
+        for future in futures:
+            name = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                print(f"[啟動預熱] {name} 連線失敗（不影響服務啟動）: {e}")
 
 
 # ==========================================
