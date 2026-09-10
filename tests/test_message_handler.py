@@ -338,6 +338,59 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         prompt_sent_to_ai = mock_query.call_args[0][0]
         self.assertIn("目前尚未鎖定任何條件", prompt_sent_to_ai)
 
+    def test_new_brand_mentioned_this_turn_overrides_locked_condition_in_ai_prompt(self):
+        # 使用者疑問：如果求職者這句話明確改問其他廠商/工作類型，鎖定的條件
+        # 會不會正確更新，不會一直卡在舊條件上？這裡端對端驗證：即使前一輪
+        # 鎖定的是「蝦皮」，這句話明確改問其他真實存在的廠商時，送給 AI 的
+        # 提示詞要顯示更新後的新廠商，不是卡住的舊值「蝦皮」——槽位覆蓋本身
+        # 是既有邏輯（偵測到新廠商就直接覆蓋），這裡驗證的是覆蓋後的新值真的
+        # 有正確傳到這次新增的【求職者目前鎖定的條件】區塊，不是還沿用覆蓋前
+        # 的舊值。故意選一個不屬於門市/外送/momo 精準攔截關鍵字、也沒有帶
+        # 地名的問法，讓這句話落到 AI 決策路徑，才測得到這次新增的提示詞內容
+        # （帶 momo/門市/外送/地名的問法會被精準攔截接住，根本不會走到 AI）。
+        other_vendor_job = {
+            "職缺名稱": "大立光作業員", "_internal_title": "大立光作業員",
+            "_parsed_title": "大立光作業員", "職缺名稱(對外)": "大立光作業員",
+            "_job_category": "作業員", "職務類別": "作業員",
+            "系統廠商名稱": "大立光", "_search_text": "大立光作業員",
+            "_location_search_text": "", "行業別": "", "休假方式": "", "班別": "",
+        }
+        old_slots = dict(location="", category="", shift="", leave="", brand="蝦皮")
+
+        def _merge_slots(user_id, location="", category="", shift="", leave="", brand=""):
+            merged = dict(old_slots)
+            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand)]:
+                if value == h.CLEAR_SLOT:
+                    merged[key] = ""
+                elif value:
+                    merged[key] = value
+            return merged
+
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-brand-override"
+        event.message.text = "有大立光的工作嗎"
+        line_bot_api = MagicMock()
+        fake_decision = json.dumps({"action": "NO_MATCH", "reply": "目前暫無", "ids": [], "buttons": []})
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[other_vendor_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=old_slots), \
+             patch("handlers.message_handler.update_user_slots", side_effect=_merge_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query:
+            h.process_user_message(event, line_bot_api)
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        # 規則 5 本身的說明文字裡固定舉了「廠商=蝦皮」當範例，所以不能直接對
+        # 整份提示詞斷言「不包含廠商=蝦皮」，要只截取【求職者目前鎖定的條件】
+        # 這個區塊本身來驗證，才是真的在測「這次送出去的鎖定條件是不是新值」。
+        locked_conditions_section = prompt_sent_to_ai.split("【求職者目前鎖定的條件】：")[1].split("【常見問題庫")[0]
+        self.assertIn("廠商=大立光", locked_conditions_section)
+        self.assertNotIn("廠商=蝦皮", locked_conditions_section)
+
     def test_recommend_with_no_candidates_returns_plain_text_not_empty_carousel(self):
         # AI 決策出 action="RECOMMEND"，但候選職缺清單剛好是空的（例如 Notion
         # 職缺暫時全部停招）——LINE 的 Flex Carousel 不接受 0 張卡片的空陣列，
