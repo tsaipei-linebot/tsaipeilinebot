@@ -193,6 +193,10 @@
     - **本輪發現但刻意不在這次處理的項目**：① `@app.on_event("startup")` 是 FastAPI 已標記淘汰的寫法，且 `requirements.txt` 完全沒有釘住任何套件版本——這代表未來任何一次重新部署（不管是招募機器人自己的變更，還是配送部/管理部/人資等其他子系統推送到 main 連帶觸發的重新部署）都可能意外抓到某個套件的新版本、行為跟現在不一樣。這個問題比較適合另外挑一個時間，先確認清楚目前線上實際跑的每個套件版本、逐一驗證過相容性之後再一次性釘住，不適合在上線前這麼緊迫的時間點倉促處理，避免因為版本釘錯反而製造新的相容性問題；② `delivery/routes/reminder_routes.py` 有一處密鑰比對用 `!=` 而非 `hmac.compare_digest`（時間旁道風險）——這是配送部系統的檔案，不屬於招募機器人負責的範圍，這裡只記錄下來，不會主動處理，需要的話請提醒負責配送部系統的 session 處理。
     - **新增測試**：`tests/test_config.py`（新檔案，7 個，涵蓋 `_int_env`/`_float_env` 空字串／格式錯誤／正常值三種情況）；`tests/test_message_handler.py` 新增 `DirectInterceptHistoryTests`（2 個）、`OuterExceptionFallbackTests`（1 個）；`tests/test_matcher_service.py` 新增 1 個混合同義詞否定測試。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 480 個測試，OK。
+33. **試營運當晚實測發現：職缺地址/文案裡的路名跟行政區同名，會被誤判成該職缺位於該行政區**：使用者切換到正式頻道試營運後，實際測試發現「蝦皮門市」某筆職缺的「行政區」欄位沒有勾選八德，但求職者問「八德有沒有缺額」時沛沛卻回答有。追查發現：地區判斷（`_score_job_for_ai()` 的地區加分、「都給我看看」全部瀏覽、「精準工種直達攔截」的外送/門市/momo 三個分支）全部都是拿 `_search_text` 做字串比對——這個欄位是把「工作內容(對外)」「排版工作說明」「精華亮點」等自由文字全部串在一起產生的，只要職缺地址或行銷文案剛好提到某個地名（最典型的例子就是台北市「八德路」這條知名路名，跟桃園市「八德區」同名但完全是兩個地方），就會被誤判成這個職缺真的位於該行政區，不管同仁在 Notion 裡實際勾選的行政區是什麼。
+    - **修正方式**：`services/notion_service.py` 的 `fetch_jobs_data()` 新增專屬的 `_location_search_text` 欄位，只由「縣市」「行政區」這兩個結構化欄位組成，不包含任何自由文字。`services/matcher_service.py` 的 `_score_job_for_ai()`、`handlers/message_handler.py` 裡所有跟地區比對相關的地方（全部瀏覽、外送/門市/momo 直達攔截，共 5 處）全部改成比對 `_location_search_text`，不再使用會混入自由文字的 `_search_text`。**品牌（momo/富邦/富昇）比對維持用 `_search_text`，這次沒有一併調整**——因為使用者這次回報的是地區誤判，範圍沒有連帶擴大到品牌比對。
+    - **新增測試**：`tests/test_notion_service.py` 新增 `LocationSearchTextTests`（驗證 `_location_search_text` 不包含自由文字裡的地名，`_search_text` 才會包含）；`tests/test_matcher_service.py` 新增 `LocationScoringUsesStructuredFieldTests`（2 個，驗證自由文字提到地名不會加分、結構化欄位真的命中時加分仍正常）；`tests/test_message_handler.py` 新增 `StoreIntentLocationMatchTests`（重現使用者實測到的「蝦皮門市＋八德」情境，確認不會誤判成直接命中）。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 484 個測試，OK。
 
 ## 目前所有檔案的狀態
 

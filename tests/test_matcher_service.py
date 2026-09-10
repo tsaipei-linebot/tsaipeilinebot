@@ -11,10 +11,14 @@ _stub_gcp.install()
 from services import matcher_service as m
 
 
-def _job(vendor="", search_text="", leave="", shift="", salary="", category="", title="", industry=""):
+def _job(vendor="", search_text="", leave="", shift="", salary="", category="", title="", industry="", location_search_text=None):
     return {
         "系統廠商名稱": vendor,
         "_search_text": search_text,
+        # 沒有另外指定時，預設沿用 search_text，方便原本就在測「地區能不能命中」
+        # 的既有測試不用逐一補這個新欄位；真的要測「自由文字裡的地名不該誤判」
+        # 這種情境時，才需要讓兩者不一樣（見 LocationScoringUsesStructuredFieldTests）。
+        "_location_search_text": search_text if location_search_text is None else location_search_text,
         "休假方式": leave,
         "班別": shift,
         "薪資": salary,
@@ -167,6 +171,35 @@ class ScoreJobForAiBrandBonusTests(unittest.TestCase):
         score_with_brand = m._score_job_for_ai(job, "有美光的工作嗎", slots={"brand": "美光"})
         score_without_brand = m._score_job_for_ai(job, "有美光的工作嗎", slots={"brand": ""})
         self.assertGreaterEqual(score_with_brand - score_without_brand, 80)
+
+
+class LocationScoringUsesStructuredFieldTests(unittest.TestCase):
+    """上線試營運後實測發現的 bug：蝦皮門市職缺的「行政區」沒有勾選八德，但
+    工作內容(對外)的自由文字剛好提到「八德」（例如地址上的路名），求職者問
+    「八德有沒有缺額」時被誤判成有。地區加分只能依據 _location_search_text
+    （只含縣市/行政區這兩個結構化欄位），不能沿用含自由文字的 _search_text。"""
+
+    def test_free_text_mention_does_not_earn_location_score(self):
+        # search_text（自由文字）提到「八德」，但 _location_search_text（實際
+        # 勾選的行政區）只有蘆竹、龜山，不該因為文案巧合就加到地區分數。
+        job = _job(
+            search_text="蝦皮門市地址鄰近八德路口交通便利",
+            location_search_text="桃園市蘆竹區龜山區",
+        )
+        score_with_location = m._score_job_for_ai(job, "八德有工作嗎", current_location="八德")
+        score_without_location = m._score_job_for_ai(job, "八德有工作嗎", current_location="")
+        self.assertEqual(score_with_location, score_without_location)
+
+    def test_structured_district_field_still_earns_location_score(self):
+        # 反過來確認：行政區真的有勾選八德時，地區加分要正常生效，不能因為
+        # 這次修正而連真正命中的情況都一起壞掉。
+        job = _job(
+            search_text="蝦皮門市作業員",
+            location_search_text="桃園市八德區",
+        )
+        score_with_location = m._score_job_for_ai(job, "八德有工作嗎", current_location="八德")
+        score_without_location = m._score_job_for_ai(job, "八德有工作嗎", current_location="")
+        self.assertEqual(score_with_location - score_without_location, 40)
 
 
 if __name__ == "__main__":

@@ -187,6 +187,16 @@ def fetch_jobs_data() -> list:
                     job_dict["_leave_type_clean"] = clean_text_for_search(leave_type)
                     job_dict["_raw_row_text"] = " ".join(raw_text_parts)
                     job_dict["_search_text"] = clean_text_for_search(" ".join(raw_text_parts))
+                    # 地區判斷專用的比對文字，只取「縣市」「行政區」這兩個結構化欄位，
+                    # 不能沿用上面那份包含「工作內容(對外)」「排版工作說明」「精華亮點」
+                    # 等自由文字的 _search_text——實測發現地址、行銷文案裡如果剛好提到
+                    # 某個地名（例如台北市「八德路」這條路名，本身不是桃園市八德區），
+                    # 用 _search_text 做地區比對會把這種巧合當成「這個職缺真的在八德」，
+                    # 誤判成有缺額。地區比對只應該依據同仁在 Notion 實際勾選的縣市/行政區，
+                    # 不能被自由文字裡剛好出現的地名字樣誤導。
+                    job_dict["_location_search_text"] = clean_text_for_search(
+                        f"{job_dict.get('縣市', '')} {job_dict.get('行政區', '')}"
+                    )
                     active_jobs.append(job_dict)
 
             print(f"[Notion 職缺載入成功] 共載入 {len(active_jobs)} 筆招募中職缺！")
