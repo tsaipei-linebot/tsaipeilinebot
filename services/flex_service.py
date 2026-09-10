@@ -189,6 +189,16 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
                         "color": BRAND,
                         "height": "sm",
                         "action": {"type": "uri", "label": "📄 填寫線上履歷", "uri": final_apply_link}
+                    },
+                    {
+                        "type": "button",
+                        "style": "link",
+                        "height": "sm",
+                        "action": {
+                            "type": "message",
+                            "label": "📅 預約面試",
+                            "text": f"預約面試 {unique_internal_title}"
+                        }
                     }
                 ]
             }

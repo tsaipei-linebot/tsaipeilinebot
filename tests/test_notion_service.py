@@ -268,5 +268,115 @@ class AppendUnresolvedQuestionForFollowupTests(unittest.TestCase):
         mock_post.assert_not_called()
 
 
+def _slot_page(page_id="slot-1", label="9/15 早上場", date_iso="2099-01-15T14:00:00+08:00",
+               capacity=3, booked=0, status="開放"):
+    return {
+        "id": page_id,
+        "properties": {
+            "時段名稱": {"type": "title", "title": [{"plain_text": label}]},
+            "面試時間": {"type": "date", "date": {"start": date_iso}},
+            "可預約人數": {"type": "number", "number": capacity},
+            "已預約人數": {"type": "number", "number": booked},
+            "狀態": {"type": "select", "select": {"name": status}},
+        },
+    }
+
+
+class InterviewSlotDisplayFormatTests(unittest.TestCase):
+    def test_formats_date_with_time(self):
+        self.assertEqual(n.format_interview_slot_display("2026-09-15T14:00:00+08:00"), "9/15(二) 14:00")
+
+    def test_formats_date_only_without_time(self):
+        self.assertEqual(n.format_interview_slot_display("2026-09-15"), "9/15(二)")
+
+    def test_empty_input_returns_empty(self):
+        self.assertEqual(n.format_interview_slot_display(""), "")
+
+
+class FetchAvailableInterviewSlotsTests(unittest.TestCase):
+    """「面試時段」資料庫由同仁自己維護，這裡驗證只會回傳「還沒額滿、狀態
+    開放、時間還沒過去」的時段，並依時間排序。"""
+
+    def test_skips_when_db_id_not_configured(self):
+        with patch("services.notion_service.NOTION_INTERVIEW_SLOTS_DB_ID", ""), \
+             patch("services.notion_service.query_notion_database_direct") as mock_query:
+            result = n.fetch_available_interview_slots()
+
+        self.assertEqual(result, [])
+        mock_query.assert_not_called()
+
+    def test_excludes_full_closed_and_past_slots_sorted_by_time(self):
+        pages = [
+            _slot_page(page_id="future-later", date_iso="2099-03-01T10:00:00+08:00"),
+            _slot_page(page_id="future-sooner", date_iso="2099-01-01T10:00:00+08:00"),
+            _slot_page(page_id="full", date_iso="2099-02-01T10:00:00+08:00", capacity=2, booked=2),
+            _slot_page(page_id="closed", date_iso="2099-02-01T10:00:00+08:00", status="關閉"),
+            _slot_page(page_id="past", date_iso="2020-01-01T10:00:00+08:00"),
+        ]
+        with patch("services.notion_service.NOTION_INTERVIEW_SLOTS_DB_ID", "dummy-db-id"), \
+             patch("services.notion_service.query_notion_database_direct", return_value=pages):
+            result = n.fetch_available_interview_slots()
+
+        self.assertEqual([s["page_id"] for s in result], ["future-sooner", "future-later"])
+
+
+class BookInterviewSlotTests(unittest.TestCase):
+    """求職者選定面試時段後：重新核對還沒額滿 -> 更新已預約人數 -> 在
+    「面試預約」資料庫新增一筆紀錄。"""
+
+    def test_successful_booking_updates_slot_and_creates_record(self):
+        slot_page = _slot_page(page_id="slot-1", date_iso="2099-01-15T14:00:00+08:00", capacity=3, booked=1)
+        patch_response = type("_Resp", (), {"status_code": 200, "text": ""})()
+        post_response = type("_Resp", (), {"status_code": 201, "text": ""})()
+
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_INTERVIEW_SLOTS_DB_ID", "slots-db"), \
+             patch("services.notion_service.NOTION_INTERVIEW_BOOKINGS_DB_ID", "bookings-db"), \
+             patch("services.notion_service.get_notion_page", return_value=slot_page), \
+             patch("services.notion_service.requests.patch", return_value=patch_response) as mock_patch, \
+             patch("services.notion_service.requests.post", return_value=post_response) as mock_post:
+            result = n.book_interview_slot("slot-1", "U1234", "小明", job_title="蝦皮門市人員")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["slot_label"], "1/15(四) 14:00")
+
+        _, patch_kwargs = mock_patch.call_args
+        self.assertEqual(patch_kwargs["json"]["properties"]["已預約人數"]["number"], 2)
+
+        _, post_kwargs = mock_post.call_args
+        booking_props = post_kwargs["json"]["properties"]
+        self.assertEqual(booking_props["求職者暱稱"]["title"][0]["text"]["content"], "小明")
+        self.assertEqual(booking_props["LINE User ID"]["rich_text"][0]["text"]["content"], "U1234")
+        self.assertEqual(booking_props["應徵職缺"]["rich_text"][0]["text"]["content"], "蝦皮門市人員")
+        self.assertEqual(booking_props["面試時間"]["date"]["start"], "2099-01-15T14:00:00+08:00")
+
+    def test_slot_already_full_returns_full_reason_without_writing(self):
+        slot_page = _slot_page(page_id="slot-1", capacity=2, booked=2)
+
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_INTERVIEW_SLOTS_DB_ID", "slots-db"), \
+             patch("services.notion_service.NOTION_INTERVIEW_BOOKINGS_DB_ID", "bookings-db"), \
+             patch("services.notion_service.get_notion_page", return_value=slot_page), \
+             patch("services.notion_service.requests.patch") as mock_patch, \
+             patch("services.notion_service.requests.post") as mock_post:
+            result = n.book_interview_slot("slot-1", "U1234", "小明")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["reason"], "full")
+        mock_patch.assert_not_called()
+        mock_post.assert_not_called()
+
+    def test_skips_when_not_configured(self):
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_INTERVIEW_SLOTS_DB_ID", ""), \
+             patch("services.notion_service.NOTION_INTERVIEW_BOOKINGS_DB_ID", ""), \
+             patch("services.notion_service.get_notion_page") as mock_get:
+            result = n.book_interview_slot("slot-1", "U1234", "小明")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["reason"], "config")
+        mock_get.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

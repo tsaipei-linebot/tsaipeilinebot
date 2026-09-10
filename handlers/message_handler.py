@@ -17,7 +17,8 @@ from services.session_service import (
 )
 from services.notion_service import (
     fetch_jobs_data, fetch_faqs_data, clean_text_for_search, sanitize_uri,
-    append_unresolved_faq_to_notion, append_unresolved_question_for_followup
+    append_unresolved_faq_to_notion, append_unresolved_question_for_followup,
+    fetch_available_interview_slots, book_interview_slot, format_interview_slot_display
 )
 from services.flex_service import (
     create_job_flex_card, format_clean_location, resolve_apply_url_by_industry
@@ -274,6 +275,124 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 ])
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(text=final_reply_text, quick_reply=quick_reply))
                 return
+
+        # ---------------- 步驟 0-1B：面試預約流程 ----------------
+        # 由職缺卡片的「📅 預約面試」按鈕觸發，流程是：
+        #   1. 先問「履歷確認完成/還沒填履歷」（因為填履歷用的是外部網址的 uri
+        #      按鈕，LINE 沒辦法在使用者填完、返回聊天室時通知機器人，只能靠
+        #      使用者自己回報有沒有填過，見 HANDOFF.md 對這個限制的說明）。
+        #   2. 確認已填履歷後，列出 Notion「面試時段」裡尚未額滿、還沒過期的
+        #      開放時段給使用者選。
+        #   3. 使用者選定時段後寫入 Notion「面試預約」，讓招募專員能看到。
+        # 兩個 Notion 資料庫任一沒設定時，fetch_available_interview_slots()/
+        # book_interview_slot() 會回傳空清單/config 原因，這裡統一顯示「尚未
+        # 開放預約」，不會讓機器人整個掛掉或回覆奇怪的錯誤訊息。
+        if raw_msg.startswith("預約面試"):
+            job_title = raw_msg.replace("預約面試", "", 1).strip()
+            confirm_reply = "在幫您安排面試時段之前，想先跟您確認一下 😊\n\n請問您是否已經填寫過線上履歷了呢？"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", confirm_reply)
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="✅ 已經填好了", text=f"履歷確認完成 {job_title}")),
+                QuickReplyButton(action=MessageAction(label="📝 還沒，我先去填", text=f"還沒填履歷 {job_title}"))
+            ])
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=confirm_reply, quick_reply=quick_reply))
+            return
+
+        if raw_msg.startswith("還沒填履歷"):
+            job_title = raw_msg.replace("還沒填履歷", "", 1).strip()
+            matched_job = None
+            for j in active_jobs:
+                if job_title and (j.get("職缺名稱") == job_title or j.get("_internal_title") == job_title):
+                    matched_job = j
+                    break
+            apply_url = sanitize_uri(resolve_apply_url_by_industry(matched_job or {}))
+            resume_reply = (
+                "沒關係，麻煩您先點下方連結填寫線上履歷喔 😊\n\n"
+                f"👉 {apply_url}\n\n"
+                "填寫完成後，歡迎再回來跟沛沛說一聲，就可以幫您安排面試時段囉！"
+            )
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", resume_reply)
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="✅ 我填好了", text=f"履歷確認完成 {job_title}"))
+            ])
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=resume_reply, quick_reply=quick_reply))
+            return
+
+        if raw_msg.startswith("履歷確認完成"):
+            job_title = raw_msg.replace("履歷確認完成", "", 1).strip()
+            available_slots = fetch_available_interview_slots()
+            append_user_history(user_id, "求職者", raw_msg)
+            if not available_slots:
+                no_slot_reply = "謝謝您完成履歷填寫！目前尚未開放可預約的面試時段，招募專員確認後會盡快主動與您聯繫，請耐心等候喔 😊"
+                append_user_history(user_id, "招募顧問沛沛", no_slot_reply)
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=no_slot_reply))
+                return
+
+            slot_reply = "太好了！請選擇您方便的面試時段 😊"
+            append_user_history(user_id, "招募顧問沛沛", slot_reply)
+            # LINE QuickReply 最多 13 顆按鈕，這裡保守只取前 10 個開放時段，
+            # 避免時段一多就超過上限、整包 quick_reply 被 LINE API 直接拒絕。
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(
+                    label=format_interview_slot_display(slot.get("date_iso", ""))[:20] or "面試時段",
+                    text=f"選擇面試時段 {slot.get('page_id', '')}｜{job_title}"
+                ))
+                for slot in available_slots[:10]
+            ])
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=slot_reply, quick_reply=quick_reply))
+            return
+
+        if raw_msg.startswith("選擇面試時段"):
+            remainder = raw_msg.replace("選擇面試時段", "", 1).strip()
+            slot_page_id, _, job_title = remainder.partition("｜")
+            slot_page_id = slot_page_id.strip()
+            job_title = job_title.strip()
+
+            display_name = ""
+            if target_line_bot_api is not None:
+                try:
+                    display_name = target_line_bot_api.get_profile(user_id).display_name
+                except Exception as e:
+                    print(f"[取得 LINE 顯示名稱失敗，面試預約改用 user_id]: {e}")
+
+            booking_result = book_interview_slot(slot_page_id, user_id, display_name or user_id, job_title)
+            append_user_history(user_id, "求職者", raw_msg)
+
+            if booking_result.get("success"):
+                booked_reply = (
+                    f"預約成功！招募專員已經收到您的面試預約通知 🎉\n\n"
+                    f"📅 面試時間：{booking_result.get('slot_label', '')}\n\n"
+                    "屆時請記得準時出席，若有任何問題歡迎隨時回來詢問沛沛喔！"
+                )
+                append_user_history(user_id, "招募顧問沛沛", booked_reply)
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=booked_reply))
+                return
+
+            if booking_result.get("reason") == "full":
+                remaining_slots = fetch_available_interview_slots()
+                if remaining_slots:
+                    full_reply = "不好意思，這個時段剛好被其他求職者預約滿了！請您再重新選一個時段 😊"
+                    append_user_history(user_id, "招募顧問沛沛", full_reply)
+                    quick_reply = QuickReply(items=[
+                        QuickReplyButton(action=MessageAction(
+                            label=format_interview_slot_display(slot.get("date_iso", ""))[:20] or "面試時段",
+                            text=f"選擇面試時段 {slot.get('page_id', '')}｜{job_title}"
+                        ))
+                        for slot in remaining_slots[:10]
+                    ])
+                    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=full_reply, quick_reply=quick_reply))
+                else:
+                    full_reply = "不好意思，這個時段剛好被其他求職者預約滿了，目前也暫時沒有其他開放時段。招募專員確認後會盡快主動與您聯繫，請耐心等候喔 😊"
+                    append_user_history(user_id, "招募顧問沛沛", full_reply)
+                    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=full_reply))
+                return
+
+            fallback_reply = "不好意思，這次預約沒有成功，麻煩您稍後再試一次，或是直接跟招募專員反映也可以喔 😊"
+            append_user_history(user_id, "招募顧問沛沛", fallback_reply)
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=fallback_reply))
+            return
 
         # ---------------- 步驟 0-2：就業服務法合規攔截 (年齡/性別)[cite: 6] ----------------
         age_gender_keywords = ["年齡限制", "幾歲", "年紀", "年齡", "限女性", "限男性", "性別限制", "幾歲以上", "幾歲以下", "高齡", "中高齡"]

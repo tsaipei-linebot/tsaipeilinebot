@@ -6,9 +6,11 @@ import json
 import re
 import urllib.request
 import urllib.parse
+from datetime import datetime
 from config import (
     NOTION_API_KEY, NOTION_JOBS_DB_ID, NOTION_FAQ_DB_ID,
-    NOTION_UNRESOLVED_QUESTIONS_DB_ID, ALLOWED_PROPERTIES, CACHE_TTL
+    NOTION_UNRESOLVED_QUESTIONS_DB_ID, ALLOWED_PROPERTIES, CACHE_TTL,
+    NOTION_INTERVIEW_SLOTS_DB_ID, NOTION_INTERVIEW_BOOKINGS_DB_ID, TAIPEI_TZ
 )
 
 _cached_jobs, _last_jobs_fetch = None, 0
@@ -59,6 +61,9 @@ def parse_notion_property(prop: dict) -> str:
         return str(prop.get("number", "")) if prop.get("number") is not None else ""
     elif p_type == "checkbox":
         return "true" if prop.get("checkbox") else "false"
+    elif p_type == "date":
+        date_obj = prop.get("date")
+        return date_obj.get("start", "") if date_obj else ""
     elif p_type == "rollup":
         r_data = prop.get("rollup", {})
         r_type = r_data.get("type", "")
@@ -421,3 +426,185 @@ def append_unresolved_question_for_followup(question_text: str, user_id: str, di
     except Exception as e:
         print(f"[求職者提問追蹤寫入異常]: {e}")
         return False
+
+
+# ==========================================
+# 面試時段預約：求職者確認已填履歷後，直接在 LINE 對話裡選一個開放中的面試
+# 時段。「面試時段」資料庫由同仁自己維護有哪些時段開放、上限人數；求職者選定
+# 後寫進「面試預約」資料庫，讓招募專員能看到並確認（見 HANDOFF.md）。
+# ==========================================
+_WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
+
+
+def format_interview_slot_display(date_iso: str) -> str:
+    """把面試時段的 ISO 日期時間字串，轉成求職者容易讀的格式，例如「9/15(一) 14:00」。
+    Notion 的日期欄位如果同仁沒有勾選「加上時間」，就只會有日期沒有時間，
+    這種情況不顯示時間部分。"""
+    if not date_iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(date_iso)
+    except ValueError:
+        return date_iso
+    weekday = _WEEKDAY_NAMES[dt.weekday()]
+    if "T" in date_iso:
+        return f"{dt.month}/{dt.day}({weekday}) {dt.strftime('%H:%M')}"
+    return f"{dt.month}/{dt.day}({weekday})"
+
+
+def _parse_interview_slot_page(page: dict) -> dict:
+    """把一筆「面試時段」Notion 頁面解析成方便使用的 dict。跟 fetch_faqs_data()
+    一樣用「欄位名稱裡有沒有出現關鍵字」判斷欄位用途（例如欄位名稱裡有
+    「已預約」三個字就當成已預約人數），不要求同仁把欄位名稱取得一模一樣，
+    只要有帶到關鍵字即可，同仁自己建資料庫時比較不容易出錯。"""
+    props = page.get("properties", {})
+    label, date_iso, status = "", "", ""
+    capacity, booked = 0, 0
+    for k, v in props.items():
+        if not isinstance(v, dict):
+            continue
+        val = parse_notion_property(v)
+        p_type = v.get("type", "")
+        if p_type == "title":
+            label = val
+        elif p_type == "date":
+            date_iso = val
+        elif "已預約" in k:
+            booked = int(val) if val.lstrip("-").isdigit() else 0
+        elif "可預約" in k or "上限" in k:
+            capacity = int(val) if val.lstrip("-").isdigit() else 0
+        elif "狀態" in k:
+            status = val
+    return {
+        "page_id": page.get("id", ""),
+        "label": label,
+        "date_iso": date_iso,
+        "capacity": capacity,
+        "booked": booked,
+        "status": status,
+    }
+
+
+def fetch_available_interview_slots() -> list:
+    """取得目前開放預約、還沒額滿、時間還沒過去的面試時段，依時間排序。
+    沒設定 NOTION_INTERVIEW_SLOTS_DB_ID 時安全回傳空清單，不影響其他功能。"""
+    if not NOTION_INTERVIEW_SLOTS_DB_ID:
+        return []
+
+    now = datetime.now(TAIPEI_TZ)
+    slots = []
+    try:
+        results = query_notion_database_direct(NOTION_INTERVIEW_SLOTS_DB_ID)
+        for page in results:
+            slot = _parse_interview_slot_page(page)
+            if not slot["date_iso"]:
+                continue
+            try:
+                slot_dt = datetime.fromisoformat(slot["date_iso"])
+            except ValueError:
+                continue
+            if slot_dt.tzinfo is None:
+                slot_dt = TAIPEI_TZ.localize(slot_dt)
+            if slot_dt < now:
+                continue
+            if slot["status"] and slot["status"] not in ["開放", "開放中"]:
+                continue
+            if slot["capacity"] and slot["booked"] >= slot["capacity"]:
+                continue
+            slot["_sort_key"] = slot_dt
+            slots.append(slot)
+        slots.sort(key=lambda s: s["_sort_key"])
+        for s in slots:
+            s.pop("_sort_key", None)
+    except Exception as e:
+        print(f"[面試時段讀取異常]: {e}")
+        return []
+    return slots
+
+
+def get_notion_page(page_id: str) -> dict:
+    """讀取單一 Notion 頁面的最新狀態（預約前重新核對是否還沒額滿用，
+    避免使用者看到的清單跟送出當下的實際狀態有落差）。"""
+    if not NOTION_API_KEY or not page_id:
+        return {}
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY.strip()}",
+        "Notion-Version": "2022-06-28",
+    }
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            return res.json()
+        print(f"[Notion 讀取單頁失敗 {res.status_code}]: {res.text}")
+    except Exception as e:
+        print(f"[Notion 讀取單頁異常]: {e}")
+    return {}
+
+
+def book_interview_slot(slot_page_id: str, user_id: str, display_name: str, job_title: str = "") -> dict:
+    """求職者選定一個面試時段後：重新核對這個時段還沒額滿 -> 把「已預約人數」
+    加 1 -> 在「面試預約」資料庫新增一筆紀錄。
+
+    回傳 dict：{"success": bool, "reason": str, "slot_label": str}——reason
+    只在 success=False 時有意義（"full" 代表這個時段剛好被別人約滿了、
+    "config" 代表功能還沒設定好、"error" 代表寫入時發生異常），呼叫端依
+    reason 決定要回覆使用者什麼話。這裡在真正寫入前重新讀一次 Notion 上的
+    最新狀態（而不是沿用列出清單時的舊資料），縮小「兩個人同時選同一個
+    時段」的競爭時間窗口——Notion API 沒有原生的原子遞增操作，這是盡力而為
+    的防呆，不是完全杜絕併發衝突，但對這種小規模的面試預約場景已經足夠。"""
+    if not NOTION_API_KEY or not NOTION_INTERVIEW_SLOTS_DB_ID or not NOTION_INTERVIEW_BOOKINGS_DB_ID:
+        return {"success": False, "reason": "config", "slot_label": ""}
+
+    page = get_notion_page(slot_page_id)
+    if not page:
+        return {"success": False, "reason": "error", "slot_label": ""}
+
+    slot = _parse_interview_slot_page(page)
+    slot_label = format_interview_slot_display(slot["date_iso"])
+    if slot["capacity"] and slot["booked"] >= slot["capacity"]:
+        return {"success": False, "reason": "full", "slot_label": slot_label}
+
+    booked_field_name = ""
+    for k, v in page.get("properties", {}).items():
+        if isinstance(v, dict) and v.get("type") == "number" and "已預約" in k:
+            booked_field_name = k
+            break
+
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY.strip()}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28",
+    }
+
+    if booked_field_name:
+        patch_url = f"https://api.notion.com/v1/pages/{slot_page_id}"
+        patch_payload = {"properties": {booked_field_name: {"number": slot["booked"] + 1}}}
+        try:
+            patch_res = requests.patch(patch_url, headers=headers, json=patch_payload, timeout=5)
+            if patch_res.status_code not in [200, 201]:
+                print(f"[面試時段更新已預約人數失敗 {patch_res.status_code}]: {patch_res.text}")
+        except Exception as e:
+            print(f"[面試時段更新已預約人數異常]: {e}")
+
+    title_text = display_name.strip() if display_name else user_id
+    create_payload = {
+        "parent": {"database_id": NOTION_INTERVIEW_BOOKINGS_DB_ID},
+        "properties": {
+            "求職者暱稱": {"title": [{"text": {"content": title_text}}]},
+            "LINE User ID": {"rich_text": [{"text": {"content": user_id}}]},
+            "應徵職缺": {"rich_text": [{"text": {"content": job_title or ""}}]},
+            "面試時間": {"date": {"start": slot["date_iso"]}},
+            "已回覆": {"checkbox": False},
+        }
+    }
+    try:
+        res = requests.post("https://api.notion.com/v1/pages", headers=headers, json=create_payload, timeout=5)
+        if res.status_code in [200, 201]:
+            print(f"[面試預約] 已記錄「{title_text}」預約 {slot_label} 的面試")
+            return {"success": True, "reason": "", "slot_label": slot_label}
+        print(f"[面試預約寫入失敗 {res.status_code}]: {res.text}")
+        return {"success": False, "reason": "error", "slot_label": slot_label}
+    except Exception as e:
+        print(f"[面試預約寫入異常]: {e}")
+        return {"success": False, "reason": "error", "slot_label": slot_label}

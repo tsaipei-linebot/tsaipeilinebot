@@ -57,6 +57,13 @@ NOTION_FAQ_DB_ID = os.getenv("NOTION_FAQ_DB_ID")
 # 專員能回頭去 LINE 官方帳號後台找到這個人手動回覆。沒設定時只會印 log 跳過，
 # 不影響其他功能（見 HANDOFF.md）。
 NOTION_UNRESOLVED_QUESTIONS_DB_ID = os.getenv("NOTION_UNRESOLVED_QUESTIONS_DB_ID", "")
+# 面試時段／面試預約資料庫（選填）：求職者確認已填履歷後，可以直接在 LINE
+# 對話裡選一個開放中的面試時段。「面試時段」由同仁自己在 Notion 裡維護有哪些
+# 時段開放、上限人數；「面試預約」是求職者選完之後機器人寫入的預約紀錄，
+# 讓招募專員能看到並確認（見 HANDOFF.md）。兩個只要有一個沒設定，這個功能
+# 會安全跳過（回覆一句「目前尚未開放預約」），不影響其他功能。
+NOTION_INTERVIEW_SLOTS_DB_ID = os.getenv("NOTION_INTERVIEW_SLOTS_DB_ID", "")
+NOTION_INTERVIEW_BOOKINGS_DB_ID = os.getenv("NOTION_INTERVIEW_BOOKINGS_DB_ID", "")
 OFFICIAL_WEBSITE_BASE = os.getenv("OFFICIAL_WEBSITE_BASE", "https://tsaipei.netlify.app")
 
 # ==========================================

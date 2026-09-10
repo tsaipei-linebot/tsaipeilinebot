@@ -83,7 +83,8 @@ class CreateJobFlexCardBrandColorTests(unittest.TestCase):
     def test_primary_apply_button_uses_brand_orange(self):
         card = f.create_job_flex_card([self._card_job()], "user1", "新莊")
         footer_buttons = card.contents.contents[0].footer.contents
-        primary_button = footer_buttons[-1]
+        # 最後一顆是新加的「📅 預約面試」連結按鈕，主要應徵按鈕是倒數第二顆。
+        primary_button = footer_buttons[-2]
         self.assertEqual(primary_button.color, "#ea580c")
 
     def test_category_badge_uses_brand_orange(self):
@@ -93,6 +94,26 @@ class CreateJobFlexCardBrandColorTests(unittest.TestCase):
         category_badge_text = tags_row.contents[-1].contents[0]
         self.assertEqual(category_badge_text.text, "門市")
         self.assertEqual(category_badge_text.color, "#c2410c")
+
+
+class CreateJobFlexCardInterviewButtonTests(unittest.TestCase):
+    """求職者填完履歷後可以直接約面試時間，卡片上要多一顆「📅 預約面試」按鈕，
+    按下去送出的文字要帶著 Notion 唯一識別鍵（職缺名稱），讓後續流程能精準
+    比對回同一筆職缺。"""
+
+    def _card_job(self):
+        return {
+            "職缺名稱(對外)": "測試職缺", "職缺名稱": "測試職缺(內部)",
+            "薪資": "時薪200", "班別": "早班", "職務類別": "門市",
+            "縣市": "新北市", "行政區": "新莊區",
+        }
+
+    def test_footer_has_interview_booking_button_with_internal_title(self):
+        card = f.create_job_flex_card([self._card_job()], "user1", "新莊")
+        footer_buttons = card.contents.contents[0].footer.contents
+        booking_button = footer_buttons[-1]
+        self.assertEqual(booking_button.action.label, "📅 預約面試")
+        self.assertEqual(booking_button.action.text, "預約面試 測試職缺(內部)")
 
 
 if __name__ == "__main__":

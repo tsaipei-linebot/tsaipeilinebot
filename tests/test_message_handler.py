@@ -1354,5 +1354,185 @@ class CountyLevelFallbackRecommendationTests(unittest.TestCase):
         self.assertEqual(args[1], control_message)
 
 
+class InterviewBookingFlowTests(unittest.TestCase):
+    """面試預約流程：職缺卡片「📅 預約面試」按鈕 → 確認是否已填履歷 →
+    （已填）列出 Notion 開放時段 → 選定時段寫入 Notion 面試預約。"""
+
+    def _base_patches(self, active_jobs=None):
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        return [
+            patch("handlers.message_handler.fetch_jobs_data", return_value=active_jobs or []),
+            patch("handlers.message_handler.fetch_faqs_data", return_value=[]),
+            patch("handlers.message_handler.get_user_history", return_value=[]),
+            patch("handlers.message_handler.get_user_slots", return_value=empty_slots),
+            patch("handlers.message_handler.update_user_slots"),
+            patch("handlers.message_handler.append_user_history"),
+            patch("handlers.message_handler._is_staffed_hours", return_value=False),
+        ]
+
+    def _run_with_patches(self, patches, event, line_bot_api):
+        mocks = [p.start() for p in patches]
+        try:
+            h.process_user_message(event, line_bot_api)
+        finally:
+            for p in patches:
+                p.stop()
+        return mocks
+
+    def test_booking_button_asks_resume_confirmation(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-interview-1"
+        event.message.text = "預約面試 美光(桃園)作業員"
+        line_bot_api = MagicMock()
+
+        self._run_with_patches(self._base_patches(), event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIsInstance(args[1], TextSendMessage)
+        self.assertIn("填寫過線上履歷", args[1].text)
+        texts = [btn.action.text for btn in args[1].quick_reply.items]
+        self.assertIn("履歷確認完成 美光(桃園)作業員", texts)
+        self.assertIn("還沒填履歷 美光(桃園)作業員", texts)
+
+    def test_not_yet_filled_resume_resends_apply_link(self):
+        matched_job = {
+            "職缺名稱": "美光(桃園)作業員", "_internal_title": "美光(桃園)作業員",
+            "行業別": "科技", "職務類別": "作業員",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-interview-2"
+        event.message.text = "還沒填履歷 美光(桃園)作業員"
+        line_bot_api = MagicMock()
+
+        self._run_with_patches(self._base_patches(active_jobs=[matched_job]), event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("填寫線上履歷", args[1].text)
+        self.assertIn("http", args[1].text)
+
+    def test_resume_confirmed_lists_available_slots(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-interview-3"
+        event.message.text = "履歷確認完成 美光(桃園)作業員"
+        line_bot_api = MagicMock()
+
+        slots = [
+            {"page_id": "slot-1", "date_iso": "2099-01-15T14:00:00+08:00"},
+            {"page_id": "slot-2", "date_iso": "2099-01-16T09:00:00+08:00"},
+        ]
+        patches = self._base_patches() + [
+            patch("handlers.message_handler.fetch_available_interview_slots", return_value=slots)
+        ]
+        self._run_with_patches(patches, event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        texts = [btn.action.text for btn in args[1].quick_reply.items]
+        self.assertIn("選擇面試時段 slot-1｜美光(桃園)作業員", texts)
+        self.assertIn("選擇面試時段 slot-2｜美光(桃園)作業員", texts)
+
+    def test_resume_confirmed_no_slots_replies_not_yet_open(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-interview-4"
+        event.message.text = "履歷確認完成 美光(桃園)作業員"
+        line_bot_api = MagicMock()
+
+        patches = self._base_patches() + [
+            patch("handlers.message_handler.fetch_available_interview_slots", return_value=[])
+        ]
+        self._run_with_patches(patches, event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("尚未開放", args[1].text)
+
+    def test_select_slot_success_books_and_replies_with_slot_label(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-interview-5"
+        event.message.text = "選擇面試時段 slot-1｜美光(桃園)作業員"
+        line_bot_api = MagicMock()
+        line_bot_api.get_profile.return_value = MagicMock(display_name="小明")
+
+        booking_result = {"success": True, "reason": "", "slot_label": "1/15(四) 14:00"}
+        patches = self._base_patches() + [
+            patch("handlers.message_handler.book_interview_slot", return_value=booking_result)
+        ]
+        *_, mock_book = self._run_with_patches(patches, event, line_bot_api)
+
+        mock_book.assert_called_once_with("slot-1", "test-user-interview-5", "小明", "美光(桃園)作業員")
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("預約成功", args[1].text)
+        self.assertIn("1/15(四) 14:00", args[1].text)
+
+    def test_select_slot_full_relists_remaining_slots(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-interview-6"
+        event.message.text = "選擇面試時段 slot-1｜美光(桃園)作業員"
+        line_bot_api = MagicMock()
+        line_bot_api.get_profile.return_value = MagicMock(display_name="小華")
+
+        booking_result = {"success": False, "reason": "full", "slot_label": ""}
+        remaining_slots = [{"page_id": "slot-2", "date_iso": "2099-01-16T09:00:00+08:00"}]
+        patches = self._base_patches() + [
+            patch("handlers.message_handler.book_interview_slot", return_value=booking_result),
+            patch("handlers.message_handler.fetch_available_interview_slots", return_value=remaining_slots),
+        ]
+        self._run_with_patches(patches, event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("預約滿了", args[1].text)
+        texts = [btn.action.text for btn in args[1].quick_reply.items]
+        self.assertIn("選擇面試時段 slot-2｜美光(桃園)作業員", texts)
+
+    def test_select_slot_full_with_no_remaining_slots_replies_plain_text(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-interview-7"
+        event.message.text = "選擇面試時段 slot-1｜美光(桃園)作業員"
+        line_bot_api = MagicMock()
+        line_bot_api.get_profile.return_value = MagicMock(display_name="小華")
+
+        booking_result = {"success": False, "reason": "full", "slot_label": ""}
+        patches = self._base_patches() + [
+            patch("handlers.message_handler.book_interview_slot", return_value=booking_result),
+            patch("handlers.message_handler.fetch_available_interview_slots", return_value=[]),
+        ]
+        self._run_with_patches(patches, event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIsInstance(args[1], TextSendMessage)
+        self.assertIsNone(args[1].quick_reply)
+        self.assertIn("預約滿了", args[1].text)
+
+    def test_select_slot_error_reason_replies_generic_fallback(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-interview-8"
+        event.message.text = "選擇面試時段 slot-1｜美光(桃園)作業員"
+        line_bot_api = MagicMock()
+        line_bot_api.get_profile.return_value = MagicMock(display_name="小華")
+
+        booking_result = {"success": False, "reason": "error", "slot_label": ""}
+        patches = self._base_patches() + [
+            patch("handlers.message_handler.book_interview_slot", return_value=booking_result),
+        ]
+        self._run_with_patches(patches, event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("沒有成功", args[1].text)
+
+
 if __name__ == "__main__":
     unittest.main()
