@@ -11,7 +11,7 @@ _stub_gcp.install()
 from services import matcher_service as m
 
 
-def _job(vendor="", search_text="", leave="", shift="", salary="", category="", title="", industry="", location_search_text=None):
+def _job(vendor="", search_text="", leave="", shift="", salary="", category="", title="", industry="", location_search_text=None, content_text=""):
     return {
         "系統廠商名稱": vendor,
         "_search_text": search_text,
@@ -27,6 +27,7 @@ def _job(vendor="", search_text="", leave="", shift="", salary="", category="", 
         "行業別": industry,
         "職缺名稱(對外)": title,
         "職缺名稱": title,
+        "工作內容(對外)": content_text,
     }
 
 
@@ -200,6 +201,61 @@ class LocationScoringUsesStructuredFieldTests(unittest.TestCase):
         score_with_location = m._score_job_for_ai(job, "八德有工作嗎", current_location="八德")
         score_without_location = m._score_job_for_ai(job, "八德有工作嗎", current_location="")
         self.assertEqual(score_with_location - score_without_location, 40)
+
+
+class CategoryRelaxedMatchingIgnoresFreeTextTests(unittest.TestCase):
+    """上線試營運後實測發現的 bug：使用者問「有蝦皮門市嗎」，結果被推薦一筆
+    「系統廠商名稱」是「蝦皮內勤」、「職務類別」是「設備人員」的職缺（跟門市
+    完全無關），只因為它的「工作內容(對外)」自由文字裡寫到「各區門市據點
+    （共60區，門市自選）」——這句話是在講到職地點遍布全台，不是在講職務類別
+    是門市。跟先前地區誤判是同一種 bug 類型：寬鬆比對只能信任結構化欄位
+    （職缺名稱／職務類別／行業別），不能信任自由文字說明欄位。"""
+
+    def test_equipment_job_not_matched_as_store_category_via_free_text(self):
+        # 真實案例重現：系統廠商名稱＝蝦皮內勤（廠商比對會過），職務類別＝設備
+        # 人員（跟「門市」完全無關），但工作內容(對外) 自由文字剛好出現「門市」
+        # 這個詞，寬鬆比對前會被誤判成門市類別職缺。
+        equipment_job = _job(
+            vendor="蝦皮內勤",
+            category="設備人員",
+            title="【雙北基宜】知名企業設備人員",
+            content_text="工作內容：負責各區門市據點（共60區，門市自選）設備維護保養",
+        )
+        self.assertFalse(
+            m.job_matches_category_filter(equipment_job, "門市", "蝦皮", allow_relaxed=True)
+        )
+
+    def test_genuine_store_job_still_matches_via_relaxed_industry_field(self):
+        # 反過來確認：職缺名稱／職務類別都沒有明講「門市」，但「行業別」這個
+        # 結構化欄位有門市相關字樣時，寬鬆比對仍要正常放行（不能因為這次修正
+        # 而連真正命中的情況都一起壞掉）——注意這裡刻意不讓 title/category
+        # 命中，才是真的在測「寬鬆比對」這一層，不是測嚴格比對。
+        store_job = _job(
+            vendor="蝦皮",
+            category="臨時人力",
+            industry="零售門市",
+            title="蝦皮兼職人員037",
+        )
+        self.assertTrue(
+            m.job_matches_category_filter(store_job, "門市", "蝦皮", allow_relaxed=True)
+        )
+
+    def test_filter_jobs_by_category_tiered_excludes_equipment_job(self):
+        equipment_job = _job(
+            vendor="蝦皮內勤",
+            category="設備人員",
+            title="【雙北基宜】知名企業設備人員",
+            content_text="工作內容：負責各區門市據點（共60區，門市自選）設備維護保養",
+        )
+        store_job = _job(
+            vendor="蝦皮",
+            category="臨時人力",
+            industry="零售門市",
+            title="蝦皮兼職人員037",
+        )
+        result = m.filter_jobs_by_category_tiered([equipment_job, store_job], "門市", "蝦皮")
+        self.assertIn(store_job, result)
+        self.assertNotIn(equipment_job, result)
 
 
 if __name__ == "__main__":
