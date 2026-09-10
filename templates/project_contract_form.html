@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}專案合約維護 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">專案合約維護</h1>
+<p class="hint">
+    填好送出後，系統會自動把合約檔案跟專案資訊寄送給人資與財務單位，並建檔留存。
+    這裡沒有核准流程，送出後就完成了，不用等主管審核。
+</p>
+
+{% if submitted %}
+<p class="success">專案合約已送出，已寄送通知信給人資與財務單位。</p>
+{% endif %}
+{% if submit_unknown %}
+<p class="warning">
+    這筆專案合約很可能其實已經送出成功了，只是材霈平台這邊沒辦法確認職缺維護系統的回應
+    （這是對方系統偶爾會出現的已知狀況）。請先確認財會/人資信箱有沒有收到通知信，
+    如果沒有收到才需要重新送出，避免不小心送出兩筆重複的合約資料。
+</p>
+{% endif %}
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/project-contracts" enctype="multipart/form-data" id="project-contract-form" class="form-stack">
+    <div class="repayment-section">
+        <div class="repayment-section-title">一、專案與合作廠商基本資訊</div>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">申請同仁姓名 *（登入同仁，鎖定不可更改）</span>
+                <div class="applicant-readonly">{{ user.name }}</div>
+            </label>
+            <label><span class="field-caption">廠商名稱 *</span>
+                <input type="text" name="vendor" value="{{ form.vendor or '' }}" placeholder="如：日月光半導體股份有限公司" required>
+            </label>
+            <label><span class="field-caption">合作類別 *</span>
+                <select name="coop_category" required>
+                    <option value="" {% if not form.coop_category %}selected{% endif %}>請選擇合作類別...</option>
+                    {% for opt in coop_category_options %}
+                    <option value="{{ opt }}" {% if form.coop_category == opt %}selected{% endif %}>{{ opt }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label><span class="field-caption">簽約模式 *</span>
+                <select name="contract_mode" required>
+                    <option value="" {% if not form.contract_mode %}selected{% endif %}>請選擇簽約模式...</option>
+                    {% for opt in contract_mode_options %}
+                    <option value="{{ opt }}" {% if form.contract_mode == opt %}selected{% endif %}>{{ opt }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label><span class="field-caption">約訪專員 *</span>
+                <input type="text" name="interview_specialist" value="{{ form.interview_specialist or '' }}" placeholder="如：王大明" required>
+            </label>
+            <label><span class="field-caption">拜訪主管 *</span>
+                <input type="text" name="visit_supervisor" value="{{ form.visit_supervisor or '' }}" placeholder="如：李協理" required>
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">二、合約檔案上傳（WORD、PDF）*</div>
+        <div class="upload-row">
+            <label class="upload-zone" id="contract-upload-zone">
+                <input type="file" name="contract_file" accept=".pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" id="contract-file-input" hidden>
+                <span class="upload-zone-icon">⬆</span>
+                <span><strong>點擊選取合約檔案</strong> 或拖曳至此</span>
+                <span>支援 .pdf, .doc, .docx（檔案上限 20MB）</span>
+            </label>
+            <div class="upload-preview" id="contract-upload-preview">尚未選取合約檔案</div>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block" id="project-contract-submit-btn">送出（自動寄送人資與財務單位）</button>
+</form>
+<p class="back-link"><a href="/portal">&larr; 回內部系統入口</a></p>
+
+<script>
+(function () {
+    var CONTRACT_MAX_BYTES = 20 * 1024 * 1024;
+    var CONTRACT_ALLOWED_EXTENSIONS = ['.pdf', '.doc', '.docx'];
+
+    var uploadZone = document.getElementById('contract-upload-zone');
+    var fileInput = document.getElementById('contract-file-input');
+    var preview = document.getElementById('contract-upload-preview');
+
+    function fileExt(name) {
+        var idx = name.lastIndexOf('.');
+        return idx >= 0 ? name.slice(idx).toLowerCase() : '';
+    }
+
+    function showPreview(file) {
+        if (!file) return;
+        if (file.size > CONTRACT_MAX_BYTES) {
+            alert('合約檔案不得超過 20MB，請換一個檔案較小的檔案。');
+            clearUpload();
+            return;
+        }
+        if (CONTRACT_ALLOWED_EXTENSIONS.indexOf(fileExt(file.name)) === -1) {
+            alert('合約檔案僅支援 PDF 或 WORD (.doc, .docx) 檔案格式。');
+            clearUpload();
+            return;
+        }
+        var sizeMb = (file.size / 1024 / 1024).toFixed(2);
+        preview.textContent = file.name + '（' + sizeMb + ' MB）';
+    }
+
+    function clearUpload() {
+        fileInput.value = '';
+        preview.textContent = '尚未選取合約檔案';
+    }
+
+    fileInput.addEventListener('change', function () { showPreview(fileInput.files[0]); });
+    ['dragenter', 'dragover'].forEach(function (evt) {
+        uploadZone.addEventListener(evt, function (e) { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+    });
+    ['dragleave', 'drop'].forEach(function (evt) {
+        uploadZone.addEventListener(evt, function (e) { e.preventDefault(); uploadZone.classList.remove('drag-over'); });
+    });
+    uploadZone.addEventListener('drop', function (e) {
+        var file = e.dataTransfer.files[0];
+        if (file) { fileInput.files = e.dataTransfer.files; showPreview(file); }
+    });
+
+    // fileInput 是 hidden 的（靠外層 <label class="upload-zone"> 觸發選檔），
+    // 瀏覽器對「沒有被渲染出來」的欄位不會做 required 檢查（跟職缺維護表單
+    // 那個 hidden 多選欄位是同一個坑，見 HANDOFF.md 的說明），純靠 HTML5
+    // required 沒有用，這裡在 submit 事件裡自己補一道檢查。
+    document.getElementById('project-contract-form').addEventListener('submit', function (e) {
+        if (!fileInput.files || fileInput.files.length === 0) {
+            e.preventDefault();
+            alert('請上傳合約檔案（PDF 或 WORD 格式），才能送出。');
+            return;
+        }
+        var btn = document.getElementById('project-contract-submit-btn');
+        btn.disabled = true;
+        btn.textContent = '送出中，請稍候…（可能需要幾秒鐘）';
+    });
+})();
+</script>
+{% endblock %}
