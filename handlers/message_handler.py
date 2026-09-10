@@ -361,10 +361,13 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         if is_show_all:
             matched_show_all = []
             for j in active_jobs:
-                s_text = j.get("_search_text", "")
+                # 地區比對要用 _location_search_text（只含縣市/行政區），不能用
+                # _search_text（含自由文字，可能因為地址/文案剛好提到地名而誤判，
+                # 見 notion_service.py 的欄位說明）。
+                loc_text = j.get("_location_search_text", "")
                 if current_location:
                     loc_clean = current_location.replace("台", "臺")
-                    if current_location in s_text or loc_clean in s_text:
+                    if current_location in loc_text or loc_clean in loc_text:
                         matched_show_all.append(j)
                 else:
                     matched_show_all.append(j)
@@ -386,7 +389,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             if not matched_show_all:
                 if current_location:
                     loc_clean = current_location.replace("台", "臺")
-                    matched_show_all = [j for j in active_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
+                    matched_show_all = [j for j in active_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
                 if not matched_show_all:
                     matched_show_all = active_jobs[:5]
 
@@ -428,7 +431,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 if any(k in cat for k in ["外送", "司機", "配送"]) or any(k in int_t for k in ["外送", "司機", "配送"]) or any(k in pub_t for k in ["外送", "司機", "配送"]):
                     if current_location:
                         loc_clean = current_location.replace("台", "臺")
-                        if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", ""):
+                        # 地區比對用 _location_search_text（只含縣市/行政區），見
+                        # notion_service.py 的欄位說明：不能用 _search_text，否則
+                        # 職缺描述文字裡剛好提到的地名（例如路名）會被誤判成該職缺
+                        # 真的位於那個行政區。
+                        if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", ""):
                             direct_matches.append(j)
                     else:
                         direct_matches.append(j)
@@ -439,7 +446,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             for j in active_jobs:
                 if current_location:
                     loc_clean = current_location.replace("台", "臺")
-                    if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", ""):
+                    if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", ""):
                         _location_jobs.append(j)
                 else:
                     _location_jobs.append(j)
@@ -450,7 +457,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             momo_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"])]
             if current_location:
                 loc_clean = current_location.replace("台", "臺")
-                loc_momo = [j for j in momo_jobs if current_location in j.get("_search_text", "") or loc_clean in j.get("_search_text", "")]
+                loc_momo = [j for j in momo_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
                 direct_matches = loc_momo if loc_momo else momo_jobs
             else:
                 direct_matches = momo_jobs

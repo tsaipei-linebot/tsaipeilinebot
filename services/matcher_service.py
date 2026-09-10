@@ -380,9 +380,14 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
     query_clean = clean_text_for_search(query_text)
 
     # 1. 地區命中[cite: 1]
+    # 一定要拿 _location_search_text（只含縣市/行政區這兩個結構化欄位）來比對，
+    # 不能用 search_text（含工作內容/排版說明/精華亮點等自由文字）——自由文字裡
+    # 剛好提到某個地名（例如地址是「八德路」，不是桃園市八德區）會被誤判成
+    # 這個職缺真的位於該地區（詳見 _location_search_text 的欄位說明）。
+    location_text = job.get("_location_search_text", "")
     if current_location:
         loc = clean_text_for_search(current_location)
-        if loc and loc in search_text:
+        if loc and loc in location_text:
             score += 40
 
     # 2. 廠商權重加分[cite: 1]

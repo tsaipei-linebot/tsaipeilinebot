@@ -52,6 +52,50 @@ class ParseNotionPropertyTests(unittest.TestCase):
         self.assertEqual(n.parse_notion_property("已經是純文字"), "已經是純文字")
 
 
+class LocationSearchTextTests(unittest.TestCase):
+    """_location_search_text 是上線試營運後實測發現的修正：地區判斷只能依據同仁
+    在 Notion 實際勾選的「縣市」「行政區」這兩個結構化欄位，不能沿用 _search_text
+    （包含「工作內容(對外)」等自由文字）——實際案例是蝦皮門市的「行政區」沒有
+    勾選八德，但工作內容文字剛好提到「八德」（例如地址上的路名），求職者問
+    「八德有沒有缺額」時被誤判成有。"""
+
+    def setUp(self):
+        n._cached_jobs, n._last_jobs_fetch = None, 0
+
+    def tearDown(self):
+        n._cached_jobs, n._last_jobs_fetch = None, 0
+
+    def _make_job_page(self):
+        return {
+            "id": "page-1",
+            "properties": {
+                "職缺名稱": {"type": "title", "title": [{"plain_text": "蝦皮門市"}]},
+                "縣市": {"type": "rich_text", "rich_text": [{"plain_text": "桃園市"}]},
+                "行政區": {"type": "rich_text", "rich_text": [{"plain_text": "蘆竹區,龜山區"}]},
+                "工作內容(對外)": {
+                    "type": "rich_text",
+                    "rich_text": [{"plain_text": "門市地址鄰近八德路口，交通便利"}],
+                },
+                "狀態": {"type": "select", "select": {"name": "招募中"}},
+            },
+        }
+
+    def test_location_search_text_excludes_free_text_mentions(self):
+        with patch("services.notion_service.query_notion_database_direct", return_value=[self._make_job_page()]):
+            jobs = n.fetch_jobs_data()
+
+        self.assertEqual(len(jobs), 1)
+        job = jobs[0]
+        # 「八德」只出現在工作內容的自由文字裡（路名），行政區實際上是蘆竹/龜山，
+        # 地區比對專用的欄位不該包含「八德」。
+        self.assertNotIn("八德", job["_location_search_text"])
+        self.assertIn("蘆竹", job["_location_search_text"])
+        self.assertIn("龜山", job["_location_search_text"])
+        # 一般的 _search_text（給品牌/類別等其他比對用）仍然涵蓋自由文字，
+        # 這裡確認「八德」確實只在這份欄位裡出現，才會造成誤判的可能性。
+        self.assertIn("八德", job["_search_text"])
+
+
 class DuplicateFaqQuestionTests(unittest.TestCase):
     def setUp(self):
         self.existing_titles = ["發薪日是什麼時候", "特休怎麼算", "薪水"]

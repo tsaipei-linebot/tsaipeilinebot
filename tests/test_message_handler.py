@@ -668,5 +668,48 @@ class OuterExceptionFallbackTests(unittest.TestCase):
         self.assertIn("延遲", args[1].text)
 
 
+class StoreIntentLocationMatchTests(unittest.TestCase):
+    """上線試營運後實測發現的 bug：蝦皮門市職缺的「行政區」沒有勾選八德，但
+    工作內容(對外)的自由文字剛好提到「八德」（例如地址上的路名），求職者問
+    「八德有沒有缺額」時，「精準工種直達攔截」的門市分支被誤判成有缺額。"""
+
+    def test_store_intent_does_not_match_location_only_mentioned_in_free_text(self):
+        store_job = {
+            "職缺名稱": "蝦皮門市人員",
+            "_internal_title": "蝦皮門市人員",
+            "_parsed_title": "蝦皮門市人員",
+            "職缺名稱(對外)": "蝦皮門市人員",
+            "_job_category": "門市",
+            "職務類別": "門市",
+            "_search_text": "蝦皮門市地址鄰近八德路口交通便利",
+            # 行政區實際只有蘆竹/龜山，不包含八德——「八德」只出現在上面
+            # _search_text 的自由文字裡（路名），不該被判定成這個職缺在八德。
+            "_location_search_text": "桃園市蘆竹區龜山區",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-store-location"
+        event.message.text = "八德蝦皮門市有缺額嗎"
+        line_bot_api = MagicMock()
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[store_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        # 不該因為「八德」只出現在自由文字裡就當成直接命中，組出職缺卡片
+        mock_flex_card.assert_not_called()
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+
 if __name__ == "__main__":
     unittest.main()
