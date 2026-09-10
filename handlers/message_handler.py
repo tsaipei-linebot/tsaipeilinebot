@@ -28,7 +28,8 @@ from services.matcher_service import (
     build_progressive_question, build_ai_job_candidates, build_ai_faq_candidates,
     job_matches_category_filter, has_negative_intent, extract_numeric_salary_preference,
     detect_negated_location, detect_negated_category, has_recognizable_category_or_brand_keyword,
-    CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match
+    CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match,
+    find_county_level_alternative_jobs, LOCATION_TO_COUNTY
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -485,23 +486,33 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 is_momo_intent = True
 
         direct_matches = []
+        # 這三個分支各自的「類別/廠商比對通過、但還沒篩地區」候選池，供地區
+        # 精準比對落空時，退一步找「同縣市」還有沒有符合條件的職缺用（見下面
+        # 步驟 1-4 的同縣市鄰近地區退讓建議）。沒有走到對應分支時維持空清單，
+        # 不影響原本的判斷。
+        _category_matched_jobs_for_fallback = []
+        _category_desc_for_fallback = ""
 
         if is_delivery_intent:
+            _delivery_matched_jobs = []
             for j in active_jobs:
                 cat = str(j.get("_job_category", "")).lower()
                 int_t = str(j.get("_internal_title", "")).lower()
                 pub_t = str(j.get("職缺名稱(對外)", "")).lower()
                 if any(k in cat for k in ["外送", "司機", "配送"]) or any(k in int_t for k in ["外送", "司機", "配送"]) or any(k in pub_t for k in ["外送", "司機", "配送"]):
-                    if current_location:
-                        loc_clean = current_location.replace("台", "臺")
-                        # 地區比對用 _location_search_text（只含縣市/行政區），見
-                        # notion_service.py 的欄位說明：不能用 _search_text，否則
-                        # 職缺描述文字裡剛好提到的地名（例如路名）會被誤判成該職缺
-                        # 真的位於那個行政區。
-                        if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", ""):
-                            direct_matches.append(j)
-                    else:
-                        direct_matches.append(j)
+                    _delivery_matched_jobs.append(j)
+
+            if current_location:
+                loc_clean = current_location.replace("台", "臺")
+                # 地區比對用 _location_search_text（只含縣市/行政區），見
+                # notion_service.py 的欄位說明：不能用 _search_text，否則
+                # 職缺描述文字裡剛好提到的地名（例如路名）會被誤判成該職缺
+                # 真的位於那個行政區。
+                direct_matches = [j for j in _delivery_matched_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
+            else:
+                direct_matches = _delivery_matched_jobs
+            _category_matched_jobs_for_fallback = _delivery_matched_jobs
+            _category_desc_for_fallback = "外送"
 
         elif is_store_intent:
             # 改用 detected_brand（這輪偵測到的，或延續前一輪鎖定的廠商），
@@ -519,19 +530,28 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                     _location_jobs.append(j)
 
             direct_matches = filter_jobs_by_category_tiered(_location_jobs, "門市", _store_brand)
+            # 這裡刻意「另外」對全部 active_jobs（不先篩地區）再跑一次類別/廠商
+            # 比對，只給同縣市退讓建議用，不會反過來影響上面 direct_matches 的
+            # 判斷結果——避免因為改成「先比類別再篩地區」而讓嚴格/寬鬆兩層
+            # 比對的判斷基準跟著地區篩選範圍變動，波及到已經驗證過的既有行為。
+            _category_matched_jobs_for_fallback = filter_jobs_by_category_tiered(active_jobs, "門市", _store_brand)
+            _category_desc_for_fallback = f"{_store_brand}門市" if _store_brand else "門市"
 
         elif is_momo_intent:
             # 地區沒有精準命中時不再退讓顯示「全部」momo 職缺——之前這樣設計
             # 會讓使用者收到跟他問的地區完全無關的職缺、卻被告知「找到符合
             # 條件的推薦職缺」，答非所問（見 HANDOFF.md 案例）。跟 delivery/
-            # store 分支一致：地區沒有精準命中就是沒有直接命中，落到 AI 決策，
-            # 由 AI 依候選職缺清單判斷、老實回覆。
+            # store 分支一致：地區沒有精準命中就是沒有直接命中，落到下面的
+            # 同縣市退讓建議，還是沒有才落到 AI 決策，由 AI 依候選職缺清單
+            # 判斷、老實回覆。
             momo_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"])]
             if current_location:
                 loc_clean = current_location.replace("台", "臺")
                 direct_matches = [j for j in momo_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
             else:
                 direct_matches = momo_jobs
+            _category_matched_jobs_for_fallback = momo_jobs
+            _category_desc_for_fallback = "momo"
 
         if direct_matches:
             reply_text = f"有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
@@ -545,6 +565,35 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
             )
             return
+
+        # ---------------- 步驟 1-4：同縣市鄰近地區退讓建議 ----------------
+        # 真人派遣專員跟求職者對話時，通常會順口推薦鄰近或類似的工作——例如
+        # 求職者問「蝦皮門市 八德有缺嗎」，八德沒有缺額時，會提「桃園市其他
+        # 地方有喔」。這裡刻意做成確定性比對（只靠 LOCATION_TO_COUNTY 對照表
+        # 查「同一個縣市」，不做地理相鄰推論），回覆文字也刻意明講「原本問的
+        # 地區沒有，這是同縣市的其他地方」——不能讓使用者誤以為原本問的地區
+        # 也有符合的職缺，那樣會重蹈這幾天才修好的「AI 自行推論地區涵蓋範圍」
+        # 覆轍。只有在使用者真的有指定地區、且這句話有對應到門市/外送/momo
+        # 其中一種精準攔截意圖時才會觸發；找不到同縣市的替代方案，就繼續往下
+        # 落到 AI 決策，跟原本行為一致。
+        if current_location and _category_matched_jobs_for_fallback:
+            county_alt_jobs = find_county_level_alternative_jobs(_category_matched_jobs_for_fallback, current_location)
+            if county_alt_jobs:
+                county_name = LOCATION_TO_COUNTY.get(current_location, "")
+                fallback_reply_text = (
+                    f"「{current_location}」目前沒有明確列出的{_category_desc_for_fallback}職缺，"
+                    f"不過同樣在{county_name}還有相關職缺，要不要參考看看呢？😊"
+                )
+                append_user_history(user_id, "求職者", raw_msg)
+                append_user_history(user_id, "招募顧問沛沛", fallback_reply_text)
+                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text), create_job_flex_card(county_alt_jobs[:4], user_id, "")])
+                _intercept_type = "delivery" if is_delivery_intent else ("store" if is_store_intent else "momo")
+                log_ai_decision_event(
+                    path="direct_intercept", intercept_type=f"{_intercept_type}_county_fallback",
+                    matched_brand="momo" if is_momo_intent else "",
+                    latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                )
+                return
 
         # ---------------- 步驟 1-5：FAQ 高信心比對，直接回傳 Notion 原文（不經 AI 改寫）----------------
         # 求職者問句完整命中某一筆 FAQ 問題本文時，代表這題有明確、已審核過的官方答案，
