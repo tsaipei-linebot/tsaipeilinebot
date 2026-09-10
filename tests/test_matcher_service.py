@@ -258,5 +258,86 @@ class CategoryRelaxedMatchingIgnoresFreeTextTests(unittest.TestCase):
         self.assertNotIn(equipment_job, result)
 
 
+class CategoryMatchingIgnoresInternalNamingConventionTests(unittest.TestCase):
+    """實測發現：使用者確認「蝦皮設備人員」「蝦皮客服」「蝦皮後勤專員」這三筆
+    支援門市營運的內勤職缺，被誤判成「門市」類別職缺推薦出去。追查後直接
+    核對這三筆職缺在 Notion 裡的實際欄位值，確認「門市」「智取店」「店到店」
+    這幾個字眼只出現在「職缺名稱」（同仁自己取的內部/行政命名慣例，例如
+    「蝦皮內勤(北北基宜)門市裝潢工程外勤專員」），完全沒有出現在求職者
+    實際看到的「職缺名稱(對外)」或結構化的「職務類別」欄位——這些職缺的
+    職務類別其實是「設備人員」「文字客服」，跟門市完全無關，只是剛好內部
+    命名提到這是「支援門市營運的內勤職位」。"""
+
+    def _job_with_internal_naming(self, internal_title, public_title, category, vendor="蝦皮內勤"):
+        return {
+            "_internal_title": internal_title,
+            "職缺名稱": internal_title,
+            "職缺名稱(對外)": public_title,
+            "職務類別": category,
+            "系統廠商名稱": vendor,
+            "行業別": "服務業",
+        }
+
+    def test_equipment_job_named_with_menshi_in_internal_name_not_matched(self):
+        job = self._job_with_internal_naming(
+            internal_title="蝦皮內勤(北北基宜)門市裝潢工程外勤專員",
+            public_title="【雙北基宜】知名企業設備人員",
+            category="設備人員",
+        )
+        self.assertFalse(m.job_matches_category_filter(job, "門市", "蝦皮", allow_relaxed=True))
+
+    def test_customer_service_job_named_with_zhiqudian_in_internal_name_not_matched(self):
+        job = self._job_with_internal_naming(
+            internal_title="蝦皮內勤 智取店客服",
+            public_title="知名電商客服 早/晚/夜班 月薪42k",
+            category="文字客服",
+        )
+        self.assertFalse(m.job_matches_category_filter(job, "門市", "蝦皮", allow_relaxed=True))
+
+    def test_backoffice_job_named_with_diandaodian_in_internal_name_not_matched(self):
+        job = self._job_with_internal_naming(
+            internal_title="蝦皮內勤客戶服務專員+蝦皮店到店客服團隊專員",
+            public_title="客戶服務暨後勤專員",
+            category="文字客服",
+        )
+        self.assertFalse(m.job_matches_category_filter(job, "門市", "蝦皮", allow_relaxed=True))
+
+    def test_genuine_store_job_still_matches_via_public_title(self):
+        # 反過來確認：真的門市類職缺（職缺名稱(對外) 本身就有「門市」）仍然
+        # 要能正常命中，不能因為這次修正而連真正命中的情況都一起壞掉。
+        job = self._job_with_internal_naming(
+            internal_title="蝦皮店到店門市夥伴",
+            public_title="🧡蝦皮店到店門市夥伴",
+            category="倉儲人員",
+        )
+        self.assertTrue(m.job_matches_category_filter(job, "門市", "蝦皮", allow_relaxed=True))
+
+    def test_filter_jobs_by_category_tiered_excludes_internal_naming_false_positives(self):
+        equipment_job = self._job_with_internal_naming(
+            internal_title="蝦皮內勤(北北基宜)門市裝潢工程外勤專員",
+            public_title="【雙北基宜】知名企業設備人員",
+            category="設備人員",
+        )
+        customer_service_job = self._job_with_internal_naming(
+            internal_title="蝦皮內勤 智取店客服",
+            public_title="知名電商客服 早/晚/夜班 月薪42k",
+            category="文字客服",
+        )
+        backoffice_job = self._job_with_internal_naming(
+            internal_title="蝦皮內勤客戶服務專員+蝦皮店到店客服團隊專員",
+            public_title="客戶服務暨後勤專員",
+            category="文字客服",
+        )
+        store_job = self._job_with_internal_naming(
+            internal_title="蝦皮店到店門市夥伴",
+            public_title="🧡蝦皮店到店門市夥伴",
+            category="倉儲人員",
+        )
+        result = m.filter_jobs_by_category_tiered(
+            [equipment_job, customer_service_job, backoffice_job, store_job], "門市", "蝦皮"
+        )
+        self.assertEqual(result, [store_job])
+
+
 if __name__ == "__main__":
     unittest.main()

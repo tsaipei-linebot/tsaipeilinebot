@@ -272,6 +272,24 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         self.assertIn("不能自行推論", prompt_sent_to_ai)
         self.assertIn("八德", prompt_sent_to_ai)
 
+    def test_ai_prompt_forbids_reusing_previous_recommendation_without_rechecking_location(self):
+        # 實測發現：先問「有蝦皮門市嗎」推薦了某筆職缺後，接著追問「八德有
+        # 缺嗎」，AI 直接回覆「正是之前推薦的蝦皮門市 (ID:0)」，沒有重新核對
+        # 這筆職缺的地點欄位到底有沒有列出八德（實際上沒有）——這是規則 4
+        # 原本沒涵蓋到的情況：只禁止「自行推論行政區涵蓋範圍」，沒禁止「因為
+        # 之前推薦過同一筆職缺，就跳過重新核對地點」。這裡驗證提示詞裡有把
+        # 這條規則寫進去。
+        fake_decision = json.dumps({"action": "NO_MATCH", "reply": "目前暫無", "ids": [], "buttons": []})
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            h._compute_ai_decision_messages("test-user", "八德有缺嗎", [], [], "八德", "")
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        self.assertIn("不能只因為之前推薦過同一筆職缺", prompt_sent_to_ai)
+
     def test_ai_prompt_location_reflects_specific_district_for_broad_coverage_job(self):
         # 試營運實測發現：蝦皮店到店這類「全台/多縣市門市自選」職缺涵蓋超過
         # 5 個行政區，組給 AI 判斷用的「地點:」欄位原本沒有帶入使用者問的地區
