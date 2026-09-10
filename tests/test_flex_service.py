@@ -14,6 +14,32 @@ def _detail_texts(bubble):
     return [c.text for c in detail_box.contents]
 
 
+class FormatCleanLocationCountyPrefixTests(unittest.TestCase):
+    """使用者反映：同仁為了避免同名行政區跨縣市搞混（例如中山區台北市、
+    基隆市都有），習慣在「行政區」欄位直接寫成「桃園市八德區」這種帶縣市
+    前綴的完整寫法，不是單純「八德區」。這不影響地區比對邏輯是否命中，
+    但直接組成顯示文字會變成「桃園市（桃園市八德區、桃園市蘆竹區）」這種
+    縣市名稱重複兩次的累贅呈現，這裡驗證顯示前有把重複的縣市前綴去掉。"""
+
+    def test_strips_duplicated_county_prefix_from_multiple_districts(self):
+        job = {"縣市": "桃園市", "行政區": "桃園市八德區,桃園市蘆竹區", "行業別": "服務業"}
+        self.assertEqual(f.format_clean_location(job), "桃園市（八德區、蘆竹區）")
+
+    def test_strips_prefix_regardless_of_tai_variant(self):
+        # 縣市欄位寫半形「台」、行政區欄位卻寫全形「臺」，也要能正確去掉前綴
+        job = {"縣市": "台北市", "行政區": "臺北市中山區", "行業別": "服務業"}
+        self.assertEqual(f.format_clean_location(job), "台北市（中山區）")
+
+    def test_no_prefix_present_is_unaffected(self):
+        # 行政區欄位本來就沒有帶縣市前綴時，維持原本的行為不受影響
+        job = {"縣市": "桃園市", "行政區": "八德區", "行業別": "服務業"}
+        self.assertEqual(f.format_clean_location(job), "桃園市（八德區）")
+
+    def test_target_location_match_also_uses_stripped_district(self):
+        job = {"縣市": "桃園市", "行政區": "桃園市八德區", "行業別": "服務業"}
+        self.assertEqual(f.format_clean_location(job, "八德"), "八德區")
+
+
 class CreateJobFlexCardPayMethodTests(unittest.TestCase):
     def test_shows_pay_method_line_when_present(self):
         job = {
