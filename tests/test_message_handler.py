@@ -836,9 +836,12 @@ class StoreIntentLocationMatchTests(unittest.TestCase):
             "_job_category": "門市",
             "職務類別": "門市",
             "_search_text": "蝦皮門市地址鄰近八德路口交通便利",
-            # 行政區實際只有蘆竹/龜山，不包含八德——「八德」只出現在上面
+            # 行政區實際是新北市板橋區，不包含八德——「八德」只出現在上面
             # _search_text 的自由文字裡（路名），不該被判定成這個職缺在八德。
-            "_location_search_text": "桃園市蘆竹區龜山區",
+            # 刻意選跟「八德」不同縣市的地區（板橋屬新北市，八德屬桃園市），
+            # 避免跟「同縣市鄰近地區退讓建議」這個新功能混在一起測，這裡純粹
+            # 只測「自由文字裡的地名不該誤判成直接命中」。
+            "_location_search_text": "新北市板橋區",
         }
         event = MagicMock()
         event.reply_token = "valid-reply-token"
@@ -1200,6 +1203,155 @@ class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
         mock_flex_card.assert_called_once()
         matched_jobs_arg = mock_flex_card.call_args[0][0]
         self.assertIn(momo_job, matched_jobs_arg)
+
+
+class CountyLevelFallbackRecommendationTests(unittest.TestCase):
+    """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或
+    類似的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德目前沒有蝦皮
+    門市的職缺，但同樣在桃園市有其他門市職缺時，順口推薦「同縣市還有喔」。
+    刻意做成確定性比對、固定的回覆樣板（不是交給 AI 自由生成），並且回覆
+    文字要清楚講明「原本問的地區沒有，這是同縣市的其他地方」，不能讓使用者
+    誤以為原本問的地區也有——這是這幾天才修好的「AI 自行推論地區涵蓋範圍」
+    同一類問題，這次改用確定性攔截來避免重蹈覆轍。"""
+
+    def test_recommends_same_county_alternative_when_exact_district_has_no_match(self):
+        alt_job = {
+            "職缺名稱": "蝦皮桃園門市人員", "_internal_title": "蝦皮桃園門市人員",
+            "_parsed_title": "蝦皮桃園門市人員", "職缺名稱(對外)": "蝦皮桃園門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮桃園門市人員",
+            "_location_search_text": "桃園市桃園區",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-county-fallback"
+        event.message.text = "蝦皮門市 八德有缺嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[alt_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(empty_slots, category="門市", brand="蝦皮")), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision, \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card:
+            h.process_user_message(event, line_bot_api)
+
+        # 不該落到 AI 決策——同縣市有替代方案時，用確定性比對直接回覆
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(alt_job, matched_jobs_arg)
+
+        args, _ = line_bot_api.reply_message.call_args
+        reply_text = args[1][0].text
+        # 回覆文字要老實講清楚「八德沒有」，不能讓人誤以為八德也有
+        self.assertIn("八德", reply_text)
+        self.assertIn("沒有", reply_text)
+        self.assertIn("桃園市", reply_text)
+
+    def test_bare_location_followup_also_gets_county_fallback(self):
+        # 延續前一輪「蝦皮門市」脈絡、這句話單純問地區時，也要能觸發同縣市
+        # 退讓建議，不是只有整句話講完整條件才有效。
+        alt_job = {
+            "職缺名稱": "蝦皮桃園門市人員", "_internal_title": "蝦皮桃園門市人員",
+            "_parsed_title": "蝦皮桃園門市人員", "職缺名稱(對外)": "蝦皮桃園門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮桃園門市人員",
+            "_location_search_text": "桃園市桃園區",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-county-fallback-followup"
+        event.message.text = "八德有缺嗎"
+        line_bot_api = MagicMock()
+        persisted_slots = dict(location="", category="門市", shift="", leave="", brand="蝦皮")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[alt_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision, \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card:
+            h.process_user_message(event, line_bot_api)
+
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(alt_job, matched_jobs_arg)
+
+    def test_momo_also_gets_county_fallback(self):
+        alt_momo_job = {
+            "職缺名稱": "momo桃園倉管", "_internal_title": "momo桃園倉管",
+            "_parsed_title": "momo桃園倉管", "職缺名稱(對外)": "momo桃園倉管",
+            "_job_category": "倉儲人員", "職務類別": "倉儲人員",
+            "系統廠商名稱": "momo",
+            "_search_text": "momo桃園倉管",
+            "_location_search_text": "桃園市桃園區",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-momo-county-fallback"
+        event.message.text = "八德有momo嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[alt_momo_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(empty_slots, brand="momo")), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision, \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card:
+            h.process_user_message(event, line_bot_api)
+
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(alt_momo_job, matched_jobs_arg)
+
+    def test_no_fallback_when_no_alternative_in_same_county_falls_through_to_ai(self):
+        # 同縣市也找不到替代方案時，維持原本行為，落到 AI 決策，不能因為
+        # 新增這個功能就連「真的什麼都沒有」的情況都跟著壞掉。
+        unrelated_job = {
+            "職缺名稱": "蝦皮台南門市人員", "_internal_title": "蝦皮台南門市人員",
+            "_parsed_title": "蝦皮台南門市人員", "職缺名稱(對外)": "蝦皮台南門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮台南門市人員",
+            "_location_search_text": "台南市中西區",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-no-county-fallback"
+        event.message.text = "蝦皮門市 八德有缺嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[unrelated_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(empty_slots, category="門市", brand="蝦皮")), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
 
 
 if __name__ == "__main__":

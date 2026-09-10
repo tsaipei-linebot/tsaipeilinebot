@@ -339,5 +339,33 @@ class CategoryMatchingIgnoresInternalNamingConventionTests(unittest.TestCase):
         self.assertEqual(result, [store_job])
 
 
+class CountyLevelAlternativeJobsTests(unittest.TestCase):
+    """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或類似
+    的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德沒有缺額時，會順口
+    推薦同樣在桃園市的其他門市職缺。這裡測 find_county_level_alternative_jobs
+    這個純比對函式本身（訊息處理流程的整合測試見 test_message_handler.py）。"""
+
+    def test_finds_job_in_same_county_different_district(self):
+        job_in_taoyuan_but_not_bade = _job(
+            search_text="蝦皮桃園區門市", location_search_text="桃園市桃園區",
+        )
+        result = m.find_county_level_alternative_jobs([job_in_taoyuan_but_not_bade], "八德")
+        self.assertEqual(result, [job_in_taoyuan_but_not_bade])
+
+    def test_no_alternative_when_job_is_in_a_different_county(self):
+        job_in_new_taipei = _job(
+            search_text="門市", location_search_text="新北市板橋區",
+        )
+        result = m.find_county_level_alternative_jobs([job_in_new_taipei], "八德")
+        self.assertEqual(result, [])
+
+    def test_unknown_location_returns_empty(self):
+        # LOCATION_TO_COUNTY 沒有收錄的地名（理論上不該發生，因為呼叫端只會
+        # 傳進 LOCATION_CANDIDATES 抓到的地名），保守回傳空清單，不要噴例外。
+        job = _job(search_text="門市", location_search_text="新北市板橋區")
+        result = m.find_county_level_alternative_jobs([job], "不存在的地名")
+        self.assertEqual(result, [])
+
+
 if __name__ == "__main__":
     unittest.main()
