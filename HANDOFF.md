@@ -264,6 +264,10 @@
       - 新增了兩個既有測試需要調整以避免跟新功能混在一起測（`StoreIntentLocationMatchTests` 原本用的測試職缺剛好跟查詢地區同縣市，改成不同縣市的地區，讓「自由文字地名不該誤判」跟「同縣市退讓建議」這兩個功能各自獨立測試，不互相干擾）。
     - **新增測試**：`tests/test_matcher_service.py` 新增 `CountyLevelAlternativeJobsTests`（3 個：同縣市不同行政區能找到、不同縣市找不到、對照表沒收錄的地名安全回傳空清單）；`tests/test_message_handler.py` 新增 `CountyLevelFallbackRecommendationTests`（4 個：地區精準比對落空時正確觸發同縣市建議且不落到 AI 決策、延續前一輪脈絡的地區追問也能觸發、momo 分支也適用、同縣市也找不到替代方案時維持原行為落到 AI 決策）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 520 個測試，OK。
+45. **職缺卡片改用材霈品牌色**：使用者詢問 LINE 職缺卡片是不是公版、能不能美化。確認 LINE 的 Flex Message 不是官方模板，是完全自訂的 JSON 排版，原本用的是 LINE 預設綠色（`#00B900`）跟一般 Material Design 配色，沒有材霈自己的品牌識別。使用者指定用「內部系統網頁那個接近橘色的顏色」——直接在同一個 repo 裡找到：`delivery/static/style.css` 定義的 `--brand: #ea580c`／`--brand-dark: #c2410c`／`--brand-bg: #fff1e8`，這套配色是 `/portal`、`/management`、`/hr`、`/delivery` 這幾個內部系統網頁共用的公司品牌色（`templates/base.html` 等多處 `<head>` 都連結到這份 CSS）。
+    - **修正方式**：`services/flex_service.py` 的 `create_job_flex_card()` 新增 `BRAND`／`BRAND_DARK`／`BRAND_BG` 三個常數（跟 `delivery/static/style.css` 完全同色碼），套用到卡片最顯眼的三個地方：頂部「🎯 材霈推薦職缺」標籤文字、職務類別標籤（原本的淺紫色改成品牌橘）、「填寫線上履歷」主要按鈕（原本的 LINE 綠改成品牌橘）。班別／產業／全兼職這幾個次要標籤維持原本的多色系（分別是綠/藍/紫），不整個換成同一個顏色，保留一眼就能分辨不同資訊類型的可讀性；待遇金額維持紅色強調（金額類資訊維持既有的警示色慣例）。
+    - **新增測試**：`tests/test_flex_service.py` 新增 `CreateJobFlexCardBrandColorTests`（3 個：頂部標籤文字用品牌橘、主要按鈕用品牌橘、職務類別標籤用品牌橘）。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 523 個測試，OK。
 
 ## 目前所有檔案的狀態
 
