@@ -91,11 +91,18 @@ def format_clean_location(job: dict, target_location: str = "") -> str:
 def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") -> FlexSendMessage:
     """建構職缺推薦 Flex Carousel 輪播卡片（綁定 Notion 唯一職缺名稱）[cite: 8]"""
     bubbles = []
+    # 材霈品牌色（跟 delivery/static/style.css 的 --brand/--brand-dark/--brand-bg
+    # 同一套，公司內部系統網頁 /portal、/management、/hr、/delivery 都共用這套
+    # 配色）：BRAND 用在最顯眼的類別標籤跟主要按鈕，讓卡片有材霈自己的識別，
+    # 不是 LINE 預設的綠色。其餘標籤維持不同色系，方便一眼分辨班別/產業/類型。
+    BRAND = "#ea580c"
+    BRAND_DARK = "#c2410c"
+    BRAND_BG = "#fff1e8"
     badge_styles = {
         "shift": {"bg": "#E8F5E9", "text": "#2E7D32"},
         "industry": {"bg": "#E3F2FD", "text": "#1565C0"},
-        "type": {"bg": "#FFF3E0", "text": "#E65100"},
-        "category": {"bg": "#F3E5F5", "text": "#7B1FA2"}
+        "type": {"bg": "#F3E5F5", "text": "#7B1FA2"},
+        "category": {"bg": BRAND_BG, "text": BRAND_DARK}
     }
 
     for job in jobs[:10]:
@@ -131,7 +138,7 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
         final_apply_link = sanitize_uri(resolve_apply_url_by_industry(job))
 
         body_contents = [
-            {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": "#1DB446", "size": "xs"},
+            {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": BRAND, "size": "xs"},
             {"type": "text", "text": public_job_title, "weight": "bold", "size": "lg", "margin": "xs", "wrap": True}
         ]
         
@@ -179,7 +186,7 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
                     {
                         "type": "button",
                         "style": "primary",
-                        "color": "#00B900",
+                        "color": BRAND,
                         "height": "sm",
                         "action": {"type": "uri", "label": "📄 填寫線上履歷", "uri": final_apply_link}
                     }

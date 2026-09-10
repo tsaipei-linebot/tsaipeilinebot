@@ -62,5 +62,38 @@ class CreateJobFlexCardPayMethodTests(unittest.TestCase):
         self.assertFalse(any("領薪方式" in t for t in texts))
 
 
+class CreateJobFlexCardBrandColorTests(unittest.TestCase):
+    """使用者要求卡片改用材霈的品牌橘色（跟 delivery/static/style.css 的
+    --brand/#ea580c、--brand-dark/#c2410c 同一套，內部系統網頁共用的配色），
+    取代原本 LINE 預設的綠色，讓卡片有材霈自己的識別，不是通用感覺的配色。"""
+
+    def _card_job(self):
+        return {
+            "職缺名稱(對外)": "測試職缺", "職缺名稱": "測試職缺",
+            "薪資": "時薪200", "班別": "早班", "職務類別": "門市",
+            "縣市": "新北市", "行政區": "新莊區",
+        }
+
+    def test_header_tag_uses_brand_orange(self):
+        card = f.create_job_flex_card([self._card_job()], "user1", "新莊")
+        header_text = card.contents.contents[0].body.contents[0]
+        self.assertEqual(header_text.text, "🎯 材霈推薦職缺")
+        self.assertEqual(header_text.color, "#ea580c")
+
+    def test_primary_apply_button_uses_brand_orange(self):
+        card = f.create_job_flex_card([self._card_job()], "user1", "新莊")
+        footer_buttons = card.contents.contents[0].footer.contents
+        primary_button = footer_buttons[-1]
+        self.assertEqual(primary_button.color, "#ea580c")
+
+    def test_category_badge_uses_brand_orange(self):
+        card = f.create_job_flex_card([self._card_job()], "user1", "新莊")
+        body = card.contents.contents[0].body
+        tags_row = body.contents[2]
+        category_badge_text = tags_row.contents[-1].contents[0]
+        self.assertEqual(category_badge_text.text, "門市")
+        self.assertEqual(category_badge_text.color, "#c2410c")
+
+
 if __name__ == "__main__":
     unittest.main()
