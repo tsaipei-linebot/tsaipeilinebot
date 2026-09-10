@@ -111,6 +111,26 @@ _AI_DECISION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 # 見 config.py 該常數的說明），不再是這裡寫死的常數。
 
 
+def _record_unanswered_question(raw_msg: str, user_id: str, target_line_bot_api: LineBotApi):
+    """求職者這句話「沒有比對到答案」時（不管是常見問題庫沒收錄、還是完全沒有
+    符合的職缺），統一記錄下來給招募專員回顧。初期資料量還不大，使用者希望
+    不分職缺還是其他問題，一律先進同一份常見問答集，方便之後一次盤點求職者
+    到底都在問什麼、好整理出真正該擴充的類別。
+    - append_unresolved_faq_to_notion()：寫入前已在 notion_service 做過去重，
+      同一句話（或高度相似的句子）不會重複堆積成一堆一樣的候選項。
+    - append_unresolved_question_for_followup()：另外留一筆「是誰問的」，
+      不去重，讓招募專員能回頭去 LINE 官方帳號後台找到這個人手動回覆。"""
+    append_unresolved_faq_to_notion(raw_msg)
+
+    display_name = ""
+    if target_line_bot_api is not None:
+        try:
+            display_name = target_line_bot_api.get_profile(user_id).display_name
+        except Exception as e:
+            print(f"[取得 LINE 顯示名稱失敗，追蹤紀錄改用 user_id]: {e}")
+    append_unresolved_question_for_followup(raw_msg, user_id, display_name)
+
+
 def _build_quick_reply_buttons(labels: list, fallback: list) -> list:
     """把 AI 回傳的按鈕文字陣列轉成 LINE QuickReplyButton：最多取前 5 個、每個標籤截斷
     20 字、並去掉開頭殘留的 emoji（Gemini 有時會自己在文字前面加 emoji）。沒有任何有效
@@ -884,10 +904,11 @@ def _compute_ai_decision_messages(
     網路來回都對延遲有幫助。沒有傳入時（例如舊測試直接呼叫這個函式）才退回
     原本自己查一次的行為，保持相容。
 
-    target_line_bot_api：只在決策結果是 UNKNOWN_FAQ 時才會用到，呼叫 LINE
-    的 get_profile() 取得求職者的暱稱，連同 user_id 一起記錄到「求職者提問
-    追蹤」資料庫，讓招募專員能回頭去 LINE 官方帳號後台找到這個人手動回覆
-    （見 HANDOFF.md）。沒有傳入時（例如舊測試）就只記錄 user_id，不會出錯。
+    target_line_bot_api：只在決策結果是 UNKNOWN_FAQ 或 NO_MATCH 時才會用到，
+    呼叫 LINE 的 get_profile() 取得求職者的暱稱，連同 user_id 一起記錄到
+    「求職者提問追蹤」資料庫，讓招募專員能回頭去 LINE 官方帳號後台找到這個人
+    手動回覆（見 HANDOFF.md）。沒有傳入時（例如舊測試）就只記錄 user_id，
+    不會出錯。
 
     保證不會往外拋出例外：任何步驟失敗都在這裡攔截並回傳保底訊息，讓呼叫端
     不需要再處理例外，只要送出這裡回傳的 messages 即可。"""
@@ -1025,19 +1046,7 @@ def _compute_ai_decision_messages(
         ai_ids = decision.get("ids") if isinstance(decision.get("ids"), list) else []
 
         if action == "UNKNOWN_FAQ":
-            # 自動將未收錄問題寫入 Notion FAQ 資料庫（寫入前已在 notion_service 做過去重）[cite: 6]
-            append_unresolved_faq_to_notion(raw_msg)
-
-            # 另外在「求職者提問追蹤」資料庫留一筆這次是誰問的紀錄（不去重），
-            # 讓招募專員能回頭去 LINE 官方帳號後台找到這個人手動回覆——上面那筆
-            # 只是給未來的求職者累積常見問答庫用，不會留下是誰問的。
-            display_name = ""
-            if target_line_bot_api is not None:
-                try:
-                    display_name = target_line_bot_api.get_profile(user_id).display_name
-                except Exception as e:
-                    print(f"[取得 LINE 顯示名稱失敗，追蹤紀錄改用 user_id]: {e}")
-            append_unresolved_question_for_followup(raw_msg, user_id, display_name)
+            _record_unanswered_question(raw_msg, user_id, target_line_bot_api)
 
             reply_text = ai_reply_text or "謝謝您的提問！沛沛已先幫您把這個問題記錄下來回報給招募專員囉 😊 請問您目前想先看看哪個地區或班別的工作呢？"
             append_user_history(user_id, "招募顧問沛沛", reply_text)
@@ -1073,6 +1082,13 @@ def _compute_ai_decision_messages(
             return [TextSendMessage(text=reply_text), flex_card]
 
         elif action in ("ASK", "NO_MATCH"):
+            if action == "NO_MATCH":
+                # 職缺完全找不到符合的（跟 UNKNOWN_FAQ 是同一類「沒有比對到答案」的
+                # 情境，差別只在一個是問職缺、一個是問其他事情），初期同樣記錄下來，
+                # 方便招募專員一次盤點求職者實際都在問什麼、有哪些地區/類型的職缺
+                # 需求目前完全接不住。
+                _record_unanswered_question(raw_msg, user_id, target_line_bot_api)
+
             reply_text = ai_reply_text or "您好呀！沛沛隨時為您服務，想請問您偏好哪個地區或工作班別呢？"
             append_user_history(user_id, "招募顧問沛沛", reply_text)
 

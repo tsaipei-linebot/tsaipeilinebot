@@ -491,6 +491,50 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
 
         mock_followup.assert_called_once_with("颱風天上班算加班嗎", "U1234", "")
 
+    def test_no_match_also_records_into_faq_and_followup(self):
+        # 使用者希望初期不管是「職缺沒比對上」還是「其他問題沒收錄」，都先
+        # 一律記錄進同一份常見問答集／求職者提問追蹤，方便一次盤點求職者
+        # 到底都在問什麼——NO_MATCH（職缺完全找不到）要跟 UNKNOWN_FAQ 一樣
+        # 記錄下來，不能只有問其他事情才記、問職缺沒比對到就無聲跳過。
+        fake_decision = json.dumps({
+            "action": "NO_MATCH", "reply": "目前暫無符合的職缺", "ids": [], "buttons": []
+        })
+        line_bot_api = MagicMock()
+        line_bot_api.get_profile.return_value = MagicMock(display_name="小美")
+
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision), \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]), \
+             patch("handlers.message_handler.append_unresolved_faq_to_notion") as mock_faq_db, \
+             patch("handlers.message_handler.append_unresolved_question_for_followup") as mock_followup:
+            h._compute_ai_decision_messages(
+                "U5678", "有沒有台南的蝦皮工作", [], [], "台南", "",
+                target_line_bot_api=line_bot_api,
+            )
+
+        mock_faq_db.assert_called_once_with("有沒有台南的蝦皮工作")
+        mock_followup.assert_called_once_with("有沒有台南的蝦皮工作", "U5678", "小美")
+
+    def test_ask_action_does_not_record_into_faq(self):
+        # ASK 是 AI 需要使用者補充條件才能繼續判斷的正常追問，不是「沒比對到
+        # 答案」，不該被當成未解問題寫進常見問答集。
+        fake_decision = json.dumps({
+            "action": "ASK", "reply": "請問想找哪個地區的工作呢？", "ids": [], "buttons": []
+        })
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision), \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]), \
+             patch("handlers.message_handler.append_unresolved_faq_to_notion") as mock_faq_db, \
+             patch("handlers.message_handler.append_unresolved_question_for_followup") as mock_followup:
+            h._compute_ai_decision_messages("U9999", "我想找工作", [], [], "", "")
+
+        mock_faq_db.assert_not_called()
+        mock_followup.assert_not_called()
+
     def test_compute_ai_decision_messages_returns_fallback_on_internal_exception(self):
         # 就算計算過程整個爆炸（例如 Firestore/Notion/Gemini 任何一個環節出問題），
         # 也一定要回傳保底訊息，不能讓例外往外拋出、導致呼叫端完全沒有東西可送

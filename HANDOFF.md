@@ -298,6 +298,11 @@
     - **修正方式**：`services/flex_service.py` 的 `create_job_flex_card()` 新增 `BRAND`／`BRAND_DARK`／`BRAND_BG` 三個常數（跟 `delivery/static/style.css` 完全同色碼），套用到卡片最顯眼的三個地方：頂部「🎯 材霈推薦職缺」標籤文字、職務類別標籤（原本的淺紫色改成品牌橘）、「填寫線上履歷」主要按鈕（原本的 LINE 綠改成品牌橘）。班別／產業／全兼職這幾個次要標籤維持原本的多色系（分別是綠/藍/紫），不整個換成同一個顏色，保留一眼就能分辨不同資訊類型的可讀性；待遇金額維持紅色強調（金額類資訊維持既有的警示色慣例）。
     - **新增測試**：`tests/test_flex_service.py` 新增 `CreateJobFlexCardBrandColorTests`（3 個：頂部標籤文字用品牌橘、主要按鈕用品牌橘、職務類別標籤用品牌橘）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 523 個測試，OK。
+46. **初期把「職缺完全找不到」也一併記錄進常見問答集**：使用者表示初期想盡量多蒐集求職者到底都在問什麼，不管是「常見問題庫沒收錄」還是「職缺完全比對不到」，都先一律寫進同一份常見問答集／求職者提問追蹤，方便之後一次盤點、整理出真正該擴充的職缺類別或該補上的常見問答。原本只有 AI 決策判斷成 `UNKNOWN_FAQ`（問規章/制度/福利等不是問職缺的問題）才會寫入；`NO_MATCH`（求職者問的廠商/地區/類別完全找不到相符職缺）原本只會回一句「暫無」就結束，什麼都沒留下。
+    - **修正方式**：`handlers/message_handler.py` 把原本寫死在 `UNKNOWN_FAQ` 分支裡的兩段寫入邏輯（寫進 Notion FAQ 資料庫、另外記一筆「求職者提問追蹤」讓招募專員回去找人手動回覆）抽成共用函式 `_record_unanswered_question()`，`NO_MATCH` 分支現在也會呼叫同一個函式。`ASK`（AI 只是需要使用者補充條件才能繼續判斷，例如「我想找工作」這種還沒講清楚要找哪裡的正常追問）刻意不記錄——這不是「沒比對到答案」，是正常對話流程的一部分，記進常見問答集只會製造雜訊。
+    - **兩個 Notion 資料庫本來就有的去重/不去重規則不受影響**：FAQ 候選資料庫寫入前仍會去重（同一句或高度相似的問題不會重複堆積），求職者提問追蹤仍然不去重（同一個問題如果有好幾個人各自問過，要留好幾筆才能各自回覆到）。
+    - **新增測試**：`tests/test_message_handler.py` 新增 `test_no_match_also_records_into_faq_and_followup`（驗證 `NO_MATCH` 會呼叫到 `append_unresolved_faq_to_notion`／`append_unresolved_question_for_followup`，且暱稱查詢邏輯跟 `UNKNOWN_FAQ` 共用同一套）、`test_ask_action_does_not_record_into_faq`（驗證 `ASK` 不會誤觸發記錄）。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 542 個測試，OK。
 
 ## 目前所有檔案的狀態
 
