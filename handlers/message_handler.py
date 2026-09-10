@@ -162,8 +162,15 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 「真的想全部重來」跟「只想換一個條件」拆成兩種情境分開處理：
         # 全域重置才整組槽位清空；單一維度調整只詢問要換哪一項，讓後續訊息的
         # 槽位抽取（步驟 0-3）自然覆蓋對應欄位，其餘已鎖定的條件保留不動。
-        full_reset_keywords = ["重新找", "重選", "重設", "清空條件", "重新開始", "重來", "重頭開始", "清除條件"]
-        single_dimension_keywords = ["換個條件", "換一個條件", "改個條件", "換條件", "改條件", "換一下條件"]
+        full_reset_keywords = [
+            "重新找", "重選", "重設", "清空條件", "重新開始", "重來", "重頭開始", "清除條件",
+            "全部重來", "整個重來", "從頭來", "從頭開始", "重新來過", "砍掉重練", "清空重來",
+            "重新設定條件", "全部條件清空", "條件全部清掉",
+        ]
+        single_dimension_keywords = [
+            "換個條件", "換一個條件", "改個條件", "換條件", "改條件", "換一下條件",
+            "調整條件", "改一下條件", "換個項目", "改個項目",
+        ]
 
         if any(k in raw_msg for k in full_reset_keywords):
             clear_user_slots(user_id)
@@ -294,7 +301,21 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         user_slots = get_user_slots(user_id)
         clean_input = clean_text_for_search(raw_msg)
 
-        explicit_any_location = any(k in clean_input for k in ["都可以", "不限地區", "隨便", "哪裡都", "不限地點", "全台", "全區"])
+        # 「都可以」「隨便」「都好」這種泛用表態語氣，講的通常是「我很有彈性」，
+        # 不是特別針對地區/類別/廠商哪一個維度──跟真人招募專員的理解一樣，
+        # 使用者說「都可以」，一般是指全部都可以，不是恰好只有其中一個維度
+        # 可以。這份清單同時餵給地區/類別/廠商三處的「明確表示不限」判斷，
+        # 一次講出來就會把三個維度一起解鎖，不用使用者逐一分開講。刻意不放
+        # 「不限」這種太短的詞單獨進來──「不限地區」「不限廠商」都會被子字串
+        # 誤觸發成三個維度一起清空，所以「不限」只留在各自維度專屬的完整詞組裡。
+        generic_broaden_keywords = [
+            "都可以", "都可以喔", "都好", "都ok", "隨便", "無所謂", "沒差",
+            "什麼都行", "什麼都可以", "什麼都好", "都行",
+        ]
+
+        explicit_any_location = any(k in clean_input for k in generic_broaden_keywords + [
+            "不限地區", "不限地點", "哪裡都", "全台", "全區", "不挑地區", "不挑地點",
+        ])
 
         extracted_loc = extract_current_target_location(raw_msg, "")
         negated_loc = detect_negated_location(raw_msg)
@@ -315,12 +336,23 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
 
         detected_category_from_text = detect_category_label(clean_input)
         negated_category = detect_negated_category(clean_input)
+        # 類別原本只有「否定掉目前鎖定的那個類別」（例如「除了外送」）才會清空，
+        # 沒有像地區/廠商一樣的「明確表示不限」出口——使用者鎖定「門市」之後，
+        # 講「不限類型」「什麼工作都可以」這種泛用表態，原本完全沒有辦法清空，
+        # 現在補上跟地區/廠商一致的機制。
+        explicit_any_category = any(k in clean_input for k in generic_broaden_keywords + [
+            "不限類型", "不限工作類型", "不限職缺類型", "不限職種", "不挑工作", "不挑職缺",
+            "什麼工作都可以", "什麼職缺都可以", "什麼類型都可以",
+        ])
 
         if detected_category_from_text:
             category_slot_update = detected_category_from_text
         elif negated_category and negated_category == user_slots.get("category", ""):
             # 使用者明確排除掉目前鎖定的類別（例如「除了外送」）→ 清空，這輪查詢也不再沿用被排除的舊類別
             category_slot_update = CLEAR_SLOT
+            detected_category_from_text = ""
+        elif explicit_any_category:
+            category_slot_update = CLEAR_SLOT if user_slots.get("category", "") else ""
             detected_category_from_text = ""
         else:
             category_slot_update = ""
@@ -332,7 +364,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 這種自然的追問地區情境時，蝦皮這個條件整個消失，變成拿「不限廠商的
         # 門市」去查八德，而不是使用者真正想問的「蝦皮在八德有沒有」，導致
         # 回覆牛頭不對馬嘴（見 HANDOFF.md 案例）。
-        explicit_any_brand = any(k in clean_input for k in ["不限廠商", "不限品牌", "不限公司", "其他廠商", "別的廠商", "換一家", "不挑廠商"])
+        explicit_any_brand = any(k in clean_input for k in generic_broaden_keywords + [
+            "不限廠商", "不限品牌", "不限公司", "其他廠商", "別的廠商", "換一家", "不挑廠商",
+        ])
         detected_brand_this_turn = detect_brand_label(raw_msg, active_jobs)
         if detected_brand_this_turn:
             detected_brand = detected_brand_this_turn
@@ -354,7 +388,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         )
 
         # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截[cite: 6] ----------------
-        show_all_keywords = ["都給我看", "都要看", "都可以", "全部", "隨便", "推薦一下", "有什麼工作", "還有什麼", "看全部", "都看"]
+        show_all_keywords = [
+            "都給我看", "都要看", "都可以", "全部", "隨便", "推薦一下", "有什麼工作", "還有什麼", "看全部", "都看",
+            "都貼給我", "職缺都給我", "全部都給我", "有的都給我", "都拿給我看", "全部推薦", "都推薦給我",
+            "有哪些工作", "有哪些職缺", "什麼都看", "什麼工作都看", "有什麼職缺",
+        ]
         # 統一意圖判斷來源：改用 matcher_service 集中維護的 CATEGORY_KEYWORDS/KNOWN_BRANDS
         # （has_recognizable_category_or_brand_keyword），取代原本這裡另外維護、
         # 覆蓋範圍不完整的手動白名單（原本漏掉「理貨」「餐飲」等類別）。
@@ -720,6 +758,27 @@ def _compute_ai_decision_messages(
         for f in ai_faq_candidates:
             faq_index_text += f"問：{f.get('question')} => 答：{f.get('answer')}\n"
 
+        # 求職者目前鎖定的條件（地區/類別/廠商）明確列給 AI 看，不要只靠對話
+        # 歷史文字讓 AI 自己推測——同一件事「這句話本身有沒有重複提到」會讓
+        # AI 給出不一致的答案：例如先問「蝦皮門市有嗎」，接著只問「八德有缺人
+        # 嗎」，這句話本身沒再提到蝦皮/門市，AI 只能從歷史文字模糊推測，容易
+        # 沒把「八德」跟「蝦皮門市」這個仍然生效的條件放在一起判斷，把不相關
+        # 類別的職缺也一併推薦出來；但換成「蝦皮門市 八德有缺嗎」這種當下就
+        # 完整重複條件的問法，AI 又能正確判斷沒有符合。把已鎖定的條件明講出來，
+        # 讓 AI 不管這句話有沒有重複提到，都能穩定套用同一套判斷（見 HANDOFF.md
+        # 案例）。
+        _slot_location = current_location or _current_slots_for_candidates.get("location", "")
+        _slot_category = _current_slots_for_candidates.get("category", "")
+        _slot_brand = _current_slots_for_candidates.get("brand", "")
+        _known_condition_parts = []
+        if _slot_location:
+            _known_condition_parts.append(f"地區={_slot_location}")
+        if _slot_category and _slot_category != "不限":
+            _known_condition_parts.append(f"工作類型={_slot_category}")
+        if _slot_brand:
+            _known_condition_parts.append(f"廠商={_slot_brand}")
+        known_conditions_text = "、".join(_known_condition_parts) if _known_condition_parts else "（目前尚未鎖定任何條件）"
+
         ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的線上招募顧問「沛沛」。
 你的任務是：結合對話歷史，優先從常見問題庫 (FAQ) 精確解答，並在求職者尋找工作時推薦合適職缺。
 
@@ -735,7 +794,13 @@ def _compute_ai_decision_messages(
    - 每筆候選職缺的「地點:」欄位已經是同仁在系統裡實際勾選的正確行政區，不是模糊描述。
    - 求職者問到「地點:」欄位沒有明確列出的行政區時（即使那個行政區行政上屬於同一個縣市），一律視為「此條件無完全相符職缺」，不能因為同縣市有其他行政區的職缺、或地點欄位只寫到縣市層級，就自行推論或宣稱「這個行政區也涵蓋在內」。
    - 範例：地點欄位是「桃園市（蘆竹、龜山）」，求職者問「八德有沒有缺額」，不能回答「八德也涵蓋在內」——因為「地點:」欄位沒有列出八德。
-5. 【單一焦點追問】：若需引導求職者補充條件，每次僅拋出單一缺漏問題（優先順序：地區 -> 班別 -> 工作類型），避免一次詢問多個問題。
+5. 【求職者已鎖定的條件要持續套用，不是只看這句話本身有沒有重複提到】：
+   - 下面【求職者目前鎖定的條件】是求職者之前的對話裡已經確認、還沒有被取消或換掉的條件，即使「求職者最新輸入」這句話本身沒有再重複提到，也要當成這句話仍然帶著這些條件一起問。
+   - 範例：已鎖定條件是「工作類型=門市、廠商=蝦皮」，求職者這句話只問「八德有缺人嗎」，要判斷成「蝦皮的門市類職缺，八德有沒有」，不能因為這句話沒提到門市/蝦皮，就放寬成「八德不限類型/廠商的職缺」通通推薦。
+6. 【單一焦點追問】：若需引導求職者補充條件，每次僅拋出單一缺漏問題（優先順序：地區 -> 班別 -> 工作類型），避免一次詢問多個問題。
+
+【求職者目前鎖定的條件】：
+{known_conditions_text}
 
 【常見問題庫 (FAQ)】：
 {faq_index_text if faq_index_text else "（無相符 FAQ）"}

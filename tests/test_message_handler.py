@@ -299,6 +299,98 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         self.assertIn("板橋", prompt_sent_to_ai)
         self.assertNotIn("自選區域", prompt_sent_to_ai)
 
+    def test_ai_prompt_explicitly_states_locked_category_and_brand(self):
+        # 試營運實測發現：使用者先問「蝦皮門市有嗎」，接著只問「八德有缺人嗎」
+        # （這句話本身沒再提到門市/蝦皮），AI 卻把八德所有類別的職缺都推薦
+        # 出來，答非所問；但換成「蝦皮門市 八德有缺嗎」這種當下就完整重複
+        # 條件的問法，AI 又能正確判斷沒有符合。追查發現提示詞原本完全沒有
+        # 明講「求職者目前鎖定的條件」，AI 只能自己從對話歷史文字模糊推測，
+        # 這句話有沒有重複提到條件會讓 AI 判斷不一致。這裡驗證提示詞裡有
+        # 明確列出已鎖定的類別/廠商，不用 AI 自己憑對話歷史猜。
+        fake_decision = json.dumps({"action": "NO_MATCH", "reply": "目前暫無", "ids": [], "buttons": []})
+        locked_slots = dict(location="", category="門市", shift="", leave="", brand="蝦皮")
+        with patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            h._compute_ai_decision_messages(
+                "test-user", "八德有缺人嗎", [], [], "八德", "",
+                known_slots=locked_slots,
+            )
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        self.assertIn("求職者目前鎖定的條件", prompt_sent_to_ai)
+        self.assertIn("工作類型=門市", prompt_sent_to_ai)
+        self.assertIn("廠商=蝦皮", prompt_sent_to_ai)
+
+    def test_ai_prompt_shows_no_locked_conditions_when_slots_empty(self):
+        fake_decision = json.dumps({"action": "NO_MATCH", "reply": "目前暫無", "ids": [], "buttons": []})
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            h._compute_ai_decision_messages(
+                "test-user", "有工作嗎", [], [], "", "",
+                known_slots=empty_slots,
+            )
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        self.assertIn("目前尚未鎖定任何條件", prompt_sent_to_ai)
+
+    def test_new_brand_mentioned_this_turn_overrides_locked_condition_in_ai_prompt(self):
+        # 使用者疑問：如果求職者這句話明確改問其他廠商/工作類型，鎖定的條件
+        # 會不會正確更新，不會一直卡在舊條件上？這裡端對端驗證：即使前一輪
+        # 鎖定的是「蝦皮」，這句話明確改問其他真實存在的廠商時，送給 AI 的
+        # 提示詞要顯示更新後的新廠商，不是卡住的舊值「蝦皮」——槽位覆蓋本身
+        # 是既有邏輯（偵測到新廠商就直接覆蓋），這裡驗證的是覆蓋後的新值真的
+        # 有正確傳到這次新增的【求職者目前鎖定的條件】區塊，不是還沿用覆蓋前
+        # 的舊值。故意選一個不屬於門市/外送/momo 精準攔截關鍵字、也沒有帶
+        # 地名的問法，讓這句話落到 AI 決策路徑，才測得到這次新增的提示詞內容
+        # （帶 momo/門市/外送/地名的問法會被精準攔截接住，根本不會走到 AI）。
+        other_vendor_job = {
+            "職缺名稱": "大立光作業員", "_internal_title": "大立光作業員",
+            "_parsed_title": "大立光作業員", "職缺名稱(對外)": "大立光作業員",
+            "_job_category": "作業員", "職務類別": "作業員",
+            "系統廠商名稱": "大立光", "_search_text": "大立光作業員",
+            "_location_search_text": "", "行業別": "", "休假方式": "", "班別": "",
+        }
+        old_slots = dict(location="", category="", shift="", leave="", brand="蝦皮")
+
+        def _merge_slots(user_id, location="", category="", shift="", leave="", brand=""):
+            merged = dict(old_slots)
+            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand)]:
+                if value == h.CLEAR_SLOT:
+                    merged[key] = ""
+                elif value:
+                    merged[key] = value
+            return merged
+
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-brand-override"
+        event.message.text = "有大立光的工作嗎"
+        line_bot_api = MagicMock()
+        fake_decision = json.dumps({"action": "NO_MATCH", "reply": "目前暫無", "ids": [], "buttons": []})
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[other_vendor_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=old_slots), \
+             patch("handlers.message_handler.update_user_slots", side_effect=_merge_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query:
+            h.process_user_message(event, line_bot_api)
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        # 規則 5 本身的說明文字裡固定舉了「廠商=蝦皮」當範例，所以不能直接對
+        # 整份提示詞斷言「不包含廠商=蝦皮」，要只截取【求職者目前鎖定的條件】
+        # 這個區塊本身來驗證，才是真的在測「這次送出去的鎖定條件是不是新值」。
+        locked_conditions_section = prompt_sent_to_ai.split("【求職者目前鎖定的條件】：")[1].split("【常見問題庫")[0]
+        self.assertIn("廠商=大立光", locked_conditions_section)
+        self.assertNotIn("廠商=蝦皮", locked_conditions_section)
+
     def test_recommend_with_no_candidates_returns_plain_text_not_empty_carousel(self):
         # AI 決策出 action="RECOMMEND"，但候選職缺清單剛好是空的（例如 Notion
         # 職缺暫時全部停招）——LINE 的 Flex Carousel 不接受 0 張卡片的空陣列，
@@ -908,6 +1000,86 @@ class BareLocationFollowupContinuesContextTests(unittest.TestCase):
 
         _, kwargs = mock_update_slots.call_args
         self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
+
+
+class ExpandedBroadenPhraseTests(unittest.TestCase):
+    """使用者要求盡量擴充「求職者想重新詢問/不限條件」能被辨識到的說法。
+    地區/廠商原本各自有一份「明確表示不限」的關鍵字清單，類別完全沒有
+    （只能靠「否定掉目前鎖定的類別」清空，例如「除了外送」）——這裡補上
+    類別專屬的清單，並新增一份「都可以/隨便/都好」這種泛用表態共用清單，
+    講出來時同時解鎖地區/類別/廠商三個維度，不用逐一分開講。"""
+
+    def _base_slots(self, **overrides):
+        base = dict(location="", category="", shift="", leave="", brand="")
+        base.update(overrides)
+        return base
+
+    def test_category_clears_on_new_category_specific_broaden_phrase(self):
+        persisted_slots = self._base_slots(category="門市")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-category-clear"
+        event.message.text = "不限類型，有什麼都可以"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=self._base_slots()) as mock_update_slots, \
+             patch("handlers.message_handler.append_user_history"):
+            h.process_user_message(event, line_bot_api)
+
+        _, kwargs = mock_update_slots.call_args
+        self.assertEqual(kwargs.get("category"), h.CLEAR_SLOT)
+
+    def test_generic_broaden_phrase_clears_all_three_dimensions_at_once(self):
+        # 「都可以」這種泛用表態，講出來時應該同時解鎖地區/類別/廠商，
+        # 不用使用者逐一分開講「不限地區」「不限類型」「不限廠商」。
+        persisted_slots = self._base_slots(location="新莊", category="門市", brand="蝦皮")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-generic-broaden"
+        event.message.text = "都可以"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=self._base_slots()) as mock_update_slots, \
+             patch("handlers.message_handler.append_user_history"):
+            h.process_user_message(event, line_bot_api)
+
+        _, kwargs = mock_update_slots.call_args
+        self.assertEqual(kwargs.get("location"), h.CLEAR_SLOT)
+        self.assertEqual(kwargs.get("category"), h.CLEAR_SLOT)
+        self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
+
+    def test_brand_specific_broaden_phrase_does_not_clear_category_or_location(self):
+        # 廠商專屬的「不限廠商」只該清空廠商,不能因為跟類別/地區共用同一份
+        # 泛用清單,就連帶清掉其他沒被提到的維度。
+        persisted_slots = self._base_slots(location="新莊", category="門市", brand="蝦皮")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-brand-only-clear"
+        event.message.text = "不限廠商"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=persisted_slots) as mock_update_slots, \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=TextSendMessage(text="控制組")):
+            h.process_user_message(event, line_bot_api)
+
+        _, kwargs = mock_update_slots.call_args
+        self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
+        self.assertEqual(kwargs.get("location"), "")
+        self.assertEqual(kwargs.get("category"), "")
 
 
 class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
