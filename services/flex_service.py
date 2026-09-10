@@ -34,26 +34,46 @@ def get_location_suffix_by_industry(job: dict) -> str:
     # 4. 一般預設[cite: 8]
     return "各區據點（自選區域）"
 
+def _strip_county_prefix(district: str, county: str) -> str:
+    """行政區欄位有時候會被同仁習慣性地加上縣市前綴（例如寫成「桃園市八德區」
+    而不是單純「八德區」），通常是為了避免同名行政區跨縣市搞混（例如中山區
+    台北市、基隆市都有）。這不影響地區比對邏輯是否命中（比對時只看子字串
+    有沒有出現），但直接拿去組成顯示文字，會變成「桃園市（桃園市八德區、
+    桃園市蘆竹區）」這種重複縣市名稱的累贅呈現，這裡在顯示前先把每個行政區
+    開頭重複的縣市名稱去掉。同時處理「台/臺」全半形不一致的情況（例如縣市
+    欄位寫「台北市」、行政區欄位卻寫「臺北市中山區」）。"""
+    county = county.strip()
+    if not county:
+        return district
+    for variant in {county, county.replace("台", "臺"), county.replace("臺", "台")}:
+        if variant and district.startswith(variant):
+            return district[len(variant):].strip() or district
+    return district
+
+
 def format_clean_location(job: dict, target_location: str = "") -> str:
     """地點智慧聚合器：依產業別與行政區數量精準格式化[cite: 8]"""
     county = str(job.get("縣市") or "").strip()
     district = str(job.get("行政區") or "").strip()
     suffix = get_location_suffix_by_industry(job)
 
+    dist_list = [
+        _strip_county_prefix(d.strip(), county)
+        for d in re.split(r'[,，、\s]+', district) if d.strip()
+    ]
+
     # 1. 使用者有明確指定行政區時，優先顯示該行政區[cite: 8]
     if target_location:
-        dist_list = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
         for d in dist_list:
             if target_location in d or d in target_location:
                 return d
-        
+
         county_list = [c.strip() for c in re.split(r'[,，、\s]+', county) if c.strip()]
         for c in county_list:
             if target_location in c or c in target_location:
                 return f"{c} {suffix}".strip()
 
     # 2. 智慧地點聚合 (依行政區數量級距)[cite: 8]
-    dist_list = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
     dist_count = len(dist_list)
 
     if dist_count == 0:
