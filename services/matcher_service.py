@@ -304,10 +304,14 @@ def _job_extended_category_text(job: dict) -> str:
     # 跟 _job_extended_search_text 不同：這裡刻意不放「工作內容(對外)」這種
     # 行銷用自由文字欄位。自由文字裡常會出現「各區門市據點」這種泛用說法
     # （意思是「全台多處工作地點」），不代表這個職缺的職務類別真的是「門市」。
-    # 職務類別的寬鬆比對只能信任結構化欄位（職缺名稱／職務類別／行業別），
-    # 跟地區比對只信任「行政區」欄位、不信任自由文字地址的原則一致。
+    # 也刻意不放「職缺名稱」（內部名稱）——這是同仁自己取的行政/部門命名
+    # 慣例，可能帶到「門市」「智取店」「店到店」這類字眼，只是因為這個職缺
+    # 是「支援門市營運的內勤職位」（例如職缺名稱「蝦皮內勤(北北基宜)門市
+    # 裝潢工程外勤專員」，職務類別其實是「設備人員」），不代表職務本身真的
+    # 是門市類別。職務類別的寬鬆比對只能信任真正結構化、對外一致的欄位
+    # （職缺名稱(對外)／職務類別／行業別），跟地區比對只信任「行政區」欄位、
+    # 不信任自由文字地址的原則一致。
     fields = [
-        job.get("職缺名稱", ""),
         job.get("職缺名稱(對外)", ""),
         job.get("職務類別", ""),
         job.get("行業別", ""),
@@ -344,6 +348,13 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
 
     internal_title, public_title, category = _job_title_and_category_text(job)
     primary_text = " ".join([internal_title, public_title, category])
+    # 職務類別的嚴格比對絕對不能用含「職缺名稱」（內部名稱）的 primary_text——
+    # 那是同仁自己取的行政/部門命名慣例，可能帶到「門市」「智取店」「店到店」
+    # 這類字眼，只是因為這個職缺是「支援門市營運的內勤職位」（例如職缺名稱
+    # 「蝦皮內勤(北北基宜)門市裝潢工程外勤專員」，職務類別其實是「設備
+    # 人員」），不代表職務本身真的是門市類別。廠商比對不受影響，職缺名稱
+    # 通常確實會帶到真正的廠商名稱，繼續信任 primary_text。
+    primary_category_text = " ".join([public_title, category])
     extended_text = _job_extended_search_text(job)
     extended_category_text = _job_extended_category_text(job)
 
@@ -351,7 +362,7 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
         if _job_has_delivery_conflict(job):
             return False
 
-        primary_category_match = _category_matches_text(primary_text, "門市")
+        primary_category_match = _category_matches_text(primary_category_text, "門市")
         primary_brand_match = True if not brand_label else _brand_matches_text(primary_text, brand_label)
 
         if primary_category_match and primary_brand_match:
@@ -368,7 +379,7 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
         relaxed_brand_match = True if not brand_label else _brand_matches_text(extended_text, brand_label)
         return relaxed_category_match and relaxed_brand_match
 
-    if _category_matches_text(primary_text, category_label):
+    if _category_matches_text(primary_category_text, category_label):
         return True
 
     return allow_relaxed and _category_matches_text(extended_category_text, category_label)
