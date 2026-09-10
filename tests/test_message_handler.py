@@ -299,6 +299,45 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         self.assertIn("板橋", prompt_sent_to_ai)
         self.assertNotIn("自選區域", prompt_sent_to_ai)
 
+    def test_ai_prompt_explicitly_states_locked_category_and_brand(self):
+        # 試營運實測發現：使用者先問「蝦皮門市有嗎」，接著只問「八德有缺人嗎」
+        # （這句話本身沒再提到門市/蝦皮），AI 卻把八德所有類別的職缺都推薦
+        # 出來，答非所問；但換成「蝦皮門市 八德有缺嗎」這種當下就完整重複
+        # 條件的問法，AI 又能正確判斷沒有符合。追查發現提示詞原本完全沒有
+        # 明講「求職者目前鎖定的條件」，AI 只能自己從對話歷史文字模糊推測，
+        # 這句話有沒有重複提到條件會讓 AI 判斷不一致。這裡驗證提示詞裡有
+        # 明確列出已鎖定的類別/廠商，不用 AI 自己憑對話歷史猜。
+        fake_decision = json.dumps({"action": "NO_MATCH", "reply": "目前暫無", "ids": [], "buttons": []})
+        locked_slots = dict(location="", category="門市", shift="", leave="", brand="蝦皮")
+        with patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            h._compute_ai_decision_messages(
+                "test-user", "八德有缺人嗎", [], [], "八德", "",
+                known_slots=locked_slots,
+            )
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        self.assertIn("求職者目前鎖定的條件", prompt_sent_to_ai)
+        self.assertIn("工作類型=門市", prompt_sent_to_ai)
+        self.assertIn("廠商=蝦皮", prompt_sent_to_ai)
+
+    def test_ai_prompt_shows_no_locked_conditions_when_slots_empty(self):
+        fake_decision = json.dumps({"action": "NO_MATCH", "reply": "目前暫無", "ids": [], "buttons": []})
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            h._compute_ai_decision_messages(
+                "test-user", "有工作嗎", [], [], "", "",
+                known_slots=empty_slots,
+            )
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        self.assertIn("目前尚未鎖定任何條件", prompt_sent_to_ai)
+
     def test_recommend_with_no_candidates_returns_plain_text_not_empty_carousel(self):
         # AI 決策出 action="RECOMMEND"，但候選職缺清單剛好是空的（例如 Notion
         # 職缺暫時全部停招）——LINE 的 Flex Carousel 不接受 0 張卡片的空陣列，

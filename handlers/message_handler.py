@@ -720,6 +720,27 @@ def _compute_ai_decision_messages(
         for f in ai_faq_candidates:
             faq_index_text += f"問：{f.get('question')} => 答：{f.get('answer')}\n"
 
+        # 求職者目前鎖定的條件（地區/類別/廠商）明確列給 AI 看，不要只靠對話
+        # 歷史文字讓 AI 自己推測——同一件事「這句話本身有沒有重複提到」會讓
+        # AI 給出不一致的答案：例如先問「蝦皮門市有嗎」，接著只問「八德有缺人
+        # 嗎」，這句話本身沒再提到蝦皮/門市，AI 只能從歷史文字模糊推測，容易
+        # 沒把「八德」跟「蝦皮門市」這個仍然生效的條件放在一起判斷，把不相關
+        # 類別的職缺也一併推薦出來；但換成「蝦皮門市 八德有缺嗎」這種當下就
+        # 完整重複條件的問法，AI 又能正確判斷沒有符合。把已鎖定的條件明講出來，
+        # 讓 AI 不管這句話有沒有重複提到，都能穩定套用同一套判斷（見 HANDOFF.md
+        # 案例）。
+        _slot_location = current_location or _current_slots_for_candidates.get("location", "")
+        _slot_category = _current_slots_for_candidates.get("category", "")
+        _slot_brand = _current_slots_for_candidates.get("brand", "")
+        _known_condition_parts = []
+        if _slot_location:
+            _known_condition_parts.append(f"地區={_slot_location}")
+        if _slot_category and _slot_category != "不限":
+            _known_condition_parts.append(f"工作類型={_slot_category}")
+        if _slot_brand:
+            _known_condition_parts.append(f"廠商={_slot_brand}")
+        known_conditions_text = "、".join(_known_condition_parts) if _known_condition_parts else "（目前尚未鎖定任何條件）"
+
         ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的線上招募顧問「沛沛」。
 你的任務是：結合對話歷史，優先從常見問題庫 (FAQ) 精確解答，並在求職者尋找工作時推薦合適職缺。
 
@@ -735,7 +756,13 @@ def _compute_ai_decision_messages(
    - 每筆候選職缺的「地點:」欄位已經是同仁在系統裡實際勾選的正確行政區，不是模糊描述。
    - 求職者問到「地點:」欄位沒有明確列出的行政區時（即使那個行政區行政上屬於同一個縣市），一律視為「此條件無完全相符職缺」，不能因為同縣市有其他行政區的職缺、或地點欄位只寫到縣市層級，就自行推論或宣稱「這個行政區也涵蓋在內」。
    - 範例：地點欄位是「桃園市（蘆竹、龜山）」，求職者問「八德有沒有缺額」，不能回答「八德也涵蓋在內」——因為「地點:」欄位沒有列出八德。
-5. 【單一焦點追問】：若需引導求職者補充條件，每次僅拋出單一缺漏問題（優先順序：地區 -> 班別 -> 工作類型），避免一次詢問多個問題。
+5. 【求職者已鎖定的條件要持續套用，不是只看這句話本身有沒有重複提到】：
+   - 下面【求職者目前鎖定的條件】是求職者之前的對話裡已經確認、還沒有被取消或換掉的條件，即使「求職者最新輸入」這句話本身沒有再重複提到，也要當成這句話仍然帶著這些條件一起問。
+   - 範例：已鎖定條件是「工作類型=門市、廠商=蝦皮」，求職者這句話只問「八德有缺人嗎」，要判斷成「蝦皮的門市類職缺，八德有沒有」，不能因為這句話沒提到門市/蝦皮，就放寬成「八德不限類型/廠商的職缺」通通推薦。
+6. 【單一焦點追問】：若需引導求職者補充條件，每次僅拋出單一缺漏問題（優先順序：地區 -> 班別 -> 工作類型），避免一次詢問多個問題。
+
+【求職者目前鎖定的條件】：
+{known_conditions_text}
 
 【常見問題庫 (FAQ)】：
 {faq_index_text if faq_index_text else "（無相符 FAQ）"}
