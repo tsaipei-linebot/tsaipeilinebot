@@ -42,6 +42,12 @@ _MODULE_CARD_INFO = {
         # 沒有獨立的登入頁。
         "href": "/job-listings",
     },
+    "project_contracts": {
+        "description": "提報新的專案合作廠商資訊，上傳合約檔案後自動寄送人資與財務單位",
+        # 跟 job_listings 一樣直接掛在根 app（見 project_contract_routes.py），
+        # 沒有獨立的登入頁。
+        "href": "/project-contracts",
+    },
 }
 
 
