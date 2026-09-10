@@ -437,17 +437,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 前一輪的精準工種直達攔截、改用之前鎖定的類別/廠商去篩選；刻意要求
         # 「有抓到地名」，避免把「發薪日是什麼時候」這種抓不到地名的 FAQ 類問題
         # 也一起誤攔進來。
-        # 記住這句話「本身」有沒有明確提到門市/外送/momo，跟後面延續前一輪
-        # 脈絡是兩回事：momo 分支原本設計成「這個地區沒有 momo 職缺時，退讓
-        # 顯示全部 momo 職缺」，這個退讓是合理的——但前提是使用者這句話真的
-        # 有講「momo」，才適合直接假設「沒有精準符合、看看其他地區也可以」；
-        # 如果 momo 只是延續前一輪脈絡（這句話本身只是單純問地區），沒有精準
-        # 命中地區時就不該裝作有找到，否則會變成拿完全不同地區的職缺硬答
-        # 「有」（見 HANDOFF.md 案例：問完 momo 後單獨問「台南有嗎」，被塞了
-        # 一筆桃園的職缺）。
-        _is_explicit_intent_this_turn = is_delivery_intent or is_store_intent or is_momo_intent
         is_bare_location_followup = bool(extracted_loc) and not has_recognizable_category_or_brand_keyword(clean_input) and not is_negative
-        if is_bare_location_followup and not _is_explicit_intent_this_turn:
+        if is_bare_location_followup and not (is_delivery_intent or is_store_intent or is_momo_intent):
             if detected_category_from_text == "外送":
                 is_delivery_intent = True
             elif detected_category_from_text == "門市":
@@ -492,20 +483,15 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             direct_matches = filter_jobs_by_category_tiered(_location_jobs, "門市", _store_brand)
 
         elif is_momo_intent:
+            # 地區沒有精準命中時不再退讓顯示「全部」momo 職缺——之前這樣設計
+            # 會讓使用者收到跟他問的地區完全無關的職缺、卻被告知「找到符合
+            # 條件的推薦職缺」，答非所問（見 HANDOFF.md 案例）。跟 delivery/
+            # store 分支一致：地區沒有精準命中就是沒有直接命中，落到 AI 決策，
+            # 由 AI 依候選職缺清單判斷、老實回覆。
             momo_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"])]
             if current_location:
                 loc_clean = current_location.replace("台", "臺")
-                loc_momo = [j for j in momo_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
-                if loc_momo:
-                    direct_matches = loc_momo
-                elif _is_explicit_intent_this_turn:
-                    # 這句話本身真的有提到 momo，才適用「這個地區沒有，但至少
-                    # 讓您看看 momo 其他地區的職缺」這種退讓；只是延續前一輪
-                    # momo 脈絡、這句話單純問地區的情況下，沒有精準命中就不該
-                    # 裝作找到了，讓對話落到 AI 決策，由 AI 老實說明沒有符合。
-                    direct_matches = momo_jobs
-                else:
-                    direct_matches = []
+                direct_matches = [j for j in momo_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
             else:
                 direct_matches = momo_jobs
 

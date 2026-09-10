@@ -910,13 +910,15 @@ class BareLocationFollowupContinuesContextTests(unittest.TestCase):
         self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
 
 
-class MomoIntentBareLocationFollowupTests(unittest.TestCase):
-    """接續 BareLocationFollowupContinuesContextTests 發現的問題：momo 分支原本
-    設計成「這個地區沒有 momo 職缺時，退讓顯示全部 momo 職缺」，這個退讓原本
-    只適用於使用者這句話真的有講「momo」的情境；延續前一輪 momo 脈絡的新
-    功能上線後，使用者問完「有momo的職缺嗎」再單獨問「台南有嗎」（這句話
-    本身沒提到 momo，且 momo 職缺實際只在桃園），沛沛卻直接把桃園的 momo
-    職缺塞給使用者、還說「找到符合條件的推薦職缺」，答非所問。"""
+class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
+    """momo 分支原本有一段「這個地區沒有 momo 職缺時，退讓顯示全部 momo
+    職缺」的既有機制。這個退讓不管是延續前一輪脈絡、還是使用者這句話本身
+    真的有講「momo」都會觸發，導致使用者問完 momo 之後單獨問「台南有嗎」
+    （momo 職缺實際只在桃園），沛沛卻直接把桃園的 momo 職缺塞給使用者、
+    還說「找到符合條件的推薦職缺」，答非所問。使用者確認後決定整個拿掉這段
+    退讓（不只是限縮生效條件）：地區沒有精準命中，就是沒有直接命中，一律
+    落到 AI 決策，跟 delivery/store 分支一致，不再有任何「地區找不到就乾脆
+    不管地區」的例外。"""
 
     def _momo_job_in_taoyuan_only(self):
         return {
@@ -957,15 +959,41 @@ class MomoIntentBareLocationFollowupTests(unittest.TestCase):
         args, _ = line_bot_api.reply_message.call_args
         self.assertEqual(args[1], control_message)
 
-    def test_explicit_momo_mention_without_location_match_still_degrades_to_all_momo_jobs(self):
-        # 這句話本身真的有講「momo」時，維持原本既有行為：這個地區沒有 momo
-        # 職缺，仍然可以退讓顯示全部 momo 職缺讓使用者參考，不能因為這次修正
-        # 而連原本設計好的行為都跟著壞掉。
+    def test_explicit_momo_mention_without_location_match_also_falls_through_to_ai(self):
+        # 使用者確認拿掉整段退讓，這句話本身真的有講「momo」時，地區沒有
+        # 精準命中一樣要落到 AI 決策，不再退讓顯示全部 momo 職缺。
         momo_job = self._momo_job_in_taoyuan_only()
         event = MagicMock()
         event.reply_token = "valid-reply-token"
         event.source.user_id = "test-user-momo-explicit"
         event.message.text = "台南有momo的職缺嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[momo_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(empty_slots, brand="momo")), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+    def test_momo_with_no_location_specified_still_shows_all_momo_jobs(self):
+        # 使用者根本沒指定地區時（例如單純問「有momo的職缺嗎」），不算「找不到
+        # 就退讓」，這種情境本來就該顯示全部 momo 職缺，不受這次拿掉退讓機制
+        # 影響。
+        momo_job = self._momo_job_in_taoyuan_only()
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-momo-no-location"
+        event.message.text = "有momo的職缺嗎"
         line_bot_api = MagicMock()
         empty_slots = dict(location="", category="", shift="", leave="", brand="")
 
