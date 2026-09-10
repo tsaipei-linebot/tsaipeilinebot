@@ -755,5 +755,160 @@ class StoreIntentLocationMatchTests(unittest.TestCase):
         self.assertEqual(args[1], control_message)
 
 
+class BareLocationFollowupContinuesContextTests(unittest.TestCase):
+    """上線試營運後實測發現的問題：使用者先問「蝦皮門市有嗎」，接著只問
+    「八德有缺嗎」（這句話本身沒有再提到門市/蝦皮），沛沛卻答非所問，推薦了
+    完全不相關類別的職缺——因為「精準工種直達攔截」只看「這句話本身」有沒有
+    門市/外送/momo 關鍵字，不會延續前一輪已經鎖定的類別/廠商；同時廠商
+    （brand）這個槽位原本設計成「這句話沒提到就清空」，就算類別有沿用，
+    廠商條件也早就不見了。"""
+
+    def test_bare_location_message_continues_previous_category_and_brand(self):
+        matching_job = {
+            "職缺名稱": "蝦皮店到店門市夥伴",
+            "_internal_title": "蝦皮店到店門市夥伴",
+            "_parsed_title": "蝦皮店到店門市夥伴",
+            "職缺名稱(對外)": "蝦皮店到店門市夥伴",
+            "_job_category": "門市",
+            "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮店到店門市夥伴",
+            "_location_search_text": "桃園市八德區",
+        }
+        unrelated_job = {
+            "職缺名稱": "全台平價石頭火鍋",
+            "_internal_title": "全台平價石頭火鍋",
+            "_parsed_title": "全台平價石頭火鍋",
+            "職缺名稱(對外)": "全台平價石頭火鍋",
+            "_job_category": "內場人員",
+            "職務類別": "內場人員",
+            "系統廠商名稱": "石頭火鍋",
+            "_search_text": "全台平價石頭火鍋內場人員",
+            "_location_search_text": "桃園市八德區",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-bare-location-followup"
+        event.message.text = "八德有缺嗎"
+        line_bot_api = MagicMock()
+        # 模擬前一輪已經鎖定「門市」類別＋「蝦皮」廠商的槽位
+        persisted_slots = dict(location="", category="門市", shift="", leave="", brand="蝦皮")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[matching_job, unrelated_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+
+        # 應該延續前一輪的門市＋蝦皮條件，直接攔截命中，不會落到 AI 決策
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(matching_job, matched_jobs_arg)
+        self.assertNotIn(unrelated_job, matched_jobs_arg)
+
+    def test_bare_location_message_without_prior_context_falls_through_to_ai(self):
+        # 沒有任何前一輪鎖定的類別/廠商時，單純問地區不該被誤攔進精準工種直達，
+        # 維持原本會落到 AI 決策的行為。
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-bare-location-no-context"
+        event.message.text = "八德有缺嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+    def test_faq_question_not_hijacked_by_persisted_category(self):
+        # 持續鎖定「門市」類別，但這句話是問發薪日（FAQ 類問題，抓不到地名），
+        # 不該被誤判成「延續前一輪的地區追問」而攔進精準工種直達。
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-faq-not-hijacked"
+        event.message.text = "發薪日是什麼時候"
+        line_bot_api = MagicMock()
+        persisted_slots = dict(location="", category="門市", shift="", leave="", brand="蝦皮")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+    def test_brand_slot_persists_when_not_mentioned_this_turn(self):
+        # 廠商槽位這輪沒有再提到時,應該沿用前一輪的值（不寫入變更),不能再像
+        # 原本設計那樣直接清空——否則「蝦皮門市有嗎」下一句只問「八德有缺嗎」
+        # 時,蝦皮這個條件會整個消失。
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-brand-persist"
+        event.message.text = "還有其他工作嗎"
+        line_bot_api = MagicMock()
+        persisted_slots = dict(location="", category="", shift="", leave="", brand="蝦皮")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=persisted_slots) as mock_update_slots, \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        # brand 這個參數應該傳入空字串（代表「沿用、不變更」），不是 CLEAR_SLOT
+        _, kwargs = mock_update_slots.call_args
+        self.assertEqual(kwargs.get("brand"), "")
+
+    def test_brand_slot_clears_on_explicit_broaden_phrase(self):
+        # 使用者明確表示「不限廠商」時,還是要能真正清空,不能因為改成「預設沿用」
+        # 就永遠卡住舊的廠商條件出不去。
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-brand-clear"
+        event.message.text = "不限廠商，都給我看看"
+        line_bot_api = MagicMock()
+        persisted_slots = dict(location="", category="", shift="", leave="", brand="蝦皮")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")) as mock_update_slots, \
+             patch("handlers.message_handler.append_user_history"):
+            h.process_user_message(event, line_bot_api)
+
+        _, kwargs = mock_update_slots.call_args
+        self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
+
+
 if __name__ == "__main__":
     unittest.main()

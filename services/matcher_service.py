@@ -300,6 +300,20 @@ def _job_extended_search_text(job: dict) -> str:
     ]
     return clean_text_for_search(" ".join(str(x or "") for x in fields))
 
+def _job_extended_category_text(job: dict) -> str:
+    # 跟 _job_extended_search_text 不同：這裡刻意不放「工作內容(對外)」這種
+    # 行銷用自由文字欄位。自由文字裡常會出現「各區門市據點」這種泛用說法
+    # （意思是「全台多處工作地點」），不代表這個職缺的職務類別真的是「門市」。
+    # 職務類別的寬鬆比對只能信任結構化欄位（職缺名稱／職務類別／行業別），
+    # 跟地區比對只信任「行政區」欄位、不信任自由文字地址的原則一致。
+    fields = [
+        job.get("職缺名稱", ""),
+        job.get("職缺名稱(對外)", ""),
+        job.get("職務類別", ""),
+        job.get("行業別", ""),
+    ]
+    return clean_text_for_search(" ".join(str(x or "") for x in fields))
+
 def _job_has_delivery_conflict(job: dict) -> bool:
     internal_title, public_title, category = _job_title_and_category_text(job)
     primary_text = " ".join([internal_title, public_title, category])
@@ -331,6 +345,7 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
     internal_title, public_title, category = _job_title_and_category_text(job)
     primary_text = " ".join([internal_title, public_title, category])
     extended_text = _job_extended_search_text(job)
+    extended_category_text = _job_extended_category_text(job)
 
     if category_label == "門市":
         if _job_has_delivery_conflict(job):
@@ -345,14 +360,18 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
         if not allow_relaxed:
             return False
 
-        relaxed_category_match = _category_matches_text(extended_text, "門市")
+        # 廠商仍可用完整的 extended_text（含系統廠商名稱等欄位）寬鬆比對，
+        # 但職務類別絕對不能用含「工作內容(對外)」自由文字的 extended_text，
+        # 否則「設備人員」職缺只因為工作說明裡寫到「各區門市據點」就會被
+        # 誤判成門市類別（該欄位只是在講到職地點遍布全台，不是職務類別）。
+        relaxed_category_match = _category_matches_text(extended_category_text, "門市")
         relaxed_brand_match = True if not brand_label else _brand_matches_text(extended_text, brand_label)
         return relaxed_category_match and relaxed_brand_match
 
     if _category_matches_text(primary_text, category_label):
         return True
 
-    return allow_relaxed and _category_matches_text(extended_text, category_label)
+    return allow_relaxed and _category_matches_text(extended_category_text, category_label)
 
 def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label: str = "") -> list:
     if not category_label or category_label == "不限":
