@@ -255,6 +255,23 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         self.assertEqual(messages[0].text, "推薦這個職缺給你")
         self.assertEqual(messages[1], "FLEX_CARD")
 
+    def test_ai_prompt_forbids_inferring_uncovered_districts(self):
+        # 試營運實測發現：候選職缺「地點:」欄位明明沒有列出某個行政區（例如
+        # 只列了「桃園市（蘆竹、龜山）」），AI 卻自己推論「同縣市的八德也算
+        # 涵蓋在內」。這不是候選職缺篩選錯誤（那部分已經修過），是提示詞沒有
+        # 明確禁止 AI 這樣類推——這裡驗證提示詞確實有把這條規則寫進去。
+        fake_decision = json.dumps({"action": "NO_MATCH", "reply": "目前暫無", "ids": [], "buttons": []})
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            h._compute_ai_decision_messages("test-user", "八德有工作嗎", [], [], "八德", "")
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        self.assertIn("不能自行推論", prompt_sent_to_ai)
+        self.assertIn("八德", prompt_sent_to_ai)
+
     def test_recommend_with_no_candidates_returns_plain_text_not_empty_carousel(self):
         # AI 決策出 action="RECOMMEND"，但候選職缺清單剛好是空的（例如 Notion
         # 職缺暫時全部停招）——LINE 的 Flex Carousel 不接受 0 張卡片的空陣列，

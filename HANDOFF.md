@@ -197,6 +197,12 @@
     - **修正方式**：`services/notion_service.py` 的 `fetch_jobs_data()` 新增專屬的 `_location_search_text` 欄位，只由「縣市」「行政區」這兩個結構化欄位組成，不包含任何自由文字。`services/matcher_service.py` 的 `_score_job_for_ai()`、`handlers/message_handler.py` 裡所有跟地區比對相關的地方（全部瀏覽、外送/門市/momo 直達攔截，共 5 處）全部改成比對 `_location_search_text`，不再使用會混入自由文字的 `_search_text`。**品牌（momo/富邦/富昇）比對維持用 `_search_text`，這次沒有一併調整**——因為使用者這次回報的是地區誤判，範圍沒有連帶擴大到品牌比對。
     - **新增測試**：`tests/test_notion_service.py` 新增 `LocationSearchTextTests`（驗證 `_location_search_text` 不包含自由文字裡的地名，`_search_text` 才會包含）；`tests/test_matcher_service.py` 新增 `LocationScoringUsesStructuredFieldTests`（2 個，驗證自由文字提到地名不會加分、結構化欄位真的命中時加分仍正常）；`tests/test_message_handler.py` 新增 `StoreIntentLocationMatchTests`（重現使用者實測到的「蝦皮門市＋八德」情境，確認不會誤判成直接命中）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 484 個測試，OK。
+    - ⚠️ **部署後同一晚實測，發現同一個症狀還有第二層原因，見下方第 34 項**：第 33 項只修好「候選職缺篩選」這一關，AI 自己在推理階段的過度類推是獨立的第二個問題，光修第 33 項並不夠。
+34. **同一晚接續發現：AI 自己會憑常識推論「同縣市其他行政區應該也算」，不是候選職缺篩選錯誤**：第 33 項部署生效（GitHub Actions 確認部署成功）之後，使用者當晚馬上重新實測，沛沛仍然回覆「蝦皮門市在桃園區是有職缺的喔，八德區也涵蓋在內！」。追查後確認這是完全不同層次的問題：候選職缺清單送給 AI 判斷時，「地點:」欄位其實老實顯示的是「桃園市」這種縣市層級、或列出蘆竹/龜山等其他行政區（不含八德）——資料本身是對的，是 **AI 自己在推理階段憑常識類推「八德行政上也屬於桃園市，應該算涵蓋在內」**，原本的提示詞（prompt）沒有明確禁止這種類推。
+    - **修正方式**：在 `handlers/message_handler.py` 的 `ai_prompt` 新增一條規則（原本的規則 4「單一焦點追問」往後遞補為規則 5）：明確告知 AI「地點:」欄位是同仁在系統裡實際勾選的正確行政區，求職者問到清單裡沒有明確列出的行政區時，一律視為「此條件無完全相符職缺」，不能因為同縣市有其他行政區的職缺、或地點欄位只寫到縣市層級，就自行推論或宣稱該行政區也涵蓋在內，並附上八德/桃園市的具體反例讓 AI 更容易照做。
+    - **這次的教訓**：候選職缺篩選（資料層）跟 AI 推理（語言模型層）是兩個獨立的環節，同一個表面症狀（「八德誤判有缺額」）可能同時有兩層原因，只修好其中一層不代表問題全部解決——之後遇到類似「明明資料/篩選邏輯是對的，AI 回覆卻還是不對」的情況，要優先檢查提示詞有沒有給 AI 足夠明確、禁止過度類推的指示。
+    - **新增測試**：`tests/test_message_handler.py` 新增 `test_ai_prompt_forbids_inferring_uncovered_districts`（驗證提示詞裡確實包含這條新規則的關鍵字，不是只憑印象檢查過就算了）。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 485 個測試，OK。
 
 ## 目前所有檔案的狀態
 
