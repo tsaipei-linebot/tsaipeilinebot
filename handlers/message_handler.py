@@ -483,11 +483,15 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             direct_matches = filter_jobs_by_category_tiered(_location_jobs, "門市", _store_brand)
 
         elif is_momo_intent:
+            # 地區沒有精準命中時不再退讓顯示「全部」momo 職缺——之前這樣設計
+            # 會讓使用者收到跟他問的地區完全無關的職缺、卻被告知「找到符合
+            # 條件的推薦職缺」，答非所問（見 HANDOFF.md 案例）。跟 delivery/
+            # store 分支一致：地區沒有精準命中就是沒有直接命中，落到 AI 決策，
+            # 由 AI 依候選職缺清單判斷、老實回覆。
             momo_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"])]
             if current_location:
                 loc_clean = current_location.replace("台", "臺")
-                loc_momo = [j for j in momo_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
-                direct_matches = loc_momo if loc_momo else momo_jobs
+                direct_matches = [j for j in momo_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
             else:
                 direct_matches = momo_jobs
 
