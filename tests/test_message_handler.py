@@ -910,5 +910,79 @@ class BareLocationFollowupContinuesContextTests(unittest.TestCase):
         self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
 
 
+class MomoIntentBareLocationFollowupTests(unittest.TestCase):
+    """接續 BareLocationFollowupContinuesContextTests 發現的問題：momo 分支原本
+    設計成「這個地區沒有 momo 職缺時，退讓顯示全部 momo 職缺」，這個退讓原本
+    只適用於使用者這句話真的有講「momo」的情境；延續前一輪 momo 脈絡的新
+    功能上線後，使用者問完「有momo的職缺嗎」再單獨問「台南有嗎」（這句話
+    本身沒提到 momo，且 momo 職缺實際只在桃園），沛沛卻直接把桃園的 momo
+    職缺塞給使用者、還說「找到符合條件的推薦職缺」，答非所問。"""
+
+    def _momo_job_in_taoyuan_only(self):
+        return {
+            "職缺名稱": "粉色電商理貨員",
+            "_internal_title": "粉色電商理貨員",
+            "_parsed_title": "粉色電商理貨員",
+            "職缺名稱(對外)": "粉色電商理貨員",
+            "_job_category": "倉儲人員",
+            "職務類別": "倉儲人員",
+            "系統廠商名稱": "momo",
+            "_search_text": "momo電商理貨員桃園倉儲",
+            "_location_search_text": "桃園市",
+        }
+
+    def test_bare_location_followup_without_match_falls_through_to_ai(self):
+        # 延續前一輪 momo 脈絡、這句話本身沒提到 momo，momo 職缺實際上又不在
+        # 台南——不該裝作找到符合條件的職缺，要老實落到 AI 決策。
+        momo_job = self._momo_job_in_taoyuan_only()
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-momo-bare-location"
+        event.message.text = "台南有嗎"
+        line_bot_api = MagicMock()
+        persisted_slots = dict(location="", category="", shift="", leave="", brand="momo")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[momo_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+    def test_explicit_momo_mention_without_location_match_still_degrades_to_all_momo_jobs(self):
+        # 這句話本身真的有講「momo」時，維持原本既有行為：這個地區沒有 momo
+        # 職缺，仍然可以退讓顯示全部 momo 職缺讓使用者參考，不能因為這次修正
+        # 而連原本設計好的行為都跟著壞掉。
+        momo_job = self._momo_job_in_taoyuan_only()
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-momo-explicit"
+        event.message.text = "台南有momo的職缺嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[momo_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(empty_slots, brand="momo")), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card:
+            h.process_user_message(event, line_bot_api)
+
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(momo_job, matched_jobs_arg)
+
+
 if __name__ == "__main__":
     unittest.main()
