@@ -669,7 +669,13 @@ def _compute_ai_decision_messages(
             internal_t = j.get("職缺名稱", "")
             vendor_t = j.get("系統廠商名稱", "")
             cat_t = j.get("職務類別", "")
-            loc = format_clean_location(j)
+            # 一定要帶入 current_location：像「全台/多縣市門市自選」這種涵蓋
+            # 5 個以上行政區的職缺，不帶目標地區時只會回傳籠統的「各區門市據點
+            # （自選區域）」，AI 看不出使用者問的地區到底有沒有明確包含在內，
+            # 只能照規則保守回答「暫無明確列出」；但組卡片顯示用的地點文字
+            # 有正確帶入 target_location，導致卡片老實顯示該地區、AI 文字回覆
+            # 卻說沒有，兩邊資訊兜不起來（見 HANDOFF.md 板橋/蝦皮案例）。
+            loc = format_clean_location(j, current_location)
             shift = j.get("班別", "")
             leave_t = j.get("休假方式", "")
             pay_method = j.get("領薪方式", "")

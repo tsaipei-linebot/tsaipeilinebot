@@ -272,6 +272,33 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         self.assertIn("不能自行推論", prompt_sent_to_ai)
         self.assertIn("八德", prompt_sent_to_ai)
 
+    def test_ai_prompt_location_reflects_specific_district_for_broad_coverage_job(self):
+        # 試營運實測發現：蝦皮店到店這類「全台/多縣市門市自選」職缺涵蓋超過
+        # 5 個行政區，組給 AI 判斷用的「地點:」欄位原本沒有帶入使用者問的地區
+        # （current_location），只會回傳籠統的「各區門市據點（自選區域）」，
+        # AI 因此看不出「板橋」有沒有明確包含在內，只能保守回答「暫無明確
+        # 列出」——但同一時間組給 LINE 卡片顯示用的地點文字有正確帶入
+        # target_location，卡片老實顯示「板橋區」，兩邊資訊兜不起來。這裡驗證
+        # 提示詞裡的「地點:」欄位有正確反映使用者問的地區。
+        broad_job = {
+            "職缺名稱(對外)": "蝦皮店到店門市夥伴", "職缺名稱": "蝦皮店到店門市夥伴",
+            "系統廠商名稱": "蝦皮", "職務類別": "門市",
+            "縣市": "宜蘭縣,桃園市,高雄市,基隆市,新北市,新竹縣",
+            "行政區": "宜蘭市,桃園區,高雄區,基隆區,新北市板橋區,新竹縣區",
+        }
+        fake_decision = json.dumps({"action": "RECOMMEND", "reply": "推薦這個職缺給你", "ids": [0], "buttons": []})
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[broad_job]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]), \
+             patch("handlers.message_handler.create_job_flex_card", return_value="FLEX_CARD"):
+            h._compute_ai_decision_messages("test-user", "板橋蝦皮門市有缺嗎", [broad_job], [], "板橋", "")
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        self.assertIn("板橋", prompt_sent_to_ai)
+        self.assertNotIn("自選區域", prompt_sent_to_ai)
+
     def test_recommend_with_no_candidates_returns_plain_text_not_empty_carousel(self):
         # AI 決策出 action="RECOMMEND"，但候選職缺清單剛好是空的（例如 Notion
         # 職缺暫時全部停招）——LINE 的 Flex Carousel 不接受 0 張卡片的空陣列，
