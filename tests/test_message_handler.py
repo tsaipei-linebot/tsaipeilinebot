@@ -1002,6 +1002,86 @@ class BareLocationFollowupContinuesContextTests(unittest.TestCase):
         self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
 
 
+class ExpandedBroadenPhraseTests(unittest.TestCase):
+    """使用者要求盡量擴充「求職者想重新詢問/不限條件」能被辨識到的說法。
+    地區/廠商原本各自有一份「明確表示不限」的關鍵字清單，類別完全沒有
+    （只能靠「否定掉目前鎖定的類別」清空，例如「除了外送」）——這裡補上
+    類別專屬的清單，並新增一份「都可以/隨便/都好」這種泛用表態共用清單，
+    講出來時同時解鎖地區/類別/廠商三個維度，不用逐一分開講。"""
+
+    def _base_slots(self, **overrides):
+        base = dict(location="", category="", shift="", leave="", brand="")
+        base.update(overrides)
+        return base
+
+    def test_category_clears_on_new_category_specific_broaden_phrase(self):
+        persisted_slots = self._base_slots(category="門市")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-category-clear"
+        event.message.text = "不限類型，有什麼都可以"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=self._base_slots()) as mock_update_slots, \
+             patch("handlers.message_handler.append_user_history"):
+            h.process_user_message(event, line_bot_api)
+
+        _, kwargs = mock_update_slots.call_args
+        self.assertEqual(kwargs.get("category"), h.CLEAR_SLOT)
+
+    def test_generic_broaden_phrase_clears_all_three_dimensions_at_once(self):
+        # 「都可以」這種泛用表態，講出來時應該同時解鎖地區/類別/廠商，
+        # 不用使用者逐一分開講「不限地區」「不限類型」「不限廠商」。
+        persisted_slots = self._base_slots(location="新莊", category="門市", brand="蝦皮")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-generic-broaden"
+        event.message.text = "都可以"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=self._base_slots()) as mock_update_slots, \
+             patch("handlers.message_handler.append_user_history"):
+            h.process_user_message(event, line_bot_api)
+
+        _, kwargs = mock_update_slots.call_args
+        self.assertEqual(kwargs.get("location"), h.CLEAR_SLOT)
+        self.assertEqual(kwargs.get("category"), h.CLEAR_SLOT)
+        self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
+
+    def test_brand_specific_broaden_phrase_does_not_clear_category_or_location(self):
+        # 廠商專屬的「不限廠商」只該清空廠商,不能因為跟類別/地區共用同一份
+        # 泛用清單,就連帶清掉其他沒被提到的維度。
+        persisted_slots = self._base_slots(location="新莊", category="門市", brand="蝦皮")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-brand-only-clear"
+        event.message.text = "不限廠商"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=persisted_slots) as mock_update_slots, \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=TextSendMessage(text="控制組")):
+            h.process_user_message(event, line_bot_api)
+
+        _, kwargs = mock_update_slots.call_args
+        self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
+        self.assertEqual(kwargs.get("location"), "")
+        self.assertEqual(kwargs.get("category"), "")
+
+
 class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
     """momo 分支原本有一段「這個地區沒有 momo 職缺時，退讓顯示全部 momo
     職缺」的既有機制。這個退讓不管是延續前一輪脈絡、還是使用者這句話本身
