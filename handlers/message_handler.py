@@ -326,16 +326,23 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             category_slot_update = ""
             detected_category_from_text = user_slots.get("category", "")
 
-        # 廠商（brand）跟地點/類別的行為不同：地點/類別是持續性偏好，沿用到被明確取消為止；
-        # 廠商比較像單次詢問，這句話沒有再提到某個廠商，就視為使用者已經看過、
-        # 不應該讓候選集合被舊的廠商鎖住，所以每輪都重新判斷，沒偵測到就明確清空。
+        # 廠商（brand）改成比照地區/類別：沿用到使用者明確換掉、或明確表示不限
+        # 廠商為止，不再「這句話沒提到就清空」。實測發現原本「每句話沒提到就
+        # 清空」的設計，會讓使用者問完「蝦皮門市有嗎」、下一句只問「八德有缺嗎」
+        # 這種自然的追問地區情境時，蝦皮這個條件整個消失，變成拿「不限廠商的
+        # 門市」去查八德，而不是使用者真正想問的「蝦皮在八德有沒有」，導致
+        # 回覆牛頭不對馬嘴（見 HANDOFF.md 案例）。
+        explicit_any_brand = any(k in clean_input for k in ["不限廠商", "不限品牌", "不限公司", "其他廠商", "別的廠商", "換一家", "不挑廠商"])
         detected_brand_this_turn = detect_brand_label(raw_msg, active_jobs)
         if detected_brand_this_turn:
             detected_brand = detected_brand_this_turn
             brand_slot_update = detected_brand_this_turn
-        else:
+        elif explicit_any_brand:
             detected_brand = ""
             brand_slot_update = CLEAR_SLOT if user_slots.get("brand", "") else ""
+        else:
+            brand_slot_update = ""
+            detected_brand = user_slots.get("brand", "")
 
         current_slots = update_user_slots(
             user_id,
@@ -421,6 +428,24 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         is_store_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["門市"]) and not is_delivery_intent and not is_negative
         is_momo_intent = any(k in clean_input for k in KNOWN_BRANDS["momo"]) and not is_negative
 
+        # 追問地區延續前一輪已鎖定的類別/廠商：例如先問「蝦皮門市有嗎」，接著
+        # 只問「八德有缺嗎」——這句話本身沒有再提到門市/外送/momo等關鍵字，
+        # 只是單純問地區，原本因此會直接掉到後面的 AI 決策，AI 只把類別/廠商
+        # 條件當成排序加分（不是硬性篩選），加上廠商原本每句話沒提到就清空，
+        # 導致這種追問常常答非所問（見 HANDOFF.md 案例）。這裡改成：只有在這句
+        # 話「有抓到明確地名、且沒有夾雜其他新的類別/廠商關鍵字」時，才視為延續
+        # 前一輪的精準工種直達攔截、改用之前鎖定的類別/廠商去篩選；刻意要求
+        # 「有抓到地名」，避免把「發薪日是什麼時候」這種抓不到地名的 FAQ 類問題
+        # 也一起誤攔進來。
+        is_bare_location_followup = bool(extracted_loc) and not has_recognizable_category_or_brand_keyword(clean_input) and not is_negative
+        if is_bare_location_followup and not (is_delivery_intent or is_store_intent or is_momo_intent):
+            if detected_category_from_text == "外送":
+                is_delivery_intent = True
+            elif detected_category_from_text == "門市":
+                is_store_intent = True
+            elif detected_brand == "momo":
+                is_momo_intent = True
+
         direct_matches = []
 
         if is_delivery_intent:
@@ -441,7 +466,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                         direct_matches.append(j)
 
         elif is_store_intent:
-            _store_brand = "蝦皮" if "蝦皮門市" in clean_input else ""
+            # 改用 detected_brand（這輪偵測到的，或延續前一輪鎖定的廠商），
+            # 不再只靠「蝦皮門市」這種字面上剛好連在一起的寫法做特例判斷——
+            # 這樣「蝦皮門市有嗎」下一句接著問「八德有缺嗎」時，也能正確延續
+            # 蝦皮這個廠商條件，不會變成查「不限廠商的門市」。
+            _store_brand = detected_brand
             _location_jobs = []
             for j in active_jobs:
                 if current_location:
