@@ -178,9 +178,9 @@ cookie，還是要分開登入。
 **派遣契約產生器（`/dispatch-contracts`）上線前還缺：**
 21. 到 `/accounts` 幫需要用這個功能的帳號開通「派遣契約產生器」權限
     （不需要新的環境變數，沿用既有的 `DELIVERY_GCS_BUCKET`）。
-22. **上線後第一次產生契約時，確認列表頁的「預覽」連結真的能顯示 PDF
-    排版**——這一步（LibreOffice 轉檔）開發階段沒辦法在本機驗證，失敗
-    也不影響 Word 檔案下載，詳見 `HANDOFF.md`。
+
+（列表頁的 Word 排版「預覽」功能——LibreOffice 轉 PDF——2026-09-11 上線後
+已經使用者實測確認正常運作，詳見 `HANDOFF.md`。）
 
 **廠商管理（`/vendors`）上線前還缺：**
 19. 跑一次 `python -m scripts.seed_vendors`，把已知的 4 個廠商（蝦皮/
