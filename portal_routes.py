@@ -54,6 +54,12 @@ _MODULE_CARD_INFO = {
         # 沒有獨立的登入頁。
         "href": "/chicken-points",
     },
+    "dispatch_contracts": {
+        "description": "填入客戶的班別/薪資/工作條件，自動套版產生派遣契約 Word 檔並存檔",
+        # 跟 job_listings 一樣直接掛在根 app（見 dispatch_contract_routes.py），
+        # 沒有獨立的登入頁。
+        "href": "/dispatch-contracts",
+    },
 }
 
 

@@ -15,6 +15,7 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage
 import accounts_routes
 import company_routes
 import chicken_points_routes
+import dispatch_contract_routes
 import job_listing_routes
 import project_contract_routes
 import login_routes
@@ -79,6 +80,10 @@ app.include_router(me_routes.router)
 app.include_router(job_listing_routes.router)
 app.include_router(project_contract_routes.router)
 app.include_router(chicken_points_routes.router)
+# /dispatch-contracts：派遣契約產生器，跟 job_listings 一樣是獨立的部門
+# 模組（模組代碼 dispatch_contracts，見 platform_accounts.MODULES），直接
+# 掛在根 app（見 dispatch_contract_routes.py）。
+app.include_router(dispatch_contract_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，
