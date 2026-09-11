@@ -22,6 +22,7 @@ from services.dispatch_contract_service import (
     CLAUSE_ORDER,
     SHIFT_COLUMNS,
     build_shift_rows,
+    convert_docx_to_pdf,
     get_submission,
     list_recent_client_names,
     list_submissions,
@@ -151,8 +152,16 @@ async def dispatch_contract_submit(request: Request, redirect=Depends(_require_a
 
     filename = f"派遣契約_{client_name}.docx"
     blob_path = ""
+    pdf_blob_path = ""
     if dispatch_contract_storage.is_configured():
         blob_path = dispatch_contract_storage.upload_contract_docx(docx_bytes, filename)
+        # PDF 轉檔失敗不影響這次送出——見 convert_docx_to_pdf() 的說明，
+        # 失敗時回傳 None，這裡就直接不存 PDF，Word 檔案跟紀錄照樣正常。
+        pdf_bytes = convert_docx_to_pdf(docx_bytes)
+        if pdf_bytes:
+            pdf_blob_path = dispatch_contract_storage.upload_contract_pdf(
+                pdf_bytes, f"派遣契約_{client_name}.pdf"
+            )
 
     save_submission(
         submitted_by=account["username"],
@@ -164,6 +173,7 @@ async def dispatch_contract_submit(request: Request, redirect=Depends(_require_a
         shifts=shifts,
         clauses=clauses,
         blob_path=blob_path,
+        pdf_blob_path=pdf_blob_path,
     )
 
     encoded_filename = quote(filename)
@@ -190,4 +200,27 @@ def dispatch_contract_download(submission_id: str, request: Request, redirect=De
         content=content,
         media_type=content_type or "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"},
+    )
+
+
+@router.get("/dispatch-contracts/{submission_id}/preview")
+def dispatch_contract_preview(submission_id: str, request: Request, redirect=Depends(_require_access)):
+    """回傳 PDF 讓瀏覽器用內建的 PDF 檢視器直接顯示（``inline``，不是強制
+    下載）——沒有轉檔成功的紀錄（``pdf_blob_path`` 是空字串）回傳 404，
+    列表頁只會在有 ``pdf_blob_path`` 時才顯示「預覽」連結，見
+    dispatch_contract_home.html。"""
+    if redirect:
+        return redirect
+    record = get_submission(submission_id)
+    if not record or not record.get("pdf_blob_path"):
+        return Response(status_code=404)
+    content, content_type = dispatch_contract_storage.download_file(record["pdf_blob_path"])
+    if content is None:
+        return Response(status_code=404)
+    filename = f"派遣契約_{record.get('client_name', '')}.pdf"
+    encoded_filename = quote(filename)
+    return Response(
+        content=content,
+        media_type=content_type or "application/pdf",
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}"},
     )

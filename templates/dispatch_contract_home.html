@@ -24,6 +24,7 @@
                 <th>工作地址</th>
                 <th>送出人</th>
                 <th>送出時間</th>
+                <th>預覽</th>
                 <th>下載</th>
             </tr>
         </thead>
@@ -34,6 +35,13 @@
                 <td>{{ record.work_address }}</td>
                 <td>{{ record.submitted_by }}</td>
                 <td>{{ record.created_at }}</td>
+                <td>
+                    {% if record.pdf_blob_path %}
+                    <a href="/dispatch-contracts/{{ record.id }}/preview" target="_blank" class="btn btn-small">預覽</a>
+                    {% else %}
+                    <span title="這筆紀錄沒有預覽檔，可能是產生當下 PDF 轉檔失敗，Word 檔案不受影響，仍可正常下載">-</span>
+                    {% endif %}
+                </td>
                 <td>
                     {% if record.blob_path %}
                     <a href="/dispatch-contracts/{{ record.id }}/download" class="btn btn-small">下載</a>

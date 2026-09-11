@@ -2945,17 +2945,44 @@ dispatch_contract_service.py`），GCS 存產生的 Word 檔（
 兩者體驗完全一樣，任何有這個模組權限的帳號都能建立契約、也都看得到
 全部同仁產生過的紀錄（方便同仁互相接手同一個客戶的後續契約）。
 
+**Word 排版預覽**（2026-09-11 新增，使用者明確要求「做法二」——不只列表
+頁看到填了什麼，要能直接看到真正的 Word 排版）：產生契約的同時，額外用
+LibreOffice（`soffice --convert-to pdf`）把 Word 轉成一份 PDF 存進 GCS，
+`/dispatch-contracts` 列表頁每一筆紀錄多一個「預覽」連結，點開用瀏覽器
+內建的 PDF 檢視器直接顯示（`Content-Disposition: inline`，不是強制下載）。
+
+**這一步刻意設計成失敗容錯，且開發階段沒有驗證成功過**：LibreOffice 在
+這次開發用的沙盒環境裡，不管轉什麼檔案都會失敗（錯誤訊息是「source file
+could not be loaded」，實際排查過不是權限或已知的沙盒 socket 限制問題，
+比較像是那個沙盒環境本身的 LibreOffice 安裝有缺陷，已經花時間排查過、
+沒有找到根本解法，判斷跟這裡的程式碼寫法無關）。轉檔函式
+`convert_docx_to_pdf()`（`services/dispatch_contract_service.py`）失敗時
+回傳 `None`，呼叫端就不會存 PDF、列表頁那筆紀錄的「預覽」欄位顯示「－」，
+但 **Word 檔案的產生/下載/存檔完全不受影響**，這件事不會讓整個功能掛掉。
+**上線後請務必實際測試一次「預覽」連結能不能正常顯示排版**——如果不行，
+去 Cloud Run 的 log 找 `[派遣契約 PDF 轉檔失敗]` 開頭的訊息，裡面會有
+實際的失敗原因，屆時再回來看是不是要調整 `Dockerfile` 裡 LibreOffice
+的安裝方式（目前裝的是 `libreoffice-writer` + `fonts-noto-cjk`，用來讓
+PDF 裡的中文正常顯示）。
+
 **上線前要做的事**：
 1. **不需要新的環境變數**（沿用既有的 `DELIVERY_GCS_BUCKET`）。
 2. 到 `/accounts` 幫需要用這個功能的帳號開通「派遣契約產生器」模組權限。
-3. 建議正式上線前先用一份真實客戶的條件實測一次，下載出來的 Word 檔
+3. **正式上線後第一次產生契約時，務必確認「預覽」連結真的能顯示 PDF
+   排版**（見上面「Word 排版預覽」的說明，開發階段沒辦法在本機驗證這一
+   步）。就算預覽失敗，Word 檔案下載也完全不受影響。
+4. 建議正式上線前先用一份真實客戶的條件實測一次，下載出來的 Word 檔
    打開確認排版跟 `${...}` 公式都正常，再開始正式使用。
 
 **測試涵蓋範圍**：延續既有分工——`build_shift_rows()`（純函式，欄位
 勾選/空白列判斷邏輯）、`render_contract_docx()`（會讀本地 assets 檔案跟
 套版，但不碰 Firestore/GCS，歸類為可以直接測的部分，涵蓋系統公式不被
-動到、變動欄位有正確代入、班別列數正確、條文段落預設值/覆寫）都有完整
-單元測試；路由層測試未登入導向、表單驗證錯誤訊息、成功送出時呼叫順序
-跟下載檔頭（mock 掉 Firestore/GCS）。真正的 Firestore/GCS 讀寫、以及
-產出的 Word 檔案在真正的 Microsoft Word 裡打開排版是否正常，留給
-有憑證的環境／使用者實測。
+動到、變動欄位有正確代入、班別列數正確、條文段落預設值/覆寫）、
+`convert_docx_to_pdf()`（mock 掉 `subprocess.run`，因為真正的 `soffice`
+在開發/CI 環境不一定裝得起來或能正常運作，涵蓋轉檔成功、逾時、找不到
+執行檔、輸出檔案不存在這幾種失敗容錯路徑）都有完整單元測試；路由層
+測試未登入導向、表單驗證錯誤訊息、成功送出時呼叫順序跟下載檔頭、PDF
+轉檔成功/失敗時 `pdf_blob_path` 有沒有正確存檔、預覽路由的 404/inline
+內容（mock 掉 Firestore/GCS/LibreOffice）。真正的 Firestore/GCS 讀寫、
+LibreOffice 轉檔在正式環境是否真的成功、以及產出的 Word 檔案在真正的
+Microsoft Word 裡打開排版是否正常，留給有憑證的環境／使用者實測。

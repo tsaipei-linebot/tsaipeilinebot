@@ -47,6 +47,14 @@ def upload_contract_docx(content: bytes, filename: str) -> str:
     return blob_path
 
 
+def upload_contract_pdf(content: bytes, filename: str) -> str:
+    """上傳契約 Word 檔轉出的 PDF（給列表頁內嵌預覽用），回傳 blob path。"""
+    blob_path = f"dispatch_contracts/{uuid.uuid4().hex}/{filename}"
+    blob = _bucket().blob(blob_path)
+    blob.upload_from_string(content, content_type="application/pdf")
+    return blob_path
+
+
 def download_file(blob_path: str):
     """回傳 (bytes, content_type)；檔案不存在時回傳 (None, None)。"""
     if not blob_path.startswith("dispatch_contracts/"):

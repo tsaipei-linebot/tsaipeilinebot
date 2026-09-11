@@ -43,6 +43,11 @@ class DispatchContractRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/dispatch-contracts")
 
+    def test_preview_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/dispatch-contracts/abc123/preview", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/dispatch-contracts")
+
 
 class RequireAccessDependencyTests(unittest.TestCase):
     """dispatch_contract_routes._require_access() 是 /dispatch-contracts 的
@@ -191,6 +196,85 @@ class SubmitValidationTests(unittest.TestCase):
         mock_save.assert_called_once()
         self.assertEqual(result.body, fake_bytes)
         self.assertIn("attachment", result.headers["content-disposition"])
+        self.assertIn("pchome", result.headers["content-disposition"])
+
+    def _minimal_form(self):
+        return self._multidict([
+            ("client_name", "pchome"), ("work_address", "台北市"), ("work_content", "收銀"),
+            ("enabled_columns", "title"), ("shift_title", "日班"),
+            ("clause_leave_policy", ""), ("clause_overtime_allowance_note", ""),
+            ("clause_dress_deposit_note", ""), ("clause_benefits_note", ""), ("clause_onboarding_note", ""),
+        ])
+
+    def test_pdf_conversion_success_is_uploaded_and_saved(self):
+        """儲存空間有設定、PDF 轉檔成功時，pdf_blob_path 要真的傳給
+        save_submission——列表頁靠這個欄位決定要不要顯示「預覽」連結。"""
+        with mock.patch.object(dispatch_contract_routes, "render_contract_docx", return_value=b"DOCX"):
+            with mock.patch.object(dispatch_contract_routes, "convert_docx_to_pdf", return_value=b"PDF") as mock_convert:
+                with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
+                    with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "is_configured", return_value=True):
+                        with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_docx", return_value="dispatch_contracts/x/a.docx"):
+                            with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_pdf", return_value="dispatch_contracts/x/a.pdf") as mock_upload_pdf:
+                                asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                    self._FakeRequest(self._account(), self._minimal_form()), redirect=None,
+                                ))
+        mock_convert.assert_called_once_with(b"DOCX")
+        mock_upload_pdf.assert_called_once()
+        self.assertEqual(mock_save.call_args.kwargs["pdf_blob_path"], "dispatch_contracts/x/a.pdf")
+
+    def test_pdf_conversion_failure_saves_without_pdf(self):
+        """PDF 轉檔失敗（convert_docx_to_pdf 回傳 None）時，不上傳、不當機，
+        pdf_blob_path 存空字串——Word 檔案跟紀錄本身完全不受影響。"""
+        with mock.patch.object(dispatch_contract_routes, "render_contract_docx", return_value=b"DOCX"):
+            with mock.patch.object(dispatch_contract_routes, "convert_docx_to_pdf", return_value=None):
+                with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
+                    with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "is_configured", return_value=True):
+                        with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_docx", return_value="dispatch_contracts/x/a.docx"):
+                            with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_pdf") as mock_upload_pdf:
+                                result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                    self._FakeRequest(self._account(), self._minimal_form()), redirect=None,
+                                ))
+        mock_upload_pdf.assert_not_called()
+        self.assertEqual(mock_save.call_args.kwargs["pdf_blob_path"], "")
+        self.assertEqual(result.body, b"DOCX")
+
+
+class PreviewRouteTests(unittest.TestCase):
+    """dispatch_contract_preview()：沒有 pdf_blob_path 的紀錄回 404，有的話
+    用 inline Content-Disposition 回傳 PDF 內容，讓瀏覽器直接顯示。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = PreviewRouteTests._FakeSession({"user": user})
+
+    def test_no_pdf_blob_path_returns_404(self):
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value={"id": "x", "pdf_blob_path": ""}):
+            result = dispatch_contract_routes.dispatch_contract_preview(
+                "x", self._FakeRequest({"username": "bob"}), redirect=None,
+            )
+        self.assertEqual(result.status_code, 404)
+
+    def test_missing_record_returns_404(self):
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=None):
+            result = dispatch_contract_routes.dispatch_contract_preview(
+                "x", self._FakeRequest({"username": "bob"}), redirect=None,
+            )
+        self.assertEqual(result.status_code, 404)
+
+    def test_existing_pdf_returns_inline_content(self):
+        record = {"id": "x", "client_name": "pchome", "pdf_blob_path": "dispatch_contracts/x/a.pdf"}
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "download_file",
+                                    return_value=(b"%PDF-DATA", "application/pdf")):
+                result = dispatch_contract_routes.dispatch_contract_preview(
+                    "x", self._FakeRequest({"username": "bob"}), redirect=None,
+                )
+        self.assertEqual(result.body, b"%PDF-DATA")
+        self.assertIn("inline", result.headers["content-disposition"])
         self.assertIn("pchome", result.headers["content-disposition"])
 
 

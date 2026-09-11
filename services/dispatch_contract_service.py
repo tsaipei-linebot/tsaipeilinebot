@@ -30,9 +30,26 @@ template 存在 ``assets/dispatch_contracts/master_template.docx``，是拿
 條文段落」這個原本混雜排版的區塊，改成上下堆疊的清楚版面（原本是同一列
 裡班別跟條文說明用合併儲存格交錯排在一起，沒辦法在「班別列數會變動」的
 前提下安全維持，所以刻意重新排版，文字內容不變）。
+
+**Word 排版預覽（2026-09-11 新增）**：產生 Word 檔的同時，另外用
+LibreOffice（``soffice --convert-to pdf``，見 ``convert_docx_to_pdf()``）
+轉一份 PDF 存起來，讓 `/dispatch-contracts` 列表頁可以直接內嵌預覽真正的
+排版，不用下載就能看。**這一步刻意設計成失敗容錯**：轉檔需要 Cloud Run
+的容器裡裝有 LibreOffice（見專案根目錄 `Dockerfile`），如果轉檔失敗（逾時、
+找不到 ``soffice``、輸出檔案不存在等任何原因），``convert_docx_to_pdf()``
+回傳 ``None``，呼叫端（`dispatch_contract_routes.py`）不會讓整個送出流程
+失敗，只是那一筆紀錄沒有 PDF、看不到預覽，Word 檔案照樣正常產生/下載/
+存檔。開發階段沒有在本機的沙盒環境驗證過這個轉檔步驟一定能成功（沙盒
+環境本身的 LibreOffice 安裝有問題，跟這裡的程式碼無關），**上線後第一次
+真的產生契約時，要麻煩使用者確認一下列表頁看不看得到預覽**，如果看不到、
+但 Word 檔案下載正常，去 Cloud Run 的 log 找
+`[派遣契約 PDF 轉檔失敗]` 開頭的訊息，會有實際的失敗原因。
 """
 import io
 import os
+import subprocess
+import tempfile
+import uuid
 from datetime import datetime, timezone
 
 from docxtpl import DocxTemplate
@@ -148,8 +165,44 @@ def render_contract_docx(*, work_address: str, work_content: str, pay_cycle: str
     return buffer.getvalue()
 
 
+def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
+    """把 Word 檔內容轉成 PDF（給列表頁內嵌預覽用），失敗回傳 ``None``
+    （逾時、找不到 ``soffice``、輸出檔案不存在都算失敗），呼叫端不應該讓
+    這一步的失敗擋住整個契約產生流程——見本檔案開頭「Word 排版預覽」的
+    說明。每次呼叫都用一個全新的暫存目錄當 LibreOffice 的
+    ``UserInstallation``（``-env:UserInstallation``），避免多個請求同時
+    轉檔時搶用同一份使用者設定檔互相卡住。"""
+    with tempfile.TemporaryDirectory(prefix="dispatch_contract_pdf_") as tmpdir:
+        docx_path = os.path.join(tmpdir, "input.docx")
+        with open(docx_path, "wb") as f:
+            f.write(docx_bytes)
+        profile_dir = os.path.join(tmpdir, f"lo_profile_{uuid.uuid4().hex}")
+        try:
+            subprocess.run(
+                [
+                    "soffice", "--headless", "--norestore",
+                    f"-env:UserInstallation=file://{profile_dir}",
+                    "--convert-to", "pdf", "--outdir", tmpdir, docx_path,
+                ],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError) as err:
+            print(f"[派遣契約 PDF 轉檔失敗] {err}")
+            return None
+
+        pdf_path = os.path.join(tmpdir, "input.pdf")
+        if not os.path.exists(pdf_path):
+            print("[派遣契約 PDF 轉檔失敗] LibreOffice 執行完成但找不到輸出的 PDF 檔案")
+            return None
+        with open(pdf_path, "rb") as f:
+            return f.read()
+
+
 def save_submission(*, submitted_by: str, client_name: str, work_address: str, work_content: str,
-                     pay_cycle: str, enabled_columns: list, shifts: list, clauses: dict, blob_path: str) -> dict:
+                     pay_cycle: str, enabled_columns: list, shifts: list, clauses: dict, blob_path: str,
+                     pdf_blob_path: str = "") -> dict:
     data = {
         "submitted_by": submitted_by,
         "client_name": client_name,
@@ -160,6 +213,7 @@ def save_submission(*, submitted_by: str, client_name: str, work_address: str, w
         "shifts": shifts,
         "clauses": clauses,
         "blob_path": blob_path,
+        "pdf_blob_path": pdf_blob_path,
         "created_at": datetime.now(timezone.utc),
     }
     doc_ref = contracts_ref().document()
