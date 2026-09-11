@@ -32,8 +32,8 @@ async def sick_leave_submit(
     vendor: str = Form(...),
     personnel_name: str = Form(...),
     leave_type: str = Form(""),
-    start_date: str = Form(...),
-    end_date: str = Form(...),
+    leave_date: str = Form(...),
+    hours: str = Form(...),
     reason: str = Form(""),
     receipt: UploadFile = File(None),
     redirect=Depends(login_required),
@@ -45,28 +45,35 @@ async def sick_leave_submit(
     if leave_type not in LEAVE_TYPE_MAP:
         leave_type = ""
 
+    def _error_response(error: str):
+        return templates.TemplateResponse(
+            request,
+            "sick_leave_form.html",
+            {
+                "user": user,
+                "vendors": VENDORS,
+                "leave_types": LEAVE_TYPES,
+                "today": today,
+                "error": error,
+            },
+            status_code=400,
+        )
+
+    try:
+        hours_value = float(hours)
+        if hours_value <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return _error_response("請輸入正確的時數（大於 0 的數字，可以有小數）")
+
     receipt_path = ""
     if receipt is not None and receipt.filename:
         content = await receipt.read()
         content_type = receipt.content_type or "application/octet-stream"
-        error = None
         if len(content) > MAX_UPLOAD_BYTES:
-            error = "檔案超過 10MB 上限"
-        elif content_type not in ALLOWED_UPLOAD_CONTENT_TYPES:
-            error = "檔案格式不支援，請上傳 JPG/PNG/PDF"
-        if error:
-            return templates.TemplateResponse(
-                request,
-                "sick_leave_form.html",
-                {
-                    "user": user,
-                    "vendors": VENDORS,
-                    "leave_types": LEAVE_TYPES,
-                    "today": today,
-                    "error": error,
-                },
-                status_code=400,
-            )
+            return _error_response("檔案超過 10MB 上限")
+        if content_type not in ALLOWED_UPLOAD_CONTENT_TYPES:
+            return _error_response("檔案格式不支援，請上傳 JPG/PNG/PDF")
         try:
             receipt_path = upload_file(
                 "sick-leave-receipts", user["username"], receipt.filename, content, content_type
@@ -79,8 +86,8 @@ async def sick_leave_submit(
         personnel_name=personnel_name,
         vendor=vendor,
         leave_type=leave_type,
-        start_date=start_date,
-        end_date=end_date,
+        leave_date=leave_date,
+        hours=hours_value,
         reason=reason,
         receipt_file_path=receipt_path,
         created_by=user["username"],
@@ -103,6 +110,24 @@ def sick_leave_records(
     records = repository.list_sick_leaves(
         name_keyword=name, vendor_filter=vendor, month_filter=month, leave_type_filter=leave_type
     )
+
+    # 年度假別累積總表：只有同時篩了「姓名」+「廠商」才能明確對應到唯一
+    # 一位人員（假別登記本身沒有存 personnel_id，見 repository.py 假別
+    # 登記那節開頭的說明），不然沒辦法知道要幫誰算累積。
+    quota_summary = None
+    quota_person_name = ""
+    clean_name = name.strip()
+    if clean_name and vendor:
+        person = repository.find_personnel_by_name_vendor(vendor, clean_name)
+        if person:
+            hire_date = repository._parse_date(person.get("hire_date"))
+            person_records = [
+                r for r in repository.list_sick_leaves(vendor_filter=vendor)
+                if r.get("personnel_name") == person["name"]
+            ]
+            quota_summary = repository.leave_quota_summary_for_person(person_records, hire_date)
+            quota_person_name = person["name"]
+
     return templates.TemplateResponse(
         request,
         "sick_leave_records.html",
@@ -116,6 +141,8 @@ def sick_leave_records(
             "filter_vendor": vendor,
             "filter_month": month,
             "filter_leave_type": leave_type,
+            "quota_summary": quota_summary,
+            "quota_person_name": quota_person_name,
         },
     )
 

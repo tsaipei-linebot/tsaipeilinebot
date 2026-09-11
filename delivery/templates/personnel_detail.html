@@ -44,6 +44,10 @@
             </select>
         </label>
         {% endif %}
+        <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+            到職日期
+            <input type="date" name="hire_date" value="{{ person.hire_date or '' }}">
+        </label>
     </div>
 
     <button type="submit" class="btn btn-primary btn-bulk-update">一鍵全部更新</button>

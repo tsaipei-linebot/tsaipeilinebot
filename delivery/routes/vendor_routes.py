@@ -195,6 +195,9 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
     if "email" in form:
         repository.update_personnel_email(personnel_id, (form.get("email") or "").strip())
 
+    if "hire_date" in form:
+        repository.update_personnel_hire_date(personnel_id, (form.get("hire_date") or "").strip())
+
     doc_types = repository.applicable_doc_types(
         person.get("vendor"), person.get("cooperation_type"), person.get("client")
     )
