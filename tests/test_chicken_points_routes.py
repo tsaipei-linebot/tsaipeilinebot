@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -112,6 +113,64 @@ class RoleBasedRecordVisibilityTests(unittest.TestCase):
                     chicken_points_routes.chicken_points_home(self._FakeRequest(account), redirect=None)
         mock_all.assert_called_once()
         mock_by_user.assert_not_called()
+
+
+class DepartmentAutoFillTests(unittest.TestCase):
+    """2026-09-11 使用者要求：申請部門直接沿用帳號資料的 department 欄位，
+    不再讓同仁自己選。這裡驗證兩條規則：帳號沒設定部門時擋下、給清楚
+    提示；帳號有部門時，送出的資料直接採用帳號的部門，不是表單另外傳的
+    值（新版路由已經不再收 department 這個表單欄位）。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = DepartmentAutoFillTests._FakeSession({"user": user})
+
+    def test_new_form_shows_missing_department_message(self):
+        account = {"username": "bob", "name": "Bob", "department": "", "modules": {"chicken_points": "staff"}, "is_platform_admin": False}
+        with mock.patch.object(chicken_points_routes, "templates") as mock_templates:
+            chicken_points_routes.chicken_points_new_form(self._FakeRequest(account), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["error"], chicken_points_routes._MISSING_DEPARTMENT_MESSAGE)
+
+    def test_new_form_no_error_when_department_set(self):
+        account = {"username": "bob", "name": "Bob", "department": "桃園所", "modules": {"chicken_points": "staff"}, "is_platform_admin": False}
+        with mock.patch.object(chicken_points_routes, "templates") as mock_templates:
+            chicken_points_routes.chicken_points_new_form(self._FakeRequest(account), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["error"], "")
+
+    def test_submit_blocks_when_account_has_no_department(self):
+        account = {"username": "bob", "name": "Bob", "department": "", "modules": {"chicken_points": "staff"}, "is_platform_admin": False}
+        with mock.patch.object(chicken_points_routes, "templates") as mock_templates:
+            with mock.patch.object(chicken_points_routes, "save_request") as mock_save:
+                asyncio.run(chicken_points_routes.chicken_points_submit(
+                    self._FakeRequest(account),
+                    purchase_month="2026-08",
+                    points="5000",
+                    signed_image="data:image/png;base64,AAAA",
+                    redirect=None,
+                ))
+        mock_save.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["error"], chicken_points_routes._MISSING_DEPARTMENT_MESSAGE)
+
+    def test_submit_uses_account_department(self):
+        account = {"username": "bob", "name": "Bob", "department": "桃園所", "modules": {"chicken_points": "staff"}, "is_platform_admin": False}
+        with mock.patch.object(chicken_points_routes, "save_request") as mock_save:
+            result = asyncio.run(chicken_points_routes.chicken_points_submit(
+                self._FakeRequest(account),
+                purchase_month="2026-08",
+                points="5000",
+                signed_image="data:image/png;base64,AAAA",
+                redirect=None,
+            ))
+        mock_save.assert_called_once()
+        self.assertEqual(mock_save.call_args.kwargs["department"], "桃園所")
+        self.assertEqual(result.status_code, 303)
 
 
 if __name__ == "__main__":

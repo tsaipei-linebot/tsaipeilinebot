@@ -11,17 +11,13 @@
 <p class="error">{{ error }}</p>
 {% endif %}
 
+{% if user.department %}
 <form method="post" action="/chicken-points/new" id="chicken-points-form" class="form-stack">
     <div class="repayment-section">
         <div class="repayment-section-title">小雞點數自費申請單</div>
         <div class="repayment-basic-grid">
-            <label><span class="field-caption">申請部門 *</span>
-                <select name="department" id="cp-department" required>
-                    <option value="" {% if not form.department %}selected{% endif %}>請選擇申請部門...</option>
-                    {% for opt in department_options %}
-                    <option value="{{ opt }}" {% if form.department == opt %}selected{% endif %}>{{ opt }}</option>
-                    {% endfor %}
-                </select>
+            <label><span class="field-caption">申請部門 *（帶入您帳號設定的部門，鎖定不可更改）</span>
+                <div class="applicant-readonly" id="cp-department">{{ user.department }}</div>
             </label>
             <label><span class="field-caption">申請同仁 *（目前登入者，鎖定不可更改）</span>
                 <div class="applicant-readonly">{{ user.name }}</div>
@@ -50,14 +46,13 @@
 
     <button type="submit" class="btn btn-primary btn-block" id="cp-submit-btn">送出申請</button>
 </form>
-<p class="back-link"><a href="/chicken-points">&larr; 回申請紀錄列表</a></p>
 
 <script>
 (function () {
     var POINT_RATE = {{ point_rate }};
     var APPLICANT_NAME = {{ user.name | tojson }};
 
-    var deptSelect = document.getElementById('cp-department');
+    var departmentValue = document.getElementById('cp-department').textContent.trim();
     var monthInput = document.getElementById('cp-month');
     var pointsInput = document.getElementById('cp-points');
     var amountPreview = document.getElementById('cp-amount-preview');
@@ -162,7 +157,7 @@
         ctx.font = '22px ' + FONT_STACK;
         var todayStr = new Date().toISOString().slice(0, 10);
         var lines = [
-            ['申請部門', deptSelect.value],
+            ['申請部門', departmentValue],
             ['申請同仁', APPLICANT_NAME],
             ['購買月份', monthInput.value],
             ['點數', pointsInput.value + ' 點'],
@@ -196,7 +191,7 @@
             alert('請先在方框內簽名，才能送出。');
             return;
         }
-        if (!deptSelect.value || !monthInput.value || !pointsInput.value) {
+        if (!monthInput.value || !pointsInput.value) {
             // 交給瀏覽器原生 required 檢查去擋，這裡不用重複跳提示。
             return;
         }
@@ -206,4 +201,6 @@
     });
 })();
 </script>
+{% endif %}
+<p class="back-link"><a href="/chicken-points">&larr; 回申請紀錄列表</a></p>
 {% endblock %}

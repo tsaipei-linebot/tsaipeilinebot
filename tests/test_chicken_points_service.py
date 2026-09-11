@@ -97,10 +97,5 @@ class ListRequestsTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in result], ["d2", "d1"])
 
 
-class DepartmentOptionsTests(unittest.TestCase):
-    def test_department_options_not_empty(self):
-        self.assertTrue(len(cp_service.DEPARTMENT_OPTIONS) > 0)
-
-
 if __name__ == "__main__":
     unittest.main()
