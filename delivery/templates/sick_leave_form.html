@@ -21,11 +21,11 @@
             {% endfor %}
         </select>
     </label>
-    <label>開始日期
-        <input type="date" name="start_date" value="{{ today }}" required>
+    <label>申請日期
+        <input type="date" name="leave_date" value="{{ today }}" required>
     </label>
-    <label>結束日期
-        <input type="date" name="end_date" value="{{ today }}" required>
+    <label>申請時數
+        <input type="number" name="hours" step="0.5" min="0.5" placeholder="例如：8" required>
     </label>
     <label>原因說明
         <textarea name="reason" rows="3"></textarea>

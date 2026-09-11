@@ -183,14 +183,59 @@ APPLICANT_STATUSES = [
 APPLICANT_STATUS_MAP = {s["code"]: s["name"] for s in APPLICANT_STATUSES}
 SELECTABLE_APPLICANT_STATUSES = [s for s in APPLICANT_STATUSES if s["code"] != "hired"]
 
-# 假別登記的假別種類。
+# ==========================================
+# 假別登記
+# 2026-09-11 依勞基法擴充：原本只有病假/事假/特休/其他四種，且只記錄
+# 起訖日期、沒有時數／額度概念。這次改成「一天一筆、記時數」，並且加上
+# 法定額度自動試算＋90% 提醒，詳見 repository.py「假別額度計算」那一節
+# 的說明。
+#
+# 每一項的欄位：
+#   - quota_basis：額度怎麼算週期。
+#       "calendar"：曆年制（每年 1/1~12/31 重新歸零）。
+#       "anniversary"：到職週年制（只有特休用，週期是「到職日~隔年到職日
+#         前一天」，依到職週年往後推）。
+#       None：沒有固定額度（公假、其他、育嬰留職停薪），不算累積、不會
+#         被 90% 提醒掃到。
+#   - quota_days：法定年度上限天數。特休是 None（依年資查
+#     ANNUAL_LEAVE_TIERS 表，不是固定數字），quota_basis 是 None 的假別
+#     也是 None（代表沒有上限）。
+#   - shares_quota_with：這個假別的用量要「額外」算進另一個假別的額度
+#     消耗裡（目前只有家庭照顧假——本身上限 7 天，同時法規規定這 7 天要
+#     算在事假 14 天的額度裡）。見 repository._quota_pool_codes()。
 LEAVE_TYPES = [
-    {"code": "sick", "name": "病假"},
-    {"code": "personal", "name": "事假"},
-    {"code": "annual", "name": "特休"},
-    {"code": "other", "name": "其他"},
+    {"code": "annual", "name": "特休", "quota_basis": "anniversary", "quota_days": None},
+    {"code": "personal", "name": "事假", "quota_basis": "calendar", "quota_days": 14},
+    {"code": "sick", "name": "病假", "quota_basis": "calendar", "quota_days": 30},
+    {"code": "marriage", "name": "婚假", "quota_basis": "calendar", "quota_days": 8},
+    {"code": "funeral", "name": "喪假", "quota_basis": "calendar", "quota_days": 8},
+    {"code": "menstrual", "name": "生理假", "quota_basis": "calendar", "quota_days": 3},
+    {"code": "family_care", "name": "家庭照顧假", "quota_basis": "calendar", "quota_days": 7, "shares_quota_with": "personal"},
+    {"code": "official", "name": "公假", "quota_basis": None, "quota_days": None},
+    {"code": "maternity", "name": "產假", "quota_basis": "calendar", "quota_days": 56},
+    {"code": "prenatal_checkup", "name": "產檢假", "quota_basis": "calendar", "quota_days": 7},
+    {"code": "paternity", "name": "陪產（檢）假", "quota_basis": "calendar", "quota_days": 7},
+    {"code": "parental_unpaid", "name": "育嬰留職停薪", "quota_basis": None, "quota_days": None},
+    {"code": "other", "name": "其他", "quota_basis": None, "quota_days": None},
 ]
 LEAVE_TYPE_MAP = {t["code"]: t["name"] for t in LEAVE_TYPES}
+LEAVE_TYPE_LOOKUP = {t["code"]: t for t in LEAVE_TYPES}
+
+# 特休依到職年資的級距（勞基法第38條）：
+#   未滿半年 0 天／半年以上未滿1年 3天／1年以上未滿2年 7天／
+#   2年以上未滿3年 10天／3年以上未滿5年每年14天／5年以上未滿10年每年15天／
+#   10年以上每滿1年加1天，最高30天。
+# 實際的分級判斷寫在 repository.compute_annual_leave_days()（純函式，方便
+# 單元測試），這裡只記錄法條依據，不是真的查表用的資料結構。
+ANNUAL_LEAVE_MAX_DAYS = 30
+
+# 一天正常工時（時數／天數互相換算用，例如查詢頁面顯示「已用 24 小時
+# ≈ 3 天」）。
+WORKDAY_HOURS = 8
+
+# 年度假別額度用到 90% 時觸發 LINE 提醒的門檻。使用者要求達到門檻後
+# 「每次都要提醒」，不像文件到期提醒有「幾天內提醒過就不重複」的機制。
+LEAVE_QUOTA_ALERT_RATIO = 0.9
 
 # 應徵名單的廠商/合作方式：跟人員的 vendor/cooperation_type 是同一套代碼，
 # 沿用 VENDOR_MAP / COOPERATION_TYPE_MAP。應徵階段沒表單欄位可以填廠商，

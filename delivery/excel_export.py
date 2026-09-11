@@ -39,11 +39,11 @@ def build_repayment_workbook(records: list) -> bytes:
 
 
 def build_sick_leave_workbook(records: list) -> bytes:
-    header = ["開始日期", "結束日期", "假別", "廠商", "人員", "原因", "核准狀態"]
+    header = ["申請日期", "時數", "假別", "廠商", "人員", "原因", "核准狀態"]
     rows = [
         [
-            r.get("start_date", ""),
-            r.get("end_date", ""),
+            r.get("leave_date") or f"{r.get('start_date', '')} ~ {r.get('end_date', '')}",
+            r.get("hours", ""),
             LEAVE_TYPE_MAP.get(r.get("leave_type"), r.get("leave_type") or ""),
             VENDOR_MAP.get(r.get("vendor"), r.get("vendor")),
             r.get("personnel_name", ""),
