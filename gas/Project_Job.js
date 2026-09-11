@@ -1038,10 +1038,18 @@ const NotionService = {
   updateJobPage: function(pageId, fields, reviewStatus, jobStatus) {
     const url = `https://api.notion.com/v1/pages/${pageId}`;
     const properties = this.buildNotionProperties(fields, reviewStatus, jobStatus);
-    
+
     const response = this._fetchWithFallback(url, 'patch', { properties: properties });
-    
-    return JSON.parse(response.getContentText());
+
+    const json = JSON.parse(response.getContentText());
+    if (json.id) {
+      return json;
+    } else {
+      // 比照 createJobPage 既有的檢查方式：Notion 沒有真的寫入成功就丟出例外，
+      // 讓呼叫端（processJobSubmission）中斷、不要再照樣回報「已送出審核」的假成功訊息
+      console.error('Notion Page 更新失敗:', response.getContentText());
+      throw new Error('Notion Page 更新失敗: ' + JSON.stringify(json));
+    }
   },
   
   updateJobPageReviewStatus: function(pageId, reviewStatus, jobStatus, approveDate) {
