@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}派遣契約產生器 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">派遣契約產生器</h1>
+<p class="hint">
+    填寫這次客戶的派遣條件，送出後會自動套進公司固定的派遣契約範本，產生 Word 檔給你下載，
+    同時系統會存一份紀錄，之後可以到「歷史紀錄」重新下載。契約裡「公司/客戶/員工」相關的欄位
+    （由簽署系統自動讀取）不用在這裡填。
+</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/dispatch-contracts/new" id="dispatch-contract-form" class="form-stack">
+    <div class="repayment-section">
+        <div class="repayment-section-title">一、客戶與工作內容</div>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">客戶名稱 *</span>
+                <input type="text" name="client_name" list="client-names-datalist"
+                       value="{{ form.client_name or '' }}" placeholder="如：pchome" required>
+                <datalist id="client-names-datalist">
+                    {% for name in recent_client_names %}
+                    <option value="{{ name }}">
+                    {% endfor %}
+                </datalist>
+            </label>
+            <label><span class="field-caption">工作地址 *</span>
+                <input type="text" name="work_address" value="{{ form.work_address or '' }}"
+                       placeholder="如：台北市內湖區瑞光路588號或公司指定之地點" required>
+            </label>
+            <label><span class="field-caption">工作內容 *</span>
+                <input type="text" name="work_content" value="{{ form.work_content or '' }}"
+                       placeholder="如：收銀結帳／出餐／內用外帶服務等" required>
+            </label>
+            <label><span class="field-caption">結薪週期</span>
+                <input type="text" name="pay_cycle" value="{{ form.pay_cycle or '' }}"
+                       placeholder="如：每月1號至月底">
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">二、班別薪資表格</div>
+        <p class="hint">先勾選這次契約要用到的欄位，沒勾選的欄位在產出的 Word 表格裡會顯示「－」。</p>
+        <div class="shift-column-toggles">
+            {% for col in shift_columns %}
+            <label class="shift-column-toggle">
+                <input type="checkbox" name="enabled_columns" value="{{ col.code }}"
+                       {% if (not form.enabled_columns) or col.code in form.enabled_columns %}checked{% endif %}>
+                {{ col.label }}
+            </label>
+            {% endfor %}
+        </div>
+        <div class="table-scroll">
+            <table class="data-table" id="shift-rows-table">
+                <thead>
+                    <tr>
+                        {% for col in shift_columns %}<th>{{ col.label }}</th>{% endfor %}
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="shift-rows-tbody">
+                    {% for row in shift_rows %}
+                    <tr class="shift-row">
+                        <td><input type="text" name="shift_title" value="{{ row.title or '' }}"></td>
+                        <td><input type="text" name="shift_hours" value="{{ row.hours or '' }}"></td>
+                        <td><input type="text" name="shift_wage" value="{{ row.wage or '' }}"></td>
+                        <td><input type="text" name="shift_bonus" value="{{ row.bonus or '' }}"></td>
+                        <td><input type="text" name="shift_overtime" value="{{ row.overtime or '' }}"></td>
+                        <td><button type="button" class="btn btn-danger btn-small shift-row-remove">移除</button></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <button type="button" class="btn btn-small" id="shift-row-add">+ 新增一列班別</button>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">三、條文段落（已有預設標準文字，可依這次客戶需求修改）</div>
+        {% for key in clause_order %}
+        <label class="clause-field">
+            <span class="field-caption">{{ clause_labels[key] }}</span>
+            <textarea name="clause_{{ key }}" rows="4">{{ (form.clauses[key] if form.clauses and form.clauses[key] is defined else clause_defaults[key]) }}</textarea>
+        </label>
+        {% endfor %}
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block" id="dispatch-contract-submit-btn">產生 Word 契約並下載</button>
+</form>
+<p class="back-link"><a href="/dispatch-contracts">&larr; 回派遣契約歷史紀錄</a></p>
+
+<script>
+(function () {
+    var COLUMNS = ['title', 'hours', 'wage', 'bonus', 'overtime'];
+
+    function addShiftRow() {
+        var tbody = document.getElementById('shift-rows-tbody');
+        var tr = document.createElement('tr');
+        tr.className = 'shift-row';
+        var cellsHtml = '';
+        ['shift_title', 'shift_hours', 'shift_wage', 'shift_bonus', 'shift_overtime'].forEach(function (name) {
+            cellsHtml += '<td><input type="text" name="' + name + '"></td>';
+        });
+        cellsHtml += '<td><button type="button" class="btn btn-danger btn-small shift-row-remove">移除</button></td>';
+        tr.innerHTML = cellsHtml;
+        tbody.appendChild(tr);
+    }
+
+    document.getElementById('shift-row-add').addEventListener('click', addShiftRow);
+
+    document.getElementById('shift-rows-tbody').addEventListener('click', function (e) {
+        if (e.target.classList.contains('shift-row-remove')) {
+            var tbody = document.getElementById('shift-rows-tbody');
+            if (tbody.querySelectorAll('tr').length <= 1) {
+                alert('至少要留一列班別。');
+                return;
+            }
+            e.target.closest('tr').remove();
+        }
+    });
+
+    document.getElementById('dispatch-contract-form').addEventListener('submit', function () {
+        var btn = document.getElementById('dispatch-contract-submit-btn');
+        btn.disabled = true;
+        btn.textContent = '產生中，請稍候…';
+    });
+})();
+</script>
+{% endblock %}

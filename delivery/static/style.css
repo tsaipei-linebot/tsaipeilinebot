@@ -778,3 +778,27 @@ body {
 }
 tr[draggable="true"] { cursor: grab; }
 tr[draggable="true"].dragging { opacity: 0.4; background: var(--brand-bg); }
+
+/* 派遣契約產生器（/dispatch-contracts）：班別薪資表格欄位勾選、可編輯
+   表格列的輸入框寬度，其餘沿用 .data-table／.form-stack 既有樣式。 */
+.shift-column-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin: 8px 0 16px;
+}
+.shift-column-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+}
+#shift-rows-table input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font: inherit;
+}
+.clause-field { margin-bottom: 16px; }
