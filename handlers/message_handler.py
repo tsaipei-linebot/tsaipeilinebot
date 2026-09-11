@@ -29,7 +29,7 @@ from services.matcher_service import (
     job_matches_category_filter, has_negative_intent, extract_numeric_salary_preference,
     detect_negated_location, detect_negated_category, has_recognizable_category_or_brand_keyword,
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match,
-    find_county_level_alternative_jobs, LOCATION_TO_COUNTY
+    find_county_level_alternative_jobs, LOCATION_TO_COUNTY, find_same_county_district_labels
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -600,10 +600,21 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             county_alt_jobs = find_county_level_alternative_jobs(_category_matched_jobs_for_fallback, current_location)
             if county_alt_jobs:
                 county_name = LOCATION_TO_COUNTY.get(current_location, "")
-                fallback_reply_text = (
-                    f"「{current_location}」目前沒有明確列出的{_category_desc_for_fallback}職缺，"
-                    f"不過同樣在{county_name}還有相關職缺，要不要參考看看呢？😊"
-                )
+                # 能拆出具體同縣市行政區名稱時，直接列出來讓求職者知道確切
+                # 有哪些地區可選（使用者要求這裡不設數量上限）；拆不出來時
+                # （例如職缺沒有結構化的「行政區」欄位）退回原本的空泛說法，
+                # 不能因為列不出清單就不回覆。
+                district_labels = find_same_county_district_labels(county_alt_jobs, current_location)
+                if district_labels:
+                    fallback_reply_text = (
+                        f"「{current_location}」目前沒有明確列出的{_category_desc_for_fallback}職缺，"
+                        f"不過{county_name}的{'、'.join(district_labels)}有相關職缺，要不要參考看看呢？😊"
+                    )
+                else:
+                    fallback_reply_text = (
+                        f"「{current_location}」目前沒有明確列出的{_category_desc_for_fallback}職缺，"
+                        f"不過同樣在{county_name}還有相關職缺，要不要參考看看呢？😊"
+                    )
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", fallback_reply_text)
                 target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text), create_job_flex_card(county_alt_jobs[:4], user_id, "")])

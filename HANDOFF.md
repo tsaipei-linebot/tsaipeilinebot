@@ -295,6 +295,11 @@
     - **新增測試**：`tests/test_message_handler.py` 新增 `test_ai_prompt_forbids_claiming_vague_aggregate_covers_specific_district`（驗證提示詞裡有明講概括描述不能當作確認依據、特色欄位不能拿來當判斷依據）、`test_ai_prompt_forbids_self_contradiction_on_previously_ruled_out_district`（驗證提示詞裡有「絕對不能自我矛盾」規則，且【過去對話】確實把先前那句「沒有明確列出」的誠實回覆帶給 AI 看）。
     - **順便修正一個因為新規則文字本身用詞導致的既有測試誤判**：`test_ai_prompt_location_reflects_specific_district_for_broad_coverage_job` 原本檢查「整份提示詞裡完全不出現『自選區域』」，但這次新增的規則說明文字本身就會提到這個詞當範例，導致這個檢查即使資料本身完全正確也會誤判失敗——改成只檢查該筆職缺自己那一行「地點:」欄位的內容有沒有落回概括描述，不再檢查整份提示詞。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 558 個測試，OK。
+48. **接續改善：同縣市退讓建議的回覆文字，改成直接列出具體有哪些行政區可選，不再只講空泛的「同樣在OO縣市還有相關職缺」**：第 47 項修好「AI 不能自己腦補行政區涵蓋範圍」之後，使用者測試時提出：既然求職者鎖定的是桃園市，而這筆職缺在桃園市底下實際涵蓋哪些行政區其實是同仁在 Notion 裡結構化勾選好的資料（不是要 AI 推論），那能不能乾脆直接把桃園市裡真正有據點的行政區列出來，讓求職者確切知道可以參考哪裡，而不是只講「同縣市還有相關職缺」這種還要求職者自己再問一次「有哪些區」的空泛說法。討論後確認這是確定性資料比對（不經 AI），跟第 47 項要防堵的「AI 自行推論」完全是不同的兩件事，不衝突。
+    - **使用者明確要求這個情境不設數量上限**：同縣市地區數量通常不多，但特別提醒不要讓這個「不設上限」的決定，連帶影響到其他本來就需要防止卡片/清單爆量的既有邏輯（例如 `services/flex_service.py` 的 `format_clean_location()` 對涵蓋 5 個以上行政區的職缺仍然維持原本的概括顯示，避免卡片被塞爆；面試時段清單、快速回覆按鈕等其他有筆數上限的既有功能也完全沒有修改）。
+    - **實作方式**：`services/matcher_service.py` 新增 `find_same_county_district_labels(same_county_jobs, target_location)`——讀取職缺的原始「行政區」欄位（不是給比對用、逗號會被清乾淨黏成一整串的 `_location_search_text`），用逗號/頓號/空白拆成一個一個地名 token，逐一比對 `LOCATION_TO_COUNTY` 這份既有對照表判斷是不是屬於目標縣市，是的話去掉重複的縣市前綴（跟卡片顯示用的邏輯風格一致）當作顯示用標籤，跨多筆職缺也會自動去重、保留原始出現順序，刻意不設數量上限。`handlers/message_handler.py` 的同縣市退讓建議分支（第 44 項）呼叫這個新函式，能拆出具體地名時就把回覆文字改成「不過{縣市}的{地名1}、{地名2}...有相關職缺」，拆不出來時（例如測試資料或極少數職缺沒有結構化「行政區」欄位）安全退回原本「同樣在{縣市}還有相關職缺」的空泛說法，不會因為列不出清單就整句話都不回覆。
+    - **新增測試**：`tests/test_matcher_service.py` 新增 `FindSameCountyDistrictLabelsTests`（6 個：正確拆出並去除縣市前綴、涵蓋很多行政區時真的不設上限全部列出、跨職缺去重、排除不同縣市的行政區、缺少原始「行政區」欄位時安全回傳空清單、地名對照表沒收錄的地名安全回傳空清單）；`tests/test_message_handler.py` 新增 `test_lists_specific_same_county_districts_when_raw_field_available`（驗證整合流程下回覆文字有列出具體行政區、不再是空泛說法）。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 565 個測試，OK。
 
 ## 目前所有檔案的狀態
 
