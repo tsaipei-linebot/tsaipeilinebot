@@ -17,7 +17,9 @@ from services.dispatch_contract_service import (
     CLAUSE_ORDER,
     SHIFT_COLUMN_CODES,
     build_shift_rows,
+    can_view_submission,
     convert_docx_to_pdf,
+    list_visible_submissions,
     render_contract_docx,
 )
 
@@ -174,6 +176,74 @@ class ConvertDocxToPdfTests(unittest.TestCase):
                          return_value=mock.Mock(returncode=0)):
             result = convert_docx_to_pdf(b"fake docx bytes")
         self.assertIsNone(result)
+
+
+class CanViewSubmissionTests(unittest.TestCase):
+    """can_view_submission()：送出者本人／送出者的主管／平台管理員可以看，
+    其他跟這筆紀錄無關的帳號看不到（2026-09-11 依使用者要求收斂權限，見
+    services/dispatch_contract_service.py 開頭說明）。"""
+
+    def test_submitter_can_view_own_record(self):
+        viewer = {"username": "bob", "is_platform_admin": False}
+        record = {"submitted_by": "bob"}
+        self.assertTrue(can_view_submission(viewer, record))
+
+    def test_platform_admin_can_view_anyone(self):
+        viewer = {"username": "boss", "is_platform_admin": True}
+        record = {"submitted_by": "alice"}
+        self.assertTrue(can_view_submission(viewer, record))
+
+    def test_manager_of_submitter_can_view(self):
+        viewer = {"username": "carol", "is_platform_admin": False}
+        record = {"submitted_by": "alice"}
+        with mock.patch("services.dispatch_contract_service.platform_accounts.get_account",
+                         return_value={"username": "alice", "manager_usernames": ["carol"]}):
+            self.assertTrue(can_view_submission(viewer, record))
+
+    def test_unrelated_account_cannot_view(self):
+        viewer = {"username": "dave", "is_platform_admin": False}
+        record = {"submitted_by": "alice"}
+        with mock.patch("services.dispatch_contract_service.platform_accounts.get_account",
+                         return_value={"username": "alice", "manager_usernames": ["carol"]}):
+            self.assertFalse(can_view_submission(viewer, record))
+
+    def test_missing_submitter_account_cannot_view(self):
+        viewer = {"username": "dave", "is_platform_admin": False}
+        record = {"submitted_by": "someone_deleted"}
+        with mock.patch("services.dispatch_contract_service.platform_accounts.get_account", return_value=None):
+            self.assertFalse(can_view_submission(viewer, record))
+
+
+class ListVisibleSubmissionsTests(unittest.TestCase):
+    """list_visible_submissions()：平台管理員看全部；其他帳號只看得到自己
+    送出的、或自己是送出者主管的那些紀錄。"""
+
+    def test_platform_admin_sees_all(self):
+        viewer = {"username": "boss", "is_platform_admin": True}
+        records = [{"submitted_by": "alice"}, {"submitted_by": "bob"}]
+        with mock.patch("services.dispatch_contract_service.list_submissions", return_value=records):
+            self.assertEqual(list_visible_submissions(viewer), records)
+
+    def test_non_admin_only_sees_own_and_subordinates(self):
+        viewer = {"username": "carol", "is_platform_admin": False}
+        records = [
+            {"id": "1", "submitted_by": "carol"},
+            {"id": "2", "submitted_by": "alice"},
+            {"id": "3", "submitted_by": "dave"},
+        ]
+
+        def _fake_get_account(username):
+            accounts = {
+                "alice": {"username": "alice", "manager_usernames": ["carol"]},
+                "dave": {"username": "dave", "manager_usernames": ["someone_else"]},
+            }
+            return accounts.get(username)
+
+        with mock.patch("services.dispatch_contract_service.list_submissions", return_value=records):
+            with mock.patch("services.dispatch_contract_service.platform_accounts.get_account",
+                             side_effect=_fake_get_account):
+                visible = list_visible_submissions(viewer)
+        self.assertEqual([r["id"] for r in visible], ["1", "2"])
 
 
 if __name__ == "__main__":

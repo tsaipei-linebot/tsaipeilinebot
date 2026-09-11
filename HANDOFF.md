@@ -2942,8 +2942,22 @@ dispatch_contract_service.py`），GCS 存產生的 Word 檔（
 
 **權限**：模組代碼 `dispatch_contracts`（`platform_accounts.MODULES`），
 跟 `/project-contracts`／`/job-listings` 一樣不分「專員」/「主管」角色，
-兩者體驗完全一樣，任何有這個模組權限的帳號都能建立契約、也都看得到
-全部同仁產生過的紀錄（方便同仁互相接手同一個客戶的後續契約）。
+兩者都能建立契約，體驗完全一樣。
+
+**⚠️ 可見範圍（2026-09-11 修改）**：原本任何有這個模組權限的帳號都能看到
+「全部」同仁產生過的紀錄，方便互相接手同一個客戶。使用者確認後明確要求
+收斂：**現在只有送出者本人、送出者的主管（`platform_accounts` 的
+`manager_usernames`）、或是全平台管理員（`is_platform_admin`）能看到某筆
+紀錄**，跟這筆紀錄無關的其他同仁完全看不到（列表頁看不到那一列，也不能
+用網址直接下載/預覽）。核心邏輯是
+`services/dispatch_contract_service.py` 的 `can_view_submission()`／
+`list_visible_submissions()`，`dispatch_contract_routes.py` 的列表
+（`GET /dispatch-contracts`）、下載（`.../download`）、預覽
+（`.../preview`）三個路由都走同一個判斷，避免只擋列表頁、卻能猜網址
+下載別人紀錄的漏洞。**如果同仁互相接手客戶的需求之後又出現，要處理
+「同仁 A 手上的客戶交給同仁 B」的情境，可以用 `manager_usernames` 這條
+主管關係，或是另外設計一個「轉交」的功能，不建議直接改回「全部都看得
+到」。**
 
 **Word 排版預覽**（2026-09-11 新增，使用者明確要求「做法二」——不只列表
 頁看到填了什麼，要能直接看到真正的 Word 排版）：產生契約的同時，額外用
@@ -2951,27 +2965,27 @@ LibreOffice（`soffice --convert-to pdf`）把 Word 轉成一份 PDF 存進 GCS�
 `/dispatch-contracts` 列表頁每一筆紀錄多一個「預覽」連結，點開用瀏覽器
 內建的 PDF 檢視器直接顯示（`Content-Disposition: inline`，不是強制下載）。
 
-**這一步刻意設計成失敗容錯，且開發階段沒有驗證成功過**：LibreOffice 在
-這次開發用的沙盒環境裡，不管轉什麼檔案都會失敗（錯誤訊息是「source file
-could not be loaded」，實際排查過不是權限或已知的沙盒 socket 限制問題，
-比較像是那個沙盒環境本身的 LibreOffice 安裝有缺陷，已經花時間排查過、
-沒有找到根本解法，判斷跟這裡的程式碼寫法無關）。轉檔函式
+這一步刻意設計成失敗容錯：LibreOffice 在這次**開發用的沙盒環境**裡，
+不管轉什麼檔案都會失敗（錯誤訊息是「source file could not be loaded」，
+排查過不是權限或已知的沙盒 socket 限制問題，比較像是那個沙盒環境本身的
+LibreOffice 安裝有缺陷，跟這裡的程式碼寫法無關）。轉檔函式
 `convert_docx_to_pdf()`（`services/dispatch_contract_service.py`）失敗時
 回傳 `None`，呼叫端就不會存 PDF、列表頁那筆紀錄的「預覽」欄位顯示「－」，
 但 **Word 檔案的產生/下載/存檔完全不受影響**，這件事不會讓整個功能掛掉。
-**上線後請務必實際測試一次「預覽」連結能不能正常顯示排版**——如果不行，
-去 Cloud Run 的 log 找 `[派遣契約 PDF 轉檔失敗]` 開頭的訊息，裡面會有
-實際的失敗原因，屆時再回來看是不是要調整 `Dockerfile` 裡 LibreOffice
-的安裝方式（目前裝的是 `libreoffice-writer` + `fonts-noto-cjk`，用來讓
-PDF 裡的中文正常顯示）。
+如果之後這個功能又出現「預覽」連結看不到內容的狀況，去 Cloud Run 的 log
+找 `[派遣契約 PDF 轉檔失敗]` 開頭的訊息，裡面會有實際的失敗原因。
+
+**✅ 2026-09-11 上線後使用者實測確認：正式環境（Cloud Run）的 LibreOffice
+轉檔運作正常，「預覽」連結能正確顯示 PDF 排版**——證實了開發階段的判斷：
+那個轉檔失敗只是開發沙盒環境本身的安裝問題，Cloud Run 用 `apt-get` 重新
+安裝的 LibreOffice 沒有這個問題。這件事也順便印證一個經驗：**這個專案的
+開發沙盒環境，不能拿來當作「LibreOffice／需要系統層級套件的功能，在正式
+環境也會失敗」的證據**，真的要確認還是得看部署後的實測結果。
 
 **上線前要做的事**：
 1. **不需要新的環境變數**（沿用既有的 `DELIVERY_GCS_BUCKET`）。
 2. 到 `/accounts` 幫需要用這個功能的帳號開通「派遣契約產生器」模組權限。
-3. **正式上線後第一次產生契約時，務必確認「預覽」連結真的能顯示 PDF
-   排版**（見上面「Word 排版預覽」的說明，開發階段沒辦法在本機驗證這一
-   步）。就算預覽失敗，Word 檔案下載也完全不受影響。
-4. 建議正式上線前先用一份真實客戶的條件實測一次，下載出來的 Word 檔
+3. 建議正式上線前先用一份真實客戶的條件實測一次，下載出來的 Word 檔
    打開確認排版跟 `${...}` 公式都正常，再開始正式使用。
 
 **測試涵蓋範圍**：延續既有分工——`build_shift_rows()`（純函式，欄位

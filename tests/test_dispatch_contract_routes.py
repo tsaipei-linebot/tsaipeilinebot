@@ -239,6 +239,63 @@ class SubmitValidationTests(unittest.TestCase):
         self.assertEqual(result.body, b"DOCX")
 
 
+class HomeRouteTests(unittest.TestCase):
+    """dispatch_contract_home() 要把目前登入的帳號傳給
+    list_visible_submissions()，而不是直接呼叫 list_submissions()——這是
+    可見範圍收斂（送出者/主管/平台管理員）真正生效的地方。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = HomeRouteTests._FakeSession({"user": user})
+
+    def test_home_passes_account_to_visible_submissions(self):
+        account = {"username": "bob", "is_platform_admin": False}
+        with mock.patch.object(dispatch_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(dispatch_contract_routes, "list_visible_submissions", return_value=[]) as mock_list:
+                dispatch_contract_routes.dispatch_contract_home(
+                    self._FakeRequest(account), generated="", redirect=None,
+                )
+        mock_list.assert_called_once_with(account)
+        self.assertEqual(mock_templates.TemplateResponse.call_args[0][2]["records"], [])
+
+
+class DownloadRouteVisibilityTests(unittest.TestCase):
+    """dispatch_contract_download()：跟 preview 一樣，不是送出者/主管/平台
+    管理員的話，即使知道網址也不能下載別人的紀錄。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = DownloadRouteVisibilityTests._FakeSession({"user": user})
+
+    def test_other_user_record_returns_404(self):
+        record = {"id": "x", "client_name": "pchome", "blob_path": "dispatch_contracts/x/a.docx", "submitted_by": "alice"}
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                result = dispatch_contract_routes.dispatch_contract_download(
+                    "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                )
+        self.assertEqual(result.status_code, 404)
+
+    def test_owner_can_download(self):
+        record = {"id": "x", "client_name": "pchome", "blob_path": "dispatch_contracts/x/a.docx", "submitted_by": "bob"}
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "download_file",
+                                    return_value=(b"DOCX-DATA", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")):
+                result = dispatch_contract_routes.dispatch_contract_download(
+                    "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                )
+        self.assertEqual(result.body, b"DOCX-DATA")
+
+
 class PreviewRouteTests(unittest.TestCase):
     """dispatch_contract_preview()：沒有 pdf_blob_path 的紀錄回 404，有的話
     用 inline Content-Disposition 回傳 PDF 內容，讓瀏覽器直接顯示。"""
@@ -266,16 +323,62 @@ class PreviewRouteTests(unittest.TestCase):
         self.assertEqual(result.status_code, 404)
 
     def test_existing_pdf_returns_inline_content(self):
-        record = {"id": "x", "client_name": "pchome", "pdf_blob_path": "dispatch_contracts/x/a.pdf"}
+        record = {
+            "id": "x", "client_name": "pchome", "pdf_blob_path": "dispatch_contracts/x/a.pdf",
+            "submitted_by": "bob",
+        }
         with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
             with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "download_file",
                                     return_value=(b"%PDF-DATA", "application/pdf")):
                 result = dispatch_contract_routes.dispatch_contract_preview(
-                    "x", self._FakeRequest({"username": "bob"}), redirect=None,
+                    "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
                 )
         self.assertEqual(result.body, b"%PDF-DATA")
         self.assertIn("inline", result.headers["content-disposition"])
         self.assertIn("pchome", result.headers["content-disposition"])
+
+    def test_other_user_record_returns_404(self):
+        """不是送出者、不是送出者的主管、也不是平台管理員的話，即使
+        pdf_blob_path 存在，也不能用網址直接看到別人的預覽。"""
+        record = {
+            "id": "x", "client_name": "pchome", "pdf_blob_path": "dispatch_contracts/x/a.pdf",
+            "submitted_by": "alice",
+        }
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                result = dispatch_contract_routes.dispatch_contract_preview(
+                    "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                )
+        self.assertEqual(result.status_code, 404)
+
+    def test_manager_of_submitter_can_preview(self):
+        record = {
+            "id": "x", "client_name": "pchome", "pdf_blob_path": "dispatch_contracts/x/a.pdf",
+            "submitted_by": "alice",
+        }
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": ["carol"]}):
+                with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "download_file",
+                                        return_value=(b"%PDF-DATA", "application/pdf")):
+                    result = dispatch_contract_routes.dispatch_contract_preview(
+                        "x", self._FakeRequest({"username": "carol", "is_platform_admin": False}), redirect=None,
+                    )
+        self.assertEqual(result.body, b"%PDF-DATA")
+
+    def test_platform_admin_can_preview_anyone(self):
+        record = {
+            "id": "x", "client_name": "pchome", "pdf_blob_path": "dispatch_contracts/x/a.pdf",
+            "submitted_by": "alice",
+        }
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "download_file",
+                                    return_value=(b"%PDF-DATA", "application/pdf")):
+                result = dispatch_contract_routes.dispatch_contract_preview(
+                    "x", self._FakeRequest({"username": "boss", "is_platform_admin": True}), redirect=None,
+                )
+        self.assertEqual(result.body, b"%PDF-DATA")
 
 
 if __name__ == "__main__":
