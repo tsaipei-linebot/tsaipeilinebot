@@ -6,9 +6,11 @@ import json
 import re
 import urllib.request
 import urllib.parse
+from datetime import datetime
 from config import (
     NOTION_API_KEY, NOTION_JOBS_DB_ID, NOTION_FAQ_DB_ID,
-    NOTION_UNRESOLVED_QUESTIONS_DB_ID, ALLOWED_PROPERTIES, CACHE_TTL
+    NOTION_UNRESOLVED_QUESTIONS_DB_ID, ALLOWED_PROPERTIES, CACHE_TTL,
+    TAIPEI_TZ, NOTION_RESUME_CLICK_LOG_DB_ID
 )
 
 _cached_jobs, _last_jobs_fetch = None, 0
@@ -420,4 +422,53 @@ def append_unresolved_question_for_followup(question_text: str, user_id: str, di
             return False
     except Exception as e:
         print(f"[求職者提問追蹤寫入異常]: {e}")
+        return False
+
+
+_RESUME_TYPE_LABELS = {
+    "Spx": "蝦皮/外送",
+    "Service": "門市/服務餐飲",
+    "Manufacture": "廠務/其他",
+}
+
+
+def record_resume_click(user_id: str, display_name: str, job_title: str, resume_type: str) -> bool:
+    """在『履歷點擊紀錄』資料庫新增一筆紀錄，讓招募專員知道誰點了職缺卡片上的
+    「填寫線上履歷」按鈕、對哪個職缺有興趣。這個按鈕本身是 LINE 的 uri 類型，
+    點下去不會觸發任何 webhook 事件——這筆紀錄是由 main.py 的 /apply-click
+    轉址端點在求職者點擊當下呼叫寫入的（見該端點的說明），不是由一般對話流程
+    觸發，所以刻意不去重：同一個人對同一個職缺點第二次，代表他可能還在猶豫、
+    值得再留一筆給招募專員參考，不應該被去重掉。"""
+    if not NOTION_API_KEY or not NOTION_RESUME_CLICK_LOG_DB_ID or not user_id:
+        return False
+
+    title_text = display_name.strip() if display_name else user_id
+
+    url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+    payload = {
+        "parent": {"database_id": NOTION_RESUME_CLICK_LOG_DB_ID},
+        "properties": {
+            "求職者暱稱": {"title": [{"text": {"content": title_text}}]},
+            "LINE User ID": {"rich_text": [{"text": {"content": user_id}}]},
+            "應徵職缺": {"rich_text": [{"text": {"content": (job_title or "").strip()}}]},
+            "產業類別": {"rich_text": [{"text": {"content": _RESUME_TYPE_LABELS.get(resume_type, resume_type or "")}}]},
+            "點擊時間": {"date": {"start": datetime.now(TAIPEI_TZ).isoformat()}},
+        }
+    }
+
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=5)
+        if res.status_code in [200, 201]:
+            print(f"[履歷點擊紀錄] 已記錄「{title_text}」點擊了「{job_title}」的履歷連結")
+            return True
+        else:
+            print(f"[履歷點擊紀錄寫入失敗 {res.status_code}]: {res.text}")
+            return False
+    except Exception as e:
+        print(f"[履歷點擊紀錄寫入異常]: {e}")
         return False

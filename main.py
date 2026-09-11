@@ -4,6 +4,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, Request, Header, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
@@ -23,7 +24,8 @@ import vendors_routes
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
-    LOAD_TEST_SECRET, FACTORY_WATCH_TRIGGER_SECRET, DAILY_REPORT_TRIGGER_SECRET, DAILY_REPORT_ENABLED
+    LOAD_TEST_SECRET, FACTORY_WATCH_TRIGGER_SECRET, DAILY_REPORT_TRIGGER_SECRET, DAILY_REPORT_ENABLED,
+    DEFAULT_RESUME_URLS
 )
 from delivery.config import SESSION_SECRET_KEY
 from handlers.message_handler import process_user_message, process_image_message
@@ -33,7 +35,7 @@ from hr.app import hr_app
 from services.factory_watch_service import run_weekly_scan
 from services.daily_report_service import run_daily_report
 from services.session_service import db as _firestore_db, SESSIONS_COLLECTION as _SESSIONS_COLLECTION
-from services.notion_service import fetch_jobs_data, fetch_faqs_data
+from services.notion_service import fetch_jobs_data, fetch_faqs_data, sanitize_uri, record_resume_click
 from services.ai_service import query_gemini_ai
 
 app = FastAPI(
@@ -214,6 +216,46 @@ if test_handler:
 if handler:
     handler.add(MessageEvent, message=TextMessage)(handle_message)
     handler.add(MessageEvent, message=ImageMessage)(handle_image_message)
+
+# ==========================================
+# 職缺卡片「填寫線上履歷」按鈕的轉址端點（記錄點擊後再轉去外部履歷網站）
+#
+# LINE 的 uri 類型按鈕點下去是直接開外部瀏覽器，完全不會觸發任何 webhook
+# 事件，機器人原本沒辦法知道誰點了這顆按鈕。做法是讓按鈕先連到我們自己這支
+# 服務（見 services/flex_service.py 的 SERVICE_BASE_URL 判斷），這裡記錄下
+# 「誰、點了哪個職缺」之後，再用 302 轉址到真正的履歷網站，求職者感覺不出
+# 差異（只多一次幾乎瞬間完成的伺服器轉址）。
+#
+# `type` 只接受 DEFAULT_RESUME_URLS 這份白名單裡的 key（Spx/Service/
+# Manufacture），不接受外部傳來的完整網址當轉址目標，避免被拿去偽造成開放
+# 重導向（open redirect）的釣魚連結。記錄失敗（例如 Notion 沒設定、逾時）
+# 絕對不能擋住轉址——求職者永遠都要能順利到達履歷網站。
+# ==========================================
+@app.get("/apply-click")
+def apply_click_redirect(uid: str = "", type: str = "", job: str = ""):
+    dest = sanitize_uri(DEFAULT_RESUME_URLS.get(type, DEFAULT_RESUME_URLS["Manufacture"]))
+
+    # 這整段記錄點擊的邏輯包在 try/except 裡，是刻意的最後一道防線：
+    # record_resume_click() 自己內部雖然已經有 try/except（見
+    # services/notion_service.py），但這裡多包一層可以確保就算未來那支
+    # 函式的防護出現漏洞，也不會連帶讓求職者連不到履歷網站——轉址永遠是
+    # 第一優先，記錄點擊只是附加價值。
+    if uid:
+        try:
+            display_name = ""
+            for api in (line_bot_api, test_line_bot_api):
+                if api is None:
+                    continue
+                try:
+                    display_name = api.get_profile(uid).display_name
+                    break
+                except Exception:
+                    continue
+            record_resume_click(uid, display_name, job, type)
+        except Exception as e:
+            print(f"[履歷點擊記錄失敗，不影響轉址]: {e}")
+
+    return RedirectResponse(url=dest, status_code=302)
 
 # ==========================================
 # 內部壓力測試端點（預設關閉，僅供壓力測試腳本使用）

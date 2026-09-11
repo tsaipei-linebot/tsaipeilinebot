@@ -1,19 +1,28 @@
 import re
+from urllib.parse import quote
 from linebot.models import FlexSendMessage
-from config import DEFAULT_RESUME_URLS
+from config import DEFAULT_RESUME_URLS, SERVICE_BASE_URL
 from services.notion_service import sanitize_uri
 
-def resolve_apply_url_by_industry(job: dict) -> str:
-    """依職缺行業精準解析對應的線上履歷網址 (維持原設定)[cite: 8]"""
+def resolve_apply_url_key_by_industry(job: dict) -> str:
+    """依職缺行業判斷履歷網址分類鍵值（Spx／Service／Manufacture），純判斷、
+    不組網址。拆出這支獨立函式是為了讓 create_job_flex_card() 組「先過我們
+    自己伺服器記錄點擊、再轉址」的連結時，可以只帶這個白名單 key 過去（見
+    main.py 的 /apply-click 端點），不必把完整外部網址放進求職者看得到、
+    可能被竄改的網址參數裡（開放重導向風險）。"""
     full_search_text = f"{job.get('職缺名稱(對外)', '')} {job.get('職缺名稱', '')} {job.get('職務類別', '')} {job.get('行業別', '')} {job.get('工作內容(對外)', '')}".lower()
 
     if any(k in full_search_text for k in ["蝦皮", "智取店", "店到店", "spx", "外送"]):
-        return DEFAULT_RESUME_URLS["Spx"]
+        return "Spx"
 
     if any(k in full_search_text for k in ["服務", "餐飲", "服飾", "門市", "專櫃", "店員", "廚助"]):
-        return DEFAULT_RESUME_URLS["Service"]
+        return "Service"
 
-    return DEFAULT_RESUME_URLS["Manufacture"]
+    return "Manufacture"
+
+def resolve_apply_url_by_industry(job: dict) -> str:
+    """依職缺行業精準解析對應的線上履歷網址 (維持原設定)[cite: 8]"""
+    return DEFAULT_RESUME_URLS[resolve_apply_url_key_by_industry(job)]
 
 def get_location_suffix_by_industry(job: dict) -> str:
     """依職缺產業類別動態回傳專屬地點描述語[cite: 8]"""
@@ -135,7 +144,19 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
             clean_raw = re.sub(r'[*•▶►◆◇■□▲▼\r\n\t]+', ' ', raw_desc)
             highlight_desc = f"開放應徵【{public_job_title}】，環境單純、福利健全，歡迎點擊應徵！" if len(clean_raw) < 5 else (clean_raw[:40] + "...")
             
-        final_apply_link = sanitize_uri(resolve_apply_url_by_industry(job))
+        resume_type_key = resolve_apply_url_key_by_industry(job)
+        direct_apply_link = sanitize_uri(DEFAULT_RESUME_URLS[resume_type_key])
+        if SERVICE_BASE_URL:
+            # 先連到我們自己的 /apply-click 轉址端點記錄點擊（見 main.py），
+            # 再由該端點 302 轉去真正的履歷網站；求職者感覺不出差異。
+            # SERVICE_BASE_URL 沒設定時（尚未上線這項追蹤功能）維持原本行為，
+            # 按鈕直接連到履歷網站。
+            final_apply_link = (
+                f"{SERVICE_BASE_URL.rstrip('/')}/apply-click"
+                f"?uid={quote(str(user_id))}&type={quote(resume_type_key)}&job={quote(unique_internal_title)}"
+            )
+        else:
+            final_apply_link = direct_apply_link
 
         body_contents = [
             {"type": "text", "text": "🎯 材霈推薦職缺", "weight": "bold", "color": BRAND, "size": "xs"},

@@ -88,6 +88,13 @@
   - 其餘角色（服務帳戶使用者、記錄寫入者、Artifact Registry 寫入者、Cloud Run 管理員）研判是 Cloud Build 部署流程需要，可以保留；「Aiplatform 編輯者」可以考慮之後降級成範圍較小的「Aiplatform 使用者」（`roles/aiplatform.user`，因為只是呼叫 Gemini 生成回覆，不需要管理模型/端點的權限），非急迫。
   - 相關但優先度較低的資料安全項目，之後也可以一併處理：① Firestore 目前沒有資料保留/自動清除機制（`SESSION_TTL` 只是「軟過期」邏輯，使用者如果不再回來，session 文件會永久留在 Firestore，建議設定 Firestore 原生 [TTL 政策](https://cloud.google.com/firestore/docs/ttl) 自動清掉過期文件）；② 各項金鑰（`NOTION_API_KEY`／`GEMINI_API_KEY`／LINE channel secret／`LOAD_TEST_SECRET`）目前是明文 Cloud Run 環境變數，可以考慮搬到 Secret Manager 多一層存取控制與稽核紀錄。
 
+- **【程式碼已合併部署，等使用者確認環境變數都設定好即可生效】履歷點擊紀錄：記錄誰點了職缺卡片的「填寫線上履歷」按鈕**：詳見下方「已完成」第 47 項的完整說明。這裡只記還缺什麼設定：
+  1. Notion「履歷點擊紀錄」資料庫已建立、欄位也已確認正確（求職者暱稱/LINE User ID/應徵職缺/產業類別皆為對的類型，點擊時間已改成日期類型）。
+  2. 確認這個資料庫已分享給機器人用的 Notion 整合。
+  3. 到 Cloud Run 設定 `NOTION_RESUME_CLICK_LOG_DB_ID`（該資料庫 ID）與 `SERVICE_BASE_URL`（`https://recruitment-bot-412901869672.asia-east1.run.app`）這兩個環境變數，兩者都設定好功能才會真正生效。
+
+**注意：面試預約功能（原本在同一個分支上開發）這次刻意沒有一起合併**——使用者明確表示「面試預約請先不要加進去」，程式碼仍然只留在 `claude/tsaipei-linebot-handoff-7jdsks` 分支上，main 這邊完全沒有相關程式碼，之後如果要上線這個功能，需要另外再合併一次。
+
 ## 已完成並部署驗證過的項目
 
 ### 第一組：架構層級（全部完成）
@@ -273,6 +280,15 @@
     - **兩個 Notion 資料庫本來就有的去重/不去重規則不受影響**：FAQ 候選資料庫寫入前仍會去重（同一句或高度相似的問題不會重複堆積），求職者提問追蹤仍然不去重（同一個問題如果有好幾個人各自問過，要留好幾筆才能各自回覆到）。
     - **新增測試**：`tests/test_message_handler.py` 新增 `test_no_match_also_records_into_faq_and_followup`（驗證 `NO_MATCH` 會呼叫到 `append_unresolved_faq_to_notion`／`append_unresolved_question_for_followup`，且暱稱查詢邏輯跟 `UNKNOWN_FAQ` 共用同一套）、`test_ask_action_does_not_record_into_faq`（驗證 `ASK` 不會誤觸發記錄）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 542 個測試，OK。
+47. **履歷點擊紀錄：記錄誰點了職缺卡片的「填寫線上履歷」按鈕**：使用者希望知道有點擊這顆按鈕的求職者 LINE 名稱，方便招募專員追蹤。技術上有個關鍵限制：這顆按鈕是 LINE 的 `uri` 類型（點下去直接開外部瀏覽器），**點擊本身完全不會觸發任何 webhook 事件**，機器人原本沒有任何方式能在伺服器端知道誰點了它。
+    - **做法**：讓按鈕改連到我們自己這支服務新增的 `/apply-click` 轉址端點（`main.py`），把「誰、點了哪個職缺、哪個產業分類」記錄進新的 Notion「履歷點擊紀錄」資料庫，再用 HTTP 302 立刻轉址到真正的履歷網站——求職者感覺不出差異，只多花幾乎瞬間的伺服器轉址時間。`services/flex_service.py` 的 `create_job_flex_card()` 只有在 `SERVICE_BASE_URL` 有設定時才會把按鈕改連到這個轉址端點，沒設定時維持原本直接連履歷網站的行為，按鈕不會壞掉。
+    - **安全性考量（開放重導向）**：轉址目的地只接受 `Spx`／`Service`／`Manufacture` 這三個內部白名單代號（`config.py` 的 `DEFAULT_RESUME_URLS`），不接受外部直接傳一個完整網址進來當轉址目標，避免這個轉址端點被拿去偽造成看似「材霈網域開頭」、實際轉去釣魚網站的連結。
+    - **兩層防護確保記錄失敗不影響轉址**：`services/notion_service.py` 的 `record_resume_click()` 自己有 try/except（Notion 沒設定、逾時、寫入失敗都只印 log、回傳 `False`）；`main.py` 的端點又整層包了一次 try/except——求職者永遠都能順利到達履歷網站，記錄點擊純粹是附加價值，絕對不能反過來卡住應徵流程。
+    - **使用者已完成 Notion 資料庫建立**：「履歷點擊紀錄」資料庫欄位為 `求職者暱稱`（標題）／`LINE User ID`（文字）／`應徵職缺`（文字）／`產業類別`（文字）／`點擊時間`（日期）——第一次建立時「點擊時間」誤設成文字類型、且漏了「產業類別」欄位，已請使用者修正並確認過欄位設定正確。
+    - **上線前還需要使用者做（詳見上方「待辦事項」對應段落）**：確認資料庫已分享給 Notion 整合、到 Cloud Run 設定 `NOTION_RESUME_CLICK_LOG_DB_ID`／`SERVICE_BASE_URL` 兩個環境變數（可用 `gcloud run services update` 指令、也可以直接在 Cloud Run 主控台「編輯並部署新修訂版本」→「變數與密鑰」分頁手動新增，兩種方式效果相同）。
+    - **新增測試**：`tests/test_notion_service.py` 新增 `RecordResumeClickTests`（5 個：成功寫入含產業類別標籤、沒有顯示名稱時退回用 user_id、資料庫沒設定時安全跳過、缺 user_id 時安全跳過、寫入失敗回傳 False 不拋例外）；`tests/test_flex_service.py` 新增 `CreateJobFlexCardResumeClickTrackingTests`（3 個：`SERVICE_BASE_URL` 沒設定時按鈕維持直接連履歷網站、有設定時按鈕改連轉址端點並帶對的 uid/type/job 參數、網址結尾多一個 `/` 不會產生雙斜線）；新增 `tests/test_apply_click_endpoint.py`（`ApplyClickRedirectTests`，6 個：預設轉址正確、未知 type 代號安全退回 Manufacture、正式頻道能查到顯示名稱時正確記錄、正式頻道查無資料時退回查測試頻道、記錄過程整個失敗也不影響轉址、沒帶 uid 時跳過記錄但仍正常轉址）。
+    - **面試預約功能刻意沒有一起合併**：這兩個功能原本在同一個分支上先後開發，但使用者明確表示「面試預約請先不要加進去」，所以只挑這次的履歷點擊紀錄相關 commit 合併進 main，面試預約的程式碼仍然只留在 `claude/tsaipei-linebot-handoff-7jdsks` 分支上，之後要上線需要再另外合併一次。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 556 個測試，OK。
 
 ## 目前所有檔案的狀態
 

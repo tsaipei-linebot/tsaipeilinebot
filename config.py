@@ -58,6 +58,16 @@ NOTION_FAQ_DB_ID = os.getenv("NOTION_FAQ_DB_ID")
 # 不影響其他功能（見 HANDOFF.md）。
 NOTION_UNRESOLVED_QUESTIONS_DB_ID = os.getenv("NOTION_UNRESOLVED_QUESTIONS_DB_ID", "")
 OFFICIAL_WEBSITE_BASE = os.getenv("OFFICIAL_WEBSITE_BASE", "https://tsaipei.netlify.app")
+# 履歷點擊紀錄資料庫（選填）：職缺卡片「填寫線上履歷」按鈕點下去，記錄是誰
+# 點的，方便招募專員追蹤誰對哪個職缺有興趣。沒設定時這個功能會安全跳過（按鈕
+# 一樣能正常導去履歷網站，只是不會留紀錄），不影響其他功能。
+NOTION_RESUME_CLICK_LOG_DB_ID = os.getenv("NOTION_RESUME_CLICK_LOG_DB_ID", "")
+# 這支服務自己的對外網址（例如 Cloud Run 的 https://recruitment-bot-xxxxx-xx.a.run.app）。
+# LINE 的「uri」類型按鈕點下去完全不會觸發 webhook，機器人原本沒辦法知道誰點了
+# 「填寫線上履歷」——設定這個變數後，卡片上的按鈕會先連到我們自己這支服務的
+# /apply-click 端點記錄點擊，再 302 轉址到真正的履歷網站，求職者感覺不出差異。
+# 沒設定時（空字串）維持原本行為：按鈕直接連到履歷網站，不會記錄點擊。
+SERVICE_BASE_URL = os.getenv("SERVICE_BASE_URL", "")
 
 # ==========================================
 # 3. 快取與 Session 設定
