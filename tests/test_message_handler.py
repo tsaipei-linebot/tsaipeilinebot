@@ -1340,6 +1340,41 @@ class CountyLevelFallbackRecommendationTests(unittest.TestCase):
         self.assertIn("沒有", reply_text)
         self.assertIn("桃園市", reply_text)
 
+    def test_lists_specific_same_county_districts_when_raw_field_available(self):
+        # 使用者要求：能拆出具體行政區名稱時，回覆文字要直接列出來（不設
+        # 數量上限），不是只講「同樣在桃園市還有相關職缺」這種空泛說法。
+        alt_job = {
+            "職缺名稱": "蝦皮桃園門市人員", "_internal_title": "蝦皮桃園門市人員",
+            "_parsed_title": "蝦皮桃園門市人員", "職缺名稱(對外)": "蝦皮桃園門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮桃園門市人員",
+            "_location_search_text": "桃園市蘆竹區桃園市龜山區",
+            "行政區": "桃園市蘆竹區,桃園市龜山區",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-county-fallback-districts"
+        event.message.text = "蝦皮門市 八德有缺嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[alt_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(empty_slots, category="門市", brand="蝦皮")), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card:
+            h.process_user_message(event, line_bot_api)
+
+        args, _ = line_bot_api.reply_message.call_args
+        reply_text = args[1][0].text
+        self.assertIn("蘆竹區", reply_text)
+        self.assertIn("龜山區", reply_text)
+        self.assertNotIn("同樣在桃園市還有相關職缺", reply_text)
+
     def test_bare_location_followup_also_gets_county_fallback(self):
         # 延續前一輪「蝦皮門市」脈絡、這句話單純問地區時，也要能觸發同縣市
         # 退讓建議，不是只有整句話講完整條件才有效。

@@ -99,6 +99,52 @@ def find_county_level_alternative_jobs(category_matched_jobs: list, target_locat
     return [j for j in category_matched_jobs if county_clean in j.get("_location_search_text", "")]
 
 
+def find_same_county_district_labels(same_county_jobs: list, target_location: str) -> list:
+    """從已經確認「同縣市」的候選職缺裡，列出實際同縣市的行政區名稱清單，
+    給 handlers/message_handler.py 的退讓建議回覆文字直接列出來用（例如
+    「不過桃園市的蘆竹、龜山有相關職缺」），不要只講「同縣市還有相關職缺」
+    這種空泛說法。
+
+    使用者確認過這個情境刻意不設數量上限（同縣市地區數量通常不多），但這
+    只影響這裡組出來的「回覆文字」，跟 services/flex_service.py 的
+    format_clean_location()（卡片顯示用、職缺涵蓋 5 個以上行政區時會改用
+    概括描述以免卡片爆版）完全是兩份獨立邏輯、互不影響，不要因為這裡不設
+    上限就跟著放寬卡片那邊的顯示上限。
+
+    刻意讀「行政區」這個原始欄位（不是 _location_search_text）：後者是
+    clean_text_for_search() 處理過的比對專用字串，逗號等分隔符號會被直接
+    刪除、行政區名稱會黏在一起，沒辦法拆回一個一個地名。"""
+    county = LOCATION_TO_COUNTY.get(target_location, "")
+    if not county:
+        return []
+
+    labels = []
+    seen = set()
+    for job in same_county_jobs:
+        district_field = str(job.get("行政區") or "")
+        for token in re.split(r'[,，、\s]+', district_field):
+            token = token.strip()
+            if not token:
+                continue
+            # 這個行政區 token 是不是屬於目標縣市：沿用同一份 LOCATION_TO_COUNTY
+            # 對照表，檢查 token 裡有沒有出現屬於這個縣市的地名關鍵字（例如
+            # 「桃園市八德區」裡的「八德」對應到「桃園市」）。
+            if not any(name in token and c == county for name, c in LOCATION_TO_COUNTY.items()):
+                continue
+            # 顯示用的地區名稱去掉重複的縣市前綴（例如「桃園市八德區」只顯示
+            # 「八德區」），跟卡片顯示（format_clean_location）用的是同一種
+            # 去重前綴邏輯，維持兩邊呈現風格一致。
+            label = token
+            for variant in {county, county.replace("台", "臺"), county.replace("臺", "台")}:
+                if variant and label.startswith(variant):
+                    label = label[len(variant):].strip() or label
+                    break
+            if label and label not in seen:
+                seen.add(label)
+                labels.append(label)
+    return labels
+
+
 def extract_current_target_location(raw_msg: str, history_text: str = "") -> str:
     """從使用者最新訊息擷取鎖定地區（避免被對話歷史中的範例字詞干擾，並跳過被否定的地名）[cite: 1]"""
     for loc in LOCATION_CANDIDATES:

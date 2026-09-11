@@ -367,5 +367,56 @@ class CountyLevelAlternativeJobsTests(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class FindSameCountyDistrictLabelsTests(unittest.TestCase):
+    """使用者要求：同縣市退讓建議的回覆文字要直接列出具體有哪些行政區可選
+    （不是只說「同樣在桃園市還有相關職缺」這種空泛說法），且這個情境刻意
+    不設數量上限。這裡測 find_same_county_district_labels() 這個純函式本身。"""
+
+    def test_extracts_same_county_districts_stripping_county_prefix(self):
+        job = {"行政區": "桃園市蘆竹區,桃園市龜山區"}
+        result = m.find_same_county_district_labels([job], "八德")
+        self.assertEqual(result, ["蘆竹區", "龜山區"])
+
+    def test_no_cap_on_number_of_districts_listed(self):
+        # 使用者明確表示這個情境不設上限，涵蓋很多行政區時也要全部列出來。
+        job = {
+            "行政區": (
+                "宜蘭市,桃園區,高雄區,基隆區,新北市板橋區,新竹縣區,"
+                "嘉義縣區,彰化縣區,台中市區,台北市區,新竹市區,屏東縣區,"
+                "台南市區,澎湖縣區,雲林縣區,桃園市蘆竹區,桃園市龜山區,"
+                "桃園市中壢區,桃園市平鎮區,桃園市楊梅區,桃園市大園區,桃園市龍潭區"
+            )
+        }
+        result = m.find_same_county_district_labels([job], "八德")
+        self.assertEqual(
+            result,
+            ["桃園區", "蘆竹區", "龜山區", "中壢區", "平鎮區", "楊梅區", "大園區", "龍潭區"],
+        )
+
+    def test_deduplicates_same_district_across_multiple_jobs(self):
+        job_a = {"行政區": "桃園市蘆竹區"}
+        job_b = {"行政區": "蘆竹區,龜山區"}
+        result = m.find_same_county_district_labels([job_a, job_b], "八德")
+        self.assertEqual(result, ["蘆竹區", "龜山區"])
+
+    def test_excludes_districts_from_a_different_county(self):
+        job = {"行政區": "新北市板橋區,桃園市蘆竹區"}
+        result = m.find_same_county_district_labels([job], "八德")
+        self.assertEqual(result, ["蘆竹區"])
+
+    def test_missing_raw_district_field_returns_empty(self):
+        # 職缺沒有結構化的「行政區」欄位時（例如測試資料只給了
+        # _location_search_text），安全回傳空清單，呼叫端會退回原本的空泛
+        # 說法，不會因為列不出清單就整句話都不回覆。
+        job = {"_location_search_text": "桃園市桃園區"}
+        result = m.find_same_county_district_labels([job], "八德")
+        self.assertEqual(result, [])
+
+    def test_unknown_location_returns_empty(self):
+        job = {"行政區": "桃園市蘆竹區"}
+        result = m.find_same_county_district_labels([job], "不存在的地名")
+        self.assertEqual(result, [])
+
+
 if __name__ == "__main__":
     unittest.main()
