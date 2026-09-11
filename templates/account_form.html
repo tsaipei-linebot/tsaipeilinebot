@@ -19,7 +19,7 @@
     <label>姓名
         <input type="text" name="name" value="{{ account.name if account else '' }}" required>
     </label>
-    <label>部門（自由填寫，之後功能會用到，目前只是先存起來）
+    <label>部門（自由填寫；「小雞點數自費申請」會直接帶入這裡填的部門）
         <input type="text" name="department" value="{{ account.department if account else '' }}">
     </label>
     <label>所屬主管（可複選；沒有主管、或是最高層級就不用選）

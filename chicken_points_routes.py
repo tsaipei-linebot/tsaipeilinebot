@@ -9,6 +9,15 @@
 角色真的有差別——「專員」登入後只看得到自己送出過的申請紀錄；「主管」
 （例如會計）看得到全部同仁的申請紀錄，方便對帳，這是目前平台裡第一個
 真的用到這個角色區分的模組。
+
+**申請部門 2026-09-11 改成自動帶入，不用同仁自己選**：直接沿用帳號
+資料裡本來就有、但一直沒有功能在用的 `department` 欄位（`/accounts`
+編輯帳號畫面「部門」那一欄，自由填寫）——使用者要求「跟建立帳號內的
+部門相同就好了，不用讓人員選了」。因為是帳號本身就有的資料，不是同仁
+在這個表單裡自己填的，所以這裡不再收 `department` 這個表單欄位，直接
+從登入的帳號資料讀。如果帳號沒有設定部門（`department` 是空字串），
+擋下表單並提示要先請平台管理員到 `/accounts` 幫忙補上部門，不能送出——
+避免存進一筆部門是空白的紀錄，讓會計對帳時看不出是哪個部門申請的。
 """
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -16,7 +25,6 @@ from fastapi.responses import RedirectResponse
 import platform_accounts
 from platform_templating import templates
 from services.chicken_points_service import (
-    DEPARTMENT_OPTIONS,
     POINT_RATE,
     list_all_requests,
     list_requests_by_username,
@@ -32,6 +40,11 @@ MODULE_CODE = "chicken_points"
 # 下（幾行文字＋一段簽名線條）頂多幾十 KB。這裡抓一個遠高於正常情況、但
 # 足以擋下異常巨大檔案的上限，避免超過 Firestore 單一文件 1MB 的限制。
 _MAX_SIGNED_IMAGE_BASE64_CHARS = 700_000
+
+_MISSING_DEPARTMENT_MESSAGE = (
+    "您的帳號還沒有設定部門，沒辦法送出申請（申請部門會直接沿用帳號資料，不用自己選）。"
+    "請聯絡平台管理員，到「帳號管理」幫您的帳號補上部門後再回來申請。"
+)
 
 
 def _require_access(request: Request):
@@ -61,23 +74,19 @@ def chicken_points_home(request: Request, submitted: str = "", redirect=Depends(
 def chicken_points_new_form(request: Request, redirect=Depends(_require_access)):
     if redirect:
         return redirect
-    return templates.TemplateResponse(
-        request,
-        "chicken_points_form.html",
-        {
-            "user": platform_accounts.current_account(request),
-            "error": "",
-            "form": {},
-            "department_options": DEPARTMENT_OPTIONS,
-            "point_rate": POINT_RATE,
-        },
-    )
+    account = platform_accounts.current_account(request)
+    context = {
+        "user": account,
+        "error": "" if account.get("department") else _MISSING_DEPARTMENT_MESSAGE,
+        "form": {},
+        "point_rate": POINT_RATE,
+    }
+    return templates.TemplateResponse(request, "chicken_points_form.html", context)
 
 
 @router.post("/chicken-points/new")
 async def chicken_points_submit(
     request: Request,
-    department: str = Form(""),
     purchase_month: str = Form(""),
     points: str = Form(""),
     signed_image: str = Form(""),
@@ -86,12 +95,13 @@ async def chicken_points_submit(
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
-    form_values = {"department": department, "purchase_month": purchase_month, "points": points}
+    department = account.get("department", "")
+    form_values = {"purchase_month": purchase_month, "points": points}
 
     error = ""
     points_int = 0
-    if department not in DEPARTMENT_OPTIONS:
-        error = "請選擇申請部門。"
+    if not department:
+        error = _MISSING_DEPARTMENT_MESSAGE
     elif not purchase_month:
         error = "請填寫購買月份。"
     else:
@@ -108,13 +118,7 @@ async def chicken_points_submit(
         error = "簽名圖檔異常過大，請重新整理頁面再試一次。"
 
     if error:
-        context = {
-            "user": account,
-            "error": error,
-            "form": form_values,
-            "department_options": DEPARTMENT_OPTIONS,
-            "point_rate": POINT_RATE,
-        }
+        context = {"user": account, "error": error, "form": form_values, "point_rate": POINT_RATE}
         return templates.TemplateResponse(request, "chicken_points_form.html", context, status_code=400)
 
     save_request(

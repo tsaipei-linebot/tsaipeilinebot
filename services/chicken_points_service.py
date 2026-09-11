@@ -21,13 +21,6 @@ from platform_db import get_db
 
 REQUESTS_COLLECTION = "chicken_point_requests"
 
-# 申請部門選單，沿用職缺維護「負責所別」的既有所別清單（同一套組織架構），
-# 見 services/job_listing_submit_service.py 的 BRANCH_OPTIONS——這裡故意
-# 另外複製一份而不是直接 import 共用，因為這是兩個獨立模組各自的選項
-# 清單，語意不同（一個是「負責所別」、一個是「申請部門」），沒有規定兩邊
-# 一定要永遠同步異動。
-DEPARTMENT_OPTIONS = ["台北所(派遣組)", "新北所(派遣組)", "桃園所", "台中所", "高雄所", "新北所(配送組)"]
-
 # 點數換算金額的固定比例（元/點），使用者 2026-09-11 確認過的數字
 # （範例：3250 元 = 5000 點）。
 POINT_RATE = 0.65
