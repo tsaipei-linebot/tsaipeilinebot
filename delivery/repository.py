@@ -8,6 +8,7 @@ import time
 from datetime import date, datetime, timedelta
 
 from delivery.config import (
+    ANNUAL_LEAVE_MAX_DAYS,
     COOPERATION_TYPE_MAP,
     DEFAULT_INCIDENT_STATUS,
     DEFAULT_PERSONNEL_STATUS,
@@ -15,9 +16,13 @@ from delivery.config import (
     DEFAULT_VEHICLE_STATUS,
     DOC_TYPES,
     HIDDEN_PERSONNEL_STATUSES,
+    LEAVE_QUOTA_ALERT_RATIO,
+    LEAVE_TYPE_LOOKUP,
+    LEAVE_TYPES,
     LEGACY_PERSONNEL_STATUS,
     RISK_LEVELS,
     SELECTABLE_APPLICANT_STATUSES,
+    WORKDAY_HOURS,
     TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
     TEST_DRIVE_REQUIRED_VENDORS,
     TEST_DRIVE_STATUS_MAP,
@@ -474,13 +479,19 @@ def bulk_approve_repayments(repayment_ids: list) -> None:
 
 # ==========================================
 # 假別登記
+# 2026-09-11 起改成「一天一筆、記時數」（leave_date + hours），取代原本
+# 「起訖日期、沒有時數」的 start_date/end_date。**這個功能上線前既有的
+# 舊資料只有 start_date/end_date，沒有 leave_date/hours**——這裡刻意不去
+# 改寫/搬遷舊資料（無法回推當初到底請了幾小時），畫面顯示、篩選都對兩種
+# 格式做相容處理，但額度累積計算只會採計「有 leave_date/hours 的新格式
+# 紀錄」，這是新功能上線後才開始準確累計的已知限制，見 HANDOFF.md。
 # ==========================================
 def create_sick_leave(
     personnel_id: str,
     personnel_name: str,
     vendor: str,
-    start_date: str,
-    end_date: str,
+    leave_date: str,
+    hours: float,
     reason: str,
     receipt_file_path: str,
     created_by: str,
@@ -493,8 +504,8 @@ def create_sick_leave(
             "personnel_name": personnel_name,
             "vendor": vendor,
             "leave_type": leave_type or "",
-            "start_date": start_date,
-            "end_date": end_date,
+            "leave_date": leave_date,
+            "hours": hours,
             "reason": reason,
             "receipt_file_path": receipt_file_path,
             "approved": False,
@@ -505,6 +516,12 @@ def create_sick_leave(
     return doc_ref.id
 
 
+def sick_leave_record_date(record: dict) -> str:
+    """取這筆紀錄「用來篩選/排序/顯示」的日期字串：新格式用 leave_date，
+    上線前的舊格式（沒有 leave_date）退回用 start_date。"""
+    return record.get("leave_date") or record.get("start_date") or ""
+
+
 def sick_leave_matches_filters(
     record: dict,
     name_keyword: str = "",
@@ -513,12 +530,12 @@ def sick_leave_matches_filters(
     leave_type_filter: str = "",
 ) -> bool:
     """判斷這筆假別登記要不要出現在「假別查詢」清單裡（純函式）。month_filter
-    是 "YYYY-MM" 格式，比對 start_date（請假開始日期）開頭。"""
+    是 "YYYY-MM" 格式，比對這筆紀錄的日期（見 sick_leave_record_date()）開頭。"""
     if name_keyword and name_keyword not in (record.get("personnel_name") or ""):
         return False
     if vendor_filter and record.get("vendor") != vendor_filter:
         return False
-    if month_filter and not (record.get("start_date") or "").startswith(month_filter):
+    if month_filter and not sick_leave_record_date(record).startswith(month_filter):
         return False
     if leave_type_filter and record.get("leave_type") != leave_type_filter:
         return False
@@ -540,7 +557,7 @@ def list_sick_leaves(
         data["approved"] = bool(data.get("approved"))
         if sick_leave_matches_filters(data, name_keyword, vendor_filter, month_filter, leave_type_filter):
             result.append(data)
-    result.sort(key=lambda r: r.get("start_date", ""), reverse=True)
+    result.sort(key=sick_leave_record_date, reverse=True)
     return result
 
 
@@ -552,6 +569,194 @@ def bulk_approve_sick_leaves(sick_leave_ids: list) -> None:
     for sick_leave_id in sick_leave_ids:
         batch.update(sick_leaves_ref().document(sick_leave_id), {"approved": True})
     batch.commit()
+
+
+# ==========================================
+# 假別額度計算（2026-09-11 新增）
+# 特休依「到職週年」計算，其餘假別依「曆年」計算，見 config.py 的
+# LEAVE_TYPES 說明。純函式部分（不連 Firestore）方便直接寫單元測試。
+# ==========================================
+def compute_annual_leave_days(years_of_service: float) -> int:
+    """依勞基法第38條的年資級距，回傳特休天數。years_of_service 是到職
+    當下累積的年資（例如 1.5 代表滿1年半），0.5~1年這個級距需要知道有沒有
+    滿半年，所以用浮點數而不是只看整數年。10年以上每滿1年加1天，最高
+    30天：第10年（10.0~10.9）比照5~10年級距是15天，滿第11個完整年度
+    （years_of_service>=11）開始才+1天，以此類推。"""
+    if years_of_service < 0.5:
+        return 0
+    if years_of_service < 1:
+        return 3
+    floor_years = int(years_of_service)
+    if floor_years < 2:
+        return 7
+    if floor_years < 3:
+        return 10
+    if floor_years < 5:
+        return 14
+    if floor_years < 10:
+        return 15
+    return min(15 + (floor_years - 9), ANNUAL_LEAVE_MAX_DAYS)
+
+
+def _add_years(base_date: date, years: int) -> date:
+    """base_date 往後加 years 年，處理 2/29 加到非閏年的邊界情況（退到
+    2/28，不是進位到 3/1）。"""
+    try:
+        return base_date.replace(year=base_date.year + years)
+    except ValueError:
+        return base_date.replace(year=base_date.year + years, day=28)
+
+
+def years_of_service_at(hire_date: date, on_date: date) -> float:
+    """on_date 這一天，距離 hire_date 累積了幾年年資。未滿一年時，用實際
+    天數（>=182天）概算「有沒有滿半年」，滿一年以上就回傳整數年（用月/日
+    比對，不是用「相減天數 / 365」概算，避免閏年造成的誤差）。"""
+    if on_date < hire_date:
+        return 0.0
+    years = on_date.year - hire_date.year
+    if (on_date.month, on_date.day) < (hire_date.month, hire_date.day):
+        years -= 1
+    if years >= 1:
+        return float(years)
+    days = (on_date - hire_date).days
+    return 0.5 if days >= 182 else 0.0
+
+
+def leave_period_and_quota(leave_type_code: str, hire_date, as_of: date = None):
+    """回傳 (period_start, period_end, quota_days) 這個假別「目前所在的
+    額度週期」跟法定上限天數：
+    - 特休（quota_basis="anniversary"）：週期是「到職週年」；hire_date
+      是 None（同仁還沒補到職日期）時算不出週期，回傳 (None, None, None)。
+    - 曆年制的假別：週期固定是當年 1/1~12/31。
+    - 沒有固定額度的假別（quota_basis 是 None）：週期一樣給曆年（方便
+      畫面上還是能顯示「今年用了幾天」），但 quota_days 是 None，呼叫端
+      不應該拿 None 去算百分比。
+    """
+    as_of = as_of or date.today()
+    leave_type = LEAVE_TYPE_LOOKUP.get(leave_type_code) or {}
+    basis = leave_type.get("quota_basis")
+
+    if basis == "anniversary":
+        if hire_date is None:
+            return None, None, None
+        years = years_of_service_at(hire_date, as_of)
+        start_years = int(years) if years >= 1 else 0
+        period_start = _add_years(hire_date, start_years)
+        period_end = _add_years(hire_date, start_years + 1) - timedelta(days=1)
+        return period_start, period_end, compute_annual_leave_days(years)
+
+    period_start, period_end = date(as_of.year, 1, 1), date(as_of.year, 12, 31)
+    return period_start, period_end, leave_type.get("quota_days")
+
+
+def _quota_pool_codes(leave_type_code: str) -> list:
+    """回傳跟這個假別共用同一包額度的所有假別代碼（含自己）——目前只有
+    家庭照顧假的用量要「額外」算進事假的額度消耗裡（見 config.py
+    LEAVE_TYPES 的 shares_quota_with 說明）。"""
+    codes = [leave_type_code]
+    for t in LEAVE_TYPES:
+        if t.get("shares_quota_with") == leave_type_code:
+            codes.append(t["code"])
+    return codes
+
+
+def leave_quota_summary_for_person(records: list, hire_date, as_of: date = None) -> list:
+    """算這個人「每一種有固定額度的假別」目前週期內的累積使用狀況。records
+    是這個人全部的假別登記紀錄（不限假別、不限期間，這裡自己篩）；沒有
+    leave_date/hours 的舊格式紀錄不會被算進累積（見本節開頭的說明）。
+    公假、其他、育嬰留職停薪這種沒有固定額度的假別不會出現在回傳清單裡。"""
+    as_of = as_of or date.today()
+    summary = []
+    for leave_type in LEAVE_TYPES:
+        code = leave_type["code"]
+        if leave_type.get("quota_basis") is None:
+            continue
+        period_start, period_end, quota_days = leave_period_and_quota(code, hire_date, as_of)
+        if period_start is None:
+            continue
+        pool_codes = _quota_pool_codes(code)
+        hours_used = 0.0
+        for r in records:
+            if r.get("leave_type") not in pool_codes:
+                continue
+            record_date = _parse_date(r.get("leave_date"))
+            if record_date is None or not (period_start <= record_date <= period_end):
+                continue
+            hours_used += r.get("hours") or 0
+        days_used = round(hours_used / WORKDAY_HOURS, 2)
+        percent_used = round(days_used / quota_days * 100, 1) if quota_days else None
+        summary.append(
+            {
+                "leave_type": code,
+                "leave_type_name": leave_type["name"],
+                "period_start": period_start.isoformat(),
+                "period_end": period_end.isoformat(),
+                "hours_used": hours_used,
+                "days_used": days_used,
+                "quota_days": quota_days,
+                "percent_used": percent_used,
+            }
+        )
+    return summary
+
+
+def find_personnel_by_name_vendor(vendor: str, name: str):
+    """假別登記表單只填廠商+姓名（自由文字，沒有連到人員資料的
+    personnel_id，見本節開頭說明），算年度額度時要靠這個反查對應的人員
+    資料（拿到職日期）。同一廠商同名同姓會抓到「其中一筆」在職人員，這是
+    現有系統本來就有的限制（假別登記從一開始就沒有存 personnel_id），
+    不是這次新增功能造成的。"""
+    query = personnel_ref().where("vendor", "==", vendor).where("name", "==", name).where("status", "==", "active")
+    for snapshot in query.stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        return data
+    return None
+
+
+def list_leave_quota_alerts(as_of: date = None) -> list:
+    """掃過全部在職人員，抓出「有固定額度的假別，累積使用達 90% 以上」的
+    (人員, 假別) 配對，給排程端點（routes/reminder_routes.py）推播 LINE
+    提醒用。每次呼叫都是重新掃描全部資料，沒有「已提醒過」的排除邏輯——
+    使用者要求只要仍然在 90% 以上，每次排程都要提醒，不用像文件到期提醒
+    那樣記錄「最近提醒過」。"""
+    as_of = as_of or date.today()
+    all_records = list_sick_leaves()
+    records_by_key = {}
+    for r in all_records:
+        key = (r.get("vendor"), r.get("personnel_name"))
+        records_by_key.setdefault(key, []).append(r)
+
+    alerts = []
+    for snapshot in personnel_ref().where("status", "==", "active").stream():
+        person = snapshot.to_dict() or {}
+        person["id"] = snapshot.id
+        if personnel_employment_status(person) != "employed":
+            continue
+        key = (person.get("vendor"), person.get("name"))
+        person_records = records_by_key.get(key, [])
+        hire_date = _parse_date(person.get("hire_date"))
+        summary = leave_quota_summary_for_person(person_records, hire_date, as_of)
+        for row in summary:
+            if row["quota_days"] and row["percent_used"] is not None and row["percent_used"] >= LEAVE_QUOTA_ALERT_RATIO * 100:
+                alerts.append(
+                    {
+                        "personnel_name": person.get("name"),
+                        "vendor": person.get("vendor"),
+                        "leave_type_name": row["leave_type_name"],
+                        "days_used": row["days_used"],
+                        "quota_days": row["quota_days"],
+                        "percent_used": row["percent_used"],
+                    }
+                )
+    return alerts
+
+
+def update_personnel_hire_date(personnel_id: str, hire_date: str):
+    """到職日期只影響特休額度試算，跟其他文件欄位一樣在人員詳細頁的
+    「一鍵全部更新」表單裡一起送出（見 routes/vendor_routes.py 的
+    bulk_update_personnel()）。"""
+    personnel_ref().document(personnel_id).update({"hire_date": hire_date, "updated_at": time.time()})
 
 
 # ==========================================

@@ -30,6 +30,40 @@
     {% endif %}
 </form>
 
+{% if quota_summary is not none %}
+<div class="page-head">
+    <h2 class="page-title" style="font-size:1.1rem;">{{ quota_person_name }} 年度假別累積</h2>
+</div>
+{% if quota_summary %}
+<div class="table-scroll">
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>假別</th>
+            <th>額度週期</th>
+            <th>已用天數</th>
+            <th>法定上限（天）</th>
+            <th>使用比例</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in quota_summary %}
+        <tr {% if row.quota_days and row.percent_used is not none and row.percent_used >= 90 %}class="badge-pending"{% endif %}>
+            <td>{{ row.leave_type_name }}</td>
+            <td>{{ row.period_start }} ~ {{ row.period_end }}</td>
+            <td>{{ row.days_used }}</td>
+            <td>{{ row.quota_days if row.quota_days is not none else "-" }}</td>
+            <td>{{ row.percent_used ~ "%" if row.percent_used is not none else "-" }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">這位人員還沒有補到職日期，無法試算特休等額度（請到人員詳細頁補上到職日期）。</p>
+{% endif %}
+{% endif %}
+
 {% if records %}
 <form method="post" action="/delivery/function/sick-leave/records/approve">
     <input type="hidden" name="filter_name" value="{{ filter_name }}">
@@ -45,7 +79,8 @@
     <table class="data-table sticky-head">
         <thead>
             <tr>
-                <th>期間</th>
+                <th>申請日期</th>
+                <th>時數</th>
                 <th>假別</th>
                 <th>廠商</th>
                 <th>人員</th>
@@ -57,7 +92,13 @@
         <tbody>
             {% for r in records %}
             <tr>
+                {% if r.leave_date %}
+                <td>{{ r.leave_date }}</td>
+                <td>{{ r.hours }}</td>
+                {% else %}
                 <td>{{ r.start_date }} ~ {{ r.end_date }}</td>
+                <td>-</td>
+                {% endif %}
                 <td>{{ leave_type_map.get(r.leave_type, r.leave_type or "-") }}</td>
                 <td>{{ r.vendor }}</td>
                 <td>{{ r.personnel_name }}</td>

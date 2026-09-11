@@ -47,3 +47,35 @@ def expiry_reminder_check(x_delivery_reminder_secret: str = Header(None)):
         repository.mark_documents_reminded(items)
 
     return {"status": "ok", "reminded": len(items) if sent else 0, "sent": sent}
+
+
+def _format_leave_quota_message(alerts: list) -> str:
+    lines = [f"📋 配送部系統－假別額度提醒（累積達法定上限 90% 以上，共 {len(alerts)} 筆）"]
+    for alert in alerts[:_MAX_ITEMS_IN_MESSAGE]:
+        vendor_name = VENDOR_MAP.get(alert["vendor"], alert["vendor"])
+        lines.append(
+            f"⚠️ {alert['personnel_name']}（{vendor_name}）- {alert['leave_type_name']}，"
+            f"已用 {alert['days_used']}/{alert['quota_days']} 天（{alert['percent_used']}%）"
+        )
+    remaining = len(alerts) - _MAX_ITEMS_IN_MESSAGE
+    if remaining > 0:
+        lines.append(f"...還有 {remaining} 筆，請登入系統查看")
+    return "\n".join(lines)
+
+
+@router.post("/api/leave-quota-reminder-check")
+def leave_quota_reminder_check(x_delivery_reminder_secret: str = Header(None)):
+    """跟到期文件提醒一樣是 Cloud Scheduler 打的排程端點（共用同一組
+    DELIVERY_REMINDER_SECRET）。跟到期提醒不同的是這裡沒有「已提醒過」的
+    排除邏輯：只要累積使用還在90%以上，每次排程執行都會再推播一次（使用者
+    要求「達到90%後每次都要提醒」，見 repository.list_leave_quota_alerts()
+    的說明）。"""
+    if not REMINDER_TRIGGER_SECRET or x_delivery_reminder_secret != REMINDER_TRIGGER_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    alerts = repository.list_leave_quota_alerts()
+    if not alerts:
+        return {"status": "ok", "reminded": 0}
+
+    sent = push_reminder_message(_format_leave_quota_message(alerts))
+    return {"status": "ok", "reminded": len(alerts) if sent else 0, "sent": sent}
