@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -85,6 +86,68 @@ class ToAccountTests(unittest.TestCase):
         )
         self.assertEqual(account["manager_usernames"], ["bob"])
         self.assertEqual(account["department"], "業務部")
+
+    def test_defaults_sort_index_to_none_when_missing(self):
+        account = platform_accounts._to_account("alice", {"name": "Alice"})
+        self.assertIsNone(account["sort_index"])
+
+    def test_preserves_sort_index_when_present(self):
+        account = platform_accounts._to_account("alice", {"name": "Alice", "sort_index": 3})
+        self.assertEqual(account["sort_index"], 3)
+
+
+class ListAccountsSortingTests(unittest.TestCase):
+    """帳號權限管理頁面依部門分組顯示，同部門內先看拖曳排過序的
+    （sort_index 由小到大），再看還沒排過序的（依姓名排在後面）——見
+    list_accounts() 的說明。"""
+
+    def _fake_doc(self, doc_id, data):
+        doc = mock.Mock()
+        doc.id = doc_id
+        doc.to_dict.return_value = data
+        return doc
+
+    def test_groups_by_department_then_sort_index_then_name(self):
+        docs = [
+            self._fake_doc("u1", {"name": "小華", "department": "桃園所"}),
+            self._fake_doc("u2", {"name": "小明", "department": "桃園所", "sort_index": 1}),
+            self._fake_doc("u3", {"name": "小美", "department": "桃園所", "sort_index": 0}),
+            self._fake_doc("u4", {"name": "老闆", "department": "台中所"}),
+        ]
+        fake_collection = mock.Mock()
+        fake_collection.stream.return_value = docs
+        with mock.patch.object(platform_accounts, "users_ref", return_value=fake_collection):
+            result = platform_accounts.list_accounts()
+        self.assertEqual([a["username"] for a in result], ["u4", "u3", "u2", "u1"])
+
+
+class ReorderDepartmentTests(unittest.TestCase):
+    """reorder_department() 是帳號權限管理頁面拖曳排序存檔的核心邏輯：
+    只更新真的屬於這個部門的帳號，其餘（不相干的 username、屬於別部門的
+    帳號）一律忽略，不完全信任前端送來的內容。"""
+
+    def test_updates_sort_index_in_given_order_and_ignores_unrelated_usernames(self):
+        fake_accounts = [
+            {"username": "u1", "department": "桃園所"},
+            {"username": "u2", "department": "桃園所"},
+            {"username": "u3", "department": "台中所"},
+        ]
+        fake_batch = mock.Mock()
+        fake_db = mock.Mock()
+        fake_db.batch.return_value = fake_batch
+        doc_refs = {"u1": mock.Mock(name="doc_u1"), "u2": mock.Mock(name="doc_u2")}
+        fake_collection = mock.Mock()
+        fake_collection.document.side_effect = lambda u: doc_refs[u]
+
+        with mock.patch.object(platform_accounts, "list_accounts", return_value=fake_accounts):
+            with mock.patch.object(platform_accounts, "get_db", return_value=fake_db):
+                with mock.patch.object(platform_accounts, "users_ref", return_value=fake_collection):
+                    platform_accounts.reorder_department("桃園所", ["u2", "u1", "u3", "u_unknown"])
+
+        fake_batch.update.assert_any_call(doc_refs["u2"], {"sort_index": 0})
+        fake_batch.update.assert_any_call(doc_refs["u1"], {"sort_index": 1})
+        self.assertEqual(fake_batch.update.call_count, 2)
+        fake_batch.commit.assert_called_once()
 
 
 class ValidateAccountDeletionTests(unittest.TestCase):

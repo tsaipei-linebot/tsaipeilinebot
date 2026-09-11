@@ -77,7 +77,13 @@ FastAPI（Python）＋ line-bot-sdk（LINE 官方帳號串接）＋ Notion API
 - `manager_usernames`：這個帳號的主管（存的是別的帳號的 username，可以
   有多個），在 `/accounts` 網頁上設定，給「主管能看部屬資料」這類跨模組
   功能共用（目前是 `/me` 的薪資補款紀錄在用）。
-- `department`：部門，自由文字，目前只是存起來備用，還沒有功能會用到。
+- `department`：部門，自由文字，**必填**（`/accounts` 新增/編輯帳號表單會擋空白）。
+  用途：`/accounts` 帳號權限管理頁面依此分組顯示、組內可拖曳排序；
+  「小雞點數自費申請」的申請部門也直接帶入這裡的值。
+- `sort_index`：帳號在自己部門內的手動排序數字（拖曳 `/accounts` 頁面存的），
+  沒被拖曳過是 `None`（排在有排過序的人後面，依姓名排），新帳號一律
+  `None`，天生排在部門最後——見 `platform_accounts.list_accounts()`／
+  `reorder_department()`。
 
 跟帳號同一層級（跨模組共用、不屬於任何單一部門）的還有 `/companies`
 管理的公司牌照主檔（`platform_companies.py`，Firestore collection
