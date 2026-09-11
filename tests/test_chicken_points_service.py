@@ -97,5 +97,18 @@ class ListRequestsTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in result], ["d2", "d1"])
 
 
+class DeleteRequestTests(unittest.TestCase):
+    def test_deletes_the_matching_document(self):
+        fake_doc_ref = mock.Mock()
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+
+        with mock.patch.object(cp_service, "requests_ref", return_value=fake_collection):
+            cp_service.delete_request("abc123")
+
+        fake_collection.document.assert_called_once_with("abc123")
+        fake_doc_ref.delete.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

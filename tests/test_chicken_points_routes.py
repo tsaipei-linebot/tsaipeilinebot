@@ -173,5 +173,57 @@ class DepartmentAutoFillTests(unittest.TestCase):
         self.assertEqual(result.status_code, 303)
 
 
+class DeletePermissionTests(unittest.TestCase):
+    """刪除申請紀錄只有「主管」角色（含全平台管理員）能用——這裡驗證
+    `_require_admin_access()` 正確擋下「專員」角色，以及
+    `chicken_points_delete()` 只有在通過權限檢查後才會真的呼叫
+    `delete_request()`。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = DeletePermissionTests._FakeSession({"user": user})
+
+    def test_staff_role_is_redirected_back_to_home(self):
+        account = {"username": "bob", "name": "Bob", "modules": {"chicken_points": "staff"}, "is_platform_admin": False}
+        result = chicken_points_routes._require_admin_access(self._FakeRequest(account))
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(result.headers["location"], "/chicken-points")
+
+    def test_admin_role_is_allowed(self):
+        account = {"username": "carol", "name": "Carol", "modules": {"chicken_points": "admin"}, "is_platform_admin": False}
+        result = chicken_points_routes._require_admin_access(self._FakeRequest(account))
+        self.assertIsNone(result)
+
+    def test_platform_admin_is_allowed_even_without_module_role(self):
+        account = {"username": "boss", "name": "Boss", "modules": {}, "is_platform_admin": True}
+        result = chicken_points_routes._require_admin_access(self._FakeRequest(account))
+        self.assertIsNone(result)
+
+    def test_no_module_access_is_redirected_to_portal(self):
+        account = {"username": "dave", "name": "Dave", "modules": {}, "is_platform_admin": False}
+        result = chicken_points_routes._require_admin_access(self._FakeRequest(account))
+        self.assertIsNotNone(result)
+        self.assertEqual(result.headers["location"], "/portal")
+
+    def test_delete_route_calls_delete_request_when_authorized(self):
+        with mock.patch.object(chicken_points_routes, "delete_request") as mock_delete:
+            result = chicken_points_routes.chicken_points_delete("abc123", redirect=None)
+        mock_delete.assert_called_once_with("abc123")
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(result.headers["location"], "/chicken-points?deleted=1")
+
+    def test_delete_route_skips_delete_when_redirect_present(self):
+        fake_redirect = object()
+        with mock.patch.object(chicken_points_routes, "delete_request") as mock_delete:
+            result = chicken_points_routes.chicken_points_delete("abc123", redirect=fake_redirect)
+        mock_delete.assert_not_called()
+        self.assertIs(result, fake_redirect)
+
+
 if __name__ == "__main__":
     unittest.main()
