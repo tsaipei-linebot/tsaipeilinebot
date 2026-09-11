@@ -378,5 +378,67 @@ class BookInterviewSlotTests(unittest.TestCase):
         mock_get.assert_not_called()
 
 
+class RecordResumeClickTests(unittest.TestCase):
+    """職缺卡片「填寫線上履歷」按鈕點擊記錄：main.py 的 /apply-click 轉址
+    端點在求職者點擊當下呼叫這個函式，寫進『履歷點擊紀錄』資料庫，讓招募
+    專員知道誰對哪個職缺有興趣。"""
+
+    def test_successful_write_records_display_name_job_and_industry_label(self):
+        post_response = type("_Resp", (), {"status_code": 201, "text": ""})()
+
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_RESUME_CLICK_LOG_DB_ID", "click-log-db"), \
+             patch("services.notion_service.requests.post", return_value=post_response) as mock_post:
+            result = n.record_resume_click("U1234", "小明", "蝦皮店到店門市夥伴", "Spx")
+
+        self.assertTrue(result)
+        _, post_kwargs = mock_post.call_args
+        props = post_kwargs["json"]["properties"]
+        self.assertEqual(props["求職者暱稱"]["title"][0]["text"]["content"], "小明")
+        self.assertEqual(props["LINE User ID"]["rich_text"][0]["text"]["content"], "U1234")
+        self.assertEqual(props["應徵職缺"]["rich_text"][0]["text"]["content"], "蝦皮店到店門市夥伴")
+        self.assertEqual(props["產業類別"]["rich_text"][0]["text"]["content"], "蝦皮/外送")
+        self.assertIn("點擊時間", props)
+
+    def test_falls_back_to_user_id_when_no_display_name(self):
+        post_response = type("_Resp", (), {"status_code": 201, "text": ""})()
+
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_RESUME_CLICK_LOG_DB_ID", "click-log-db"), \
+             patch("services.notion_service.requests.post", return_value=post_response) as mock_post:
+            n.record_resume_click("U1234", "", "美光(桃園)作業員", "Manufacture")
+
+        _, post_kwargs = mock_post.call_args
+        self.assertEqual(post_kwargs["json"]["properties"]["求職者暱稱"]["title"][0]["text"]["content"], "U1234")
+
+    def test_skips_when_db_id_not_configured(self):
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_RESUME_CLICK_LOG_DB_ID", ""), \
+             patch("services.notion_service.requests.post") as mock_post:
+            result = n.record_resume_click("U1234", "小明", "蝦皮門市", "Spx")
+
+        self.assertFalse(result)
+        mock_post.assert_not_called()
+
+    def test_skips_when_missing_user_id(self):
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_RESUME_CLICK_LOG_DB_ID", "click-log-db"), \
+             patch("services.notion_service.requests.post") as mock_post:
+            result = n.record_resume_click("", "小明", "蝦皮門市", "Spx")
+
+        self.assertFalse(result)
+        mock_post.assert_not_called()
+
+    def test_write_failure_returns_false_without_raising(self):
+        error_response = type("_Resp", (), {"status_code": 500, "text": "server error"})()
+
+        with patch("services.notion_service.NOTION_API_KEY", "dummy-key"), \
+             patch("services.notion_service.NOTION_RESUME_CLICK_LOG_DB_ID", "click-log-db"), \
+             patch("services.notion_service.requests.post", return_value=error_response):
+            result = n.record_resume_click("U1234", "小明", "蝦皮門市", "Spx")
+
+        self.assertFalse(result)
+
+
 if __name__ == "__main__":
     unittest.main()

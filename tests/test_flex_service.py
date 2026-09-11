@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -94,6 +95,49 @@ class CreateJobFlexCardBrandColorTests(unittest.TestCase):
         category_badge_text = tags_row.contents[-1].contents[0]
         self.assertEqual(category_badge_text.text, "門市")
         self.assertEqual(category_badge_text.color, "#c2410c")
+
+
+class CreateJobFlexCardResumeClickTrackingTests(unittest.TestCase):
+    """使用者要求要能知道誰點了「填寫線上履歷」按鈕：LINE 的 uri 按鈕點擊
+    完全不會觸發 webhook，唯一能觀察到的方式是讓按鈕先連到我們自己的
+    /apply-click 轉址端點（見 main.py）記錄，再轉址到真正的履歷網站。
+    這裡驗證 SERVICE_BASE_URL 有設定時，按鈕會改連到轉址端點並帶對的參數；
+    沒設定時維持原本「直接連到履歷網站」的行為，不能讓按鈕失效。"""
+
+    def _card_job(self, **overrides):
+        job = {
+            "職缺名稱(對外)": "測試門市職缺", "職缺名稱": "測試門市職缺(內部)",
+            "薪資": "時薪200", "班別": "早班", "職務類別": "門市",
+            "縣市": "新北市", "行政區": "新莊區",
+        }
+        job.update(overrides)
+        return job
+
+    def test_uses_direct_resume_link_when_service_base_url_not_configured(self):
+        with patch("services.flex_service.SERVICE_BASE_URL", ""):
+            card = f.create_job_flex_card([self._card_job()], "U1234", "新莊")
+
+        apply_button = card.contents.contents[0].footer.contents[-2]
+        self.assertTrue(apply_button.action.uri.startswith("https://resume.tsaipei.com.tw"))
+
+    def test_routes_through_apply_click_endpoint_when_service_base_url_configured(self):
+        with patch("services.flex_service.SERVICE_BASE_URL", "https://recruitment-bot-example.a.run.app"):
+            card = f.create_job_flex_card([self._card_job()], "U1234", "新莊")
+
+        apply_button = card.contents.contents[0].footer.contents[-2]
+        uri = apply_button.action.uri
+        self.assertTrue(uri.startswith("https://recruitment-bot-example.a.run.app/apply-click?"))
+        self.assertIn("uid=U1234", uri)
+        self.assertIn("type=Service", uri)
+        self.assertIn("job=%E6%B8%AC%E8%A9%A6%E9%96%80%E5%B8%82%E8%81%B7%E7%BC%BA%28%E5%85%A7%E9%83%A8%29", uri)
+
+    def test_trailing_slash_on_service_base_url_does_not_produce_double_slash(self):
+        with patch("services.flex_service.SERVICE_BASE_URL", "https://recruitment-bot-example.a.run.app/"):
+            card = f.create_job_flex_card([self._card_job()], "U1234", "新莊")
+
+        apply_button = card.contents.contents[0].footer.contents[-2]
+        self.assertTrue(apply_button.action.uri.startswith("https://recruitment-bot-example.a.run.app/apply-click?"))
+        self.assertNotIn("run.app//apply-click", apply_button.action.uri)
 
 
 class CreateJobFlexCardInterviewButtonTests(unittest.TestCase):
