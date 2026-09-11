@@ -81,3 +81,12 @@ def list_requests_by_username(username: str) -> list:
     results = [_doc_to_dict(d) for d in docs]
     results.sort(key=lambda r: r.get("created_at") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return results
+
+
+def delete_request(request_id: str) -> None:
+    """刪除一筆申請紀錄——呼叫端（chicken_points_routes.py）要先確認過
+    是「主管」角色或全平台管理員才能呼叫這個函式，這裡本身不再重複
+    判斷權限。刪掉不存在的 request_id 也不會噴例外（Firestore
+    `document(id).delete()` 對不存在的文件一樣視為成功），呼叫端不用
+    先查一次是否存在。"""
+    requests_ref().document(request_id).delete()

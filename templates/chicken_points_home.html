@@ -13,6 +13,9 @@
 {% if submitted %}
 <p class="success">申請已送出，資料已存檔。</p>
 {% endif %}
+{% if deleted %}
+<p class="success">這筆申請紀錄已刪除。</p>
+{% endif %}
 
 <p><a href="/chicken-points/new" class="btn btn-primary">+ 送出新的小雞點數自費申請</a></p>
 
@@ -31,6 +34,7 @@
                 <th>應扣金額</th>
                 <th>送出時間</th>
                 <th>簽名表單</th>
+                {% if is_admin_view %}<th>刪除</th>{% endif %}
             </tr>
         </thead>
         <tbody>
@@ -49,6 +53,14 @@
                     -
                     {% endif %}
                 </td>
+                {% if is_admin_view %}
+                <td>
+                    <form method="post" action="/chicken-points/{{ record.id }}/delete" style="display:inline"
+                          onsubmit="return confirm('確定要刪除這筆申請紀錄嗎？（{{ record.applicant_name }}／{{ record.purchase_month }}／{{ record.points }} 點）刪除後無法復原。');">
+                        <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                    </form>
+                </td>
+                {% endif %}
             </tr>
             {% endfor %}
         </tbody>

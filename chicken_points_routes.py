@@ -18,6 +18,12 @@
 從登入的帳號資料讀。如果帳號沒有設定部門（`department` 是空字串），
 擋下表單並提示要先請平台管理員到 `/accounts` 幫忙補上部門，不能送出——
 避免存進一筆部門是空白的紀錄，讓會計對帳時看不出是哪個部門申請的。
+
+**刪除功能（2026-09-11 新增）**：只有「主管」角色（含全平台管理員，
+`platform_accounts.module_role()` 對全平台管理員一律回傳 `ROLE_ADMIN`，
+見該函式的說明）才能刪除申請紀錄，「專員」看不到刪除按鈕，伺服器端
+`_require_admin_access()` 也會再檢查一次角色，不是只有前端藏起來
+按鈕而已。
 """
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -26,6 +32,7 @@ import platform_accounts
 from platform_templating import templates
 from services.chicken_points_service import (
     POINT_RATE,
+    delete_request,
     list_all_requests,
     list_requests_by_username,
     save_request,
@@ -56,8 +63,20 @@ def _require_access(request: Request):
     return None
 
 
+def _require_admin_access(request: Request):
+    """比 `_require_access()` 多一層：不只要有這個模組的權限，角色還要是
+    「主管」（含全平台管理員）才放行，用在刪除這種主管限定的操作上。"""
+    redirect = _require_access(request)
+    if redirect:
+        return redirect
+    account = platform_accounts.current_account(request)
+    if platform_accounts.module_role(account, MODULE_CODE) != platform_accounts.ROLE_ADMIN:
+        return RedirectResponse(url="/chicken-points", status_code=303)
+    return None
+
+
 @router.get("/chicken-points")
-def chicken_points_home(request: Request, submitted: str = "", redirect=Depends(_require_access)):
+def chicken_points_home(request: Request, submitted: str = "", deleted: str = "", redirect=Depends(_require_access)):
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
@@ -66,8 +85,16 @@ def chicken_points_home(request: Request, submitted: str = "", redirect=Depends(
     return templates.TemplateResponse(
         request,
         "chicken_points_home.html",
-        {"user": account, "records": records, "is_admin_view": is_admin_view, "submitted": submitted},
+        {"user": account, "records": records, "is_admin_view": is_admin_view, "submitted": submitted, "deleted": deleted},
     )
+
+
+@router.post("/chicken-points/{request_id}/delete")
+def chicken_points_delete(request_id: str, redirect=Depends(_require_admin_access)):
+    if redirect:
+        return redirect
+    delete_request(request_id)
+    return RedirectResponse(url="/chicken-points?deleted=1", status_code=303)
 
 
 @router.get("/chicken-points/new")
