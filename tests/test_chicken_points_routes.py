@@ -1,0 +1,118 @@
+import os
+import sys
+import unittest
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tests import _env  # noqa: F401  (匯入即副作用：見 _env.py 說明)
+from tests import _stub_gcp
+_stub_gcp.install()
+
+import chicken_points_routes
+import main
+import platform_accounts
+from fastapi.testclient import TestClient
+
+
+class ChickenPointsRoutingSmokeTests(unittest.TestCase):
+    """/chicken-points 是小雞點數自費申請的獨立模組，只涵蓋不需要真的打
+    Firestore 的部分：未登入時的導向（跟 test_project_contract_routes.py
+    同一種寫法）。"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+
+    def test_form_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/chicken-points", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/chicken-points")
+
+    def test_new_form_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/chicken-points/new", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/chicken-points")
+
+    def test_submit_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.post("/chicken-points/new", data={}, follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/chicken-points")
+
+
+class RequireAccessDependencyTests(unittest.TestCase):
+    """chicken_points_routes._require_access() 是 /chicken-points 的權限
+    檢查，直接單元測試回傳值（跟 test_project_contract_routes.py 同一種
+    寫法）。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user=None):
+            self.session = RequireAccessDependencyTests._FakeSession()
+            if user is not None:
+                self.session["user"] = user
+
+    def test_no_session_redirects_to_login(self):
+        result = chicken_points_routes._require_access(self._FakeRequest())
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(result.headers["location"], "/login?next=/chicken-points")
+
+    def test_logged_in_without_module_access_redirects_to_portal(self):
+        account = {"username": "alice", "name": "Alice", "modules": {}, "is_platform_admin": False}
+        result = chicken_points_routes._require_access(self._FakeRequest(account))
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(result.headers["location"], "/portal")
+
+    def test_logged_in_with_staff_module_access_returns_none(self):
+        account = {"username": "bob", "name": "Bob", "modules": {"chicken_points": "staff"}, "is_platform_admin": False}
+        result = chicken_points_routes._require_access(self._FakeRequest(account))
+        self.assertIsNone(result)
+
+    def test_logged_in_with_admin_module_access_returns_none(self):
+        account = {"username": "carol", "name": "Carol", "modules": {"chicken_points": "admin"}, "is_platform_admin": False}
+        result = chicken_points_routes._require_access(self._FakeRequest(account))
+        self.assertIsNone(result)
+
+
+class RoleBasedRecordVisibilityTests(unittest.TestCase):
+    """核心規則：「專員」只看自己送出過的紀錄，「主管」看得到全部同仁的
+    紀錄——這是目前平台第一個真的用到專員/主管角色差異的模組。直接呼叫
+    route function 本身（跟 test_portal.py／test_job_listing_routes.py
+    的既有分工一致：需要真的登入 session 才能測的行為，不透過 TestClient
+    真的跑一次 HTTP，而是直接單元測試，把 `redirect` 依賴的回傳值固定
+    傳 None 模擬「已通過權限檢查」），順便把 templates.TemplateResponse
+    mock 掉，不需要真的走一次 Jinja2 渲染。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = RoleBasedRecordVisibilityTests._FakeSession({"user": user})
+
+    def test_staff_role_calls_list_requests_by_username(self):
+        account = {"username": "bob", "name": "Bob", "modules": {"chicken_points": "staff"}, "is_platform_admin": False}
+        with mock.patch.object(chicken_points_routes, "list_requests_by_username", return_value=[]) as mock_by_user:
+            with mock.patch.object(chicken_points_routes, "list_all_requests") as mock_all:
+                with mock.patch.object(chicken_points_routes, "templates"):
+                    chicken_points_routes.chicken_points_home(self._FakeRequest(account), redirect=None)
+        mock_by_user.assert_called_once_with("bob")
+        mock_all.assert_not_called()
+
+    def test_admin_role_calls_list_all_requests(self):
+        account = {"username": "carol", "name": "Carol", "modules": {"chicken_points": "admin"}, "is_platform_admin": False}
+        with mock.patch.object(chicken_points_routes, "list_all_requests", return_value=[]) as mock_all:
+            with mock.patch.object(chicken_points_routes, "list_requests_by_username") as mock_by_user:
+                with mock.patch.object(chicken_points_routes, "templates"):
+                    chicken_points_routes.chicken_points_home(self._FakeRequest(account), redirect=None)
+        mock_all.assert_called_once()
+        mock_by_user.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

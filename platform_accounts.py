@@ -57,6 +57,7 @@ MODULES = [
     {"code": "salesdev", "name": "少凱業務開發專區"},
     {"code": "job_listings", "name": "職缺維護"},
     {"code": "project_contracts", "name": "專案合約維護"},
+    {"code": "chicken_points", "name": "小雞點數自費申請"},
 ]
 MODULE_MAP = {m["code"]: m["name"] for m in MODULES}
 

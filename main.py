@@ -12,6 +12,7 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage
 
 import accounts_routes
 import company_routes
+import chicken_points_routes
 import job_listing_routes
 import project_contract_routes
 import login_routes
@@ -74,6 +75,7 @@ app.include_router(me_routes.router)
 # job_listing_routes.py）。
 app.include_router(job_listing_routes.router)
 app.include_router(project_contract_routes.router)
+app.include_router(chicken_points_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，

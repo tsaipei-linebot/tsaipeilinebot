@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}小雞點數自費申請 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">小雞點數自費申請</h1>
+<p class="hint">
+    填好資料後，請在下方用手指（手機/平板）或滑鼠（電腦）簽名，送出後系統會把表單內容跟您的簽名
+    合成一張圖直接存檔，會計會自行查看紀錄，不用另外通知任何人。
+</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/chicken-points/new" id="chicken-points-form" class="form-stack">
+    <div class="repayment-section">
+        <div class="repayment-section-title">小雞點數自費申請單</div>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">申請部門 *</span>
+                <select name="department" id="cp-department" required>
+                    <option value="" {% if not form.department %}selected{% endif %}>請選擇申請部門...</option>
+                    {% for opt in department_options %}
+                    <option value="{{ opt }}" {% if form.department == opt %}selected{% endif %}>{{ opt }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label><span class="field-caption">申請同仁 *（目前登入者，鎖定不可更改）</span>
+                <div class="applicant-readonly">{{ user.name }}</div>
+            </label>
+            <label><span class="field-caption">購買月份 *</span>
+                <input type="month" name="purchase_month" id="cp-month" value="{{ form.purchase_month or '' }}" required>
+            </label>
+            <label><span class="field-caption">點數 *</span>
+                <input type="number" name="points" id="cp-points" min="1" step="1" value="{{ form.points or '' }}" placeholder="如：5000" required>
+            </label>
+            <label class="full-width"><span class="field-caption">應扣金額（依 {{ point_rate }} 元/點自動換算，同當月薪資內扣抵）</span>
+                <div class="applicant-readonly" id="cp-amount-preview">NT$ 0</div>
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">本人簽名 *</div>
+        <p class="hint" style="margin-top: 0;">請在下方方框內簽名，簽錯可以按「清除重簽」。</p>
+        <canvas id="cp-signature-pad" width="600" height="220" style="touch-action: none; width: 100%; max-width: 600px; height: 220px; border: 1px dashed var(--border); border-radius: 8px; background: var(--panel); display: block;"></canvas>
+        <p style="margin-top: 10px;">
+            <button type="button" class="btn" id="cp-clear-signature">清除重簽</button>
+        </p>
+        <input type="hidden" name="signed_image" id="cp-signed-image" value="">
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block" id="cp-submit-btn">送出申請</button>
+</form>
+<p class="back-link"><a href="/chicken-points">&larr; 回申請紀錄列表</a></p>
+
+<script>
+(function () {
+    var POINT_RATE = {{ point_rate }};
+    var APPLICANT_NAME = {{ user.name | tojson }};
+
+    var deptSelect = document.getElementById('cp-department');
+    var monthInput = document.getElementById('cp-month');
+    var pointsInput = document.getElementById('cp-points');
+    var amountPreview = document.getElementById('cp-amount-preview');
+    var padCanvas = document.getElementById('cp-signature-pad');
+    var padCtx = padCanvas.getContext('2d');
+    var clearBtn = document.getElementById('cp-clear-signature');
+    var signedImageField = document.getElementById('cp-signed-image');
+    var form = document.getElementById('chicken-points-form');
+    var submitBtn = document.getElementById('cp-submit-btn');
+
+    function computeAmount(points) {
+        var n = parseInt(points, 10);
+        if (!n || n <= 0) return 0;
+        return Math.round(n * POINT_RATE);
+    }
+
+    function updateAmountPreview() {
+        amountPreview.textContent = 'NT$ ' + computeAmount(pointsInput.value).toLocaleString();
+    }
+    pointsInput.addEventListener('input', updateAmountPreview);
+    updateAmountPreview();
+
+    // ---- 簽名板：canvas 座標要換算成「畫面顯示大小」跟「canvas 實際
+    // 解析度」之間的比例，不然手機螢幕縮放後簽名軌跡會跑掉。 ----
+    var hasSignature = false;
+    var drawing = false;
+
+    function resizeCanvasForDisplay() {
+        var rect = padCanvas.getBoundingClientRect();
+        var ratio = window.devicePixelRatio || 1;
+        padCanvas.width = rect.width * ratio;
+        padCanvas.height = rect.height * ratio;
+        padCtx.scale(ratio, ratio);
+        padCtx.lineWidth = 2.5;
+        padCtx.lineCap = 'round';
+        padCtx.strokeStyle = '#16181d';
+    }
+    resizeCanvasForDisplay();
+
+    function pointFromEvent(e) {
+        var rect = padCanvas.getBoundingClientRect();
+        var clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+        var clientY = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
+        return { x: clientX - rect.left, y: clientY - rect.top };
+    }
+
+    function startDraw(e) {
+        e.preventDefault();
+        drawing = true;
+        hasSignature = true;
+        var p = pointFromEvent(e);
+        padCtx.beginPath();
+        padCtx.moveTo(p.x, p.y);
+    }
+    function moveDraw(e) {
+        if (!drawing) return;
+        e.preventDefault();
+        var p = pointFromEvent(e);
+        padCtx.lineTo(p.x, p.y);
+        padCtx.stroke();
+    }
+    function endDraw(e) {
+        if (!drawing) return;
+        e.preventDefault();
+        drawing = false;
+    }
+
+    padCanvas.addEventListener('mousedown', startDraw);
+    padCanvas.addEventListener('mousemove', moveDraw);
+    window.addEventListener('mouseup', endDraw);
+    padCanvas.addEventListener('touchstart', startDraw, { passive: false });
+    padCanvas.addEventListener('touchmove', moveDraw, { passive: false });
+    padCanvas.addEventListener('touchend', endDraw, { passive: false });
+
+    clearBtn.addEventListener('click', function () {
+        padCtx.clearRect(0, 0, padCanvas.width, padCanvas.height);
+        hasSignature = false;
+    });
+
+    // ---- 送出前把表單內容跟簽名合成一張圖（純瀏覽器端 canvas 完成，
+    // 不需要伺服器端另外裝圖片處理套件）。 ----
+    function composeSignedImage() {
+        var W = 720, H = 900;
+        var out = document.createElement('canvas');
+        out.width = W;
+        out.height = H;
+        var ctx = out.getContext('2d');
+        var FONT_STACK = "'PingFang TC', 'Microsoft JhengHei', sans-serif";
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, W, H);
+        ctx.strokeStyle = '#333333';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(12, 12, W - 24, H - 24);
+
+        ctx.fillStyle = '#111111';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 30px ' + FONT_STACK;
+        ctx.fillText('小雞點數自費申請單', W / 2, 68);
+
+        ctx.textAlign = 'left';
+        ctx.font = '22px ' + FONT_STACK;
+        var todayStr = new Date().toISOString().slice(0, 10);
+        var lines = [
+            ['申請部門', deptSelect.value],
+            ['申請同仁', APPLICANT_NAME],
+            ['購買月份', monthInput.value],
+            ['點數', pointsInput.value + ' 點'],
+            ['應扣金額', 'NT$ ' + computeAmount(pointsInput.value).toLocaleString()],
+            ['申請日期', todayStr]
+        ];
+        var y = 130;
+        lines.forEach(function (pair) {
+            ctx.fillText(pair[0] + '：' + pair[1], 48, y);
+            y += 46;
+        });
+
+        y += 10;
+        ctx.font = '20px ' + FONT_STACK;
+        ctx.fillText('本人簽名：', 48, y);
+        var sigBoxY = y + 20;
+        var sigBoxW = W - 96, sigBoxH = 220;
+        ctx.strokeRect(48, sigBoxY, sigBoxW, sigBoxH);
+        ctx.drawImage(padCanvas, 48, sigBoxY, sigBoxW, sigBoxH);
+
+        ctx.font = '15px ' + FONT_STACK;
+        ctx.fillStyle = '#666666';
+        ctx.fillText('※ 自費購買的金額，同當月薪資內扣抵。', 48, H - 30);
+
+        return out.toDataURL('image/png');
+    }
+
+    form.addEventListener('submit', function (e) {
+        if (!hasSignature) {
+            e.preventDefault();
+            alert('請先在方框內簽名，才能送出。');
+            return;
+        }
+        if (!deptSelect.value || !monthInput.value || !pointsInput.value) {
+            // 交給瀏覽器原生 required 檢查去擋，這裡不用重複跳提示。
+            return;
+        }
+        signedImageField.value = composeSignedImage();
+        submitBtn.disabled = true;
+        submitBtn.textContent = '送出中，請稍候…';
+    });
+})();
+</script>
+{% endblock %}
