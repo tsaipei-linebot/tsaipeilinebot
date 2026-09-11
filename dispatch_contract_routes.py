@@ -3,10 +3,13 @@
 開頭的說明，這裡只負責表單頁面、送出後套版產生 Word 檔、下載。
 
 是否看得到這張卡片、能不能進來，由 `/accounts` 的權限設定決定（模組代碼
-`dispatch_contracts`）——這裡不分「專員」/「主管」角色，兩者體驗完全一樣
-（跟 /project-contracts、/job-listings 一樣），任何有這個模組權限的帳號
-都能建立契約、也都能看到全部同仁產生過的紀錄（方便同仁互相接手同一個
-客戶的後續契約）。
+`dispatch_contracts`）——這裡不分「專員」/「主管」角色，兩者都能建立契約，
+體驗完全一樣。但看得到「哪些紀錄」有另外一層限制（2026-09-11 依使用者
+要求收斂權限）：只有送出者本人、送出者的主管（`platform_accounts` 的
+`manager_usernames`）、或是全平台管理員（`is_platform_admin`）看得到某筆
+紀錄，其他有這個模組權限但跟這筆紀錄無關的帳號看不到——列表頁、下載、
+預覽三個地方都要走 `services.dispatch_contract_service.can_view_submission()`
+這同一個判斷，避免只擋列表頁、卻能用網址直接下載/預覽別人紀錄的漏洞。
 """
 from urllib.parse import quote
 
@@ -22,10 +25,11 @@ from services.dispatch_contract_service import (
     CLAUSE_ORDER,
     SHIFT_COLUMNS,
     build_shift_rows,
+    can_view_submission,
     convert_docx_to_pdf,
     get_submission,
     list_recent_client_names,
-    list_submissions,
+    list_visible_submissions,
     render_contract_docx,
     save_submission,
 )
@@ -63,7 +67,7 @@ def dispatch_contract_home(request: Request, generated: str = "", redirect=Depen
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
-    records = list_submissions()
+    records = list_visible_submissions(account)
     return templates.TemplateResponse(
         request,
         "dispatch_contract_home.html",
@@ -188,8 +192,11 @@ async def dispatch_contract_submit(request: Request, redirect=Depends(_require_a
 def dispatch_contract_download(submission_id: str, request: Request, redirect=Depends(_require_access)):
     if redirect:
         return redirect
+    account = platform_accounts.current_account(request)
     record = get_submission(submission_id)
     if not record or not record.get("blob_path"):
+        return Response(status_code=404)
+    if not can_view_submission(account, record):
         return Response(status_code=404)
     content, content_type = dispatch_contract_storage.download_file(record["blob_path"])
     if content is None:
@@ -211,8 +218,11 @@ def dispatch_contract_preview(submission_id: str, request: Request, redirect=Dep
     dispatch_contract_home.html。"""
     if redirect:
         return redirect
+    account = platform_accounts.current_account(request)
     record = get_submission(submission_id)
     if not record or not record.get("pdf_blob_path"):
+        return Response(status_code=404)
+    if not can_view_submission(account, record):
         return Response(status_code=404)
     content, content_type = dispatch_contract_storage.download_file(record["pdf_blob_path"])
     if content is None:

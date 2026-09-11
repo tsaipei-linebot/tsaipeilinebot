@@ -54,6 +54,7 @@ from datetime import datetime, timezone
 
 from docxtpl import DocxTemplate
 
+import platform_accounts
 from platform_db import get_db
 
 CONTRACTS_COLLECTION = "dispatch_contracts"
@@ -229,11 +230,41 @@ def _doc_to_dict(doc) -> dict:
 
 
 def list_submissions(limit: int = 200) -> list:
-    """依送出時間新到舊列出所有紀錄——這個功能沒有像 chicken_points 那樣區分
-    「專員只看自己」跟「主管看全部」，任何有這個模組權限的帳號都直接看全部，
-    跟 /project-contracts 一樣（見 dispatch_contract_routes.py 的權限說明）。"""
+    """依送出時間新到舊列出「全部」紀錄，不分送出人——內部用的底層函式，
+    不會過濾可見範圍。要給使用者看的清單一律要透過 `list_visible_submissions()`
+    做權限過濾，這個函式只給「本來就該看全部」的情境用（例如平台管理員、
+    或是 `list_recent_client_names()` 這種只是要抓客戶名稱、不會把整筆紀錄
+    顯示出來的用途）。"""
     docs = contracts_ref().order_by("created_at", direction="DESCENDING").limit(limit).stream()
     return [_doc_to_dict(d) for d in docs]
+
+
+def can_view_submission(viewer_account: dict, record: dict) -> bool:
+    """判斷 viewer_account 能不能看到這筆紀錄（列表頁、下載、預覽都要走這個
+    檢查）：只有送出者本人、送出者的主管（`manager_usernames` 指向送出者的
+    帳號才算）、或是全平台管理員可以看——2026-09-11 依使用者要求收斂權限，
+    原本是任何有這個模組權限的帳號都能看到全部紀錄。"""
+    if viewer_account.get("is_platform_admin"):
+        return True
+    viewer_username = viewer_account.get("username")
+    submitted_by = record.get("submitted_by")
+    if submitted_by == viewer_username:
+        return True
+    submitter = platform_accounts.get_account(submitted_by) if submitted_by else None
+    if submitter and viewer_username in (submitter.get("manager_usernames") or []):
+        return True
+    return False
+
+
+def list_visible_submissions(viewer_account: dict, limit: int = 200) -> list:
+    """依送出時間新到舊列出 viewer_account 有權限看到的紀錄：自己送出的、
+    自己是送出者的主管、或是全平台管理員——不符合以上任何一種身分的話，
+    其他同仁送出的紀錄一律看不到（2026-09-11 使用者要求收斂權限，原本是
+    任何有這個模組權限的帳號都能看到全部紀錄，方便同仁互相接手客戶）。"""
+    if viewer_account.get("is_platform_admin"):
+        return list_submissions(limit=limit)
+    records = list_submissions(limit=limit)
+    return [record for record in records if can_view_submission(viewer_account, record)]
 
 
 def get_submission(submission_id: str):

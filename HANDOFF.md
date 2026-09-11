@@ -2942,8 +2942,22 @@ dispatch_contract_service.py`），GCS 存產生的 Word 檔（
 
 **權限**：模組代碼 `dispatch_contracts`（`platform_accounts.MODULES`），
 跟 `/project-contracts`／`/job-listings` 一樣不分「專員」/「主管」角色，
-兩者體驗完全一樣，任何有這個模組權限的帳號都能建立契約、也都看得到
-全部同仁產生過的紀錄（方便同仁互相接手同一個客戶的後續契約）。
+兩者都能建立契約，體驗完全一樣。
+
+**⚠️ 可見範圍（2026-09-11 修改）**：原本任何有這個模組權限的帳號都能看到
+「全部」同仁產生過的紀錄，方便互相接手同一個客戶。使用者確認後明確要求
+收斂：**現在只有送出者本人、送出者的主管（`platform_accounts` 的
+`manager_usernames`）、或是全平台管理員（`is_platform_admin`）能看到某筆
+紀錄**，跟這筆紀錄無關的其他同仁完全看不到（列表頁看不到那一列，也不能
+用網址直接下載/預覽）。核心邏輯是
+`services/dispatch_contract_service.py` 的 `can_view_submission()`／
+`list_visible_submissions()`，`dispatch_contract_routes.py` 的列表
+（`GET /dispatch-contracts`）、下載（`.../download`）、預覽
+（`.../preview`）三個路由都走同一個判斷，避免只擋列表頁、卻能猜網址
+下載別人紀錄的漏洞。**如果同仁互相接手客戶的需求之後又出現，要處理
+「同仁 A 手上的客戶交給同仁 B」的情境，可以用 `manager_usernames` 這條
+主管關係，或是另外設計一個「轉交」的功能，不建議直接改回「全部都看得
+到」。**
 
 **Word 排版預覽**（2026-09-11 新增，使用者明確要求「做法二」——不只列表
 頁看到填了什麼，要能直接看到真正的 Word 排版）：產生契約的同時，額外用
