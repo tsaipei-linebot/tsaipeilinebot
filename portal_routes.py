@@ -48,6 +48,12 @@ _MODULE_CARD_INFO = {
         # 沒有獨立的登入頁。
         "href": "/project-contracts",
     },
+    "chicken_points": {
+        "description": "同仁自費購買小雞點數，線上填單、手指簽名送出，會計登入查看紀錄",
+        # 跟 job_listings 一樣直接掛在根 app（見 chicken_points_routes.py），
+        # 沒有獨立的登入頁。
+        "href": "/chicken-points",
+    },
 }
 
 
