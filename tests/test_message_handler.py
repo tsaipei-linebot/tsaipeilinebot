@@ -290,6 +290,44 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         prompt_sent_to_ai = mock_query.call_args[0][0]
         self.assertIn("不能只因為之前推薦過同一筆職缺", prompt_sent_to_ai)
 
+    def test_ai_prompt_forbids_claiming_vague_aggregate_covers_specific_district(self):
+        # 實測發現：求職者問「蝦皮門市」→「八德」（直接攔截誠實回答「八德沒有
+        # 明確列出」，同時附上同縣市退讓建議卡片）→「有哪些區？」，AI 卻回覆
+        # 「八德區也在可選範圍內」——地點欄位在候選職缺超過 5 個行政區時只會
+        # 顯示「各區門市據點（自選區域）」這種概括描述，AI 卻拿這種模糊描述
+        # 加上「特色」欄位提到的縣市/門市數量文字，自己腦補出「八德也算」。
+        # 這裡驗證提示詞裡有明講：概括描述不代表每個行政區都確定涵蓋，「特色」
+        # 欄位的行銷文字也不能拿來當作判斷依據。
+        fake_decision = json.dumps({"action": "RECOMMEND", "reply": "目前暫無", "ids": [], "buttons": []})
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            h._compute_ai_decision_messages("test-user", "有哪些區？", [], [], "八德", "")
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        self.assertIn("各區OO據點（自選區域）", prompt_sent_to_ai)
+        self.assertIn("不能拿來當作確認某個行政區有沒有涵蓋的依據", prompt_sent_to_ai)
+
+    def test_ai_prompt_forbids_self_contradiction_on_previously_ruled_out_district(self):
+        # 同一段對話裡，沛沛剛剛才誠實回答過「八德目前沒有明確列出的蝦皮門市
+        # 職缺」，這一輪求職者換個問法問「有哪些區？」，AI 不能改口說八德也
+        # 算在內——這裡驗證提示詞裡有明講「同一個行政區的判斷結果必須前後
+        # 一致」，且【過去對話】裡確實帶入了那句先前的誠實回覆讓 AI 看得到。
+        fake_decision = json.dumps({"action": "RECOMMEND", "reply": "目前暫無", "ids": [], "buttons": []})
+        prior_history = "求職者: 八德\n招募顧問沛沛: 「八德」目前沒有明確列出的蝦皮門市職缺，不過同樣在桃園市還有相關職缺，要不要參考看看呢？"
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]):
+            h._compute_ai_decision_messages("test-user", "有哪些區？", [], [], "八德", prior_history)
+
+        prompt_sent_to_ai = mock_query.call_args[0][0]
+        self.assertIn("絕對不能自我矛盾", prompt_sent_to_ai)
+        self.assertIn("目前沒有明確列出的蝦皮門市職缺", prompt_sent_to_ai)
+
     def test_ai_prompt_location_reflects_specific_district_for_broad_coverage_job(self):
         # 試營運實測發現：蝦皮店到店這類「全台/多縣市門市自選」職缺涵蓋超過
         # 5 個行政區，組給 AI 判斷用的「地點:」欄位原本沒有帶入使用者問的地區
@@ -314,8 +352,12 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
             h._compute_ai_decision_messages("test-user", "板橋蝦皮門市有缺嗎", [broad_job], [], "板橋", "")
 
         prompt_sent_to_ai = mock_query.call_args[0][0]
-        self.assertIn("板橋", prompt_sent_to_ai)
-        self.assertNotIn("自選區域", prompt_sent_to_ai)
+        # 只檢查這筆職缺自己那一行「地點:」欄位的內容，不是整份提示詞——
+        # 提示詞裡的規則說明本身會提到「自選區域」這個詞當作範例，那不代表
+        # 資料本身退回了籠統描述。
+        job_line = next(line for line in prompt_sent_to_ai.splitlines() if line.startswith("[ID:0]"))
+        self.assertIn("板橋", job_line)
+        self.assertNotIn("自選區域", job_line)
 
     def test_ai_prompt_explicitly_states_locked_category_and_brand(self):
         # 試營運實測發現：使用者先問「蝦皮門市有嗎」，接著只問「八德有缺人嗎」
