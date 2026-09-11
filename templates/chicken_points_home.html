@@ -44,7 +44,7 @@
                 <td>{{ record.created_at }}</td>
                 <td>
                     {% if record.signed_image_base64 %}
-                    <img src="{{ record.signed_image_base64 }}" alt="簽名表單縮圖" style="max-height: 50px; cursor: pointer; border: 1px solid var(--border); border-radius: 4px;" onclick="window.open(this.src)">
+                    <img src="{{ record.signed_image_base64 }}" alt="簽名表單縮圖" style="max-height: 50px; cursor: pointer; border: 1px solid var(--border); border-radius: 4px;" onclick="showSignedImage(this.src)">
                     {% else %}
                     -
                     {% endif %}
@@ -55,6 +55,28 @@
     </table>
 </div>
 <script>
+// 縮圖是 data:image/... 的 base64 網址（合成圖直接存在 Firestore 裡，不是
+// 一個真正的檔案網址）。瀏覽器（尤其 Chrome）基於防釣魚考量，擋掉
+// 「window.open() 直接導到一個 data: 網址」這件事——結果就是點下去只會
+// 跳出一個空白分頁，圖片完全沒有顯示出來，2026-09-11 使用者實測回報過
+// 這個狀況。修法：不要直接把 data: 網址丟給 window.open()，而是先開一個
+// 空白分頁，再把一個「裡面包著 <img>」的網頁內容寫進去——這樣瀏覽器看到
+// 的是「載入一張圖片資源」，不是「導覽到 data: 網址」，就不會被擋。
+function showSignedImage(dataUrl) {
+    var win = window.open('');
+    if (!win) {
+        alert('瀏覽器擋下了跳出視窗，請允許這個網站的彈出視窗後再試一次。');
+        return;
+    }
+    win.document.write(
+        '<!doctype html><title>簽名表單</title>' +
+        '<body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;">' +
+        '<img src="' + dataUrl + '" style="max-width:100%;max-height:100vh;">' +
+        '</body>'
+    );
+    win.document.close();
+}
+
 document.querySelectorAll('.sheet-search').forEach(function (input) {
     input.addEventListener('input', function () {
         var table = document.getElementById(input.dataset.searchFor);
