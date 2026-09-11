@@ -36,7 +36,7 @@ import time
 from fastapi import Request
 from fastapi.responses import RedirectResponse
 
-from platform_db import users_ref
+from platform_db import get_db, users_ref
 
 PBKDF2_ITERATIONS = 200_000
 
@@ -89,6 +89,11 @@ def _to_account(username: str, data: dict) -> dict:
         # 不是靠文字姓名比對，才不會有同名同姓或姓名打法不一致的問題。
         "manager_usernames": data.get("manager_usernames", []) or [],
         "department": data.get("department", "") or "",
+        # 同部門內手動拖曳排序用（見 /accounts 帳號權限管理），沒被拖曳過
+        # 的帳號是 None，排序時當成「還沒排」，放在有排過的人後面、依姓名
+        # 排——新帳號一律 None，所以天生就會排在該部門最後面，不用另外
+        # 處理「新帳號插入哪裡」的邏輯。
+        "sort_index": data.get("sort_index"),
     }
 
 
@@ -119,9 +124,35 @@ def account_exists(username: str) -> bool:
 
 
 def list_accounts() -> list:
+    """回傳全部帳號，排序規則：先依部門分組（部門名稱字母順序），組內
+    「有手動排過序」的帳號依排序數字排在前面，「還沒排過」的帳號依姓名
+    排在後面——見 `_to_account()` 的 `sort_index` 說明、`reorder_department()`
+    的拖曳存檔邏輯。"""
     result = [_to_account(s.id, s.to_dict() or {}) for s in users_ref().stream()]
-    result.sort(key=lambda a: a["username"])
+
+    def sort_key(a):
+        has_index = a["sort_index"] is not None
+        return (a["department"], 0 if has_index else 1, a["sort_index"] if has_index else a["name"])
+
+    result.sort(key=sort_key)
     return result
+
+
+def reorder_department(department: str, ordered_usernames: list) -> None:
+    """儲存「帳號權限管理」頁面拖曳排序後的結果：`ordered_usernames` 是
+    這個部門裡的帳號 username，依畫面上排好的新順序給。只會更新「真的
+    屬於這個部門」的帳號，其餘一律忽略——避免呼叫端傳入不相干的
+    username（或帳號剛好被改了部門、被刪除）意外改到不該動的排序，
+    不完全信任前端送來的內容。"""
+    valid_usernames = {a["username"] for a in list_accounts() if a["department"] == department}
+    batch = get_db().batch()
+    index = 0
+    for username in ordered_usernames:
+        if username not in valid_usernames:
+            continue
+        batch.update(users_ref().document(username), {"sort_index": index})
+        index += 1
+    batch.commit()
 
 
 def create_account(

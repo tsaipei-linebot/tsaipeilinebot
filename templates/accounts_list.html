@@ -5,7 +5,11 @@
     <h1 class="page-title">帳號權限管理</h1>
     <a class="btn btn-primary" href="/accounts/new">新增帳號</a>
 </div>
-<p class="hint">每個帳號可以同時擁有好幾個部門的權限，登入一次就能在有權限的部門之間切換，不用重複登入。</p>
+<p class="hint">
+    每個帳號可以同時擁有好幾個部門的權限，登入一次就能在有權限的部門之間切換，不用重複登入。
+    畫面依部門分組顯示，同一個部門內可以直接拖曳「⠿」把同事的順序拉到您想要的位置，放開就會自動存檔，
+    只能在同一個部門內拖動，不能拖到別的部門去。
+</p>
 
 {% if error == "self" %}
 <p class="error">不能刪除自己的帳號。</p>
@@ -15,50 +19,97 @@
 <p class="error">找不到這個帳號，可能已經被刪除了。</p>
 {% endif %}
 
-<table class="data-table">
-    <thead>
-        <tr>
-            <th>帳號</th>
-            <th>姓名</th>
-            <th>部門</th>
-            <th>所屬主管</th>
-            <th>權限</th>
-            <th></th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for a in accounts %}
-        <tr>
-            <td>{{ a.username }}</td>
-            <td>{{ a.name }}</td>
-            <td>{{ a.department or "-" }}</td>
-            <td>{{ a.manager_names|join("、") if a.manager_names else "-" }}</td>
-            <td>
-                {% if a.is_platform_admin %}
-                <span class="badge badge-ok">全平台管理員</span>
-                {% endif %}
-                {% for m in modules %}
-                {% if a.modules.get(m.code) %}
-                <span class="badge {{ 'badge-pending' if a.modules.get(m.code) == 'admin' else 'badge-employed' }}">
-                    {{ m.name }}：{{ role_map.get(a.modules.get(m.code), a.modules.get(m.code)) }}
-                </span>
-                {% endif %}
-                {% endfor %}
-                {% if not a.is_platform_admin and not a.modules %}
-                <span class="badge badge-resigned">尚未指派</span>
-                {% endif %}
-            </td>
-            <td>
-                <a href="/accounts/{{ a.username }}/edit">編輯</a>
-                {% if not a.is_platform_admin %}
-                <form method="post" action="/accounts/{{ a.username }}/delete" style="display:inline"
-                      onsubmit="return confirm('確定要刪除帳號「{{ a.username }}」嗎？');">
-                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
-                </form>
-                {% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+{% for department, dept_accounts in grouped_accounts %}
+<div class="repayment-section">
+    <div class="repayment-section-title">{{ department or "（尚未填寫部門）" }}</div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width: 32px;"></th>
+                <th>帳號</th>
+                <th>姓名</th>
+                <th>所屬主管</th>
+                <th>權限</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody class="draggable-department" data-department="{{ department }}">
+            {% for a in dept_accounts %}
+            <tr draggable="true" data-username="{{ a.username }}">
+                <td class="drag-handle" title="拖曳調整順序">⠿</td>
+                <td>{{ a.username }}</td>
+                <td>{{ a.name }}</td>
+                <td>{{ a.manager_names|join("、") if a.manager_names else "-" }}</td>
+                <td>
+                    {% if a.is_platform_admin %}
+                    <span class="badge badge-ok">全平台管理員</span>
+                    {% endif %}
+                    {% for m in modules %}
+                    {% if a.modules.get(m.code) %}
+                    <span class="badge {{ 'badge-pending' if a.modules.get(m.code) == 'admin' else 'badge-employed' }}">
+                        {{ m.name }}：{{ role_map.get(a.modules.get(m.code), a.modules.get(m.code)) }}
+                    </span>
+                    {% endif %}
+                    {% endfor %}
+                    {% if not a.is_platform_admin and not a.modules %}
+                    <span class="badge badge-resigned">尚未指派</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="/accounts/{{ a.username }}/edit">編輯</a>
+                    {% if not a.is_platform_admin %}
+                    <form method="post" action="/accounts/{{ a.username }}/delete" style="display:inline"
+                          onsubmit="return confirm('確定要刪除帳號「{{ a.username }}」嗎？');">
+                        <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+
+<script>
+// 同部門內拖曳排序：整列（<tr draggable="true">）都能拖，用原生 HTML5
+// drag and drop，不需要額外的 JS 套件。拖曳只在同一個 <tbody>（同一個
+// 部門）裡生效，因為每個部門各自是獨立的 <table>，天生就不會拖到別的
+// 部門去。放開滑鼠（dragend）後，把目前這個部門畫面上的順序整包送到
+// /accounts/reorder 存檔——用背景 fetch，不會整頁重新整理。
+document.querySelectorAll('tbody.draggable-department').forEach(function (tbody) {
+    var draggedRow = null;
+
+    function saveOrder() {
+        var department = tbody.dataset.department;
+        var usernames = Array.from(tbody.querySelectorAll('tr[data-username]')).map(function (tr) {
+            return tr.dataset.username;
+        });
+        fetch('/accounts/reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ department: department, usernames: usernames }),
+        }).catch(function () {});
+    }
+
+    tbody.querySelectorAll('tr[draggable="true"]').forEach(function (row) {
+        row.addEventListener('dragstart', function () {
+            draggedRow = row;
+            row.classList.add('dragging');
+        });
+        row.addEventListener('dragend', function () {
+            row.classList.remove('dragging');
+            draggedRow = null;
+            saveOrder();
+        });
+        row.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            if (!draggedRow || draggedRow === row) return;
+            var rect = row.getBoundingClientRect();
+            var isAfter = (e.clientY - rect.top) > rect.height / 2;
+            tbody.insertBefore(draggedRow, isAfter ? row.nextSibling : row);
+        });
+    });
+});
+</script>
 {% endblock %}

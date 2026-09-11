@@ -5,8 +5,10 @@
 刻意不放進 delivery/ 或 management/ 底下：這是跨模組的東西，不屬於任何一個
 部門，掛在根 app（main.py）上，用跟其他模組共用的同一顆 session cookie。
 """
+import itertools
+
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 import platform_accounts
 from platform_accounts import MODULE_ROLE_MAP, MODULE_ROLES, MODULES
@@ -57,17 +59,40 @@ def accounts_list(request: Request, error: str = "", redirect=Depends(platform_a
     name_by_username = {a["username"]: a["name"] for a in accounts}
     for a in accounts:
         a["manager_names"] = [name_by_username.get(u, u) for u in a["manager_usernames"]]
+    # list_accounts() 已經照部門排好序，這裡用 groupby 直接切成
+    # [(部門, [帳號, ...]), ...] 給樣板畫部門標題列——同一部門內的順序
+    # （拖曳排過的在前、其餘依姓名排在後）原封不動照 list_accounts() 給的
+    # 順序，這裡不重新排序。
+    grouped_accounts = [(dept, list(group)) for dept, group in itertools.groupby(accounts, key=lambda a: a["department"])]
     return templates.TemplateResponse(
         request,
         "accounts_list.html",
         {
             "user": platform_accounts.current_account(request),
-            "accounts": accounts,
+            "grouped_accounts": grouped_accounts,
             "modules": MODULES,
             "role_map": MODULE_ROLE_MAP,
             "error": error,
         },
     )
+
+
+@router.post("/reorder")
+async def reorder_accounts(request: Request, redirect=Depends(platform_accounts.require_platform_admin)):
+    """帳號權限管理頁面拖曳同部門帳號順序後，前端用背景請求呼叫這支端點
+    存檔——見 templates/accounts_list.html 的拖曳互動邏輯。"""
+    if redirect:
+        return redirect
+    try:
+        payload = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "invalid_json"}, status_code=400)
+    department = (payload.get("department") or "").strip()
+    usernames = payload.get("usernames")
+    if not department or not isinstance(usernames, list):
+        return JSONResponse({"error": "invalid_request"}, status_code=400)
+    platform_accounts.reorder_department(department, usernames)
+    return JSONResponse({"status": "ok"})
 
 
 @router.get("/new")
@@ -92,6 +117,8 @@ async def create_account_submit(request: Request, redirect=Depends(platform_acco
     error = ""
     if not username or not password or not name:
         error = "帳號、密碼、姓名都要填。"
+    elif not department:
+        error = "部門要填，之後才能依部門排序、分組顯示。"
     elif platform_accounts.account_exists(username):
         error = "這個帳號已經存在，請換一個帳號名稱。"
 
@@ -132,7 +159,11 @@ async def edit_account_submit(username: str, request: Request, redirect=Depends(
     manager_usernames = _manager_usernames_from_form(form)
     department = _department_from_form(form)
 
-    error = "" if name else "姓名不能空白。"
+    error = ""
+    if not name:
+        error = "姓名不能空白。"
+    elif not department:
+        error = "部門要填，之後才能依部門排序、分組顯示。"
     if error:
         return templates.TemplateResponse(
             request, "account_form.html", _account_form_context(request, account, error), status_code=400,

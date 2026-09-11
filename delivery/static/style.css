@@ -766,3 +766,15 @@ body {
     border-color: var(--brand);
 }
 .back-link a:hover { text-decoration: underline; }
+
+/* 帳號權限管理（/accounts）同部門內拖曳排序：整列可拖，「⠿」只是視覺上
+   提示可以拖曳的把手，實際拖曳事件是綁在整個 <tr> 上（見
+   templates/accounts_list.html）。 */
+.drag-handle {
+    cursor: grab;
+    color: var(--muted);
+    text-align: center;
+    user-select: none;
+}
+tr[draggable="true"] { cursor: grab; }
+tr[draggable="true"].dragging { opacity: 0.4; background: var(--brand-bg); }
