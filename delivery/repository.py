@@ -175,6 +175,7 @@ def create_personnel(
     cooperation_type: str = "",
     client: str = "",
     employment_status: str = "",
+    hire_date: str = "",
 ) -> str:
     now = time.time()
     doc_ref = personnel_ref().document()
@@ -187,6 +188,7 @@ def create_personnel(
             "cooperation_type": cooperation_type or "",
             "client": client or "",
             "employment_status": employment_status or DEFAULT_PERSONNEL_STATUS,
+            "hire_date": hire_date or "",
             "status": "active",
             "documents": {},
             "created_at": now,

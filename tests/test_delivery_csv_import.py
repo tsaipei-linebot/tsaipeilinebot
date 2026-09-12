@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -22,7 +23,7 @@ class ParsePersonnelCsvTests(unittest.TestCase):
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0], {"row": 2, "ok": True, "vendor": "shopee", "name": "王小明", "id_number": "A123456789", "phone": "0912345678"})
+        self.assertEqual(rows[0], {"row": 2, "ok": True, "vendor": "shopee", "name": "王小明", "id_number": "A123456789", "phone": "0912345678", "hire_date": ""})
         self.assertEqual(rows[1]["vendor"], "ud")
         self.assertTrue(rows[1]["ok"])
 
@@ -72,6 +73,42 @@ class ParsePersonnelCsvTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["ok"])
 
+    def test_hire_date_with_dash_separator_is_normalized(self):
+        content = "廠商,姓名,到職日期\n蝦皮,王小明,2024-01-31\n".encode("utf-8")
+        rows, header_error = parse_personnel_csv(content)
+        self.assertIsNone(header_error)
+        self.assertTrue(rows[0]["ok"])
+        self.assertEqual(rows[0]["hire_date"], "2024-01-31")
+
+    def test_hire_date_with_slash_separator_is_normalized(self):
+        content = "廠商,姓名,到職日期\n蝦皮,王小明,2024/1/31\n".encode("utf-8")
+        rows, header_error = parse_personnel_csv(content)
+        self.assertIsNone(header_error)
+        self.assertTrue(rows[0]["ok"])
+        self.assertEqual(rows[0]["hire_date"], "2024-01-31")
+
+    def test_hire_date_left_blank_is_valid(self):
+        content = "廠商,姓名,到職日期\n蝦皮,王小明,\n".encode("utf-8")
+        rows, header_error = parse_personnel_csv(content)
+        self.assertIsNone(header_error)
+        self.assertTrue(rows[0]["ok"])
+        self.assertEqual(rows[0]["hire_date"], "")
+
+    def test_hire_date_missing_column_is_valid(self):
+        content = "廠商,姓名\n蝦皮,王小明\n".encode("utf-8")
+        rows, header_error = parse_personnel_csv(content)
+        self.assertIsNone(header_error)
+        self.assertTrue(rows[0]["ok"])
+        self.assertEqual(rows[0]["hire_date"], "")
+
+    def test_unrecognizable_hire_date_is_reported_as_error(self):
+        content = "廠商,姓名,到職日期\n蝦皮,王小明,113年3月1日\n".encode("utf-8")
+        rows, header_error = parse_personnel_csv(content)
+        self.assertIsNone(header_error)
+        self.assertFalse(rows[0]["ok"])
+        self.assertIn("到職日期", rows[0]["error"])
+        self.assertIn("113年3月1日", rows[0]["error"])
+
 
 class ImportTemplateDownloadTests(unittest.TestCase):
     """/import/template.csv：2026-09-12 使用者回報下載範本後欄位是亂碼，
@@ -92,6 +129,7 @@ class ImportTemplateDownloadTests(unittest.TestCase):
         self.assertIn("姓名", text)
         self.assertIn("身分證字號", text)
         self.assertIn("電話", text)
+        self.assertIn("到職日期", text)
 
     def test_downloaded_template_round_trips_through_parser(self):
         response = import_routes.import_template(redirect=None)
@@ -100,6 +138,58 @@ class ImportTemplateDownloadTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["ok"])
         self.assertEqual(rows[0]["name"], "王小明")
+        self.assertEqual(rows[0]["hire_date"], "2024-01-31")
+
+
+class ImportSubmitHireDateTests(unittest.TestCase):
+    """POST /import：2026-09-12 新增選填的「到職日期」欄位，主要給整批搬遷
+    已在職舊資料用。這裡驗證 CSV 裡有填的到職日期，真的會傳給
+    repository.create_personnel()，不是解析完就被丟掉。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = ImportSubmitHireDateTests._FakeSession({"user": user})
+
+    class _FakeUploadFile:
+        def __init__(self, content: bytes):
+            self._content = content
+
+        async def read(self):
+            return self._content
+
+    def _account(self):
+        return {"username": "bob", "modules": {"delivery": "staff"}, "is_platform_admin": False}
+
+    def test_hire_date_from_csv_is_passed_to_create_personnel(self):
+        import asyncio
+
+        content = "廠商,姓名,到職日期\n蝦皮,王小明,2024-01-31\n".encode("utf-8")
+        with mock.patch.object(import_routes.repository, "find_active_personnel_by_name_and_phone", return_value=None):
+            with mock.patch.object(import_routes.repository, "create_personnel") as mock_create:
+                with mock.patch.object(import_routes, "templates") as mock_templates:
+                    asyncio.run(import_routes.import_submit(
+                        self._FakeRequest(self._account()), self._FakeUploadFile(content), redirect=None,
+                    ))
+        mock_create.assert_called_once()
+        self.assertEqual(mock_create.call_args.kwargs["hire_date"], "2024-01-31")
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(len(context["result"]["created"]), 1)
+
+    def test_blank_hire_date_from_csv_is_passed_as_empty_string(self):
+        import asyncio
+
+        content = "廠商,姓名,到職日期\n蝦皮,王小明,\n".encode("utf-8")
+        with mock.patch.object(import_routes.repository, "find_active_personnel_by_name_and_phone", return_value=None):
+            with mock.patch.object(import_routes.repository, "create_personnel") as mock_create:
+                with mock.patch.object(import_routes, "templates"):
+                    asyncio.run(import_routes.import_submit(
+                        self._FakeRequest(self._account()), self._FakeUploadFile(content), redirect=None,
+                    ))
+        self.assertEqual(mock_create.call_args.kwargs["hire_date"], "")
 
 
 if __name__ == "__main__":
