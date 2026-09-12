@@ -96,6 +96,37 @@ class LocationSearchTextTests(unittest.TestCase):
         self.assertIn("八德", job["_search_text"])
 
 
+class BenefitFieldReadThroughTests(unittest.TestCase):
+    """回歸測試：「福利」欄位一開始沒有被列在 ALLOWED_PROPERTIES 白名單裡，
+    導致即使同仁在 Notion 填了「福利」欄位，fetch_jobs_data() 也會把這個
+    欄位整個濾掉，讓 services/matcher_service.py 的福利關鍵字直達攔截
+    （find_benefit_matched_jobs）永遠比對不到任何資料——這裡直接驗證
+    「福利」欄位確實有被讀進 job_dict，不要重蹈覆轍。"""
+
+    def setUp(self):
+        n._cached_jobs, n._last_jobs_fetch = None, 0
+
+    def tearDown(self):
+        n._cached_jobs, n._last_jobs_fetch = None, 0
+
+    def test_benefit_field_is_included_in_job_dict(self):
+        job_page = {
+            "id": "page-1",
+            "properties": {
+                "職缺名稱": {"type": "title", "title": [{"plain_text": "蝦皮外送三輪雇傭"}]},
+                "縣市": {"type": "rich_text", "rich_text": [{"plain_text": "桃園市"}]},
+                "行政區": {"type": "rich_text", "rich_text": [{"plain_text": "桃園區"}]},
+                "福利": {"type": "rich_text", "rich_text": [{"plain_text": "公司車"}]},
+                "狀態": {"type": "select", "select": {"name": "招募中"}},
+            },
+        }
+        with patch("services.notion_service.query_notion_database_direct", return_value=[job_page]):
+            jobs = n.fetch_jobs_data()
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].get("福利"), "公司車")
+
+
 class DuplicateFaqQuestionTests(unittest.TestCase):
     def setUp(self):
         self.existing_titles = ["發薪日是什麼時候", "特休怎麼算", "薪水"]
