@@ -63,3 +63,14 @@ def download_file(blob_path: str):
         return None, None
     blob.reload()
     return blob.download_as_bytes(), blob.content_type
+
+
+def delete_file(blob_path: str):
+    """合約紀錄被刪除時一併清掉存好的檔案——`blob_path` 空字串（例如
+    當初 PDF 轉檔失敗、根本沒存過）或檔案本來就不存在都安靜跳過，不算
+    錯誤，呼叫端（刪除整筆紀錄）不應該因為這裡失敗就整個中斷。"""
+    if not blob_path or not blob_path.startswith("client_contracts/"):
+        return
+    blob = _bucket().blob(blob_path)
+    if blob.exists():
+        blob.delete()

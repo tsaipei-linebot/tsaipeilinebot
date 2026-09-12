@@ -102,6 +102,24 @@ class ClientContractOptionsTests(unittest.TestCase):
             options = project_contract_routes._client_contract_options(account)
         self.assertEqual(options[0]["project_contract_mode"], "一口價")
 
+    def test_white_collar_referral_maps_to_referral_coop_category(self):
+        # 2026-09-12 新增「白領代招」版本：合作類別要對應「代招」，不是
+        # 前兩版共用的「派遣」，不然帶入專案合約維護表單時會選錯選項。
+        account = {"username": "bob", "is_platform_admin": False}
+        records = [{"id": "1", "party_a_name": "A公司", "blob_path": "client_contracts/1/a.docx",
+                    "contract_version": "white_collar_referral", "created_at": "2026-01-01"}]
+        with mock.patch.object(project_contract_routes, "list_visible_client_contracts", return_value=records):
+            options = project_contract_routes._client_contract_options(account)
+        self.assertEqual(options[0]["project_contract_coop_category"], "代招")
+
+    def test_hourly_flat_rate_maps_to_dispatch_coop_category(self):
+        account = {"username": "bob", "is_platform_admin": False}
+        records = [{"id": "1", "party_a_name": "A公司", "blob_path": "client_contracts/1/a.docx",
+                    "contract_version": "hourly_flat_rate", "created_at": "2026-01-01"}]
+        with mock.patch.object(project_contract_routes, "list_visible_client_contracts", return_value=records):
+            options = project_contract_routes._client_contract_options(account)
+        self.assertEqual(options[0]["project_contract_coop_category"], "派遣")
+
 
 class MarkClientContractSentTests(unittest.TestCase):
     """_mark_client_contract_sent_if_applicable()：送出成功後如果有帶

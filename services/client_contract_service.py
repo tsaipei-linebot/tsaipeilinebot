@@ -19,15 +19,27 @@ Firestore／GCS。
 lookup.py`），查得到就自動帶入，查不到就手動輸入全部欄位——這兩個查詢
 服務都是失敗容錯設計，不會擋住合約產生流程。
 
-**合約版本**：目前有兩個版本，甲乙雙方欄位/合約期間/撤換條款/匯款日這些
-主文完全共用同一套排版跟 Jinja 標籤，只有附件一報價表格的結構不一樣，
-所以是兩個獨立的 master template 檔案：
-- ``hourly_flat_rate``（時薪一口價）：員工薪資／管理費由專員自行填入
-  單一數值，簡單 3 欄費率表。
-- ``actual_paid``（實支實付）：使用者提供的真實「實支實付」報價表格
-  （薪資/加班費/法定項目/員工福利都固定寫「實支實付」，只有「服務費－
-  全程派遣」那一格是空白的 `service_fee` 欄位讓專員自行填寫，例如
-  「人員薪資的15%」）。
+**合約版本**：目前有三個版本：
+- ``hourly_flat_rate``（時薪一口價）跟 ``actual_paid``（實支實付）是同一種
+  「人力派遣服務合約書」，甲乙雙方欄位/合約期間/撤換條款/匯款日這些主文
+  完全共用同一套排版跟 Jinja 標籤，只有附件一報價表格的結構不一樣：
+  時薪一口價是員工薪資／管理費由專員自行填入單一數值的簡單 3 欄費率表，
+  實支實付是使用者提供的真實報價表格（薪資/加班費/法定項目/員工福利都
+  固定寫「實支實付」，只有「服務費－全程派遣」那一格是空白的
+  `service_fee` 欄位讓專員自行填寫，例如「人員薪資的15%」）。
+- ``white_collar_referral``（白領代招，2026-09-12 新增）是完全不同的
+  「人力代招服務合約書」，條文結構（第一條～第九條）、用字都跟前兩個
+  版本不一樣，不是報價表格代換而已，所以主文也是獨立的一份 master
+  template，不共用前兩者的 Jinja 標籤。這個版本也沒有獨立的「簽約日期」
+  欄位——合約書末尾的簽署日期就是合約起始日期本身，不像前兩版另外有
+  `sign_date`；也沒有撤換條款（`replace_notice_days`／`severance_payer`）
+  這件事，只有 `remit_day`（匯款截止日，跟前兩版意義相同）跟這個版本
+  獨有的 `fee_amount`（每人每月服務費，自由文字，例如「二千五百元整」）
+  跟 `service_months`（附件一報價表「收取時間不超過幾個月」，預設12，
+  可調整）。`CONTRACT_VERSIONS` 用 ``requires_sign_date``／
+  ``requires_severance_clause`` 這兩個布林值標記每個版本各自需要哪些
+  共用欄位，`render_contract_docx()`／`client_contract_routes.py` 的表單
+  驗證都照這兩個旗標決定要不要收、要不要擋。
 之後如果要再加新版本，一樣是在 `CONTRACT_VERSIONS` 加一個版本代碼＋
 準備對應的 master template 檔案，不用改整個資料結構。
 
@@ -61,26 +73,43 @@ CONTRACTS_COLLECTION = "client_contracts"
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ASSETS_DIR = os.path.join(_REPO_ROOT, "assets", "client_contracts")
 
-# 合約版本代碼 -> 顯示名稱／對應「專案合約維護」的簽約模式選項／各自的
-# master template 檔案。兩個版本的合約主文（甲乙雙方欄位、合約期間、
-# 撤換條款、匯款日那幾條）完全共用同一套排版跟 Jinja 標籤，只有附件一
-# 報價表格的結構不一樣（時薪一口價是簡單 3 欄，實支實付是使用者提供的
-# 複雜報價表格，見 HANDOFF.md 的說明），所以是兩個獨立的 docx 檔案，不是
+# 合約版本代碼 -> 顯示名稱／對應「專案合約維護」的簽約模式跟合作類別
+# 選項／各自的 master template 檔案／這個版本需不需要「簽約日期」跟
+# 「撤換條款」這兩組共用欄位。時薪一口價跟實支實付兩個版本的合約主文
+# （甲乙雙方欄位、合約期間、撤換條款、匯款日那幾條）完全共用同一套排版跟
+# Jinja 標籤，只有附件一報價表格的結構不一樣（時薪一口價是簡單 3 欄，
+# 實支實付是使用者提供的複雜報價表格，見 HANDOFF.md 的說明），白領代招則
+# 是條文結構完全不同的另一份合約書，三個版本各自獨立一個 docx 檔案，不是
 # 同一份範本裡切換段落。之後如果要再加新版本，一樣是在這裡加一筆＋準備
 # 對應的 master template。
 CONTRACT_VERSIONS = {
     "hourly_flat_rate": {
         "label": "時薪一口價",
         "project_contract_mode": "一口價",
+        "project_contract_coop_category": "派遣",
         "template_path": os.path.join(_ASSETS_DIR, "master_template_hourly_flat_rate.docx"),
+        "requires_sign_date": True,
+        "requires_severance_clause": True,
     },
     "actual_paid": {
         "label": "實支實付",
         "project_contract_mode": "實支實付",
+        "project_contract_coop_category": "派遣",
         "template_path": os.path.join(_ASSETS_DIR, "master_template_actual_paid.docx"),
+        "requires_sign_date": True,
+        "requires_severance_clause": True,
+    },
+    "white_collar_referral": {
+        "label": "白領代招",
+        "project_contract_mode": "一口價",
+        "project_contract_coop_category": "代招",
+        "template_path": os.path.join(_ASSETS_DIR, "master_template_white_collar_referral.docx"),
+        "requires_sign_date": False,
+        "requires_severance_clause": False,
     },
 }
 DEFAULT_CONTRACT_VERSION = "hourly_flat_rate"
+DEFAULT_SERVICE_MONTHS = "12"
 
 SEVERANCE_PAYER_OPTIONS = ["甲方", "乙方"]
 DEFAULT_REPLACE_NOTICE_DAYS = "3"
@@ -107,24 +136,30 @@ def render_contract_docx(
     *,
     party_a: dict,
     party_b: dict,
-    sign_date: date,
     contract_start_date: date,
     contract_end_date: date,
-    replace_notice_days: str,
-    severance_payer: str,
     remit_day: str,
+    sign_date: date = None,
+    replace_notice_days: str = "",
+    severance_payer: str = "",
     contract_version: str = DEFAULT_CONTRACT_VERSION,
     hourly_wage: str = "",
     management_fee: str = "",
     service_fee: str = "",
+    fee_amount: str = "",
+    service_months: str = "",
 ) -> bytes:
     """套版產生 Word 檔內容（bytes）。party_a／party_b 都是
     ``{"name", "representative", "address", "tax_id", "phone"}`` 這個形狀
     的 dict——party_a 是專員填的/查到的甲方資料，party_b 是從 `/companies`
     選出來的公司資料。``contract_version`` 決定套哪一份 master template
     （見 `CONTRACT_VERSIONS`）：``hourly_flat_rate`` 用 `hourly_wage`／
-    `management_fee`，``actual_paid`` 用 `service_fee`，不屬於當次版本的
-    參數會被忽略（呼叫端只要照表單實際欄位傳就好，不用自己篩選）。"""
+    `management_fee`，``actual_paid`` 用 `service_fee`，``white_collar_
+    referral`` 用 `fee_amount`／`service_months`，不屬於當次版本的參數會
+    被忽略（呼叫端只要照表單實際欄位傳就好，不用自己篩選）。``sign_date``
+    只有 `CONTRACT_VERSIONS[contract_version]["requires_sign_date"]` 是
+    True 的版本才會用到，不需要的版本傳 None 即可（模板裡不會引用
+    `sign_date_roc` 這個變數，傳了也不影響套版結果）。"""
     context = {
         "party_a_name": party_a["name"],
         "party_a_representative": party_a["representative"],
@@ -136,7 +171,7 @@ def render_contract_docx(
         "party_b_address": party_b["address"],
         "party_b_tax_id": party_b["tax_id"],
         "party_b_phone": party_b["phone"],
-        "sign_date_roc": roc_date_string(sign_date),
+        "sign_date_roc": roc_date_string(sign_date) if sign_date else "",
         "contract_start_date_roc": roc_date_string(contract_start_date),
         "contract_end_date_roc": roc_date_string(contract_end_date),
         "replace_notice_days": replace_notice_days,
@@ -145,6 +180,8 @@ def render_contract_docx(
         "hourly_wage": hourly_wage,
         "management_fee": management_fee,
         "service_fee": service_fee,
+        "fee_amount": fee_amount,
+        "service_months": service_months,
     }
     template_path = CONTRACT_VERSIONS[contract_version]["template_path"]
     tpl = DocxTemplate(template_path)
@@ -165,16 +202,18 @@ def save_submission(
     party_a: dict,
     party_b_company_id: str,
     party_b: dict,
-    sign_date: str,
     contract_start_date: str,
     contract_end_date: str,
-    replace_notice_days: str,
-    severance_payer: str,
     remit_day: str,
     blob_path: str,
+    sign_date: str = "",
+    replace_notice_days: str = "",
+    severance_payer: str = "",
     hourly_wage: str = "",
     management_fee: str = "",
     service_fee: str = "",
+    fee_amount: str = "",
+    service_months: str = "",
     pdf_blob_path: str = "",
 ) -> dict:
     data = {
@@ -200,6 +239,8 @@ def save_submission(
         "hourly_wage": hourly_wage,
         "management_fee": management_fee,
         "service_fee": service_fee,
+        "fee_amount": fee_amount,
+        "service_months": service_months,
         "blob_path": blob_path,
         "pdf_blob_path": pdf_blob_path,
         "sent_to_project_contracts_at": None,
@@ -262,3 +303,12 @@ def mark_sent_to_project_contracts(submission_id: str):
     當作「已送出」標記，避免同仁不小心對同一份合約重複送出——見
     project_contract_routes.py。"""
     contracts_ref().document(submission_id).update({"sent_to_project_contracts_at": datetime.now(timezone.utc)})
+
+
+def delete_submission(submission_id: str):
+    """合約作廢時整筆刪掉——呼叫端（routes）要先用 `can_view_submission()`
+    確認這個帳號真的看得到這筆紀錄才能呼叫這裡，這個函式本身不重複做
+    權限檢查。只刪 Firestore 這筆文件，GCS 上的 Word/PDF 檔案由呼叫端
+    另外呼叫 storage 那邊的刪除函式清掉，這裡不知道、也不需要知道
+    儲存層的細節。"""
+    contracts_ref().document(submission_id).delete()

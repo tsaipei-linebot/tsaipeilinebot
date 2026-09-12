@@ -74,10 +74,13 @@ def _dropdown_options_context(account: dict) -> dict:
 
 def _client_contract_options(account: dict) -> list:
     """給表單「從合約產生器帶入」選單用：這個帳號在合約產生器（/client-
-    contracts）看得到、而且真的有存到 Word 檔（`blob_path`）的紀錄，
-    每筆多算一個 `project_contract_mode`（依 `contract_version` 對應到
-    這裡的「簽約模式」選項，見 client_contract_service.CONTRACT_VERSIONS）
-    方便前端 JS 直接拿來自動帶入下拉選單。"""
+    contracts）看得到、而且真的有存到 Word 檔（`blob_path`）的紀錄，每筆
+    多算一個 `project_contract_mode`（簽約模式）跟 `project_contract_coop_
+    category`（合作類別），都是依 `contract_version` 對應到這裡的下拉
+    選單選項（見 client_contract_service.CONTRACT_VERSIONS），方便前端 JS
+    直接拿來自動帶入——時薪一口價／實支實付都是「派遣」類，白領代招是
+    「代招」類，2026-09-12 新增白領代招版本時一併補上這個對應，不然會被
+    JS 寫死成「派遣」。"""
     options = []
     for record in list_visible_client_contracts(account):
         if not record.get("blob_path"):
@@ -88,6 +91,7 @@ def _client_contract_options(account: dict) -> list:
             "party_a_name": record.get("party_a_name", ""),
             "created_at": record.get("created_at"),
             "project_contract_mode": version.get("project_contract_mode", ""),
+            "project_contract_coop_category": version.get("project_contract_coop_category", "派遣"),
         })
     return options
 

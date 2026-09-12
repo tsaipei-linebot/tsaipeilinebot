@@ -307,6 +307,54 @@ class SubmitValidationTests(unittest.TestCase):
         # 不是送出當下的年份）。
         self.assertIn("2026", result.headers["content-disposition"])
 
+    def test_white_collar_referral_does_not_require_sign_date_or_severance_fields(self):
+        # 白領代招版本沒有簽約日期／撤換條款這幾個欄位，即使表單完全沒帶
+        # 這些值，只要報價欄位（fee_amount/service_months）跟其他共用
+        # 必填欄位都有填，就應該能送出成功。
+        form = self._multidict(self._full_valid_pairs(
+            contract_version="white_collar_referral",
+            sign_date="", replace_notice_days="", severance_payer="",
+            hourly_wage="", management_fee="",
+            fee_amount="二千五百元整", service_months="12",
+        ))
+        fake_bytes = b"FAKE-DOCX-BYTES"
+        with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                        return_value=self._fake_company()):
+                    with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                        result = asyncio.run(client_contract_routes.client_contract_submit(
+                            self._FakeRequest(self._account(), form), redirect=None,
+                        ))
+        mock_render.assert_called_once()
+        render_kwargs = mock_render.call_args.kwargs
+        self.assertIsNone(render_kwargs["sign_date"])
+        self.assertEqual(render_kwargs["fee_amount"], "二千五百元整")
+        self.assertEqual(render_kwargs["service_months"], "12")
+        mock_save.assert_called_once()
+        save_kwargs = mock_save.call_args.kwargs
+        self.assertEqual(save_kwargs["sign_date"], "")
+        self.assertEqual(result.body, fake_bytes)
+
+    def test_missing_pricing_fields_blocks_submit_for_white_collar_referral(self):
+        form = self._multidict(self._full_valid_pairs(
+            contract_version="white_collar_referral",
+            sign_date="", replace_notice_days="", severance_payer="",
+            hourly_wage="", management_fee="",
+            fee_amount="", service_months="",
+        ))
+        with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                        return_value=self._fake_company()):
+                    with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+                        asyncio.run(client_contract_routes.client_contract_submit(
+                            self._FakeRequest(self._account(), form), redirect=None,
+                        ))
+        mock_save.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("報價", context["error"])
+
 
 class DuplicateFromTests(unittest.TestCase):
     """GET /client-contracts/new?duplicate_from=xxx：把既有紀錄的欄位帶入
@@ -360,6 +408,60 @@ class DuplicateFromTests(unittest.TestCase):
                 )
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertEqual(context["form"], {})
+
+
+class DeleteRouteTests(unittest.TestCase):
+    """POST /client-contracts/{id}/delete：合約作廢用，能不能刪一樣走
+    can_view_submission() 的可見範圍判斷，刪除時要把 GCS 上的 Word/PDF
+    檔案也一起清掉。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = DeleteRouteTests._FakeSession({"user": user})
+
+    def test_owner_can_delete_record_and_its_files(self):
+        record = {
+            "id": "x", "submitted_by": "bob",
+            "blob_path": "client_contracts/x/a.docx", "pdf_blob_path": "client_contracts/x/a.pdf",
+        }
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes, "delete_submission") as mock_delete:
+                with mock.patch.object(client_contract_routes.client_contract_storage, "delete_file") as mock_delete_file:
+                    result = client_contract_routes.client_contract_delete(
+                        "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                    )
+        mock_delete.assert_called_once_with("x")
+        mock_delete_file.assert_any_call("client_contracts/x/a.docx")
+        mock_delete_file.assert_any_call("client_contracts/x/a.pdf")
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(result.headers["location"], "/client-contracts")
+
+    def test_other_user_cannot_delete(self):
+        record = {"id": "x", "submitted_by": "alice", "blob_path": "client_contracts/x/a.docx"}
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(client_contract_routes, "delete_submission") as mock_delete:
+                    with mock.patch.object(client_contract_routes.client_contract_storage, "delete_file") as mock_delete_file:
+                        result = client_contract_routes.client_contract_delete(
+                            "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                        )
+        mock_delete.assert_not_called()
+        mock_delete_file.assert_not_called()
+        self.assertEqual(result.status_code, 303)
+
+    def test_missing_record_is_noop(self):
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=None):
+            with mock.patch.object(client_contract_routes, "delete_submission") as mock_delete:
+                result = client_contract_routes.client_contract_delete(
+                    "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                )
+        mock_delete.assert_not_called()
+        self.assertEqual(result.status_code, 303)
 
 
 class DownloadRouteVisibilityTests(unittest.TestCase):

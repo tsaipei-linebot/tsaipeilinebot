@@ -3377,3 +3377,60 @@ API**，只有網頁（HTML）可以查，要串接的話只能用網頁爬蟲�
 **使用者選擇維持現狀，不加這個來源**（現有經濟部商工開放平台＋g0v
 公司資料庫兩個來源夠用）。之後如果又有需求，直接回來看這段說明，不用
 重新查證一次。
+
+### 2026-09-12 更新：刪除功能、新增第三個合約版本「白領代招」
+
+1. **刪除功能**：`/client-contracts` 列表頁每筆紀錄多一個「刪除」按鈕
+   （`POST /client-contracts/{id}/delete`），確認要作廢的合約可以直接
+   整筆刪掉——刪除會把 Firestore 那筆紀錄跟 GCS 上存的 Word/PDF 檔案
+   一起清掉（`client_contract_storage.delete_file()`，路徑空字串或檔案
+   本來就不存在都安靜跳過，不影響整筆刪除），能不能刪一樣走
+   `can_view_submission()` 那套可見範圍判斷，沒有另外設更嚴格的權限。
+   **刪除沒有回收機制，是真的整筆刪掉，不是標記隱藏，點下去前端會先
+   跳一個確認對話框**（`confirm()`），但沒有「復原」這個選項，誤刪只能
+   重新填一次表單產生新的一筆。
+
+2. **新增第三個合約版本「白領代招」**（`services/client_contract_
+   service.py` 的 `CONTRACT_VERSIONS["white_collar_referral"]`）：使用者
+   提供一份真實的「人力代招服務合約書」（乙方是祥舜人力資源有限公司，
+   已經存在 `/companies` 公司主檔，不用另外新增）。**這個版本跟前兩版
+   （時薪一口價／實支實付）不是附件一報價表格代換的關係，而是整份合約
+   主文（第一條～第九條，條文結構跟用字）都完全不一樣的另一份合約書**，
+   所以是完全獨立建立的 master template（`assets/client_contracts/
+   master_template_white_collar_referral.docx`），沒有共用前兩版的 Jinja
+   標籤或段落。
+   - **沒有獨立的「簽約日期」欄位**：原始合約書末尾的簽署日期跟合約
+     起始日期是同一天，所以這個版本不收 `sign_date`，套版時直接拿
+     `contract_start_date_roc` 當作簽署日期。
+   - **沒有撤換條款**：原始合約書沒有「撤換人員」「資遣費用由誰負擔」
+     這件事，所以這個版本不收 `replace_notice_days`／`severance_payer`。
+   - `CONTRACT_VERSIONS` 用兩個新的布林旗標
+     `requires_sign_date`／`requires_severance_clause` 標記每個版本各自
+     需不需要這兩組欄位（時薪一口價／實支實付都是 True，白領代招都是
+     False），表單頁面（`client_contract_form.html`）用同一份資料
+     （`data-requires="sign_date"`／`"severance_clause"` 屬性）決定要不要
+     顯示對應欄位，後端驗證（`client_contract_routes.py`）也用同一組
+     旗標決定要不要擋。
+   - 這個版本自己專屬的報價欄位：`fee_amount`（招募及代辦服務費，自由
+     文字，例如「二千五百元整」，不像前兩版是純數字）、`service_months`
+     （附件一報價表「收取時間不超過幾個月」，**預設 12 個月，使用者
+     明確要求做成可填欄位而不是寫死**）。
+   - **原始範本第四條原文提到「附件二」（甲方自行招募委託乙方代招的
+     服務費用），但實際上沒有附件二的內容**——**使用者明確決定直接把
+     提到附件二的那句話從條文裡拿掉**，不是留空白附件二、也不是另外
+     問使用者附件二內容，這個版本的合約書條文裡完全不會出現「附件二」
+     字樣。
+   - **跟「專案合約維護」的合作類別對應**：這個版本自然對應
+     `COOP_CATEGORY_OPTIONS`（`services/project_contract_submit_
+     service.py`）裡的「代招」，不是前兩版對應的「派遣」——`/project-
+     contracts` 表單「從合約產生器帶入」選單原本 JS 寫死帶入「派遣」，
+     這次一併改成讀 `CONTRACT_VERSIONS[版本代碼]["project_contract_
+     coop_category"]`（時薪一口價／實支實付＝「派遣」，白領代招＝
+     「代招」），不然帶入這個新版本的合約時合作類別會選錯。簽約模式
+     （`project_contract_mode`）則對應到「一口價」——白領代招是固定
+     金額的按月收費，性質上比較接近「一口價」而不是「實支實付」的
+     實報實銷模式。
+
+**這次沒有新的環境變數／部署步驟要處理**，master template 檔案跟其他
+兩個版本一樣直接放在 repo 的 `assets/client_contracts/` 底下，`git push`
+＋ Cloud Run 重新部署後就會生效，不需要另外上傳檔案或改設定。

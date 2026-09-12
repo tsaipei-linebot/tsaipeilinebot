@@ -70,8 +70,8 @@
     <div class="repayment-section">
         <div class="repayment-section-title">三、合約期間</div>
         <div class="repayment-basic-grid">
-            <label><span class="field-caption">簽約日期 *</span>
-                <input type="date" name="sign_date" id="sign_date" value="{{ form.sign_date or default_sign_date }}" required>
+            <label data-requires="sign_date"><span class="field-caption">簽約日期 *</span>
+                <input type="date" name="sign_date" id="sign_date" value="{{ form.sign_date or default_sign_date }}">
             </label>
             <label><span class="field-caption">合約起始日期 *</span>
                 <input type="date" name="contract_start_date" id="contract_start_date" value="{{ form.contract_start_date or default_sign_date }}" required>
@@ -80,16 +80,17 @@
                 <input type="date" name="contract_end_date" id="contract_end_date" value="{{ form.contract_end_date or default_contract_end_date }}" required>
             </label>
         </div>
+        <p class="hint" data-requires="not_sign_date" hidden>這個版本的合約書沒有另外的「簽約日期」，合約書末尾的簽署日期就是合約起始日期。</p>
     </div>
 
     <div class="repayment-section">
-        <div class="repayment-section-title">四、撤換條款與匯款日</div>
+        <div class="repayment-section-title">四、匯款日<span data-requires="severance_clause">與撤換條款</span></div>
         <div class="repayment-basic-grid">
-            <label><span class="field-caption">撤換人員通知期限（日）*</span>
-                <input type="number" name="replace_notice_days" min="1" value="{{ form.replace_notice_days or default_replace_notice_days }}" required>
+            <label data-requires="severance_clause"><span class="field-caption">撤換人員通知期限（日）*</span>
+                <input type="number" name="replace_notice_days" min="1" value="{{ form.replace_notice_days or default_replace_notice_days }}">
             </label>
-            <label><span class="field-caption">資遣費用及預告工資由 *</span>
-                <select name="severance_payer" required>
+            <label data-requires="severance_clause"><span class="field-caption">資遣費用及預告工資由 *</span>
+                <select name="severance_payer">
                     {% for opt in severance_payer_options %}
                     <option value="{{ opt }}" {% if (form.severance_payer or "乙方") == opt %}selected{% endif %}>{{ opt }}負擔</option>
                     {% endfor %}
@@ -121,6 +122,18 @@
         </label>
     </div>
 
+    <div class="repayment-section" id="pricing-white_collar_referral" data-pricing-for="white_collar_referral" hidden>
+        <div class="repayment-section-title">五、附件一費率（白領代招）</div>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">招募及代辦服務費（每人每月）*</span>
+                <input type="text" name="fee_amount" value="{{ form.fee_amount or '' }}" placeholder="如：二千五百元整">
+            </label>
+            <label><span class="field-caption">收取時間上限（個月）*</span>
+                <input type="text" name="service_months" value="{{ form.service_months or default_service_months }}" placeholder="如：12">
+            </label>
+        </div>
+    </div>
+
     <button type="submit" class="btn btn-primary btn-block" id="client-contract-submit-btn">產生 Word 合約並下載</button>
 </form>
 <p class="back-link"><a href="/client-contracts">&larr; 回合約產生器歷史紀錄</a></p>
@@ -130,11 +143,33 @@
     // 合約版本切換：不同版本要填的報價欄位不一樣，切換時把對應區塊
     // 顯示/隱藏——沒被顯示的欄位刻意沒加 required（隱藏的必填欄位在部分
     // 瀏覽器會擋住送出卻看不到是哪裡沒填，這裡的必填檢查交給後端做）。
+    // 「白領代招」這個版本另外沒有簽約日期／撤換條款這兩組欄位，
+    // VERSION_REQUIREMENTS 是後端 CONTRACT_VERSIONS 裡 requires_sign_date／
+    // requires_severance_clause 這兩個旗標，同一套資料來源，不用前端另外
+    // 維護一份版本清單。
+    var VERSION_REQUIREMENTS = {
+        {% for code, version in contract_versions.items() %}
+        "{{ code }}": {
+            sign_date: {{ version.requires_sign_date | tojson }},
+            severance_clause: {{ version.requires_severance_clause | tojson }}
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+    };
     var versionSelect = document.getElementById('contract_version');
     function applyPricingVisibility() {
         var current = versionSelect ? versionSelect.value : '{{ default_contract_version }}';
         document.querySelectorAll('[data-pricing-for]').forEach(function (section) {
             section.hidden = section.dataset.pricingFor !== current;
+        });
+        var requirements = VERSION_REQUIREMENTS[current] || { sign_date: true, severance_clause: true };
+        document.querySelectorAll('[data-requires="sign_date"]').forEach(function (el) {
+            el.hidden = !requirements.sign_date;
+        });
+        document.querySelectorAll('[data-requires="not_sign_date"]').forEach(function (el) {
+            el.hidden = requirements.sign_date;
+        });
+        document.querySelectorAll('[data-requires="severance_clause"]').forEach(function (el) {
+            el.hidden = !requirements.severance_clause;
         });
     }
     if (versionSelect) {
