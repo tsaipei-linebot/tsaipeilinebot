@@ -257,3 +257,13 @@ def list_recent_client_names(limit: int = 500) -> list:
         if name and name not in seen:
             seen.append(name)
     return seen
+
+
+def delete_submission(submission_id: str):
+    """契約作廢時整筆刪掉——跟 client_contract_service.py 的 delete_
+    submission() 同一種寫法：呼叫端（routes）要先用 `can_view_submission()`
+    確認這個帳號真的看得到這筆紀錄才能呼叫這裡，這個函式本身不重複做
+    權限檢查。只刪 Firestore 這筆文件，GCS 上的 Word/PDF 檔案由呼叫端
+    另外呼叫 storage 那邊的刪除函式清掉，這裡不知道、也不需要知道
+    儲存層的細節。"""
+    contracts_ref().document(submission_id).delete()

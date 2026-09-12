@@ -10,6 +10,13 @@
 紀錄，其他有這個模組權限但跟這筆紀錄無關的帳號看不到——列表頁、下載、
 預覽三個地方都要走 `services.dispatch_contract_service.can_view_submission()`
 這同一個判斷，避免只擋列表頁、卻能用網址直接下載/預覽別人紀錄的漏洞。
+
+**「刪除」功能（2026-09-12 新增）**：契約要作廢時，`POST /dispatch-
+contracts/{id}/delete` 把 Firestore 那筆紀錄跟 GCS 上存的 Word/PDF 檔案
+一起刪掉，能不能刪一樣走 `can_view_submission()` 那套可見範圍判斷（看
+得到才能刪），沒有另外設更嚴格的權限，跟 `client_contract_routes.py`
+的刪除功能是同一套做法。刪除沒有回收機制，是真的整筆刪掉，不是標記
+隱藏。
 """
 from urllib.parse import quote
 
@@ -27,6 +34,7 @@ from services.dispatch_contract_service import (
     build_shift_rows,
     can_view_submission,
     convert_docx_to_pdf,
+    delete_submission,
     get_submission,
     list_recent_client_names,
     list_visible_submissions,
@@ -234,3 +242,16 @@ def dispatch_contract_preview(submission_id: str, request: Request, redirect=Dep
         media_type=content_type or "application/pdf",
         headers={"Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}"},
     )
+
+
+@router.post("/dispatch-contracts/{submission_id}/delete")
+def dispatch_contract_delete(submission_id: str, request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    account = platform_accounts.current_account(request)
+    record = get_submission(submission_id)
+    if record and can_view_submission(account, record):
+        dispatch_contract_storage.delete_file(record.get("blob_path", ""))
+        dispatch_contract_storage.delete_file(record.get("pdf_blob_path", ""))
+        delete_submission(submission_id)
+    return RedirectResponse(url="/dispatch-contracts", status_code=303)

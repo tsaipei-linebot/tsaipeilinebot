@@ -381,5 +381,71 @@ class PreviewRouteTests(unittest.TestCase):
         self.assertEqual(result.body, b"%PDF-DATA")
 
 
+class DeleteRouteTests(unittest.TestCase):
+    """POST /dispatch-contracts/{id}/delete（2026-09-12 新增）：契約作廢用，
+    能不能刪一樣走 can_view_submission() 的可見範圍判斷，刪除時要把 GCS
+    上的 Word/PDF 檔案也一起清掉——跟合約產生器的刪除功能同一套做法。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = DeleteRouteTests._FakeSession({"user": user})
+
+    def test_owner_can_delete_record_and_its_files(self):
+        record = {
+            "id": "x", "submitted_by": "bob",
+            "blob_path": "dispatch_contracts/x/a.docx", "pdf_blob_path": "dispatch_contracts/x/a.pdf",
+        }
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes, "delete_submission") as mock_delete:
+                with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "delete_file") as mock_delete_file:
+                    result = dispatch_contract_routes.dispatch_contract_delete(
+                        "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                    )
+        mock_delete.assert_called_once_with("x")
+        mock_delete_file.assert_any_call("dispatch_contracts/x/a.docx")
+        mock_delete_file.assert_any_call("dispatch_contracts/x/a.pdf")
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(result.headers["location"], "/dispatch-contracts")
+
+    def test_other_user_cannot_delete(self):
+        record = {"id": "x", "submitted_by": "alice", "blob_path": "dispatch_contracts/x/a.docx"}
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(dispatch_contract_routes, "delete_submission") as mock_delete:
+                    with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "delete_file") as mock_delete_file:
+                        result = dispatch_contract_routes.dispatch_contract_delete(
+                            "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                        )
+        mock_delete.assert_not_called()
+        mock_delete_file.assert_not_called()
+        self.assertEqual(result.status_code, 303)
+
+    def test_missing_record_is_noop(self):
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=None):
+            with mock.patch.object(dispatch_contract_routes, "delete_submission") as mock_delete:
+                result = dispatch_contract_routes.dispatch_contract_delete(
+                    "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                )
+        mock_delete.assert_not_called()
+        self.assertEqual(result.status_code, 303)
+
+    def test_manager_of_submitter_can_delete(self):
+        record = {"id": "x", "submitted_by": "alice", "blob_path": "dispatch_contracts/x/a.docx"}
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": ["bob"]}):
+                with mock.patch.object(dispatch_contract_routes, "delete_submission") as mock_delete:
+                    with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "delete_file"):
+                        dispatch_contract_routes.dispatch_contract_delete(
+                            "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                        )
+        mock_delete.assert_called_once_with("x")
+
+
 if __name__ == "__main__":
     unittest.main()
