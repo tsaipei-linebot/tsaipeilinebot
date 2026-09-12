@@ -26,6 +26,7 @@
                 <th>送出時間</th>
                 <th>預覽</th>
                 <th>下載</th>
+                <th>刪除</th>
             </tr>
         </thead>
         <tbody>
@@ -48,6 +49,12 @@
                     {% else %}
                     -
                     {% endif %}
+                </td>
+                <td>
+                    <form method="post" action="/dispatch-contracts/{{ record.id }}/delete" style="display:inline"
+                          onsubmit="return confirm('確定要刪除「{{ record.client_name }}」這筆派遣契約紀錄嗎？刪除後無法復原。');">
+                        <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                    </form>
                 </td>
             </tr>
             {% endfor %}

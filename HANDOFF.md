@@ -3635,3 +3635,20 @@ repo 裡，跟其他版本一樣走 `git push` ＋ Cloud Run 重新部署。
    的帳號。
 4. 確認「新北所(配送組)系統」這個新名稱在 `/portal`、`/accounts`、
    配送部系統本身各個頁面顯示都正確。
+
+## 新增：派遣契約產生器補上刪除功能（2026-09-12）
+
+使用者盤點過全站所有刪除功能有沒有確認視窗時，發現派遣契約產生器
+（`/dispatch-contracts`）跟配送部補款登記這兩個地方本來就**沒有刪除
+功能**（不是缺確認視窗，是根本沒有這個按鈕）。使用者確認只要幫派遣
+契約產生器加上刪除，配送部補款登記先不動。
+
+做法完全比照合約產生器（`/client-contracts`）已經有的刪除功能：
+`POST /dispatch-contracts/{id}/delete` 把 Firestore 那筆紀錄跟 GCS 上
+存的 Word/PDF 檔案一起刪掉，能不能刪走 `can_view_submission()` 那套
+既有的可見範圍判斷（送出者本人／主管／全平台管理員），沒有另外設更
+嚴格的權限；前端一樣先跳確認對話框（「確定要刪除「客戶名稱」這筆派遣
+契約紀錄嗎？刪除後無法復原。」），刪除沒有回收機制。新增
+`dispatch_contract_storage.delete_file()`、`services/dispatch_contract_
+service.py` 的 `delete_submission()`，跟 `client_contract_storage.py`／
+`services/client_contract_service.py` 的對應函式是同一種寫法。
