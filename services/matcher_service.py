@@ -59,6 +59,16 @@ LOCATION_CANDIDATES = [
     "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆"
 ]
 
+# LOCATION_CANDIDATES 裡屬於「縣市層級」（不是行政區層級）的詞——用來讓
+# extract_current_target_location()／detect_negated_location() 判斷優先順序：
+# 縣市層級的詞（例如「新竹」）精準度不如行政區層級的詞（例如「竹北」），一句話
+# 同時出現兩者時（例如「新竹縣 竹北沒缺嗎」），不能讓縣市層級的詞搶先命中、
+# 蓋掉更精確的行政區層級辨識，見 HANDOFF.md 竹北案例。
+_LOCATION_COUNTY_LEVEL_NAMES = {
+    "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄",
+    "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆",
+}
+
 # 行政區/城市關鍵字 -> 所屬縣市，只給「同縣市鄰近地區退讓建議」這個功能用
 # （見 find_county_level_alternative_jobs）。這份對照表刻意手動維護、只收錄
 # LOCATION_CANDIDATES 裡的詞，不做任何地理相鄰（隔壁行政區）的推論——「同一
@@ -84,22 +94,133 @@ LOCATION_TO_COUNTY = {
 }
 
 
-def find_county_level_alternative_jobs(category_matched_jobs: list, target_location: str) -> list:
+# ==========================================
+# 行政區名稱動態辨識：從 Notion 職缺資料本身「長出」地名清單，不再只靠上面
+# LOCATION_CANDIDATES 這份手動維護、只涵蓋新北/桃園的清單。
+#
+# 背景（見 HANDOFF.md 竹北／佳里案例）：LOCATION_CANDIDATES 除了新北市、
+# 桃園市之外，其他縣市完全沒有收錄任何行政區名稱，只要求職者問的行政區
+# 沒被手動收錄，程式要嘛誤配對到剛好也含有同一個縣市字樣的無關行政區
+# （竹北案例），要嘛整個掉到 AI 決策、賭 AI 判斷得準不準（佳里案例，AI
+# 即使看到正確資料還是判斷錯誤）。與其手動列一份涵蓋全台灣的地名清單
+# （既費工又一定會漏），改成每次都直接掃描目前有效職缺的「行政區」欄位，
+# 自動長出「目前系統裡真的有出現過的地名」——同仁在 Notion 開新職缺、
+# 填了新的行政區，系統下一次讀取職缺資料時就自動認得，不需要再改程式碼。
+#
+# 這整套跟職缺資料共用同一份 30 秒快取（active_jobs 本身就是
+# fetch_jobs_data() 快取好的結果），純粹是對已經在記憶體裡的資料做字串
+# 解析，不會多打一次 Notion API。
+# ==========================================
+
+# 台灣 22 個縣市的正式全名（含「市/縣」），用來把「台北市大安區」這種同仁
+# 慣用的完整寫法，切成「縣市」跟「行政區」兩段。這份清單本身是全台灣的
+# 縣市層級行政區劃，數量固定且早就穩定不變，跟「行政區」（可能有數百個、
+# 職缺資料庫實際會用到哪些完全無法預先窮舉）是不同等級的兩件事，才適合
+# 直接寫死維護。故意把「新竹市」排在「新竹縣」之前、「嘉義市」排在
+# 「嘉義縣」之前——這兩組縣市剛好共用同一個核心地名，之後把核心字還原成
+# 完整縣市名稱時，沿用 LOCATION_TO_COUNTY 既有「新竹→新竹市」「嘉義→嘉義市」
+# 的簡化慣例（不特別區分市/縣），維持行為一致。
+_COUNTY_FULL_NAMES = [
+    "台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市",
+    "基隆市", "新竹市", "嘉義市",
+    "新竹縣", "苗栗縣", "彰化縣", "南投縣", "雲林縣", "嘉義縣",
+    "屏東縣", "宜蘭縣", "花蓮縣", "台東縣", "澎湖縣", "金門縣", "連江縣",
+]
+_COUNTY_CORE_TO_FULL = {}
+for _full in _COUNTY_FULL_NAMES:
+    _COUNTY_CORE_TO_FULL.setdefault(_full[:-1], _full)
+
+
+def _strip_admin_suffix(s: str) -> str:
+    """去掉行政區劃「市/縣/區/鄉/鎮」這類單位字尾，取得地名核心字。刻意只在
+    去掉字尾後還剩下至少 2 個字時才去掉——避免「東區」「西區」這種本身只有
+    2 個字的地名被去成單一個字（「東」「西」），變成極短、極容易在任何文字
+    裡誤判命中的危險子字串。"""
+    if len(s) >= 3 and s[-1] in ("市", "縣", "區", "鄉", "鎮"):
+        return s[:-1]
+    return s
+
+
+def _split_district_token(token: str, fallback_county_core: str = "") -> tuple:
+    """把「台北市大安區」這種同仁慣用的完整寫法，拆成 (縣市核心字, 行政區核心字)，
+    例如 ("台北", "大安")。如果這個 token 本身沒有帶縣市前綴（同仁少數情況下
+    可能只寫「大安區」），改用呼叫端傳進來的 fallback_county_core（通常來自
+    這筆職缺自己的「縣市」欄位，且只在該欄位只填了單一縣市時才有意義）。"""
+    token = token.strip()
+    if not token:
+        return "", ""
+    for full in _COUNTY_FULL_NAMES:
+        for variant in {full, full.replace("台", "臺")}:
+            if token.startswith(variant):
+                county_core = variant[:-1].replace("臺", "台")
+                rest = token[len(variant):].strip()
+                return county_core, _strip_admin_suffix(rest)
+    return fallback_county_core, _strip_admin_suffix(token)
+
+
+def build_district_county_index(active_jobs: list) -> dict:
+    """掃描目前有效職缺的「行政區」（原始欄位，不是清理過的 _location_search_text）
+    欄位，建立「行政區核心字 -> 這個核心字目前對應到哪些縣市」的對照表，例如
+    {"佳里": {"台南"}, "東區": {"台中", "台南"}}。這份索引有兩個用途：
+    1. 讓 extract_current_target_location() 能辨識出 LOCATION_CANDIDATES
+       沒收錄、但職缺資料庫裡真實存在的行政區名稱（例如「佳里」「竹北」）。
+    2. 標記出「同一個行政區名稱同時存在於多個縣市」的情況（例如「東區」台中、
+       台南都有），呼叫端據此決定要不要保守跳過、不猜——寧可讓使用者的話
+       落到既有的 AI 決策保底流程，也不要自己猜錯縣市答非所問。"""
+    index = {}
+    for job in active_jobs:
+        district_field = str(job.get("行政區") or "").strip()
+        if not district_field:
+            continue
+        county_field = str(job.get("縣市") or "").strip()
+        county_tokens = [c.strip() for c in re.split(r'[,，、\s]+', county_field) if c.strip()]
+        # 「縣市」欄位只填了單一縣市時，才能安全地當作 fallback（欄位裡列了
+        # 好幾個縣市的情況下，沒辦法知道哪個行政區 token 對應哪一個縣市，
+        # 不猜、留給行政區 token 自己帶的縣市前綴去判斷）。
+        fallback_county_core = _strip_admin_suffix(county_tokens[0]) if len(county_tokens) == 1 else ""
+
+        for token in re.split(r'[,，、\s]+', district_field):
+            county_core, district_core = _split_district_token(token, fallback_county_core)
+            if not district_core or not county_core:
+                continue
+            index.setdefault(district_core, set()).add(county_core)
+    return index
+
+
+def resolve_county_for_location(location: str, active_jobs: list = None) -> str:
+    """查詢一個地名目前對應的縣市全名（例如「桃園市」），給同縣市退讓建議
+    這幾個功能共用。優先查 LOCATION_TO_COUNTY 這份手動維護、已驗證過的既有
+    對照表（新北/桃園的行政區，跟 台北/台中/台南 等縣市層級名稱），查不到
+    時才退一步用 build_district_county_index() 從目前的職缺資料動態解析——
+    只有在這個地名「明確只對應到一個縣市」時才回傳，同名跨縣市的情況
+    （例如「東區」）保守回傳空字串，不猜。"""
+    county = LOCATION_TO_COUNTY.get(location, "")
+    if county:
+        return county
+    if not active_jobs:
+        return ""
+    counties = build_district_county_index(active_jobs).get(location, set())
+    if len(counties) != 1:
+        return ""
+    return _COUNTY_CORE_TO_FULL.get(next(iter(counties)), "")
+
+
+def find_county_level_alternative_jobs(category_matched_jobs: list, target_location: str, active_jobs: list = None) -> list:
     """求職者問的行政區完全沒有精準符合的職缺時，退一步找「同縣市」還有沒有
     符合類別/廠商條件的職缺——比照真人派遣專員自然會推薦鄰近地區類似工作的
-    習慣。刻意做成確定性比對（只查 LOCATION_TO_COUNTY 這份人工維護的對照表、
-    比對結構化的 _location_search_text 欄位），不是交給 AI 自己判斷/推論，
-    避免重蹈這幾天才修好的「AI 自行推論地區涵蓋範圍」覆轍。呼叫端仍必須誠實
-    告知使用者「原本問的地區沒有，這是同縣市的其他地方」，不能包裝成原本
-    地區也有符合的職缺。"""
-    county = LOCATION_TO_COUNTY.get(target_location, "")
+    習慣。刻意做成確定性比對（只查 resolve_county_for_location() 這份人工
+    維護＋職缺資料動態解析的對照表、比對結構化的 _location_search_text 欄位），
+    不是交給 AI 自己判斷/推論，避免重蹈這幾天才修好的「AI 自行推論地區涵蓋
+    範圍」覆轍。呼叫端仍必須誠實告知使用者「原本問的地區沒有，這是同縣市的
+    其他地方」，不能包裝成原本地區也有符合的職缺。"""
+    county = resolve_county_for_location(target_location, active_jobs)
     if not county:
         return []
     county_clean = clean_text_for_search(county)
     return [j for j in category_matched_jobs if county_clean in j.get("_location_search_text", "")]
 
 
-def find_same_county_district_labels(same_county_jobs: list, target_location: str) -> list:
+def find_same_county_district_labels(same_county_jobs: list, target_location: str, active_jobs: list = None) -> list:
     """從已經確認「同縣市」的候選職缺裡，列出實際同縣市的行政區名稱清單，
     給 handlers/message_handler.py 的退讓建議回覆文字直接列出來用（例如
     「不過桃園市的蘆竹、龜山有相關職缺」），不要只講「同縣市還有相關職缺」
@@ -114,7 +235,7 @@ def find_same_county_district_labels(same_county_jobs: list, target_location: st
     刻意讀「行政區」這個原始欄位（不是 _location_search_text）：後者是
     clean_text_for_search() 處理過的比對專用字串，逗號等分隔符號會被直接
     刪除、行政區名稱會黏在一起，沒辦法拆回一個一個地名。"""
-    county = LOCATION_TO_COUNTY.get(target_location, "")
+    county = resolve_county_for_location(target_location, active_jobs)
     if not county:
         return []
 
@@ -145,20 +266,66 @@ def find_same_county_district_labels(same_county_jobs: list, target_location: st
     return labels
 
 
-def extract_current_target_location(raw_msg: str, history_text: str = "") -> str:
-    """從使用者最新訊息擷取鎖定地區（避免被對話歷史中的範例字詞干擾，並跳過被否定的地名）[cite: 1]"""
+def extract_current_target_location(raw_msg: str, history_text: str = "", active_jobs: list = None) -> str:
+    """從使用者最新訊息擷取鎖定地區（避免被對話歷史中的範例字詞干擾，並跳過被否定的地名）[cite: 1]
+
+    分三輪、精準度由高到低檢查，刻意不是單純「查完 LOCATION_CANDIDATES 全部
+    查不到才查動態索引」：LOCATION_CANDIDATES 裡混雜了「行政區層級」（板橋、
+    八德…）跟「縣市層級」（新竹、台南…）兩種詞，如果整份清單一起查、縣市
+    層級的詞排在後面但一樣會被查到，會導致「新竹縣 竹北沒缺嗎」這種訊息被
+    清單裡的「新竹」搶先命中，動態索引裡更精確的「竹北」根本沒機會被檢查到
+    （見 HANDOFF.md 竹北案例）。所以先查兩份「行政區層級」的來源（手動維護的
+    LOCATION_CANDIDATES 子集，之後才是動態解析的 build_district_county_index()），
+    只有兩者都沒查到時，才退回「縣市層級」的詞。同一個行政區名稱同時存在於
+    多個縣市時（例如「東區」台中、台南都有），動態索引保守跳過不猜，讓這句話
+    落到既有的 AI 決策保底流程，不要冒著答非所問的風險猜一個。"""
     for loc in LOCATION_CANDIDATES:
+        if loc in _LOCATION_COUNTY_LEVEL_NAMES:
+            continue
+        if loc in raw_msg and not _keyword_is_negated(raw_msg, loc):
+            return loc.replace("臺", "台")
+
+    if active_jobs:
+        district_index = build_district_county_index(active_jobs)
+        # 依地名長度由長到短檢查，避免短地名先命中、蓋掉更精確的地名。
+        for district_core in sorted(district_index.keys(), key=len, reverse=True):
+            if len(district_index[district_core]) != 1:
+                continue
+            if district_core in raw_msg and not _keyword_is_negated(raw_msg, district_core):
+                return district_core
+
+    for loc in LOCATION_CANDIDATES:
+        if loc not in _LOCATION_COUNTY_LEVEL_NAMES:
+            continue
         if loc in raw_msg and not _keyword_is_negated(raw_msg, loc):
             return loc.replace("臺", "台")
 
     return ""
 
 
-def detect_negated_location(raw_msg: str) -> str:
-    """偵測使用者是否明確表示排除某個地區（例如「不要新莊了」），回傳被排除的地名，沒有則回傳空字串"""
+def detect_negated_location(raw_msg: str, active_jobs: list = None) -> str:
+    """偵測使用者是否明確表示排除某個地區（例如「不要新莊了」），回傳被排除的地名，
+    沒有則回傳空字串。優先順序跟 extract_current_target_location() 一致，理由同上。"""
     for loc in LOCATION_CANDIDATES:
+        if loc in _LOCATION_COUNTY_LEVEL_NAMES:
+            continue
         if loc in raw_msg and _keyword_is_negated(raw_msg, loc):
             return loc.replace("臺", "台")
+
+    if active_jobs:
+        district_index = build_district_county_index(active_jobs)
+        for district_core in sorted(district_index.keys(), key=len, reverse=True):
+            if len(district_index[district_core]) != 1:
+                continue
+            if district_core in raw_msg and _keyword_is_negated(raw_msg, district_core):
+                return district_core
+
+    for loc in LOCATION_CANDIDATES:
+        if loc not in _LOCATION_COUNTY_LEVEL_NAMES:
+            continue
+        if loc in raw_msg and _keyword_is_negated(raw_msg, loc):
+            return loc.replace("臺", "台")
+
     return ""
 
 # 班別同義詞清單：獨立成模組常數，讓 extract_shift_preference 跟 _tokenize_search_terms

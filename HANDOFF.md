@@ -299,6 +299,21 @@
     - **使用者明確要求這個情境不設數量上限**：同縣市地區數量通常不多，但特別提醒不要讓這個「不設上限」的決定，連帶影響到其他本來就需要防止卡片/清單爆量的既有邏輯（例如 `services/flex_service.py` 的 `format_clean_location()` 對涵蓋 5 個以上行政區的職缺仍然維持原本的概括顯示，避免卡片被塞爆；面試時段清單、快速回覆按鈕等其他有筆數上限的既有功能也完全沒有修改）。
     - **實作方式**：`services/matcher_service.py` 新增 `find_same_county_district_labels(same_county_jobs, target_location)`——讀取職缺的原始「行政區」欄位（不是給比對用、逗號會被清乾淨黏成一整串的 `_location_search_text`），用逗號/頓號/空白拆成一個一個地名 token，逐一比對 `LOCATION_TO_COUNTY` 這份既有對照表判斷是不是屬於目標縣市，是的話去掉重複的縣市前綴（跟卡片顯示用的邏輯風格一致）當作顯示用標籤，跨多筆職缺也會自動去重、保留原始出現順序，刻意不設數量上限。`handlers/message_handler.py` 的同縣市退讓建議分支（第 44 項）呼叫這個新函式，能拆出具體地名時就把回覆文字改成「不過{縣市}的{地名1}、{地名2}...有相關職缺」，拆不出來時（例如測試資料或極少數職缺沒有結構化「行政區」欄位）安全退回原本「同樣在{縣市}還有相關職缺」的空泛說法，不會因為列不出清單就整句話都不回覆。
     - **新增測試**：`tests/test_matcher_service.py` 新增 `FindSameCountyDistrictLabelsTests`（6 個：正確拆出並去除縣市前綴、涵蓋很多行政區時真的不設上限全部列出、跨職缺去重、排除不同縣市的行政區、缺少原始「行政區」欄位時安全回傳空清單、地名對照表沒收錄的地名安全回傳空清單）；`tests/test_message_handler.py` 新增 `test_lists_specific_same_county_districts_when_raw_field_available`（驗證整合流程下回覆文字有列出具體行政區、不再是空泛說法）。
+49. **接續發現：`LOCATION_CANDIDATES` 除了新北市、桃園市之外，其他縣市完全沒有收錄任何行政區名稱，導致「誤配對到無關行政區」跟「完全沒被辨識、掉到 AI 決策亂猜」兩種真實回報的 bug**：
+    - **案例一（竹北）**：使用者實測「蝦皮門市」鎖定類別/廠商後，問「新竹縣 竹北沒缺嗎」，沛沛回覆「有的！」卻附上一張新竹市北區的卡片——完全不相關的行政區。
+    - **案例二（佳里）**：使用者問「台南有哪些區有缺呢？」正確找到職缺後，接著問「佳里有缺嗎」（這句話沒再提到「台南」），沛沛卻回覆「目前在台南佳里區暫時沒有符合『蝦皮門市』的職缺喔。不過台南下營區有蝦皮門市的職缺...」——但使用者確認 Notion 裡「行政區」欄位就是「台南市佳里區」，資料明明有。
+    - **根本原因**：`extract_current_target_location()` 只查 `LOCATION_CANDIDATES` 這份手動維護的清單，而這份清單只有新北市、桃園市收錄到行政區層級的地名（板橋、八德…），其他每一個縣市都只收錄到縣市層級（新竹、台南…）。案例一是「新竹」被搶先命中、蓋掉本來該辨識出的「竹北」；案例二是「佳里」完全沒被任何清單收錄，訊息裡又沒有其他能辨識的地名，直接落到一般 AI 決策流程，AI 即使看到候選職缺的「地點:」欄位資料正確，仍然自行判斷錯誤（回覆了「沒有」加上一個錯誤的替代建議）。
+    - **修正方式（改成從 Notion 職缺資料動態長出行政區清單，而不是手動維護一份涵蓋全台灣的地名表）**：`services/matcher_service.py` 新增一整組動態解析機制，理由是使用者確認 Notion「行政區」欄位一律用「縣市＋行政區」合併寫法（例如「台北市大安區」），跟這份資料共用職缺資料本來就有的 30 秒快取，不會多打一次 Notion API：
+        - `_COUNTY_FULL_NAMES`：台灣 22 個縣市的正式全名，數量固定不變，用來當「縣市＋行政區」合併字串的切分依據。
+        - `_strip_admin_suffix()` / `_split_district_token()`：把「台南市佳里區」這類字串拆成 (縣市核心字, 行政區核心字)，例如 ("台南", "佳里")；沒有縣市前綴時可以用呼叫端傳入的 fallback 縣市（來自這筆職缺自己「縣市」欄位，且只在該欄位只填單一縣市時才用）。刻意規定去掉字尾後至少要剩 2 個字才去——避免「東區」「西區」被去成單一個字，變成極危險的短字串誤判。
+        - `build_district_county_index(active_jobs)`：掃描目前所有有效職缺的「行政區」欄位，建立「行政區核心字 → 對應到哪些縣市（集合）」的索引，例如 `{"佳里": {"台南"}, "東區": {"台中", "台南"}}`。
+        - `resolve_county_for_location()`：查一個地名對應的縣市全名，優先查既有的 `LOCATION_TO_COUNTY`，查不到才退一步用上面的動態索引，且只有在「明確只對應到一個縣市」時才回傳，同名跨縣市（例如「東區」）保守回傳空字串。
+        - `extract_current_target_location()` / `detect_negated_location()` 改成分三輪、精準度由高到低檢查：① `LOCATION_CANDIDATES` 裡「行政區層級」的詞（板橋、八德…，排除純縣市層級的詞）；② 動態索引裡「目前資料裡明確只對應一個縣市」的行政區核心字；③ 才退回 `LOCATION_CANDIDATES` 裡純縣市層級的詞（新竹、台南…）。**這個順序刻意不是「查完整份清單才查動態索引」**：如果縣市層級的詞跟行政區層級的詞混在同一輪查、縣市層級的詞剛好也是訊息裡的子字串（例如「新竹縣 竹北」裡的「新竹」），會搶先命中、蓋掉根本還沒機會被檢查到的「竹北」，這正是案例一實際發生的原因，開發過程中被新增的回歸測試抓到、才改成三輪分開查。
+        - `find_county_level_alternative_jobs()` / `find_same_county_district_labels()`（第 44/48 項）也都加上 `active_jobs` 參數，改呼叫 `resolve_county_for_location()`，讓「同縣市退讓建議」這個既有功能一併吃到動態解析出的縣市，不會因為地名是動態辨識出來的就查不到縣市。
+    - **刻意保留的限制（已知後續待辦，明講不隱藏）**：同一個行政區名稱同時存在於多個縣市時（例如「東區」台中、台南都有），這一版刻意不猜、保守回傳空字串，讓這句話落到既有的 AI 決策保底流程——不會誤答，但也不會主動精準攔截，使用者這種情況下可能還是要多問一句講清楚縣市。「向使用者反問釐清是哪個縣市」的體驗後續可以再做，這次沒有實作。
+    - **`handlers/message_handler.py` 呼叫端配合更新**：`extract_current_target_location`／`detect_negated_location`／`find_county_level_alternative_jobs`／`find_same_county_district_labels` 這四處呼叫都補上 `active_jobs`（流程一開始就抓好、不用額外查詢）；原本直接查 `LOCATION_TO_COUNTY` 的地方改成呼叫 `resolve_county_for_location()`。
+    - **新增測試**：`tests/test_matcher_service.py` 新增 `StripAdminSuffixTests`、`SplitDistrictTokenTests`、`BuildDistrictCountyIndexTests`、`ResolveCountyForLocationTests`、`ExtractLocationDynamicDistrictRegressionTests`（含直接重現竹北／佳里兩個回報案例、同名跨縣市不亂猜、沒傳 `active_jobs` 時維持原行為不出錯等情境）；`tests/test_message_handler.py` 新增 `DynamicDistrictRecognitionRegressionTests`（`test_zhubei_query_matches_zhubei_job_not_unrelated_hsinchu_city_job`、`test_jiali_query_matches_directly_without_falling_to_ai`），走完整的 `process_user_message` 流程重現並驗證兩個案例都修好。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 591 個測試，OK。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 565 個測試，OK。
 
 ## 目前所有檔案的狀態

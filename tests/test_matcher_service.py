@@ -418,5 +418,135 @@ class FindSameCountyDistrictLabelsTests(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class StripAdminSuffixTests(unittest.TestCase):
+    def test_strips_trailing_district_suffix(self):
+        self.assertEqual(m._strip_admin_suffix("大安區"), "大安")
+        self.assertEqual(m._strip_admin_suffix("竹北市"), "竹北")
+
+    def test_keeps_short_two_char_district_names_intact(self):
+        # 「東區」「西區」去掉字尾會剩下單一個字，太短太容易誤判，刻意不去掉
+        self.assertEqual(m._strip_admin_suffix("東區"), "東區")
+        self.assertEqual(m._strip_admin_suffix("北區"), "北區")
+
+    def test_no_suffix_present_is_unaffected(self):
+        self.assertEqual(m._strip_admin_suffix("佳里"), "佳里")
+
+
+class SplitDistrictTokenTests(unittest.TestCase):
+    def test_splits_county_and_district_prefix(self):
+        self.assertEqual(m._split_district_token("台北市大安區"), ("台北", "大安"))
+
+    def test_handles_full_width_tai_variant(self):
+        self.assertEqual(m._split_district_token("臺南市佳里區"), ("台南", "佳里"))
+
+    def test_uses_fallback_county_when_no_prefix_present(self):
+        self.assertEqual(m._split_district_token("佳里區", fallback_county_core="台南"), ("台南", "佳里"))
+
+    def test_no_prefix_and_no_fallback_returns_empty_county(self):
+        self.assertEqual(m._split_district_token("佳里區"), ("", "佳里"))
+
+
+class BuildDistrictCountyIndexTests(unittest.TestCase):
+    """驗證從 active_jobs 動態解析出「行政區 -> 縣市集合」索引：這是修好
+    竹北（誤配對到無關縣市）、佳里（完全沒被辨識）這兩個回報案例的核心。"""
+
+    def test_unambiguous_district_maps_to_single_county(self):
+        jobs = [{"行政區": "台南市佳里區", "縣市": "台南市"}]
+        index = m.build_district_county_index(jobs)
+        self.assertEqual(index.get("佳里"), {"台南"})
+
+    def test_district_name_shared_across_counties_is_flagged_ambiguous(self):
+        jobs = [
+            {"行政區": "台中市東區", "縣市": "台中市"},
+            {"行政區": "台南市東區", "縣市": "台南市"},
+        ]
+        index = m.build_district_county_index(jobs)
+        self.assertEqual(index.get("東區"), {"台中", "台南"})
+
+    def test_falls_back_to_county_field_when_district_has_no_prefix(self):
+        jobs = [{"行政區": "竹北市", "縣市": "新竹縣"}]
+        index = m.build_district_county_index(jobs)
+        self.assertEqual(index.get("竹北"), {"新竹"})
+
+    def test_does_not_use_fallback_when_county_field_lists_multiple_counties(self):
+        # 縣市欄位列了好幾個縣市時，沒辦法知道哪個行政區 token 對應哪一個，
+        # 不猜，跳過這個 token。
+        jobs = [{"行政區": "佳里區", "縣市": "台南市,高雄市"}]
+        index = m.build_district_county_index(jobs)
+        self.assertEqual(index.get("佳里"), None)
+
+    def test_multiple_districts_in_same_field_are_all_indexed(self):
+        jobs = [{"行政區": "桃園市蘆竹區,桃園市龜山區", "縣市": "桃園市"}]
+        index = m.build_district_county_index(jobs)
+        self.assertEqual(index.get("蘆竹"), {"桃園"})
+        self.assertEqual(index.get("龜山"), {"桃園"})
+
+    def test_missing_district_field_is_skipped(self):
+        jobs = [{"縣市": "台南市"}]
+        index = m.build_district_county_index(jobs)
+        self.assertEqual(index, {})
+
+
+class ResolveCountyForLocationTests(unittest.TestCase):
+    def test_prefers_static_location_to_county_table(self):
+        self.assertEqual(m.resolve_county_for_location("八德"), "桃園市")
+
+    def test_falls_back_to_dynamic_index_when_unambiguous(self):
+        jobs = [{"行政區": "台南市佳里區", "縣市": "台南市"}]
+        self.assertEqual(m.resolve_county_for_location("佳里", jobs), "台南市")
+
+    def test_ambiguous_dynamic_district_returns_empty(self):
+        jobs = [
+            {"行政區": "台中市東區", "縣市": "台中市"},
+            {"行政區": "台南市東區", "縣市": "台南市"},
+        ]
+        self.assertEqual(m.resolve_county_for_location("東區", jobs), "")
+
+    def test_unknown_location_without_active_jobs_returns_empty(self):
+        self.assertEqual(m.resolve_county_for_location("不存在的地名"), "")
+
+
+class ExtractLocationDynamicDistrictRegressionTests(unittest.TestCase):
+    """回歸測試：使用者實際回報的兩個案例——竹北（LOCATION_CANDIDATES 只收錄
+    「新竹」,沒有「竹北」,導致「新竹縣 竹北沒缺嗎」被誤判成只命中「新竹」，
+    進而配對到無關的新竹市北區職缺）與佳里（完全沒被任何清單收錄，掉到 AI
+    決策、AI 即使看到正確資料仍判斷錯誤）。"""
+
+    def test_recognizes_zhubei_from_active_jobs_instead_of_only_hsinchu(self):
+        jobs = [{"行政區": "新竹縣竹北市", "縣市": "新竹縣"}]
+        self.assertEqual(m.extract_current_target_location("新竹縣 竹北沒缺嗎", "", jobs), "竹北")
+
+    def test_recognizes_jiali_from_active_jobs(self):
+        jobs = [{"行政區": "台南市佳里區", "縣市": "台南市"}]
+        self.assertEqual(m.extract_current_target_location("佳里有缺嗎", "", jobs), "佳里")
+
+    def test_bare_county_still_recognized_when_no_district_match(self):
+        jobs = [{"行政區": "台南市佳里區", "縣市": "台南市"}]
+        self.assertEqual(m.extract_current_target_location("台南有哪些區有缺呢", "", jobs), "台南")
+
+    def test_ambiguous_district_is_not_guessed(self):
+        jobs = [
+            {"行政區": "台中市東區", "縣市": "台中市"},
+            {"行政區": "台南市東區", "縣市": "台南市"},
+        ]
+        self.assertEqual(m.extract_current_target_location("東區有缺嗎", "", jobs), "")
+
+    def test_without_active_jobs_dynamic_recognition_is_skipped(self):
+        # 沒有傳 active_jobs 時（例如舊呼叫端尚未更新），維持原本行為，不會
+        # 因為新功能而噴錯。
+        self.assertEqual(m.extract_current_target_location("佳里有缺嗎"), "")
+
+    def test_negated_dynamic_district_is_recognized(self):
+        jobs = [{"行政區": "台南市佳里區", "縣市": "台南市"}]
+        self.assertEqual(m.detect_negated_location("不要佳里了", jobs), "佳里")
+
+    def test_negated_ambiguous_district_is_not_guessed(self):
+        jobs = [
+            {"行政區": "台中市東區", "縣市": "台中市"},
+            {"行政區": "台南市東區", "縣市": "台南市"},
+        ]
+        self.assertEqual(m.detect_negated_location("不要東區", jobs), "")
+
+
 if __name__ == "__main__":
     unittest.main()
