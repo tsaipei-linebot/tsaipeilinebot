@@ -118,12 +118,63 @@ class RenderContractDocxTests(unittest.TestCase):
         full_text = "\n".join(p.text for p in doc.paragraphs)
         self.assertIn("甲方應於次月20日前匯款", full_text)
 
-    def test_rate_table_substituted(self):
+    def test_rate_table_substituted_without_unit_suffix(self):
+        # 2026-09-12 使用者要求拿掉「元/hr」，套版結果應該是乾淨的數字。
         doc = self._render(hourly_wage="180", management_fee="55")
         table = doc.tables[1]
         row = table.rows[1]
-        self.assertEqual(row.cells[1].text, "180元/hr")
-        self.assertEqual(row.cells[3].text, "55元/hr")
+        self.assertEqual(row.cells[1].text, "180")
+        self.assertEqual(row.cells[3].text, "55")
+
+
+class RenderActualPaidContractDocxTests(unittest.TestCase):
+    """actual_paid（實支實付）版本：跟 hourly_flat_rate 共用同一套甲乙雙方/
+    日期/撤換條款排版，只有附件一報價表格結構不一樣（使用者提供的真實
+    報價表格，只有「服務費－全程派遣」那一格開放填寫）。"""
+
+    def _render(self, **overrides):
+        defaults = dict(
+            party_a=_PARTY_A,
+            party_b=_PARTY_B,
+            sign_date=date(2026, 1, 1),
+            contract_start_date=date(2026, 1, 1),
+            contract_end_date=date(2026, 12, 31),
+            replace_notice_days="3",
+            severance_payer="乙方",
+            remit_day="10",
+            contract_version="actual_paid",
+            service_fee="人員薪資的15%",
+        )
+        defaults.update(overrides)
+        content = render_contract_docx(**defaults)
+        path = "/tmp/_test_client_contract_actual_paid_render.docx"
+        with open(path, "wb") as f:
+            f.write(content)
+        return docx.Document(path)
+
+    def test_no_leftover_jinja_tags(self):
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertNotIn("{{", full_text)
+        self.assertNotIn("{%", full_text)
+
+    def test_shares_the_same_main_clauses_as_hourly_flat_rate(self):
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("測試客戶股份有限公司", full_text)
+        self.assertIn("瑋政有限公司", full_text)
+        self.assertIn("115年01月01日", full_text)
+
+    def test_service_fee_cell_is_substituted(self):
+        doc = self._render(service_fee="CUSTOM-SERVICE-FEE-VALUE")
+        table = doc.tables[1]
+        self.assertEqual(table.rows[10].cells[2].text, "CUSTOM-SERVICE-FEE-VALUE")
+
+    def test_fixed_rows_still_say_actual_paid(self):
+        doc = self._render()
+        table = doc.tables[1]
+        self.assertEqual(table.rows[1].cells[2].text, "實支實付")
+        self.assertEqual(table.rows[7].cells[2].text, "實支實付")
 
 
 class ContractVersionConfigTests(unittest.TestCase):
@@ -132,6 +183,16 @@ class ContractVersionConfigTests(unittest.TestCase):
 
     def test_severance_payer_options_are_the_two_parties(self):
         self.assertEqual(set(SEVERANCE_PAYER_OPTIONS), {"甲方", "乙方"})
+
+    def test_both_versions_have_existing_template_files(self):
+        for code, version in CONTRACT_VERSIONS.items():
+            self.assertTrue(
+                os.path.exists(version["template_path"]),
+                f"{code} 的 template_path 指向的檔案不存在：{version['template_path']}",
+            )
+
+    def test_actual_paid_version_maps_to_matching_project_contract_mode(self):
+        self.assertEqual(CONTRACT_VERSIONS["actual_paid"]["project_contract_mode"], "實支實付")
 
 
 class CanViewSubmissionTests(unittest.TestCase):

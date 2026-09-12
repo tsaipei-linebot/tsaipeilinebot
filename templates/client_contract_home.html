@@ -29,6 +29,7 @@
                 <th>專案合約維護</th>
                 <th>預覽</th>
                 <th>下載</th>
+                <th>複製</th>
             </tr>
         </thead>
         <tbody>
@@ -60,6 +61,9 @@
                     {% else %}
                     -
                     {% endif %}
+                </td>
+                <td>
+                    <a href="/client-contracts/new?duplicate_from={{ record.id }}" class="btn btn-small" title="用這筆合約的內容預填新增表單，年底續下一年度合約時用">複製</a>
                 </td>
             </tr>
             {% endfor %}

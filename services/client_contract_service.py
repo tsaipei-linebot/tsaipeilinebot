@@ -19,12 +19,17 @@ Firestore／GCS。
 lookup.py`），查得到就自動帶入，查不到就手動輸入全部欄位——這兩個查詢
 服務都是失敗容錯設計，不會擋住合約產生流程。
 
-**合約版本**：這是第一版「時薪一口價」（`CONTRACT_VERSIONS` 的
-``hourly_flat_rate``），員工薪資／管理費由專員自行填入單一數值，不做多列
-費率表。之後如果材霈需要「實支實付」等其他計費模式的合約範本，只要在
-`CONTRACT_VERSIONS` 加一個版本代碼＋對應的 master template 檔案，不用
-改整個資料結構——刻意把 ``contract_version`` 存進紀錄裡就是為了這個
-擴充性，不是這一版就要用到。
+**合約版本**：目前有兩個版本，甲乙雙方欄位/合約期間/撤換條款/匯款日這些
+主文完全共用同一套排版跟 Jinja 標籤，只有附件一報價表格的結構不一樣，
+所以是兩個獨立的 master template 檔案：
+- ``hourly_flat_rate``（時薪一口價）：員工薪資／管理費由專員自行填入
+  單一數值，簡單 3 欄費率表。
+- ``actual_paid``（實支實付）：使用者提供的真實「實支實付」報價表格
+  （薪資/加班費/法定項目/員工福利都固定寫「實支實付」，只有「服務費－
+  全程派遣」那一格是空白的 `service_fee` 欄位讓專員自行填寫，例如
+  「人員薪資的15%」）。
+之後如果要再加新版本，一樣是在 `CONTRACT_VERSIONS` 加一個版本代碼＋
+準備對應的 master template 檔案，不用改整個資料結構。
 
 **權限與可見範圍**：模組代碼 `client_contracts`（`platform_accounts.
 MODULES`），跟派遣契約產生器一樣，只有送出者本人、送出者的主管
@@ -54,12 +59,26 @@ from services.docx_pdf_conversion import convert_docx_to_pdf as _convert_docx_to
 CONTRACTS_COLLECTION = "client_contracts"
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MASTER_TEMPLATE_PATH = os.path.join(_REPO_ROOT, "assets", "client_contracts", "master_template.docx")
+_ASSETS_DIR = os.path.join(_REPO_ROOT, "assets", "client_contracts")
 
-# 合約版本代碼 -> 顯示名稱／對應「專案合約維護」的簽約模式選項。之後加新
-# 版本（例如「實支實付」）就是在這裡多加一筆＋準備對應的 master template。
+# 合約版本代碼 -> 顯示名稱／對應「專案合約維護」的簽約模式選項／各自的
+# master template 檔案。兩個版本的合約主文（甲乙雙方欄位、合約期間、
+# 撤換條款、匯款日那幾條）完全共用同一套排版跟 Jinja 標籤，只有附件一
+# 報價表格的結構不一樣（時薪一口價是簡單 3 欄，實支實付是使用者提供的
+# 複雜報價表格，見 HANDOFF.md 的說明），所以是兩個獨立的 docx 檔案，不是
+# 同一份範本裡切換段落。之後如果要再加新版本，一樣是在這裡加一筆＋準備
+# 對應的 master template。
 CONTRACT_VERSIONS = {
-    "hourly_flat_rate": {"label": "時薪一口價", "project_contract_mode": "一口價"},
+    "hourly_flat_rate": {
+        "label": "時薪一口價",
+        "project_contract_mode": "一口價",
+        "template_path": os.path.join(_ASSETS_DIR, "master_template_hourly_flat_rate.docx"),
+    },
+    "actual_paid": {
+        "label": "實支實付",
+        "project_contract_mode": "實支實付",
+        "template_path": os.path.join(_ASSETS_DIR, "master_template_actual_paid.docx"),
+    },
 }
 DEFAULT_CONTRACT_VERSION = "hourly_flat_rate"
 
@@ -94,15 +113,18 @@ def render_contract_docx(
     replace_notice_days: str,
     severance_payer: str,
     remit_day: str,
-    hourly_wage: str,
-    management_fee: str,
     contract_version: str = DEFAULT_CONTRACT_VERSION,
+    hourly_wage: str = "",
+    management_fee: str = "",
+    service_fee: str = "",
 ) -> bytes:
     """套版產生 Word 檔內容（bytes）。party_a／party_b 都是
     ``{"name", "representative", "address", "tax_id", "phone"}`` 這個形狀
     的 dict——party_a 是專員填的/查到的甲方資料，party_b 是從 `/companies`
-    選出來的公司資料。``contract_version`` 目前只有一個值，先留著參數位置，
-    等有第二個版本、需要套不同 master template 時再依這個值切換範本路徑。"""
+    選出來的公司資料。``contract_version`` 決定套哪一份 master template
+    （見 `CONTRACT_VERSIONS`）：``hourly_flat_rate`` 用 `hourly_wage`／
+    `management_fee`，``actual_paid`` 用 `service_fee`，不屬於當次版本的
+    參數會被忽略（呼叫端只要照表單實際欄位傳就好，不用自己篩選）。"""
     context = {
         "party_a_name": party_a["name"],
         "party_a_representative": party_a["representative"],
@@ -122,8 +144,10 @@ def render_contract_docx(
         "remit_day": remit_day,
         "hourly_wage": hourly_wage,
         "management_fee": management_fee,
+        "service_fee": service_fee,
     }
-    tpl = DocxTemplate(MASTER_TEMPLATE_PATH)
+    template_path = CONTRACT_VERSIONS[contract_version]["template_path"]
+    tpl = DocxTemplate(template_path)
     tpl.render(context)
     buffer = io.BytesIO()
     tpl.save(buffer)
@@ -147,9 +171,10 @@ def save_submission(
     replace_notice_days: str,
     severance_payer: str,
     remit_day: str,
-    hourly_wage: str,
-    management_fee: str,
     blob_path: str,
+    hourly_wage: str = "",
+    management_fee: str = "",
+    service_fee: str = "",
     pdf_blob_path: str = "",
 ) -> dict:
     data = {
@@ -174,6 +199,7 @@ def save_submission(
         "remit_day": remit_day,
         "hourly_wage": hourly_wage,
         "management_fee": management_fee,
+        "service_fee": service_fee,
         "blob_path": blob_path,
         "pdf_blob_path": pdf_blob_path,
         "sent_to_project_contracts_at": None,
