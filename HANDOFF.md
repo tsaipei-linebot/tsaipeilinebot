@@ -325,6 +325,16 @@
         - `handlers/message_handler.py` 的同縣市退讓建議分支（第 44/48/49 項），呼叫卡片產生器時改傳 `same_county_scope=county_name`（本來就已經算好、給回覆文字用的同一個縣市名稱），讓卡片跟文字一致。
     - **新增測試**：`tests/test_flex_service.py` 新增 `FormatCleanLocationMultipleDistrictMatchTests`（驗證同一個 `target_location` 命中不只一個行政區時全部列出、單一命中維持原行為不受影響）、`FormatCleanLocationSameCountyScopeTests`（縮小到指定縣市後行政區數量分別在 ≤4／≥5／完全沒有相符行政區三種情況、一般單一縣市職缺傳這個新參數也不影響原本結果）、`CreateJobFlexCardSameCountyScopeTests`（驗證 `create_job_flex_card()` 有把參數往下傳）；`tests/test_message_handler.py` 的 `CountyLevelFallbackRecommendationTests` 補上驗證會呼叫 `create_job_flex_card` 時帶 `same_county_scope`，並新增 `test_card_location_scoped_to_county_when_job_spans_many_counties` 直接重現「職缺橫跨桃園市／台南市、卡片只應顯示桃園市部分」的實測案例。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 599 個測試，OK。
+51. **新增：福利/配備關鍵字直達攔截（例如「有公司車嗎」直接推薦有勾選該福利的職缺）**：使用者提出：有些求職者問的不是地區/類別/廠商，而是「這份工作有沒有某項福利/配備」（例如「我要公司車的工作」「我選公司車」「有公司車嗎」），這種問法通常很直接對應到某幾筆有勾選該福利的職缺（例如「蝦皮外送三輪雇傭」），問能不能讓沛沛更精準回應。討論後決定不用 FAQ（FAQ 答案只會回文字＋快速回覆按鈕，架構上不會附職缺卡片，見下方「已釐清」）也不寫死在程式碼裡（維護要改程式碼、還要重新部署），改成跟第 49 項行政區動態解析同一種精神：從 Notion 職缺資料庫新增的「福利」欄位動態長出關鍵字清單，同仁自己在 Notion 幫職缺填福利關鍵字就好，不用找人改程式碼。
+    - **已釐清（過程中的討論）**：FAQ 資料庫命中（不管是高信心直接命中、還是 AI 判斷成 `UNKNOWN_FAQ`）都只會回純文字＋快速回覆按鈕，職缺卡片只有 AI 判斷成 `RECOMMEND` 這個動作才會附上，讀的是職缺資料（`ai_job_candidates`），跟 FAQ 資料庫是完全分開的兩條路徑，AI 沒辦法「一半照 FAQ 答案回答、一半附職缺卡片」。也確認過現有的加分排序機制（`_score_job_for_ai`／`_tokenize_search_terms`）完全不會抓到「公司車」這種自由關鍵字（只認得地區/班別/廠商/類別這幾份手動維護清單裡收錄的詞），這句話原本只能完全交給 AI 自己從候選職缺的「工作內容(對外)」欄位猜，命不命中純看運氣。
+    - **使用者要做的事（Notion 端）**：在職缺資料庫新增一欄「福利」，有該項福利的職缺在這欄填上關鍵字（例如「公司車」），多個福利用逗號分隔（例如「公司車,全勤獎金」），跟「行政區」欄位的多值寫法一致。
+    - **實作方式（程式端）**：`services/matcher_service.py` 新增：
+        - `build_benefit_keyword_index(active_jobs)`：掃描目前有效職缺的「福利」欄位，建立「福利關鍵字 → 有這項福利的職缺清單」的對照表。
+        - `find_benefit_matched_jobs(raw_msg, active_jobs)`：從使用者訊息裡找出有沒有命中上述索引的關鍵字，命中就回傳 `(關鍵字, 職缺清單)`，依關鍵字長度由長到短檢查（避免短關鍵字搶先蓋掉更精確的關鍵字，跟行政區辨識的處理方式一致）。
+        - `handlers/message_handler.py` 新增「步驟 1-3：福利/配備關鍵字直達攔截」，排在既有的類別/廠商直達攔截（門市/外送/momo）之後、同縣市退讓建議之前——這句話沒命中類別/廠商關鍵字時才會走到這裡，避免互搶攔截；命中就直接組卡片回覆，不經過 AI 決策。跟其他直達攔截一致：排除否定語氣（「不要公司車的」不會誤觸發）、使用者這輪如果已鎖定地區，一併用地區篩選縮小範圍（篩選後沒有職缺就視為沒命中，落到既有的 AI 決策保底流程，不特別做福利版本的同縣市退讓建議）。
+    - **刻意保留的限制（明講不隱藏）**：福利意圖不會像地區/類別/廠商那樣被記進對話槽位、延續到下一輪追問（例如問完「有公司車嗎」，下一句只問「桃園呢」不會自動延續「公司車」這個條件）——這次先只做「當輪訊息裡明確提到福利關鍵字」的直接攔截，多輪追問延續的體驗如果之後有需要可以再擴充。
+    - **新增測試**：`tests/test_matcher_service.py` 新增 `BuildBenefitKeywordIndexTests`、`FindBenefitMatchedJobsTests`（含三種講法都能命中同一筆職缺、否定語氣情境、長關鍵字優先於短關鍵字子字串等情境）；`tests/test_message_handler.py` 新增 `BenefitKeywordDirectInterceptTests`（直接命中不落到 AI 決策、否定語氣不誤觸發、地區篩選縮小範圍、沒有福利關鍵字時正常落到 AI 決策）。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 612 個測試，OK。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 565 個測試，OK。
 
 ## 目前所有檔案的狀態

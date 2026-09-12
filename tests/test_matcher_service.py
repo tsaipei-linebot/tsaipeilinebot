@@ -548,5 +548,65 @@ class ExtractLocationDynamicDistrictRegressionTests(unittest.TestCase):
         self.assertEqual(m.detect_negated_location("不要東區", jobs), "")
 
 
+class BuildBenefitKeywordIndexTests(unittest.TestCase):
+    def test_indexes_jobs_by_benefit_keyword(self):
+        job_a = {"職缺名稱": "蝦皮外送三輪雇傭", "福利": "公司車,全勤獎金"}
+        job_b = {"職缺名稱": "蝦皮門市人員", "福利": "員購優惠"}
+        index = m.build_benefit_keyword_index([job_a, job_b])
+        self.assertEqual(index.get("公司車"), [job_a])
+        self.assertEqual(index.get("全勤獎金"), [job_a])
+        self.assertEqual(index.get("員購優惠"), [job_b])
+
+    def test_multiple_jobs_sharing_same_benefit_are_all_indexed(self):
+        job_a = {"職缺名稱": "工作A", "福利": "公司車"}
+        job_b = {"職缺名稱": "工作B", "福利": "公司車,員購優惠"}
+        index = m.build_benefit_keyword_index([job_a, job_b])
+        self.assertEqual(index.get("公司車"), [job_a, job_b])
+
+    def test_missing_benefit_field_is_skipped(self):
+        job = {"職缺名稱": "工作A"}
+        self.assertEqual(m.build_benefit_keyword_index([job]), {})
+
+
+class FindBenefitMatchedJobsTests(unittest.TestCase):
+    """使用者反映：像「我要公司車的工作」「我選公司車」「有公司車嗎」這種
+    問法，很直接就是要推薦有勾選該福利的職缺（例如「蝦皮外送三輪雇傭」），
+    改成從 Notion 職缺資料庫的「福利」欄位動態辨識關鍵字，不用寫死在程式
+    碼裡。"""
+
+    def test_matches_job_by_benefit_keyword_in_message(self):
+        job = {"職缺名稱": "蝦皮外送三輪雇傭", "福利": "公司車"}
+        keyword, jobs = m.find_benefit_matched_jobs("有公司車嗎", [job])
+        self.assertEqual(keyword, "公司車")
+        self.assertEqual(jobs, [job])
+
+    def test_matches_regardless_of_surrounding_phrasing(self):
+        job = {"職缺名稱": "蝦皮外送三輪雇傭", "福利": "公司車"}
+        for msg in ["我要公司車的工作", "我選公司車", "有公司車嗎"]:
+            keyword, jobs = m.find_benefit_matched_jobs(msg, [job])
+            self.assertEqual(keyword, "公司車")
+            self.assertEqual(jobs, [job])
+
+    def test_no_match_returns_empty(self):
+        job = {"職缺名稱": "蝦皮門市人員", "福利": "員購優惠"}
+        keyword, jobs = m.find_benefit_matched_jobs("有公司車嗎", [job])
+        self.assertEqual(keyword, "")
+        self.assertEqual(jobs, [])
+
+    def test_no_active_jobs_returns_empty(self):
+        keyword, jobs = m.find_benefit_matched_jobs("有公司車嗎", [])
+        self.assertEqual(keyword, "")
+        self.assertEqual(jobs, [])
+
+    def test_longer_keyword_preferred_over_shorter_substring(self):
+        # 「保障底薪」跟「底薪」都可能同時被登記成福利關鍵字時，訊息裡如果
+        # 出現較長、較精確的關鍵字，要優先命中它，不要被短的搶先攔截。
+        job_a = {"職缺名稱": "工作A", "福利": "底薪"}
+        job_b = {"職缺名稱": "工作B", "福利": "保障底薪"}
+        keyword, jobs = m.find_benefit_matched_jobs("有保障底薪嗎", [job_a, job_b])
+        self.assertEqual(keyword, "保障底薪")
+        self.assertEqual(jobs, [job_b])
+
+
 if __name__ == "__main__":
     unittest.main()

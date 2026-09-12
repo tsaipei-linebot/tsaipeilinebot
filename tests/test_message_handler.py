@@ -1618,5 +1618,163 @@ class DynamicDistrictRecognitionRegressionTests(unittest.TestCase):
         self.assertNotIn(unrelated_xiaying_job, matched_jobs_arg)
 
 
+class BenefitKeywordDirectInterceptTests(unittest.TestCase):
+    """使用者反映：求職者常直接問「有公司車嗎」「我要公司車的工作」這種
+    福利/配備問法，很直接對應到某一筆有勾選該福利的職缺（例如「蝦皮外送
+    三輪雇傭」）。改成從 Notion 職缺資料庫新增的「福利」欄位動態辨識關鍵字，
+    命中就直接攔截推薦，不用交給 AI 自己從候選職缺的自由文字裡猜。"""
+
+    def _job(self, **overrides):
+        job = {
+            "職缺名稱": "蝦皮外送三輪雇傭", "_internal_title": "蝦皮外送三輪雇傭",
+            "_parsed_title": "蝦皮外送三輪雇傭", "職缺名稱(對外)": "蝦皮外送三輪雇傭",
+            "_job_category": "外送", "職務類別": "外送",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮外送三輪雇傭",
+            "_location_search_text": "桃園市桃園區",
+            "福利": "公司車",
+        }
+        job.update(overrides)
+        return job
+
+    def test_benefit_keyword_directly_recommends_matching_job(self):
+        benefit_job = self._job()
+        unrelated_job = {
+            "職缺名稱": "蝦皮門市人員", "_internal_title": "蝦皮門市人員",
+            "_parsed_title": "蝦皮門市人員", "職缺名稱(對外)": "蝦皮門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮門市人員",
+            "_location_search_text": "桃園市桃園區",
+            "福利": "員購優惠",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-benefit-keyword"
+        event.message.text = "有公司車嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[benefit_job, unrelated_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(benefit_job, matched_jobs_arg)
+        self.assertNotIn(unrelated_job, matched_jobs_arg)
+
+    def test_various_phrasings_all_trigger_the_same_match(self):
+        benefit_job = self._job()
+        for msg in ["我要公司車的工作", "我選公司車", "有公司車嗎"]:
+            event = MagicMock()
+            event.reply_token = "valid-reply-token"
+            event.source.user_id = f"test-user-benefit-{msg}"
+            event.message.text = msg
+            line_bot_api = MagicMock()
+            empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+            with patch("handlers.message_handler.fetch_jobs_data", return_value=[benefit_job]), \
+                 patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+                 patch("handlers.message_handler.get_user_history", return_value=[]), \
+                 patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+                 patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+                 patch("handlers.message_handler.append_user_history"), \
+                 patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+                 patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+                 patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+                h.process_user_message(event, line_bot_api)
+
+            mock_ai_decision.assert_not_called()
+            mock_flex_card.assert_called_once()
+            matched_jobs_arg = mock_flex_card.call_args[0][0]
+            self.assertIn(benefit_job, matched_jobs_arg)
+
+    def test_negated_benefit_mention_does_not_trigger_intercept(self):
+        # 「不要公司車的」是明確排除，不該被當成正向意圖直接攔截推薦
+        benefit_job = self._job()
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-benefit-negated"
+        event.message.text = "不要公司車的工作"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[benefit_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+    def test_location_narrows_benefit_matches(self):
+        # 求職者這輪已經鎖定地區時，福利關鍵字攔截也要一併用地區篩選縮小範圍。
+        taoyuan_job = self._job(_location_search_text="桃園市桃園區")
+        tainan_job = self._job(職缺名稱="蝦皮外送三輪雇傭(台南)", _location_search_text="台南市中西區")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-benefit-location"
+        event.message.text = "桃園有公司車的工作嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[taoyuan_job, tainan_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(taoyuan_job, matched_jobs_arg)
+        self.assertNotIn(tainan_job, matched_jobs_arg)
+
+    def test_no_benefit_keyword_falls_through_to_ai(self):
+        benefit_job = self._job()
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-no-benefit-keyword"
+        event.message.text = "薪水怎麼算"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[benefit_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+
 if __name__ == "__main__":
     unittest.main()

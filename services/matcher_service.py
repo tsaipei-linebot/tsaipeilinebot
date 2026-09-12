@@ -328,6 +328,52 @@ def detect_negated_location(raw_msg: str, active_jobs: list = None) -> str:
 
     return ""
 
+
+# ==========================================
+# 福利/配備關鍵字直達攔截：跟行政區動態解析（見上方 build_district_county_index）
+# 同一種精神——與其把「公司車」這類福利關鍵字寫死在程式碼裡，不如直接從
+# Notion 職缺資料庫的「福利」欄位（同仁自行維護）動態長出關鍵字清單。
+#
+# 背景：有些求職者問的不是地區/類別/廠商，而是「這份工作有沒有某項福利/
+# 配備」（例如「有公司車嗎」「我要公司車的工作」），這種問法通常很直接對應
+# 到某幾筆有勾選該福利的職缺，適合做成確定性攔截，不用交給 AI 自己從候選
+# 職缺的自由文字裡猜（這個 session 已經踩過好幾次「AI 即使看到正確資料還是
+# 判斷錯誤」的坑）。跟這份資料共用職缺資料本來就有的 30 秒快取，不會多打
+# 一次 Notion API。
+# ==========================================
+
+def build_benefit_keyword_index(active_jobs: list) -> dict:
+    """掃描目前有效職缺的「福利」欄位，建立「福利關鍵字 -> 有這項福利的職缺
+    清單」的對照表，例如 {"公司車": [job1, job3]}。同仁在 Notion 幫職缺勾選/
+    填上福利關鍵字，系統下一次讀取職缺資料就自動認得，不需要改程式碼。"""
+    index = {}
+    for job in active_jobs:
+        benefit_field = str(job.get("福利") or "").strip()
+        if not benefit_field:
+            continue
+        for token in re.split(r'[,，、\s]+', benefit_field):
+            token = token.strip()
+            if not token:
+                continue
+            index.setdefault(token, []).append(job)
+    return index
+
+
+def find_benefit_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
+    """從使用者訊息裡找出有沒有命中目前職缺資料庫「福利」欄位收錄的關鍵字，
+    命中就回傳 (關鍵字, 有這項福利的職缺清單)；沒有 active_jobs 或完全沒
+    命中則回傳 ("", [])。刻意依關鍵字長度由長到短檢查，避免短關鍵字先命中
+    蓋掉更精確的關鍵字（跟 extract_current_target_location() 處理行政區的
+    方式一致）。"""
+    if not active_jobs:
+        return "", []
+    benefit_index = build_benefit_keyword_index(active_jobs)
+    for keyword in sorted(benefit_index.keys(), key=len, reverse=True):
+        if keyword in raw_msg:
+            return keyword, benefit_index[keyword]
+    return "", []
+
+
 # 班別同義詞清單：獨立成模組常數，讓 extract_shift_preference 跟 _tokenize_search_terms
 # 共用同一份來源，避免兩處各自維護、覆蓋範圍不一致。
 SHIFT_SYNONYMS = {
