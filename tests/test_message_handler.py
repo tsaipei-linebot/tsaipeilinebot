@@ -1475,6 +1475,107 @@ class CountyLevelFallbackRecommendationTests(unittest.TestCase):
         self.assertEqual(args[1], control_message)
 
 
+class DynamicDistrictRecognitionRegressionTests(unittest.TestCase):
+    """回歸測試：實測回報的兩個真實案例，重現整個 process_user_message 流程
+    （不是只測 matcher_service 的純函式）。
+
+    案例一（竹北）：使用者先問「蝦皮門市」鎖定類別/廠商，接著問「新竹縣
+    竹北沒缺嗎」——LOCATION_CANDIDATES 只收錄「新竹」沒收錄「竹北」，導致
+    program 誤判成只鎖定「新竹」，配對到一筆完全無關、剛好也在新竹市（但是
+    北區）的職缺卡片。修好後應該要精準命中竹北那筆職缺，不能命中新竹市北區
+    那筆不相關的職缺。
+
+    案例二（佳里）：使用者問「佳里有缺嗎」（訊息裡完全沒有「台南」兩個字），
+    「佳里」沒有被任何清單收錄，導致整句話落到不可靠的 AI 決策流程、AI 即使
+    看到正確資料仍回答「沒有」。修好後應該要能直接命中，不落到 AI 決策。"""
+
+    def test_zhubei_query_matches_zhubei_job_not_unrelated_hsinchu_city_job(self):
+        zhubei_job = {
+            "職缺名稱": "蝦皮竹北門市人員", "_internal_title": "蝦皮竹北門市人員",
+            "_parsed_title": "蝦皮竹北門市人員", "職缺名稱(對外)": "蝦皮竹北門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮竹北門市人員",
+            "_location_search_text": "新竹縣竹北市",
+            "行政區": "新竹縣竹北市", "縣市": "新竹縣",
+        }
+        unrelated_hsinchu_city_job = {
+            "職缺名稱": "蝦皮新竹市北區門市人員", "_internal_title": "蝦皮新竹市北區門市人員",
+            "_parsed_title": "蝦皮新竹市北區門市人員", "職缺名稱(對外)": "蝦皮新竹市北區門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮新竹市北區門市人員",
+            "_location_search_text": "新竹市北區",
+            "行政區": "新竹市北區", "縣市": "新竹市",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-zhubei-regression"
+        event.message.text = "新竹縣 竹北沒缺嗎"
+        line_bot_api = MagicMock()
+        persisted_slots = dict(location="", category="門市", shift="", leave="", brand="蝦皮")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[zhubei_job, unrelated_hsinchu_city_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(zhubei_job, matched_jobs_arg)
+        self.assertNotIn(unrelated_hsinchu_city_job, matched_jobs_arg)
+
+    def test_jiali_query_matches_directly_without_falling_to_ai(self):
+        jiali_job = {
+            "職缺名稱": "蝦皮佳里門市人員", "_internal_title": "蝦皮佳里門市人員",
+            "_parsed_title": "蝦皮佳里門市人員", "職缺名稱(對外)": "蝦皮佳里門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮佳里門市人員",
+            "_location_search_text": "台南市佳里區",
+            "行政區": "台南市佳里區", "縣市": "台南市",
+        }
+        unrelated_xiaying_job = {
+            "職缺名稱": "蝦皮下營門市人員", "_internal_title": "蝦皮下營門市人員",
+            "_parsed_title": "蝦皮下營門市人員", "職缺名稱(對外)": "蝦皮下營門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮下營門市人員",
+            "_location_search_text": "台南市下營區",
+            "行政區": "台南市下營區", "縣市": "台南市",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-jiali-regression"
+        event.message.text = "佳里有缺嗎"
+        line_bot_api = MagicMock()
+        persisted_slots = dict(location="", category="門市", shift="", leave="", brand="蝦皮")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[jiali_job, unrelated_xiaying_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=persisted_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(jiali_job, matched_jobs_arg)
+        self.assertNotIn(unrelated_xiaying_job, matched_jobs_arg)
+
+
 class InterviewBookingFlowTests(unittest.TestCase):
     """面試預約流程：職缺卡片「📅 預約面試」按鈕 → 確認是否已填履歷 →
     （已填）列出 Notion 開放時段 → 選定時段寫入 Notion 面試預約。"""

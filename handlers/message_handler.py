@@ -30,7 +30,8 @@ from services.matcher_service import (
     job_matches_category_filter, has_negative_intent, extract_numeric_salary_preference,
     detect_negated_location, detect_negated_category, has_recognizable_category_or_brand_keyword,
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match,
-    find_county_level_alternative_jobs, LOCATION_TO_COUNTY, find_same_county_district_labels
+    find_county_level_alternative_jobs, find_same_county_district_labels,
+    resolve_county_for_location
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -457,8 +458,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             "不限地區", "不限地點", "哪裡都", "全台", "全區", "不挑地區", "不挑地點",
         ])
 
-        extracted_loc = extract_current_target_location(raw_msg, "")
-        negated_loc = detect_negated_location(raw_msg)
+        extracted_loc = extract_current_target_location(raw_msg, "", active_jobs)
+        negated_loc = detect_negated_location(raw_msg, active_jobs)
 
         if extracted_loc:
             current_location = extracted_loc
@@ -708,22 +709,24 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # ---------------- 步驟 1-4：同縣市鄰近地區退讓建議 ----------------
         # 真人派遣專員跟求職者對話時，通常會順口推薦鄰近或類似的工作——例如
         # 求職者問「蝦皮門市 八德有缺嗎」，八德沒有缺額時，會提「桃園市其他
-        # 地方有喔」。這裡刻意做成確定性比對（只靠 LOCATION_TO_COUNTY 對照表
-        # 查「同一個縣市」，不做地理相鄰推論），回覆文字也刻意明講「原本問的
+        # 地方有喔」。這裡刻意做成確定性比對（只靠 resolve_county_for_location()
+        # 查「同一個縣市」——優先查 LOCATION_TO_COUNTY 手動對照表，查不到再退一步
+        # 從目前職缺資料動態解析，見 matcher_service.py 說明，不做地理相鄰推論），
+        # 回覆文字也刻意明講「原本問的
         # 地區沒有，這是同縣市的其他地方」——不能讓使用者誤以為原本問的地區
         # 也有符合的職缺，那樣會重蹈這幾天才修好的「AI 自行推論地區涵蓋範圍」
         # 覆轍。只有在使用者真的有指定地區、且這句話有對應到門市/外送/momo
         # 其中一種精準攔截意圖時才會觸發；找不到同縣市的替代方案，就繼續往下
         # 落到 AI 決策，跟原本行為一致。
         if current_location and _category_matched_jobs_for_fallback:
-            county_alt_jobs = find_county_level_alternative_jobs(_category_matched_jobs_for_fallback, current_location)
+            county_alt_jobs = find_county_level_alternative_jobs(_category_matched_jobs_for_fallback, current_location, active_jobs)
             if county_alt_jobs:
-                county_name = LOCATION_TO_COUNTY.get(current_location, "")
+                county_name = resolve_county_for_location(current_location, active_jobs)
                 # 能拆出具體同縣市行政區名稱時，直接列出來讓求職者知道確切
                 # 有哪些地區可選（使用者要求這裡不設數量上限）；拆不出來時
                 # （例如職缺沒有結構化的「行政區」欄位）退回原本的空泛說法，
                 # 不能因為列不出清單就不回覆。
-                district_labels = find_same_county_district_labels(county_alt_jobs, current_location)
+                district_labels = find_same_county_district_labels(county_alt_jobs, current_location, active_jobs)
                 if district_labels:
                     fallback_reply_text = (
                         f"「{current_location}」目前沒有明確列出的{_category_desc_for_fallback}職缺，"
