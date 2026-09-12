@@ -9,6 +9,7 @@ from tests import _stub_gcp
 _stub_gcp.install()
 
 from delivery.csv_import import parse_personnel_csv
+from delivery.routes import import_routes
 
 
 class ParsePersonnelCsvTests(unittest.TestCase):
@@ -70,6 +71,35 @@ class ParsePersonnelCsvTests(unittest.TestCase):
         self.assertIsNone(header_error)
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["ok"])
+
+
+class ImportTemplateDownloadTests(unittest.TestCase):
+    """/import/template.csv：2026-09-12 使用者回報下載範本後欄位是亂碼，
+    原因是原本用純 UTF-8（無 BOM）輸出，Windows 版 Excel 雙擊開啟 CSV 時
+    會用系統的中文編碼（Big5/cp950）去猜、猜錯就整份亂碼。修正成
+    utf-8-sig（帶 BOM）後，這裡驗證：(1) 檔案開頭真的有 BOM，(2) 這份
+    範本檔案本身可以直接餵回 parse_personnel_csv() 正確解析（下載範本
+    填完再上傳的流程不會被 BOM 影響）。"""
+
+    def test_response_has_utf8_bom(self):
+        response = import_routes.import_template(redirect=None)
+        self.assertTrue(response.body.startswith(b"\xef\xbb\xbf"))
+
+    def test_response_decodes_correctly_as_utf8_sig(self):
+        response = import_routes.import_template(redirect=None)
+        text = response.body.decode("utf-8-sig")
+        self.assertIn("廠商", text)
+        self.assertIn("姓名", text)
+        self.assertIn("身分證字號", text)
+        self.assertIn("電話", text)
+
+    def test_downloaded_template_round_trips_through_parser(self):
+        response = import_routes.import_template(redirect=None)
+        rows, header_error = parse_personnel_csv(response.body)
+        self.assertIsNone(header_error)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["ok"])
+        self.assertEqual(rows[0]["name"], "王小明")
 
 
 if __name__ == "__main__":
