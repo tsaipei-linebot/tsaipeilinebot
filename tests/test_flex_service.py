@@ -41,6 +41,66 @@ class FormatCleanLocationCountyPrefixTests(unittest.TestCase):
         self.assertEqual(f.format_clean_location(job, "八德"), "八德區")
 
 
+class FormatCleanLocationMultipleDistrictMatchTests(unittest.TestCase):
+    """實測回報案例：一筆職缺涵蓋範圍很廣（同時橫跨很多縣市/行政區），使用者
+    只問籠統的縣市層級地點（例如「台南」）時，這筆職缺剛好在該縣市底下有
+    不只一個行政區有缺（下營、佳里）。原本的寫法「找到第一個符合就回傳」
+    只會顯示下營，完全看不出佳里也有——這裡驗證改成「全部列出」後兩個都會
+    顯示，不再只看到第一個。"""
+
+    def test_lists_all_matching_districts_not_just_the_first(self):
+        job = {
+            "縣市": "宜蘭縣,桃園市,高雄市,基隆市,新竹縣,嘉義縣,彰化縣,台中市,台北市,新竹市,屏東縣,台南市,澎湖縣,雲林縣,苗栗縣",
+            "行政區": "新竹縣竹北市,台南市下營區,台南市佳里區",
+            "行業別": "服務業",
+        }
+        self.assertEqual(f.format_clean_location(job, "台南"), "台南市下營區、台南市佳里區")
+
+    def test_single_matching_district_is_unaffected(self):
+        job = {"縣市": "桃園市", "行政區": "桃園市八德區,桃園市蘆竹區", "行業別": "服務業"}
+        self.assertEqual(f.format_clean_location(job, "八德"), "八德區")
+
+
+class FormatCleanLocationSameCountyScopeTests(unittest.TestCase):
+    """實測回報案例：「同縣市退讓建議」功能推薦的職缺，如果本身涵蓋範圍橫跨
+    很多縣市（例如同時橫跨 15 個縣市），卡片的地點欄位會把「全部」縣市都印
+    出來，跟文字回覆（只講「桃園市的...有相關職缺」）兜不起來，使用者反映
+    「明確詢問八德，卡片中的地點應該只要列出桃園市的其他區，不應該把所有
+    縣市放進來」。這裡驗證新增的 same_county_scope 參數：只用指定縣市底下
+    的行政區組字，不受職缺橫跨其他縣市影響。"""
+
+    def _broad_job(self, district):
+        return {
+            "縣市": "宜蘭縣,桃園市,高雄市,基隆市,新竹縣,嘉義縣,彰化縣,台中市,台北市,新竹市,屏東縣,台南市,澎湖縣,雲林縣,苗栗縣",
+            "行政區": district,
+            "行業別": "服務業",
+        }
+
+    def test_scopes_down_to_target_county_when_few_districts(self):
+        job = self._broad_job("台南市下營區,台南市佳里區")
+        self.assertEqual(f.format_clean_location(job, same_county_scope="台南市"), "台南市（下營區、佳里區）")
+
+    def test_falls_back_to_generic_suffix_when_scoped_county_still_has_many_districts(self):
+        job = self._broad_job(
+            "桃園市桃園區,桃園市蘆竹區,桃園市大園區,桃園市中壢區,桃園市平鎮區,"
+            "桃園市新屋區,桃園市楊梅區,桃園市觀音區,桃園市龜山區,桃園市大溪區"
+        )
+        self.assertEqual(f.format_clean_location(job, same_county_scope="桃園市"), "桃園市 各區據點（自選區域）")
+
+    def test_scoped_county_with_no_matching_district_returns_bare_county_name(self):
+        job = self._broad_job("台南市下營區")
+        self.assertEqual(f.format_clean_location(job, same_county_scope="桃園市"), "桃園市")
+
+    def test_normal_single_county_job_unaffected(self):
+        # 一般（非跨縣市）的職缺傳 same_county_scope 進來，結果要跟原本沒帶
+        # 這個參數、單純用行政區數量級距判斷時一致，不能因為新參數而改變。
+        job = {"縣市": "桃園市", "行政區": "桃園市蘆竹區,桃園市龜山區", "行業別": "服務業"}
+        self.assertEqual(
+            f.format_clean_location(job, same_county_scope="桃園市"),
+            f.format_clean_location(job),
+        )
+
+
 class CreateJobFlexCardPayMethodTests(unittest.TestCase):
     def test_shows_pay_method_line_when_present(self):
         job = {
@@ -158,6 +218,24 @@ class CreateJobFlexCardInterviewButtonTests(unittest.TestCase):
         booking_button = footer_buttons[-1]
         self.assertEqual(booking_button.action.label, "📅 預約面試")
         self.assertEqual(booking_button.action.text, "預約面試 測試職缺(內部)")
+
+
+class CreateJobFlexCardSameCountyScopeTests(unittest.TestCase):
+    """驗證 create_job_flex_card() 有把 same_county_scope 參數往下傳給
+    format_clean_location()，「同縣市退讓建議」卡片才能正確縮小地點顯示範圍
+    （見 handlers/message_handler.py 的縣市退讓建議分支）。"""
+
+    def test_same_county_scope_narrows_displayed_location(self):
+        job = {
+            "職缺名稱(對外)": "測試職缺", "職缺名稱": "測試職缺",
+            "薪資": "時薪200", "班別": "早班", "職務類別": "門市",
+            "縣市": "宜蘭縣,桃園市,高雄市,基隆市,新竹縣,嘉義縣,彰化縣,台中市,台北市,新竹市,屏東縣,台南市,澎湖縣,雲林縣,苗栗縣",
+            "行政區": "台南市下營區,台南市佳里區",
+        }
+        card = f.create_job_flex_card([job], "user1", "", same_county_scope="台南市")
+        texts = _detail_texts(card.contents.contents[0])
+        self.assertTrue(any("📍 地點：台南市（下營區、佳里區）" in t for t in texts))
+        self.assertFalse(any("宜蘭縣" in t for t in texts))
 
 
 if __name__ == "__main__":
