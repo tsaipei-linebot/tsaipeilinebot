@@ -31,7 +31,7 @@ from services.matcher_service import (
     detect_negated_location, detect_negated_category, has_recognizable_category_or_brand_keyword,
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match,
     find_county_level_alternative_jobs, find_same_county_district_labels,
-    resolve_county_for_location
+    resolve_county_for_location, find_benefit_matched_jobs
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -702,6 +702,34 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             log_ai_decision_event(
                 path="direct_intercept", intercept_type=_intercept_type,
                 matched_brand="momo" if is_momo_intent else "",
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
+            return
+
+        # ---------------- 步驟 1-3：福利/配備關鍵字直達攔截 ----------------
+        # 使用者反映：有些求職者問的不是地區/類別/廠商，而是「這份工作有沒有
+        # 某項福利/配備」（例如「有公司車嗎」「我要公司車的工作」），這種問法
+        # 通常很直接對應到某幾筆有勾選該福利的職缺。改成從 Notion 職缺資料庫
+        # 的「福利」欄位（同仁自行維護，見 services/matcher_service.py 的
+        # find_benefit_matched_jobs() 說明）動態辨識關鍵字，命中就直接攔截
+        # 推薦，不用交給 AI 自己從候選職缺的自由文字裡猜。刻意排在類別/廠商
+        # 直達攔截之後才檢查——兩者是各自獨立的判斷維度，這句話沒有命中類別/
+        # 廠商關鍵字時才會走到這裡，不會互相搶著攔截。跟其他三種直達攔截一樣
+        # 排除否定語氣（例如「不要公司車的」），且使用者這輪如果已經鎖定地區，
+        # 一併用地區篩選縮小範圍；篩選後沒有職缺就視為沒有命中，往下走既有的
+        # AI 決策保底流程，不特別做「福利版本的同縣市退讓建議」。
+        matched_benefit_keyword, benefit_jobs = find_benefit_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
+        if current_location and benefit_jobs:
+            loc_clean = current_location.replace("台", "臺")
+            benefit_jobs = [j for j in benefit_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
+
+        if matched_benefit_keyword and benefit_jobs:
+            reply_text = f"有的！沛沛為您找到有「{matched_benefit_keyword}」的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", reply_text)
+            target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(benefit_jobs[:4], user_id, current_location)])
+            log_ai_decision_event(
+                path="direct_intercept", intercept_type="benefit_keyword",
                 latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
             )
             return
