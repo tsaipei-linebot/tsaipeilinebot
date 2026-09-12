@@ -254,6 +254,97 @@ class RenderWhiteCollarReferralContractDocxTests(unittest.TestCase):
         self.assertIn("6個月", note_cell_text)
 
 
+class RenderTaiwaneseReferralContractDocxTests(unittest.TestCase):
+    """taiwanese_referral（台籍代招）：跟 white_collar_referral 一樣沒有
+    sign_date／replace_notice_days／severance_payer，但報價是佔薪資百分比
+    （不是固定金額），用 referral_fee_percentage／referral_service_months
+    這兩個獨立命名的欄位（跟 white_collar_referral 的 fee_amount／
+    service_months 刻意不共用，避免表單同名欄位互相干擾），管轄法院跟
+    第四/五條用字也跟 white_collar_referral 不同。"""
+
+    def _render(self, **overrides):
+        defaults = dict(
+            party_a=_PARTY_A,
+            party_b=_PARTY_B,
+            contract_start_date=date(2026, 4, 8),
+            contract_end_date=date(2026, 12, 31),
+            remit_day="20",
+            contract_version="taiwanese_referral",
+            referral_fee_percentage="人員應領薪資的15%",
+            referral_service_months="6",
+        )
+        defaults.update(overrides)
+        content = render_contract_docx(**defaults)
+        path = "/tmp/_test_client_contract_taiwanese_referral_render.docx"
+        with open(path, "wb") as f:
+            f.write(content)
+        return docx.Document(path)
+
+    def test_no_leftover_jinja_tags(self):
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    full_text += "\n" + cell.text
+        self.assertNotIn("{{", full_text)
+        self.assertNotIn("{%", full_text)
+
+    def test_party_a_and_b_names_and_dates_appear(self):
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("測試客戶股份有限公司", full_text)
+        self.assertIn("瑋政有限公司", full_text)
+        self.assertIn("115年04月08日", full_text)
+        self.assertIn("115年12月31日", full_text)
+
+    def test_no_separate_sign_date_reuses_contract_start_date_for_tail_signature(self):
+        doc = self._render(contract_start_date=date(2026, 4, 8))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("中華民國115年04月08日", full_text)
+
+    def test_remit_day_substituted(self):
+        doc = self._render(remit_day="25")
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("甲方應於次月25日前匯款", full_text)
+
+    def test_no_replace_notice_or_severance_clause_in_body(self):
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertNotIn("撤換", full_text)
+        self.assertNotIn("資遣費用", full_text)
+
+    def test_uses_hsinchu_court_not_taipei(self):
+        # 這個版本原始範本的管轄法院是新竹地方法院，跟 white_collar_
+        # referral 的臺北地方法院不同——這是使用者提供的兩份不同合約書
+        # 本來就有的差異，不是我猜的。
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("臺灣新竹地方法院", full_text)
+        self.assertNotIn("臺北", full_text)
+
+    def test_fee_percentage_and_service_months_substituted_in_table(self):
+        doc = self._render(referral_fee_percentage="人員應領薪資的20%", referral_service_months="3")
+        table = doc.tables[0]
+        fee_cell_text = table.rows[1].cells[1].text
+        note_cell_text = table.rows[1].cells[2].text
+        footer_text = table.rows[2].cells[0].text
+        self.assertIn("人員應領薪資的20%", fee_cell_text)
+        self.assertIn("3個月", note_cell_text)
+        self.assertIn("3個月", footer_text)
+
+    def test_does_not_leak_white_collar_referral_fields(self):
+        # 兩個「代招」版本的報價欄位刻意用不同名稱，確認彼此不會互相污染
+        # （例如白領代招的 fee_amount 值不該出現在台籍代招的套版結果裡）。
+        doc = self._render(referral_fee_percentage="人員應領薪資的15%")
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    full_text += "\n" + cell.text
+        self.assertNotIn("二千五百元整", full_text)
+
+
 class ContractVersionConfigTests(unittest.TestCase):
     def test_default_version_exists_in_registry(self):
         self.assertIn(DEFAULT_CONTRACT_VERSION, CONTRACT_VERSIONS)
@@ -273,6 +364,12 @@ class ContractVersionConfigTests(unittest.TestCase):
 
     def test_white_collar_referral_does_not_require_sign_date_or_severance_clause(self):
         version = CONTRACT_VERSIONS["white_collar_referral"]
+        self.assertFalse(version["requires_sign_date"])
+        self.assertFalse(version["requires_severance_clause"])
+        self.assertEqual(version["project_contract_coop_category"], "代招")
+
+    def test_taiwanese_referral_does_not_require_sign_date_or_severance_clause(self):
+        version = CONTRACT_VERSIONS["taiwanese_referral"]
         self.assertFalse(version["requires_sign_date"])
         self.assertFalse(version["requires_severance_clause"])
         self.assertEqual(version["project_contract_coop_category"], "代招")

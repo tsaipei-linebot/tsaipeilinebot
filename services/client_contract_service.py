@@ -19,7 +19,7 @@ Firestore／GCS。
 lookup.py`），查得到就自動帶入，查不到就手動輸入全部欄位——這兩個查詢
 服務都是失敗容錯設計，不會擋住合約產生流程。
 
-**合約版本**：目前有三個版本：
+**合約版本**：目前有四個版本：
 - ``hourly_flat_rate``（時薪一口價）跟 ``actual_paid``（實支實付）是同一種
   「人力派遣服務合約書」，甲乙雙方欄位/合約期間/撤換條款/匯款日這些主文
   完全共用同一套排版跟 Jinja 標籤，只有附件一報價表格的結構不一樣：
@@ -27,21 +27,33 @@ lookup.py`），查得到就自動帶入，查不到就手動輸入全部欄位�
   實支實付是使用者提供的真實報價表格（薪資/加班費/法定項目/員工福利都
   固定寫「實支實付」，只有「服務費－全程派遣」那一格是空白的
   `service_fee` 欄位讓專員自行填寫，例如「人員薪資的15%」）。
-- ``white_collar_referral``（白領代招，2026-09-12 新增）是完全不同的
-  「人力代招服務合約書」，條文結構（第一條～第九條）、用字都跟前兩個
-  版本不一樣，不是報價表格代換而已，所以主文也是獨立的一份 master
-  template，不共用前兩者的 Jinja 標籤。這個版本也沒有獨立的「簽約日期」
-  欄位——合約書末尾的簽署日期就是合約起始日期本身，不像前兩版另外有
+- ``white_collar_referral``（白領代招，2026-09-12 新增）跟
+  ``taiwanese_referral``（台籍代招，2026-09-12 新增）是完全不同的
+  「人力代招服務合約書」，條文結構（第一條～第九條）都跟前兩個「人力
+  派遣服務合約書」版本不一樣，不是報價表格代換而已，所以主文也是各自
+  獨立的一份 master template，不共用其他版本的 Jinja 標籤。這兩個
+  「代招」版本彼此的條文結構高度相似（同樣沒有簽約日期、沒有撤換
+  條款），但**細節不同，不是同一份文件**：白領代招的服務費是每人每月
+  固定金額（`fee_amount`，例如「二千五百元整」）、收取月數上限欄位叫
+  `service_months`；台籍代招的服務費是佔薪資的百分比（`referral_fee_
+  percentage`，例如「人員應領薪資的15%」）、收取月數上限欄位叫
+  `referral_service_months`（兩者故意用不同的欄位名稱，不是共用同一組，
+  因為兩個版本的報價區塊在表單上是同時存在、只是顯示/隱藏切換的兩個
+  `<div>`，欄位名稱共用的話瀏覽器送出表單時會把兩個欄位的值都送出，
+  後端會抓到錯的那個值），管轄法院、部分條文用字（第四條/第五條）也
+  跟白領代招不同——這些差異都是使用者提供的原始合約書本來就不一樣，
+  不是刻意設計出來的變化。這兩個版本都沒有獨立的「簽約日期」欄位——
+  合約書末尾的簽署日期就是合約起始日期本身，不像前兩版另外有
   `sign_date`；也沒有撤換條款（`replace_notice_days`／`severance_payer`）
-  這件事，只有 `remit_day`（匯款截止日，跟前兩版意義相同）跟這個版本
-  獨有的 `fee_amount`（每人每月服務費，自由文字，例如「二千五百元整」）
-  跟 `service_months`（附件一報價表「收取時間不超過幾個月」，預設12，
-  可調整）。`CONTRACT_VERSIONS` 用 ``requires_sign_date``／
+  這件事，只有 `remit_day`（匯款截止日，跟其他版本意義相同）。
+  `CONTRACT_VERSIONS` 用 ``requires_sign_date``／
   ``requires_severance_clause`` 這兩個布林值標記每個版本各自需要哪些
   共用欄位，`render_contract_docx()`／`client_contract_routes.py` 的表單
   驗證都照這兩個旗標決定要不要收、要不要擋。
 之後如果要再加新版本，一樣是在 `CONTRACT_VERSIONS` 加一個版本代碼＋
-準備對應的 master template 檔案，不用改整個資料結構。
+準備對應的 master template 檔案，不用改整個資料結構；**如果新版本的
+報價欄位形狀跟既有版本很像，記得取一個不會跟其他版本欄位名稱衝突的
+新名字**，不要重複使用其他版本已經在用的欄位名稱。
 
 **權限與可見範圍**：模組代碼 `client_contracts`（`platform_accounts.
 MODULES`），跟派遣契約產生器一樣，只有送出者本人、送出者的主管
@@ -107,9 +119,18 @@ CONTRACT_VERSIONS = {
         "requires_sign_date": False,
         "requires_severance_clause": False,
     },
+    "taiwanese_referral": {
+        "label": "台籍代招",
+        "project_contract_mode": "實支實付",
+        "project_contract_coop_category": "代招",
+        "template_path": os.path.join(_ASSETS_DIR, "master_template_taiwanese_referral.docx"),
+        "requires_sign_date": False,
+        "requires_severance_clause": False,
+    },
 }
 DEFAULT_CONTRACT_VERSION = "hourly_flat_rate"
 DEFAULT_SERVICE_MONTHS = "12"
+DEFAULT_REFERRAL_SERVICE_MONTHS = "6"
 
 SEVERANCE_PAYER_OPTIONS = ["甲方", "乙方"]
 DEFAULT_REPLACE_NOTICE_DAYS = "3"
@@ -148,6 +169,8 @@ def render_contract_docx(
     service_fee: str = "",
     fee_amount: str = "",
     service_months: str = "",
+    referral_fee_percentage: str = "",
+    referral_service_months: str = "",
 ) -> bytes:
     """套版產生 Word 檔內容（bytes）。party_a／party_b 都是
     ``{"name", "representative", "address", "tax_id", "phone"}`` 這個形狀
@@ -155,11 +178,12 @@ def render_contract_docx(
     選出來的公司資料。``contract_version`` 決定套哪一份 master template
     （見 `CONTRACT_VERSIONS`）：``hourly_flat_rate`` 用 `hourly_wage`／
     `management_fee`，``actual_paid`` 用 `service_fee`，``white_collar_
-    referral`` 用 `fee_amount`／`service_months`，不屬於當次版本的參數會
-    被忽略（呼叫端只要照表單實際欄位傳就好，不用自己篩選）。``sign_date``
-    只有 `CONTRACT_VERSIONS[contract_version]["requires_sign_date"]` 是
-    True 的版本才會用到，不需要的版本傳 None 即可（模板裡不會引用
-    `sign_date_roc` 這個變數，傳了也不影響套版結果）。"""
+    referral`` 用 `fee_amount`／`service_months`，``taiwanese_referral``
+    用 `referral_fee_percentage`／`referral_service_months`，不屬於當次
+    版本的參數會被忽略（呼叫端只要照表單實際欄位傳就好，不用自己篩選）。
+    ``sign_date`` 只有 `CONTRACT_VERSIONS[contract_version]["requires_
+    sign_date"]` 是 True 的版本才會用到，不需要的版本傳 None 即可（模板
+    裡不會引用 `sign_date_roc` 這個變數，傳了也不影響套版結果）。"""
     context = {
         "party_a_name": party_a["name"],
         "party_a_representative": party_a["representative"],
@@ -182,6 +206,8 @@ def render_contract_docx(
         "service_fee": service_fee,
         "fee_amount": fee_amount,
         "service_months": service_months,
+        "referral_fee_percentage": referral_fee_percentage,
+        "referral_service_months": referral_service_months,
     }
     template_path = CONTRACT_VERSIONS[contract_version]["template_path"]
     tpl = DocxTemplate(template_path)
@@ -214,6 +240,8 @@ def save_submission(
     service_fee: str = "",
     fee_amount: str = "",
     service_months: str = "",
+    referral_fee_percentage: str = "",
+    referral_service_months: str = "",
     pdf_blob_path: str = "",
 ) -> dict:
     data = {
@@ -241,6 +269,8 @@ def save_submission(
         "service_fee": service_fee,
         "fee_amount": fee_amount,
         "service_months": service_months,
+        "referral_fee_percentage": referral_fee_percentage,
+        "referral_service_months": referral_service_months,
         "blob_path": blob_path,
         "pdf_blob_path": pdf_blob_path,
         "sent_to_project_contracts_at": None,

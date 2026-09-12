@@ -21,11 +21,18 @@ contracts/{id}/delete` 把 Firestore 那筆紀錄跟 GCS 上存的 Word/PDF 檔�
 得到才能刪），沒有另外設更嚴格的權限——反正看不到的人本來就點不到
 刪除連結。刪除沒有回收機制，是真的整筆刪掉，不是標記隱藏。
 
-**第三個合約版本「白領代招」（2026-09-12 新增）**：`white_collar_referral`
-這個版本的主文結構跟前兩版（時薪一口價／實支實付）完全不同，也沒有
-「簽約日期」「撤換條款」這兩組共用欄位，`CONTRACT_VERSIONS[版本代碼]` 的
-`requires_sign_date`／`requires_severance_clause` 決定這裡的表單驗證要不要
-擋這些欄位——詳見 services/client_contract_service.py 開頭的版本說明。
+**第三、四個合約版本「白領代招」「台籍代招」（2026-09-12 新增）**：
+`white_collar_referral`／`taiwanese_referral` 這兩個版本的主文結構跟前
+兩版（時薪一口價／實支實付）完全不同，也沒有「簽約日期」「撤換條款」
+這兩組共用欄位，`CONTRACT_VERSIONS[版本代碼]` 的 `requires_sign_date`／
+`requires_severance_clause` 決定這裡的表單驗證要不要擋這些欄位——詳見
+services/client_contract_service.py 開頭的版本說明。這兩個版本彼此的
+報價欄位形狀很像（都是「自由文字費用＋收費月數上限」），但刻意用不同
+的欄位名稱（白領代招是 `fee_amount`／`service_months`，台籍代招是
+`referral_fee_percentage`／`referral_service_months`），因為兩組報價
+區塊在表單上是同時存在、只是用 CSS 切換顯示/隱藏，欄位名稱共用的話
+瀏覽器送出表單時會把兩個同名欄位的值都送出，後端可能抓到看不到的那個
+欄位的值。
 """
 from datetime import date, datetime
 from urllib.parse import quote
@@ -40,6 +47,7 @@ from platform_templating import templates
 from services.client_contract_service import (
     CONTRACT_VERSIONS,
     DEFAULT_CONTRACT_VERSION,
+    DEFAULT_REFERRAL_SERVICE_MONTHS,
     DEFAULT_REMIT_DAY,
     DEFAULT_REPLACE_NOTICE_DAYS,
     DEFAULT_SERVICE_MONTHS,
@@ -61,11 +69,14 @@ MODULE_CODE = "client_contracts"
 
 # 各合約版本各自需要哪些報價欄位才算填完整——時薪一口價要員工薪資+管理費
 # 兩個數字，實支實付只要服務費那一格文字，白領代招要服務費金額+收費月數
-# 上限，三者互不相干，送出時只檢查這次選的版本實際用得到的欄位。
+# 上限，台籍代招要服務費百分比+收費月數上限（跟白領代招欄位名稱刻意不
+# 一樣，見 services/client_contract_service.py 開頭說明），四者互不相干，
+# 送出時只檢查這次選的版本實際用得到的欄位。
 _PRICING_FIELDS_BY_VERSION = {
     "hourly_flat_rate": ["hourly_wage", "management_fee"],
     "actual_paid": ["service_fee"],
     "white_collar_referral": ["fee_amount", "service_months"],
+    "taiwanese_referral": ["referral_fee_percentage", "referral_service_months"],
 }
 
 
@@ -116,6 +127,8 @@ def _duplicate_form_values(record: dict) -> dict:
         "service_fee": record.get("service_fee", ""),
         "fee_amount": record.get("fee_amount", ""),
         "service_months": record.get("service_months", ""),
+        "referral_fee_percentage": record.get("referral_fee_percentage", ""),
+        "referral_service_months": record.get("referral_service_months", ""),
         "contract_version": record.get("contract_version", DEFAULT_CONTRACT_VERSION),
     }
 
@@ -133,6 +146,7 @@ def _form_context(*, user: dict, error: str = "", form: dict = None) -> dict:
         "default_replace_notice_days": DEFAULT_REPLACE_NOTICE_DAYS,
         "default_remit_day": DEFAULT_REMIT_DAY,
         "default_service_months": DEFAULT_SERVICE_MONTHS,
+        "default_referral_service_months": DEFAULT_REFERRAL_SERVICE_MONTHS,
         "default_sign_date": today.isoformat(),
         "default_contract_end_date": default_contract_end_date(today).isoformat(),
     }
@@ -205,6 +219,8 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
     service_fee = (form.get("service_fee") or "").strip()
     fee_amount = (form.get("fee_amount") or "").strip()
     service_months = (form.get("service_months") or "").strip()
+    referral_fee_percentage = (form.get("referral_fee_percentage") or "").strip()
+    referral_service_months = (form.get("referral_service_months") or "").strip()
     contract_version = (form.get("contract_version") or DEFAULT_CONTRACT_VERSION).strip()
     version_config = CONTRACT_VERSIONS.get(contract_version, {})
     requires_sign_date = version_config.get("requires_sign_date", True)
@@ -216,6 +232,8 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         "service_fee": service_fee,
         "fee_amount": fee_amount,
         "service_months": service_months,
+        "referral_fee_percentage": referral_fee_percentage,
+        "referral_service_months": referral_service_months,
     }
 
     form_values = {
@@ -283,6 +301,8 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         service_fee=service_fee,
         fee_amount=fee_amount,
         service_months=service_months,
+        referral_fee_percentage=referral_fee_percentage,
+        referral_service_months=referral_service_months,
     )
 
     filename = _build_filename(party_a["name"], contract_start_date.year, "docx")
@@ -313,6 +333,8 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         service_fee=service_fee,
         fee_amount=fee_amount,
         service_months=service_months,
+        referral_fee_percentage=referral_fee_percentage,
+        referral_service_months=referral_service_months,
         blob_path=blob_path,
         pdf_blob_path=pdf_blob_path,
     )
