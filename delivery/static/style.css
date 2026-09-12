@@ -283,6 +283,20 @@ body {
 
 .repayment-basic-grid .full-width { grid-column: 1 / -1; }
 
+/* 職缺維護表單的「工作內容(對內)/(對外)」：文案通常很長，2026-09-12
+   使用者截圖回報原本上下疊放、輸入框太短很難編輯，改成左右並列＋
+   輸入框拉高（rows 從 3 拉到 9，約 3 倍），螢幕太窄（例如手機）時改回
+   上下疊放，避免每欄被擠到只剩幾個字的寬度。 */
+.job-desc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+@media (max-width: 720px) {
+    .job-desc-grid { grid-template-columns: 1fr; }
+}
+
 .applicant-readonly {
     padding: 8px 10px;
     border: 1px solid var(--border);
