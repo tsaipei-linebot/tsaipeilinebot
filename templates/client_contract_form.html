@@ -13,7 +13,20 @@
 {% endif %}
 
 <form method="post" action="/client-contracts/new" id="client-contract-form" class="form-stack">
+    {% if contract_versions|length > 1 %}
+    <div class="repayment-section">
+        <div class="repayment-section-title">合約版本</div>
+        <label><span class="field-caption">選擇這次合約要用哪一種報價方式 *</span>
+            <select name="contract_version" id="contract_version">
+                {% for code, version in contract_versions.items() %}
+                <option value="{{ code }}" {% if (form.contract_version or default_contract_version) == code %}selected{% endif %}>{{ version.label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+    {% else %}
     <input type="hidden" name="contract_version" value="{{ form.contract_version or default_contract_version }}">
+    {% endif %}
 
     <div class="repayment-section">
         <div class="repayment-section-title">一、甲方（客戶公司）</div>
@@ -88,16 +101,24 @@
         </div>
     </div>
 
-    <div class="repayment-section">
+    <div class="repayment-section" id="pricing-hourly_flat_rate" data-pricing-for="hourly_flat_rate">
         <div class="repayment-section-title">五、附件一費率（時薪一口價）</div>
         <div class="repayment-basic-grid">
             <label><span class="field-caption">員工薪資（元/hr）*</span>
-                <input type="text" name="hourly_wage" value="{{ form.hourly_wage or '' }}" placeholder="如：200" required>
+                <input type="text" name="hourly_wage" value="{{ form.hourly_wage or '' }}" placeholder="如：200">
             </label>
             <label><span class="field-caption">管理費（元/hr）*</span>
-                <input type="text" name="management_fee" value="{{ form.management_fee or '' }}" placeholder="如：65" required>
+                <input type="text" name="management_fee" value="{{ form.management_fee or '' }}" placeholder="如：65">
             </label>
         </div>
+    </div>
+
+    <div class="repayment-section" id="pricing-actual_paid" data-pricing-for="actual_paid" hidden>
+        <div class="repayment-section-title">五、附件一費率（實支實付）</div>
+        <p class="hint">薪資、加班費、法定項目、員工福利都是固定「實支實付」，只有「服務費－全程派遣」這一項需要填寫。</p>
+        <label><span class="field-caption">服務費（全程派遣）*</span>
+            <input type="text" name="service_fee" value="{{ form.service_fee or '' }}" placeholder="如：人員薪資的15%">
+        </label>
     </div>
 
     <button type="submit" class="btn btn-primary btn-block" id="client-contract-submit-btn">產生 Word 合約並下載</button>
@@ -106,6 +127,21 @@
 
 <script>
 (function () {
+    // 合約版本切換：不同版本要填的報價欄位不一樣，切換時把對應區塊
+    // 顯示/隱藏——沒被顯示的欄位刻意沒加 required（隱藏的必填欄位在部分
+    // 瀏覽器會擋住送出卻看不到是哪裡沒填，這裡的必填檢查交給後端做）。
+    var versionSelect = document.getElementById('contract_version');
+    function applyPricingVisibility() {
+        var current = versionSelect ? versionSelect.value : '{{ default_contract_version }}';
+        document.querySelectorAll('[data-pricing-for]').forEach(function (section) {
+            section.hidden = section.dataset.pricingFor !== current;
+        });
+    }
+    if (versionSelect) {
+        versionSelect.addEventListener('change', applyPricingVisibility);
+    }
+    applyPricingVisibility();
+
     var lookupBtn = document.getElementById('party-a-lookup-btn');
     var lookupInput = document.getElementById('party-a-lookup-query');
     var lookupStatus = document.getElementById('party-a-lookup-status');

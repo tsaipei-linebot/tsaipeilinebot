@@ -15,6 +15,25 @@ import main
 from fastapi.testclient import TestClient
 
 
+class FilenameHelperTests(unittest.TestCase):
+    """檔名（含存進 GCS 的名稱）要帶合約起始日期的年份，不是送出當下的
+    年份——2026-09-12 使用者要求，方便年底先產生下一年度續約合約時，
+    檔名本身就標示清楚是哪一年的合約。"""
+
+    def test_build_filename_includes_contract_year(self):
+        self.assertEqual(
+            client_contract_routes._build_filename("測試客戶股份有限公司", 2027, "docx"),
+            "合約_測試客戶股份有限公司_2027.docx",
+        )
+
+    def test_contract_year_extracts_from_iso_date_string(self):
+        self.assertEqual(client_contract_routes._contract_year({"contract_start_date": "2027-03-15"}), "2027")
+
+    def test_contract_year_returns_empty_string_when_missing(self):
+        self.assertEqual(client_contract_routes._contract_year({}), "")
+        self.assertEqual(client_contract_routes._contract_year({"contract_start_date": ""}), "")
+
+
 class ClientContractRoutingSmokeTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(main.app)
@@ -220,6 +239,52 @@ class SubmitValidationTests(unittest.TestCase):
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertIn("資遣費用", context["error"])
 
+    def test_missing_hourly_wage_blocks_submit_for_hourly_flat_rate(self):
+        form = self._multidict(self._full_valid_pairs(hourly_wage=""))
+        with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                        return_value=self._fake_company()):
+                    with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+                        asyncio.run(client_contract_routes.client_contract_submit(
+                            self._FakeRequest(self._account(), form), redirect=None,
+                        ))
+        mock_save.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("報價", context["error"])
+
+    def test_missing_service_fee_blocks_submit_for_actual_paid(self):
+        form = self._multidict(self._full_valid_pairs(
+            contract_version="actual_paid", hourly_wage="", management_fee="", service_fee="",
+        ))
+        with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                        return_value=self._fake_company()):
+                    with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+                        asyncio.run(client_contract_routes.client_contract_submit(
+                            self._FakeRequest(self._account(), form), redirect=None,
+                        ))
+        mock_save.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("報價", context["error"])
+
+    def test_actual_paid_with_service_fee_does_not_require_hourly_fields(self):
+        form = self._multidict(self._full_valid_pairs(
+            contract_version="actual_paid", hourly_wage="", management_fee="", service_fee="人員薪資的15%",
+        ))
+        fake_bytes = b"FAKE-DOCX-BYTES"
+        with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes):
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                        return_value=self._fake_company()):
+                    with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                        result = asyncio.run(client_contract_routes.client_contract_submit(
+                            self._FakeRequest(self._account(), form), redirect=None,
+                        ))
+        mock_save.assert_called_once()
+        self.assertEqual(result.body, fake_bytes)
+
     def test_successful_submit_renders_saves_and_returns_docx(self):
         form = self._multidict(self._full_valid_pairs())
         fake_bytes = b"FAKE-DOCX-BYTES"
@@ -238,6 +303,63 @@ class SubmitValidationTests(unittest.TestCase):
         mock_save.assert_called_once()
         self.assertEqual(result.body, fake_bytes)
         self.assertIn("attachment", result.headers["content-disposition"])
+        # 2026-09-12 使用者要求檔名要帶「合約年」（合約起始日期的年份，
+        # 不是送出當下的年份）。
+        self.assertIn("2026", result.headers["content-disposition"])
+
+
+class DuplicateFromTests(unittest.TestCase):
+    """GET /client-contracts/new?duplicate_from=xxx：把既有紀錄的欄位帶入
+    新增表單，給年底續下一年度合約用。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = DuplicateFromTests._FakeSession({"user": user})
+
+    def _account(self):
+        return {"username": "bob", "modules": {"client_contracts": "staff"}, "is_platform_admin": False}
+
+    def test_visible_record_prefills_form(self):
+        record = {
+            "id": "x", "submitted_by": "bob", "party_a_name": "測試客戶股份有限公司",
+            "party_b_company_id": "weizheng", "contract_start_date": "2026-01-01",
+            "hourly_wage": "200", "management_fee": "65", "contract_version": "hourly_flat_rate",
+        }
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+                with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+                    client_contract_routes.client_contract_new_form(
+                        self._FakeRequest(self._account()), duplicate_from="x", redirect=None,
+                    )
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["form"]["party_a_name"], "測試客戶股份有限公司")
+        self.assertEqual(context["form"]["hourly_wage"], "200")
+
+    def test_invisible_record_is_ignored(self):
+        record = {"id": "x", "submitted_by": "alice", "party_a_name": "別人的客戶"}
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+                    with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+                        client_contract_routes.client_contract_new_form(
+                            self._FakeRequest(self._account()), duplicate_from="x", redirect=None,
+                        )
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["form"], {})
+
+    def test_no_duplicate_from_leaves_form_empty(self):
+        with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+            with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+                client_contract_routes.client_contract_new_form(
+                    self._FakeRequest(self._account()), duplicate_from="", redirect=None,
+                )
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["form"], {})
 
 
 class DownloadRouteVisibilityTests(unittest.TestCase):
@@ -260,7 +382,8 @@ class DownloadRouteVisibilityTests(unittest.TestCase):
         self.assertEqual(result.status_code, 404)
 
     def test_owner_can_download(self):
-        record = {"id": "x", "party_a_name": "測試客戶", "blob_path": "client_contracts/x/a.docx", "submitted_by": "bob"}
+        record = {"id": "x", "party_a_name": "測試客戶", "blob_path": "client_contracts/x/a.docx",
+                  "submitted_by": "bob", "contract_start_date": "2026-01-01"}
         with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
             with mock.patch.object(client_contract_routes.client_contract_storage, "download_file",
                                     return_value=(b"DOCX-DATA", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")):
@@ -268,6 +391,7 @@ class DownloadRouteVisibilityTests(unittest.TestCase):
                     "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
                 )
         self.assertEqual(result.body, b"DOCX-DATA")
+        self.assertIn("2026", result.headers["content-disposition"])
 
 
 class PreviewRouteTests(unittest.TestCase):
@@ -297,7 +421,8 @@ class PreviewRouteTests(unittest.TestCase):
         self.assertEqual(result.status_code, 404)
 
     def test_owner_can_preview(self):
-        record = {"id": "x", "party_a_name": "測試客戶", "pdf_blob_path": "client_contracts/x/a.pdf", "submitted_by": "bob"}
+        record = {"id": "x", "party_a_name": "測試客戶", "pdf_blob_path": "client_contracts/x/a.pdf",
+                  "submitted_by": "bob", "contract_start_date": "2026-01-01"}
         with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
             with mock.patch.object(client_contract_routes.client_contract_storage, "download_file",
                                     return_value=(b"%PDF-DATA", "application/pdf")):
@@ -306,6 +431,7 @@ class PreviewRouteTests(unittest.TestCase):
                 )
         self.assertEqual(result.body, b"%PDF-DATA")
         self.assertIn("inline", result.headers["content-disposition"])
+        self.assertIn("2026", result.headers["content-disposition"])
 
 
 if __name__ == "__main__":

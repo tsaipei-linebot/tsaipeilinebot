@@ -8,6 +8,12 @@ services/client_contract_service.py 開頭的說明，這裡只負責表單頁�
 地方都走 `services.client_contract_service.can_view_submission()` 這同一個
 判斷，避免只擋列表頁、卻能用網址直接下載/預覽別人紀錄的漏洞——跟
 `dispatch_contract_routes.py` 是同一套做法。
+
+**「複製」功能（2026-09-12 新增）**：`GET /client-contracts/new` 多接受
+一個 `duplicate_from` 查詢參數，帶某一筆看得到的紀錄 id，就會把那筆紀錄
+的全部欄位（含合約期間、費率）預先帶入新增表單——給年底要用同樣條件
+續下一年度合約的情境用，日期同仁還是要自己改成新的年度，這裡不會自動
+幫忙加一年，避免猜錯使用者實際要的日期。
 """
 from datetime import date, datetime
 from urllib.parse import quote
@@ -39,6 +45,14 @@ router = APIRouter()
 
 MODULE_CODE = "client_contracts"
 
+# 各合約版本各自需要哪些報價欄位才算填完整——時薪一口價要員工薪資+管理費
+# 兩個數字，實支實付只要服務費那一格文字，兩者互不相干，送出時只檢查
+# 這次選的版本實際用得到的欄位。
+_PRICING_FIELDS_BY_VERSION = {
+    "hourly_flat_rate": ["hourly_wage", "management_fee"],
+    "actual_paid": ["service_fee"],
+}
+
 
 def _require_access(request: Request):
     account = platform_accounts.current_account(request)
@@ -57,6 +71,36 @@ def _parse_date(value: str):
         return datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError:
         return None
+
+
+def _build_filename(party_a_name: str, contract_year: int, ext: str) -> str:
+    """檔名（包含存進 GCS 的名稱）都要帶「合約年」——2026-09-12 使用者
+    要求，用合約起始日期的年份，不是同仁實際送出表單當下的年份（例如
+    年底先產生下一年度的續約合約，檔名要用下一年度，不是今年）。"""
+    return f"合約_{party_a_name}_{contract_year}.{ext}"
+
+
+def _duplicate_form_values(record: dict) -> dict:
+    """「複製」功能用：把一筆既有紀錄轉成表單預填用的 dict，key 要跟表單
+    欄位的 name 屬性一致。"""
+    return {
+        "party_a_name": record.get("party_a_name", ""),
+        "party_a_representative": record.get("party_a_representative", ""),
+        "party_a_address": record.get("party_a_address", ""),
+        "party_a_tax_id": record.get("party_a_tax_id", ""),
+        "party_a_phone": record.get("party_a_phone", ""),
+        "party_b_company_id": record.get("party_b_company_id", ""),
+        "sign_date": record.get("sign_date", ""),
+        "contract_start_date": record.get("contract_start_date", ""),
+        "contract_end_date": record.get("contract_end_date", ""),
+        "replace_notice_days": record.get("replace_notice_days", ""),
+        "severance_payer": record.get("severance_payer", ""),
+        "remit_day": record.get("remit_day", ""),
+        "hourly_wage": record.get("hourly_wage", ""),
+        "management_fee": record.get("management_fee", ""),
+        "service_fee": record.get("service_fee", ""),
+        "contract_version": record.get("contract_version", DEFAULT_CONTRACT_VERSION),
+    }
 
 
 def _form_context(*, user: dict, error: str = "", form: dict = None) -> dict:
@@ -90,11 +134,16 @@ def client_contract_home(request: Request, generated: str = "", redirect=Depends
 
 
 @router.get("/client-contracts/new")
-def client_contract_new_form(request: Request, redirect=Depends(_require_access)):
+def client_contract_new_form(request: Request, duplicate_from: str = "", redirect=Depends(_require_access)):
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
-    return templates.TemplateResponse(request, "client_contract_form.html", _form_context(user=account))
+    form_values = None
+    if duplicate_from:
+        source_record = get_submission(duplicate_from)
+        if source_record and can_view_submission(account, source_record):
+            form_values = _duplicate_form_values(source_record)
+    return templates.TemplateResponse(request, "client_contract_form.html", _form_context(user=account, form=form_values))
 
 
 @router.get("/client-contracts/company-lookup")
@@ -135,7 +184,10 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
     remit_day = (form.get("remit_day") or "").strip()
     hourly_wage = (form.get("hourly_wage") or "").strip()
     management_fee = (form.get("management_fee") or "").strip()
+    service_fee = (form.get("service_fee") or "").strip()
     contract_version = (form.get("contract_version") or DEFAULT_CONTRACT_VERSION).strip()
+
+    pricing_values = {"hourly_wage": hourly_wage, "management_fee": management_fee, "service_fee": service_fee}
 
     form_values = {
         **party_a,
@@ -146,12 +198,12 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         "replace_notice_days": replace_notice_days,
         "severance_payer": severance_payer,
         "remit_day": remit_day,
-        "hourly_wage": hourly_wage,
-        "management_fee": management_fee,
         "contract_version": contract_version,
+        **pricing_values,
     }
 
     party_b_company = platform_companies.get_company(party_b_company_id) if party_b_company_id else None
+    required_pricing_fields = _PRICING_FIELDS_BY_VERSION.get(contract_version, [])
 
     error = ""
     if any(not party_a[field] for field in ["name", "representative", "address", "tax_id"]):
@@ -170,12 +222,10 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         error = "請選擇資遣費用及預告工資由甲方或乙方負擔。"
     elif not remit_day:
         error = "請填寫匯款截止日。"
-    elif not hourly_wage:
-        error = "請填寫員工薪資。"
-    elif not management_fee:
-        error = "請填寫管理費。"
     elif contract_version not in CONTRACT_VERSIONS:
         error = "合約版本代碼不合法，請重新整理頁面再試一次。"
+    elif any(not pricing_values[field] for field in required_pricing_fields):
+        error = "請填寫報價欄位。"
 
     if error:
         context = _form_context(user=account, error=error, form=form_values)
@@ -198,12 +248,13 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         replace_notice_days=replace_notice_days,
         severance_payer=severance_payer,
         remit_day=remit_day,
+        contract_version=contract_version,
         hourly_wage=hourly_wage,
         management_fee=management_fee,
-        contract_version=contract_version,
+        service_fee=service_fee,
     )
 
-    filename = f"合約_{party_a['name']}.docx"
+    filename = _build_filename(party_a["name"], contract_start_date.year, "docx")
     blob_path = ""
     pdf_blob_path = ""
     if client_contract_storage.is_configured():
@@ -211,7 +262,8 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         # PDF 轉檔失敗不影響這次送出，見 convert_docx_to_pdf() 的說明。
         pdf_bytes = convert_docx_to_pdf(docx_bytes)
         if pdf_bytes:
-            pdf_blob_path = client_contract_storage.upload_contract_pdf(pdf_bytes, f"合約_{party_a['name']}.pdf")
+            pdf_filename = _build_filename(party_a["name"], contract_start_date.year, "pdf")
+            pdf_blob_path = client_contract_storage.upload_contract_pdf(pdf_bytes, pdf_filename)
 
     save_submission(
         submitted_by=account["username"],
@@ -227,6 +279,7 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         remit_day=remit_day,
         hourly_wage=hourly_wage,
         management_fee=management_fee,
+        service_fee=service_fee,
         blob_path=blob_path,
         pdf_blob_path=pdf_blob_path,
     )
@@ -237,6 +290,14 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"},
     )
+
+
+def _contract_year(record: dict) -> str:
+    """從紀錄存的 contract_start_date（"YYYY-MM-DD" 字串）取出年份，給
+    下載/預覽檔名用；欄位缺漏或格式異常（理論上不會發生，保險起見）就
+    留空，檔名還是能正常組出來，只是少了年份那一段。"""
+    value = record.get("contract_start_date") or ""
+    return value[:4] if len(value) >= 4 and value[:4].isdigit() else ""
 
 
 @router.get("/client-contracts/{submission_id}/download")
@@ -252,7 +313,7 @@ def client_contract_download(submission_id: str, request: Request, redirect=Depe
     content, content_type = client_contract_storage.download_file(record["blob_path"])
     if content is None:
         return Response(status_code=404)
-    filename = f"合約_{record.get('party_a_name', '')}.docx"
+    filename = f"合約_{record.get('party_a_name', '')}_{_contract_year(record)}.docx"
     encoded_filename = quote(filename)
     return Response(
         content=content,
@@ -274,7 +335,7 @@ def client_contract_preview(submission_id: str, request: Request, redirect=Depen
     content, content_type = client_contract_storage.download_file(record["pdf_blob_path"])
     if content is None:
         return Response(status_code=404)
-    filename = f"合約_{record.get('party_a_name', '')}.pdf"
+    filename = f"合約_{record.get('party_a_name', '')}_{_contract_year(record)}.pdf"
     encoded_filename = quote(filename)
     return Response(
         content=content,
