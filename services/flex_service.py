@@ -60,29 +60,58 @@ def _strip_county_prefix(district: str, county: str) -> str:
     return district
 
 
-def format_clean_location(job: dict, target_location: str = "") -> str:
-    """地點智慧聚合器：依產業別與行政區數量精準格式化[cite: 8]"""
+def format_clean_location(job: dict, target_location: str = "", same_county_scope: str = "") -> str:
+    """地點智慧聚合器：依產業別與行政區數量精準格式化[cite: 8]
+
+    target_location：使用者這句話鎖定的地點，用來從這筆職缺自己的「行政區」
+    欄位挑出「這筆職缺實際涵蓋到使用者問的地點」的部分顯示——不是整包欄位
+    直接印出來。同一個 target_location 命中不只一個行政區時（例如職缺涵蓋
+    範圍很廣，同時有「台南市下營區」跟「台南市佳里區」，使用者只問籠統的
+    「台南」），全部列出來，不能只回傳第一個找到的就結束，不然會讓使用者
+    誤以為這筆職缺只涵蓋其中一個地方（實測回報案例：問「台南哪些區有缺」
+    只顯示下營，即使佳里也有）。
+
+    same_county_scope：給「同縣市退讓建議」這個功能專用（見
+    handlers/message_handler.py 的縣市退讓建議分支）——這個情境下使用者問的
+    地點本來就沒有精準命中任何行政區，傳 target_location 進來也配不到，但
+    呼叫端已經知道要推薦「同縣市」的職缺，所以改傳這個縣市名稱，讓這裡只用
+    「這個縣市底下」的涵蓋範圍組字，不要把職缺可能橫跨好幾個縣市的「縣市」
+    欄位整包印出來（實測回報案例：退讓建議明明只推薦桃園市的職缺，卡片卻
+    印出職缺橫跨的全部 15 個縣市）。"""
     county = str(job.get("縣市") or "").strip()
     district = str(job.get("行政區") or "").strip()
     suffix = get_location_suffix_by_industry(job)
 
-    dist_list = [
-        _strip_county_prefix(d.strip(), county)
-        for d in re.split(r'[,，、\s]+', district) if d.strip()
-    ]
+    raw_tokens = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
+    dist_list = [_strip_county_prefix(d, county) for d in raw_tokens]
 
-    # 1. 使用者有明確指定行政區時，優先顯示該行政區[cite: 8]
+    # 1. 使用者有明確指定行政區時，優先顯示該行政區——命中不只一個就全部列出，
+    #    不要只回傳第一個找到的，避免職缺涵蓋範圍很廣時漏掉其他相符的地方。
     if target_location:
-        for d in dist_list:
-            if target_location in d or d in target_location:
-                return d
+        matched_districts = [d for d in dist_list if target_location in d or d in target_location]
+        if matched_districts:
+            return "、".join(dict.fromkeys(matched_districts))
 
         county_list = [c.strip() for c in re.split(r'[,，、\s]+', county) if c.strip()]
         for c in county_list:
             if target_location in c or c in target_location:
                 return f"{c} {suffix}".strip()
 
-    # 2. 智慧地點聚合 (依行政區數量級距)[cite: 8]
+    # 2. 「同縣市退讓建議」專用：先把行政區範圍縮小到這個縣市底下（用職缺原始、
+    #    尚未去除縣市前綴的行政區文字比對，才不會漏掉本來就沒有前綴的一般職缺），
+    #    再套用跟一般情況一樣的行政區數量級距判斷，避免職缺橫跨好幾個縣市時，
+    #    卡片把「全部」縣市都印出來，跟文字回覆（只講這個縣市）兜不起來。
+    if same_county_scope:
+        scoped_raw = [d for d in raw_tokens if same_county_scope in d]
+        scoped_dist_list = [_strip_county_prefix(d, same_county_scope) for d in scoped_raw]
+        scoped_count = len(scoped_dist_list)
+        if scoped_count == 0:
+            return same_county_scope
+        if scoped_count <= 4:
+            return f"{same_county_scope}（{'、'.join(dict.fromkeys(scoped_dist_list))}）"
+        return f"{same_county_scope} {suffix}".strip()
+
+    # 3. 智慧地點聚合 (依行政區數量級距)[cite: 8]
     dist_count = len(dist_list)
 
     if dist_count == 0:
@@ -97,7 +126,7 @@ def format_clean_location(job: dict, target_location: str = "") -> str:
         return f"{county} {suffix}"
     return suffix
 
-def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") -> FlexSendMessage:
+def create_job_flex_card(jobs: list, user_id: str, target_location: str = "", same_county_scope: str = "") -> FlexSendMessage:
     """建構職缺推薦 Flex Carousel 輪播卡片（綁定 Notion 唯一職缺名稱）[cite: 8]"""
     bubbles = []
     # 材霈品牌色（跟 delivery/static/style.css 的 --brand/--brand-dark/--brand-bg
@@ -119,7 +148,7 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "") ->
         # Notion 唯一識別鍵：職缺名稱 (內部名稱)
         unique_internal_title = str(job.get("職缺名稱") or job.get("_internal_title") or public_job_title).strip()
         
-        display_location = format_clean_location(job, target_location)
+        display_location = format_clean_location(job, target_location, same_county_scope)
         salary = str(job.get("薪資") or "依公司規定").strip()
         pay_method = str(job.get("領薪方式") or "").strip()
         shift = str(job.get("班別") or "").strip()

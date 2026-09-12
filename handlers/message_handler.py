@@ -620,7 +620,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                     )
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", fallback_reply_text)
-                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text), create_job_flex_card(county_alt_jobs[:4], user_id, "")])
+                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text), create_job_flex_card(county_alt_jobs[:4], user_id, "", same_county_scope=county_name)])
                 _intercept_type = "delivery" if is_delivery_intent else ("store" if is_store_intent else "momo")
                 log_ai_decision_event(
                     path="direct_intercept", intercept_type=f"{_intercept_type}_county_fallback",

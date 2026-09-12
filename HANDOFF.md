@@ -314,6 +314,17 @@
     - **`handlers/message_handler.py` 呼叫端配合更新**：`extract_current_target_location`／`detect_negated_location`／`find_county_level_alternative_jobs`／`find_same_county_district_labels` 這四處呼叫都補上 `active_jobs`（流程一開始就抓好、不用額外查詢）；原本直接查 `LOCATION_TO_COUNTY` 的地方改成呼叫 `resolve_county_for_location()`。
     - **新增測試**：`tests/test_matcher_service.py` 新增 `StripAdminSuffixTests`、`SplitDistrictTokenTests`、`BuildDistrictCountyIndexTests`、`ResolveCountyForLocationTests`、`ExtractLocationDynamicDistrictRegressionTests`（含直接重現竹北／佳里兩個回報案例、同名跨縣市不亂猜、沒傳 `active_jobs` 時維持原行為不出錯等情境）；`tests/test_message_handler.py` 新增 `DynamicDistrictRecognitionRegressionTests`（`test_zhubei_query_matches_zhubei_job_not_unrelated_hsinchu_city_job`、`test_jiali_query_matches_directly_without_falling_to_ai`），走完整的 `process_user_message` 流程重現並驗證兩個案例都修好。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 591 個測試，OK。
+50. **接續發現：第 49 項上線後，地區辨識本身變準了，卻連帶暴露出「卡片地點欄位」原本就存在、只是過去沒被踩到的兩個顯示層 bug（不影響底層配對邏輯，純粹是卡片/文字顯示不一致或不精準）**：
+    - **案例一（同一筆職缺涵蓋範圍很廣，籠統縣市查詢只顯示第一個符合的行政區）**：使用者實測某筆「蝦皮店到店門市夥伴」職缺，行政區欄位一次列了 110 個行政區（橫跨 15 個縣市），其中台南市底下同時有下營區、佳里區兩筆。問「台南哪些區有缺」、「只有下營嗎」、「台南總共哪些區有缺」都只顯示下營區，問不出佳里區也有。
+    - **案例二（同縣市退讓建議的卡片，地點欄位顯示全部縣市，跟回覆文字兜不起來）**：使用者問「八德有缺嗎」，退讓建議文字正確回覆「不過桃園市的桃園區、蘆竹區...有相關職缺」，但附上的卡片「📍地點」卻印出職缺橫跨的全部 15 個縣市（宜蘭縣,桃園市,高雄市...）；問「永康有嗎」也是同樣情況，文字正確列出「台南市的下營、佳里」，卡片一樣顯示全部縣市。
+    - **根本原因**：兩個案例都出在 `services/flex_service.py` 的 `format_clean_location()`——① 使用者指定 `target_location` 時，原本邏輯是「找到第一個符合的行政區就立刻回傳」，職缺只列 1~4 個行政區時「第一個」剛好等於「唯一一個」，不會有問題，但這筆職缺涵蓋上百個行政區、同一個縣市底下就有不只一個相符時，就只會顯示第一個，其餘的（佳里）完全看不到；②「同縣市退讓建議」呼叫卡片產生器時，`target_location` 傳的是空字串（因為使用者原本問的地點本來就沒精準命中，傳了也配不到），`format_clean_location()` 完全沒有任何地點線索可以縮小範圍，只能退回「行政區 ≥5 個時用職缺自己整包『縣市』欄位湊字」這條路，這筆職缺的「縣市」欄位本身就是 15 個縣市串起來，卡片自然把全部縣市都印出來；同一時間，回覆文字是另一支獨立函式 `find_same_county_district_labels()`（第 48 項）產生的，這支函式有專門篩選「只挑屬於目標縣市的行政區」，兩邊各自為政、沒有共用同一份「該顯示哪些行政區」的判斷，才會讓文字跟卡片兜不起來。
+    - **修正方式（純顯示層調整，不影響底層配對邏輯——配對到哪些職缺本來就是對的，只是卡片/文字沒講清楚）**：`services/flex_service.py`
+        - `format_clean_location()` 的 `target_location` 比對邏輯，改成「收集全部符合的行政區、用頓號全部列出」，不再只回傳找到的第一個。
+        - 新增 `same_county_scope` 參數，專門給「同縣市退讓建議」使用：傳進縣市名稱後，會先把行政區範圍縮小到「這個縣市底下」（用職缺原始、尚未去除縣市前綴的行政區文字比對，一般職缺沒有前綴時一樣正確運作，不受影響），再套用跟一般情況一樣的「行政區數量級距」判斷（≤4 個列出詳細行政區、≥5 個才用產業專屬概括描述），不會再把職缺橫跨的其他縣市一起印出來。
+        - `create_job_flex_card()` 新增同名 `same_county_scope` 參數往下傳給 `format_clean_location()`。
+        - `handlers/message_handler.py` 的同縣市退讓建議分支（第 44/48/49 項），呼叫卡片產生器時改傳 `same_county_scope=county_name`（本來就已經算好、給回覆文字用的同一個縣市名稱），讓卡片跟文字一致。
+    - **新增測試**：`tests/test_flex_service.py` 新增 `FormatCleanLocationMultipleDistrictMatchTests`（驗證同一個 `target_location` 命中不只一個行政區時全部列出、單一命中維持原行為不受影響）、`FormatCleanLocationSameCountyScopeTests`（縮小到指定縣市後行政區數量分別在 ≤4／≥5／完全沒有相符行政區三種情況、一般單一縣市職缺傳這個新參數也不影響原本結果）、`CreateJobFlexCardSameCountyScopeTests`（驗證 `create_job_flex_card()` 有把參數往下傳）；`tests/test_message_handler.py` 的 `CountyLevelFallbackRecommendationTests` 補上驗證會呼叫 `create_job_flex_card` 時帶 `same_county_scope`，並新增 `test_card_location_scoped_to_county_when_job_spans_many_counties` 直接重現「職缺橫跨桃園市／台南市、卡片只應顯示桃園市部分」的實測案例。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 599 個測試，OK。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 565 個測試，OK。
 
 ## 目前所有檔案的狀態

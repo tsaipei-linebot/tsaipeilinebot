@@ -1374,6 +1374,48 @@ class CountyLevelFallbackRecommendationTests(unittest.TestCase):
         self.assertIn("蘆竹區", reply_text)
         self.assertIn("龜山區", reply_text)
         self.assertNotIn("同樣在桃園市還有相關職缺", reply_text)
+        # 卡片也要收到 same_county_scope="桃園市"，讓地點顯示能跟文字回覆一致
+        # （見 services/flex_service.py 的 format_clean_location 說明）。
+        mock_flex_card.assert_called_once_with([alt_job], "test-user-county-fallback-districts", "", same_county_scope="桃園市")
+
+    def test_card_location_scoped_to_county_when_job_spans_many_counties(self):
+        # 實測回報案例：退讓建議推薦的職缺本身橫跨很多縣市時，卡片地點欄位
+        # 不應該把「全部」縣市都印出來，只應該顯示目標縣市（桃園市）底下的
+        # 涵蓋範圍，跟回覆文字一致。
+        broad_alt_job = {
+            "職缺名稱": "蝦皮店到店門市夥伴", "_internal_title": "蝦皮店到店門市夥伴",
+            "_parsed_title": "蝦皮店到店門市夥伴", "職缺名稱(對外)": "蝦皮店到店門市夥伴",
+            "_job_category": "門市", "職務類別": "門市",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮店到店門市夥伴",
+            "_location_search_text": "桃園市桃園區桃園市蘆竹區台南市下營區",
+            "行政區": "桃園市桃園區,桃園市蘆竹區,台南市下營區",
+            "縣市": "桃園市,台南市",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-county-fallback-card-scope"
+        event.message.text = "蝦皮門市 八德有缺嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[broad_alt_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(empty_slots, category="門市", brand="蝦皮")), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False):
+            h.process_user_message(event, line_bot_api)
+
+        args, _ = line_bot_api.reply_message.call_args
+        card = args[1][1]
+        location_line = next(
+            c.text for c in card.contents.contents[0].body.contents[-1].contents if c.text.startswith("📍")
+        )
+        self.assertIn("桃園區", location_line)
+        self.assertIn("蘆竹區", location_line)
+        self.assertNotIn("台南", location_line)
 
     def test_bare_location_followup_also_gets_county_fallback(self):
         # 延續前一輪「蝦皮門市」脈絡、這句話單純問地區時，也要能觸發同縣市
