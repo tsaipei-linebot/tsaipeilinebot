@@ -9,7 +9,10 @@ from delivery.templating import templates
 
 router = APIRouter()
 
-TEMPLATE_CSV = "廠商,姓名,身分證字號,電話\n蝦皮,王小明,A123456789,0912345678\n"
+TEMPLATE_CSV = (
+    "廠商,姓名,身分證字號,電話,到職日期\n"
+    "蝦皮,王小明,A123456789,0912345678,2024-01-31\n"
+)
 
 
 @router.get("/import")
@@ -64,7 +67,10 @@ async def import_submit(request: Request, file: UploadFile = File(...), redirect
                 )
                 continue
 
-            repository.create_personnel(row["name"], row["id_number"], row["phone"], row["vendor"], user["username"])
+            repository.create_personnel(
+                row["name"], row["id_number"], row["phone"], row["vendor"], user["username"],
+                hire_date=row.get("hire_date", ""),
+            )
             result["created"].append({**row, "vendor_name": VENDOR_MAP.get(row["vendor"], row["vendor"])})
 
     return templates.TemplateResponse(request, "import_form.html", {"user": user, "result": result})

@@ -3,8 +3,9 @@
 {% block content %}
 <h1 class="page-title">批次匯入人員</h1>
 <p class="hint">
-    上傳 CSV 檔案（UTF-8 或 Big5 皆可），欄位需包含「廠商」「姓名」（身分證字號、電話為選填）。
+    上傳 CSV 檔案（UTF-8 或 Big5 皆可），欄位需包含「廠商」「姓名」（身分證字號、電話、到職日期為選填）。
     廠商欄位可以填代號（shopee/ud/uc/sf）或中文名稱（蝦皮/UD/UC/順豐）。
+    到職日期格式請用 2024-01-31 或 2024/01/31（不確定的話留空即可，之後再到人員詳細頁補）。
     已存在相同「姓名+電話」的在職人員會自動略過，不會重複建立（兩者都要有值才會比對，
     電話留空的話無法判斷重複，會直接新增）。
 </p>
@@ -28,10 +29,10 @@
     {% if result.created %}
     <h2 class="section-title">已建立</h2>
     <table class="data-table">
-        <thead><tr><th>列</th><th>廠商</th><th>姓名</th></tr></thead>
+        <thead><tr><th>列</th><th>廠商</th><th>姓名</th><th>到職日期</th></tr></thead>
         <tbody>
             {% for r in result.created %}
-            <tr><td>{{ r.row }}</td><td>{{ r.vendor_name }}</td><td>{{ r.name }}</td></tr>
+            <tr><td>{{ r.row }}</td><td>{{ r.vendor_name }}</td><td>{{ r.name }}</td><td>{{ r.hire_date or "-" }}</td></tr>
             {% endfor %}
         </tbody>
     </table>
