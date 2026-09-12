@@ -21,7 +21,7 @@ from platform_db import companies_ref
 # 自己在 /companies 網頁上補（見 HANDOFF.md「未來規劃討論」），這裡先留
 # 空欄位，不代表不需要。
 FIELDS = (
-    "short_name", "name", "name_en", "responsible_person", "phone",
+    "short_name", "name", "name_en", "responsible_person", "phone", "address",
     "tax_id", "labor_insurance_no", "labor_insurance_check_code",
     "pension_unit_no", "note",
 )

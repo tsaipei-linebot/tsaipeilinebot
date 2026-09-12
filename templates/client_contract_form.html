@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}合約產生器 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">合約產生器</h1>
+<p class="hint">
+    填寫這次客戶的合約條件，送出後會自動套進固定的服務合約範本，產生 Word 檔給你下載，
+    同時系統會存一份紀錄，之後可以到「歷史紀錄」重新下載，也能在「專案合約維護」直接帶入這份檔案送出。
+    這是「{{ contract_versions[default_contract_version].label }}」版本的合約範本。
+</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/client-contracts/new" id="client-contract-form" class="form-stack">
+    <input type="hidden" name="contract_version" value="{{ form.contract_version or default_contract_version }}">
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">一、甲方（客戶公司）</div>
+        <p class="hint">輸入公司名稱或統一編號後按「查詢」，查得到會自動帶入下面欄位（仍可手動修改）；查不到的話請直接手動填寫。</p>
+        <div class="inline-form" style="margin-bottom: 12px;">
+            <input type="text" id="party-a-lookup-query" placeholder="公司名稱或統一編號">
+            <button type="button" class="btn" id="party-a-lookup-btn">查詢</button>
+            <span id="party-a-lookup-status" class="hint" style="margin:0;"></span>
+        </div>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">公司名稱 *</span>
+                <input type="text" name="party_a_name" id="party_a_name" value="{{ form.party_a_name or '' }}" required>
+            </label>
+            <label><span class="field-caption">代表人 *</span>
+                <input type="text" name="party_a_representative" id="party_a_representative" value="{{ form.party_a_representative or '' }}" required>
+            </label>
+            <label><span class="field-caption">地址 *</span>
+                <input type="text" name="party_a_address" id="party_a_address" value="{{ form.party_a_address or '' }}" required>
+            </label>
+            <label><span class="field-caption">統一編號 *</span>
+                <input type="text" name="party_a_tax_id" id="party_a_tax_id" value="{{ form.party_a_tax_id or '' }}" required>
+            </label>
+            <label><span class="field-caption">電話</span>
+                <input type="text" name="party_a_phone" id="party_a_phone" value="{{ form.party_a_phone or '' }}">
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">二、乙方（材霈旗下派遣公司）</div>
+        <label><span class="field-caption">選擇簽約公司 *</span>
+            <select name="party_b_company_id" required>
+                <option value="" {% if not form.party_b_company_id %}selected{% endif %}>請選擇...</option>
+                {% for c in companies %}
+                <option value="{{ c.id }}" {% if form.party_b_company_id == c.id %}selected{% endif %}>{{ c.short_name }}（{{ c.name }}）</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">三、合約期間</div>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">簽約日期 *</span>
+                <input type="date" name="sign_date" id="sign_date" value="{{ form.sign_date or default_sign_date }}" required>
+            </label>
+            <label><span class="field-caption">合約起始日期 *</span>
+                <input type="date" name="contract_start_date" id="contract_start_date" value="{{ form.contract_start_date or default_sign_date }}" required>
+            </label>
+            <label><span class="field-caption">合約結束日期 *</span>
+                <input type="date" name="contract_end_date" id="contract_end_date" value="{{ form.contract_end_date or default_contract_end_date }}" required>
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">四、撤換條款與匯款日</div>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">撤換人員通知期限（日）*</span>
+                <input type="number" name="replace_notice_days" min="1" value="{{ form.replace_notice_days or default_replace_notice_days }}" required>
+            </label>
+            <label><span class="field-caption">資遣費用及預告工資由 *</span>
+                <select name="severance_payer" required>
+                    {% for opt in severance_payer_options %}
+                    <option value="{{ opt }}" {% if (form.severance_payer or "乙方") == opt %}selected{% endif %}>{{ opt }}負擔</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label><span class="field-caption">匯款截止日（次月幾日前）*</span>
+                <input type="number" name="remit_day" min="1" max="31" value="{{ form.remit_day or default_remit_day }}" required>
+            </label>
+        </div>
+    </div>
+
+    <div class="repayment-section">
+        <div class="repayment-section-title">五、附件一費率（時薪一口價）</div>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">員工薪資（元/hr）*</span>
+                <input type="text" name="hourly_wage" value="{{ form.hourly_wage or '' }}" placeholder="如：200" required>
+            </label>
+            <label><span class="field-caption">管理費（元/hr）*</span>
+                <input type="text" name="management_fee" value="{{ form.management_fee or '' }}" placeholder="如：65" required>
+            </label>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block" id="client-contract-submit-btn">產生 Word 合約並下載</button>
+</form>
+<p class="back-link"><a href="/client-contracts">&larr; 回合約產生器歷史紀錄</a></p>
+
+<script>
+(function () {
+    var lookupBtn = document.getElementById('party-a-lookup-btn');
+    var lookupInput = document.getElementById('party-a-lookup-query');
+    var lookupStatus = document.getElementById('party-a-lookup-status');
+
+    lookupBtn.addEventListener('click', function () {
+        var q = lookupInput.value.trim();
+        if (!q) {
+            lookupStatus.textContent = '請先輸入公司名稱或統一編號。';
+            return;
+        }
+        lookupStatus.textContent = '查詢中…';
+        fetch('/client-contracts/company-lookup?q=' + encodeURIComponent(q))
+            .then(function (resp) { return resp.json(); })
+            .then(function (data) {
+                if (!data.found) {
+                    lookupStatus.textContent = '查無資料，請手動輸入下面欄位。';
+                    return;
+                }
+                document.getElementById('party_a_name').value = data.name || '';
+                document.getElementById('party_a_representative').value = data.representative || '';
+                document.getElementById('party_a_address').value = data.address || '';
+                document.getElementById('party_a_tax_id').value = data.tax_id || '';
+                lookupStatus.textContent = '已自動帶入，請確認內容是否正確（電話請自行填寫）。';
+            })
+            .catch(function () {
+                lookupStatus.textContent = '查詢失敗，請手動輸入下面欄位。';
+            });
+    });
+
+    // 合約起始日預設跟簽約日同一天，只要同仁自己沒手動改過起始日就跟著
+    // 簽約日一起變動；一旦手動改過起始日，就不再自動覆蓋。
+    var signDateInput = document.getElementById('sign_date');
+    var startDateInput = document.getElementById('contract_start_date');
+    var startDateTouched = false;
+    startDateInput.addEventListener('input', function () { startDateTouched = true; });
+    signDateInput.addEventListener('change', function () {
+        if (!startDateTouched) {
+            startDateInput.value = signDateInput.value;
+        }
+    });
+
+    document.getElementById('client-contract-form').addEventListener('submit', function () {
+        var btn = document.getElementById('client-contract-submit-btn');
+        btn.disabled = true;
+        btn.textContent = '產生中，請稍候…';
+    });
+})();
+</script>
+{% endblock %}

@@ -22,6 +22,26 @@
 {% endif %}
 
 <form method="post" action="/project-contracts" enctype="multipart/form-data" id="project-contract-form" class="form-stack">
+    <input type="hidden" name="from_client_contract_id" id="from_client_contract_id" value="">
+
+    {% if client_contract_options %}
+    <div class="repayment-section">
+        <div class="repayment-section-title">從合約產生器帶入（選填）</div>
+        <p class="hint">挑一筆你在「合約產生器」產生過的合約，會自動帶入廠商名稱、合作類別、簽約模式，並把那份 Word 檔直接放進下面的檔案欄位（仍可再手動換成別的檔案）。</p>
+        <label>
+            <select id="client-contract-picker">
+                <option value="">不使用，我要自己手動填寫</option>
+                {% for opt in client_contract_options %}
+                <option value="{{ opt.id }}" data-party-a-name="{{ opt.party_a_name }}" data-project-contract-mode="{{ opt.project_contract_mode }}">
+                    {{ opt.party_a_name }}（{{ opt.created_at }}）
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <span id="client-contract-picker-status" class="hint" style="margin:0;"></span>
+    </div>
+    {% endif %}
+
     <div class="repayment-section">
         <div class="repayment-section-title">一、專案與合作廠商基本資訊</div>
         <div class="repayment-basic-grid">
@@ -29,10 +49,10 @@
                 <div class="applicant-readonly">{{ user.name }}</div>
             </label>
             <label><span class="field-caption">廠商名稱 *</span>
-                <input type="text" name="vendor" value="{{ form.vendor or '' }}" placeholder="如：日月光半導體股份有限公司" required>
+                <input type="text" name="vendor" id="vendor" value="{{ form.vendor or '' }}" placeholder="如：日月光半導體股份有限公司" required>
             </label>
             <label><span class="field-caption">合作類別 *</span>
-                <select name="coop_category" required>
+                <select name="coop_category" id="coop_category" required>
                     <option value="" {% if not form.coop_category %}selected{% endif %}>請選擇合作類別...</option>
                     {% for opt in coop_category_options %}
                     <option value="{{ opt }}" {% if form.coop_category == opt %}selected{% endif %}>{{ opt }}</option>
@@ -40,7 +60,7 @@
                 </select>
             </label>
             <label><span class="field-caption">簽約模式 *</span>
-                <select name="contract_mode" required>
+                <select name="contract_mode" id="contract_mode" required>
                     <option value="" {% if not form.contract_mode %}selected{% endif %}>請選擇簽約模式...</option>
                     {% for opt in contract_mode_options %}
                     <option value="{{ opt }}" {% if form.contract_mode == opt %}selected{% endif %}>{{ opt }}</option>
@@ -108,7 +128,18 @@
         preview.textContent = '尚未選取合約檔案';
     }
 
-    fileInput.addEventListener('change', function () { showPreview(fileInput.files[0]); });
+    // 使用者自己手動選檔（不管是點擊選檔還是拖曳），都視為「不再對應
+    // 上面選的合約產生器紀錄」，把那個關聯清掉——避免送出後誤標記某筆
+    // 合約產生器紀錄「已送出」，但實際附上的其實是另一個檔案。
+    function forgetClientContractPicker() {
+        if (picker) {
+            picker.value = '';
+            document.getElementById('from_client_contract_id').value = '';
+            document.getElementById('client-contract-picker-status').textContent = '';
+        }
+    }
+
+    fileInput.addEventListener('change', function () { forgetClientContractPicker(); showPreview(fileInput.files[0]); });
     ['dragenter', 'dragover'].forEach(function (evt) {
         uploadZone.addEventListener(evt, function (e) { e.preventDefault(); uploadZone.classList.add('drag-over'); });
     });
@@ -117,8 +148,61 @@
     });
     uploadZone.addEventListener('drop', function (e) {
         var file = e.dataTransfer.files[0];
-        if (file) { fileInput.files = e.dataTransfer.files; showPreview(file); }
+        if (file) { forgetClientContractPicker(); fileInput.files = e.dataTransfer.files; showPreview(file); }
     });
+
+    // 「從合約產生器帶入」選單：選了之後自動帶入廠商名稱/合作類別/簽約
+    // 模式，並且用 fetch 把合約產生器存的 Word 檔抓下來，包成 File 物件
+    // 塞進上面的檔案上傳欄位——瀏覽器基於安全考量，不能直接用 JS 幫使用者
+    // 「選好一個檔案」，但可以用 DataTransfer 把已經拿到的 File 塞進
+    // <input type="file">，效果一樣，而且使用者選完之後還是可以再手動
+    // 點擊換成別的檔案（那樣就不會再對到這筆合約產生器紀錄，送出後也就
+    // 不會標記那筆紀錄「已送出」，這是預期中的行為）。
+    var picker = document.getElementById('client-contract-picker');
+    if (picker) {
+        var pickerStatus = document.getElementById('client-contract-picker-status');
+        var fromClientContractInput = document.getElementById('from_client_contract_id');
+        picker.addEventListener('change', function () {
+            var option = picker.options[picker.selectedIndex];
+            var id = option.value;
+            if (!id) {
+                fromClientContractInput.value = '';
+                pickerStatus.textContent = '';
+                return;
+            }
+            document.getElementById('vendor').value = option.dataset.partyAName || '';
+            var coopCategorySelect = document.getElementById('coop_category');
+            if ([].some.call(coopCategorySelect.options, function (o) { return o.value === '派遣'; })) {
+                coopCategorySelect.value = '派遣';
+            }
+            var contractModeSelect = document.getElementById('contract_mode');
+            var mode = option.dataset.projectContractMode;
+            if (mode && [].some.call(contractModeSelect.options, function (o) { return o.value === mode; })) {
+                contractModeSelect.value = mode;
+            }
+
+            pickerStatus.textContent = '下載檔案中…';
+            fetch('/client-contracts/' + id + '/download')
+                .then(function (resp) {
+                    if (!resp.ok) { throw new Error('download failed'); }
+                    return resp.blob();
+                })
+                .then(function (blob) {
+                    var file = new File([blob], option.textContent.trim() + '.docx', {
+                        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    });
+                    var dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(file);
+                    fileInput.files = dataTransfer.files;
+                    showPreview(file);
+                    fromClientContractInput.value = id;
+                    pickerStatus.textContent = '已自動帶入廠商名稱、合作類別、簽約模式跟合約檔案，請確認內容無誤。';
+                })
+                .catch(function () {
+                    pickerStatus.textContent = '抓取合約檔案失敗，請改用下面的檔案欄位手動上傳。';
+                });
+        });
+    }
 
     // fileInput 是 hidden 的（靠外層 <label class="upload-zone"> 觸發選檔），
     // 瀏覽器對「沒有被渲染出來」的欄位不會做 required 檢查（跟職缺維護表單
