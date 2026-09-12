@@ -28,6 +28,7 @@
                 <th style="width: 32px;"></th>
                 <th>帳號</th>
                 <th>姓名</th>
+                <th>職級</th>
                 <th>所屬主管</th>
                 <th>權限</th>
                 <th></th>
@@ -39,15 +40,16 @@
                 <td class="drag-handle" title="拖曳調整順序">⠿</td>
                 <td>{{ a.username }}</td>
                 <td>{{ a.name }}</td>
+                <td>{{ rank_map.get(a.rank, "-") if a.rank else "-" }}</td>
                 <td>{{ a.manager_names|join("、") if a.manager_names else "-" }}</td>
                 <td>
                     {% if a.is_platform_admin %}
                     <span class="badge badge-ok">全平台管理員</span>
                     {% endif %}
                     {% for m in modules %}
-                    {% if a.modules.get(m.code) %}
-                    <span class="badge {{ 'badge-pending' if a.modules.get(m.code) == 'admin' else 'badge-employed' }}">
-                        {{ m.name }}：{{ role_map.get(a.modules.get(m.code), a.modules.get(m.code)) }}
+                    {% if a.module_roles.get(m.code) %}
+                    <span class="badge {{ 'badge-pending' if a.module_roles.get(m.code) == 'admin' else 'badge-employed' }}">
+                        {{ m.name }}：{{ role_map.get(a.module_roles.get(m.code), a.module_roles.get(m.code)) }}
                     </span>
                     {% endif %}
                     {% endfor %}

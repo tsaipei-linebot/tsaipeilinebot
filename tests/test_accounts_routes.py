@@ -99,5 +99,142 @@ class ReorderAccountsRouteTests(unittest.TestCase):
         self.assertIs(result, fake_redirect)
 
 
+class _FakeFormData:
+    """假的 request.form() 回傳值，只提供這裡用得到的 get()／getlist()。"""
+
+    def __init__(self, pairs):
+        self._pairs = pairs
+
+    def get(self, key, default=None):
+        for k, v in self._pairs:
+            if k == key:
+                return v
+        return default
+
+    def getlist(self, key):
+        return [v for k, v in self._pairs if k == key]
+
+
+class ModulesFromFormTests(unittest.TestCase):
+    """2026-09-12 改版：模組欄位從「每個模組選不開放/專員/主管」簡化成
+    勾選「開放/不開放」，_modules_from_form() 回傳的是開放了哪些模組代碼
+    的清單，不是模組→角色的字典。"""
+
+    def test_only_checked_modules_are_included(self):
+        form = _FakeFormData([("module_delivery", "on"), ("module_management", ""), ("module_hr", "on")])
+        self.assertEqual(set(accounts_routes._modules_from_form(form)), {"delivery", "hr"})
+
+    def test_no_checked_modules_returns_empty_list(self):
+        form = _FakeFormData([])
+        self.assertEqual(accounts_routes._modules_from_form(form), [])
+
+
+class RankFromFormTests(unittest.TestCase):
+    def test_strips_whitespace(self):
+        form = _FakeFormData([("rank", "  supervisor  ")])
+        self.assertEqual(accounts_routes._rank_from_form(form), "supervisor")
+
+    def test_missing_rank_returns_empty_string(self):
+        form = _FakeFormData([])
+        self.assertEqual(accounts_routes._rank_from_form(form), "")
+
+
+class DepartmentManagersTests(unittest.TestCase):
+    """新增/編輯帳號表單選了部門後，「所屬主管」自動預帶這個部門目前職級
+    副主任（含）以上的帳號——同一個單位不會有兩個同職級的人，但可能同時
+    有主任＋副主任兩位，兩位都要列進候選名單。"""
+
+    def test_groups_manager_rank_accounts_by_department(self):
+        accounts = [
+            {"username": "u1", "department": "管理部", "rank": "supervisor"},
+            {"username": "u2", "department": "管理部", "rank": "deputy_supervisor"},
+            {"username": "u3", "department": "管理部", "rank": "specialist"},
+            {"username": "u4", "department": "財務部", "rank": "manager"},
+        ]
+        result = accounts_routes._department_managers(accounts)
+        self.assertEqual(set(result["管理部"]), {"u1", "u2"})
+        self.assertEqual(result["財務部"], ["u4"])
+        self.assertNotIn("u3", result.get("管理部", []))
+
+    def test_excludes_given_username(self):
+        accounts = [
+            {"username": "u1", "department": "管理部", "rank": "manager"},
+            {"username": "u2", "department": "管理部", "rank": "manager"},
+        ]
+        result = accounts_routes._department_managers(accounts, exclude_username="u1")
+        self.assertEqual(result["管理部"], ["u2"])
+
+    def test_ignores_accounts_without_department_or_manager_rank(self):
+        accounts = [
+            {"username": "u1", "department": "", "rank": "manager"},
+            {"username": "u2", "department": "管理部", "rank": "specialist"},
+        ]
+        result = accounts_routes._department_managers(accounts)
+        self.assertEqual(result, {})
+
+
+class CreateAccountSubmitValidationTests(unittest.TestCase):
+    """新增帳號：部門要在部門主檔清單裡才算合法選項，職級要是清單裡的
+    代碼——2026-09-12 新增，取代原本只檢查「部門不能空白」的規則。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, form_data):
+            self._form_data = form_data
+            self.session = CreateAccountSubmitValidationTests._FakeSession(
+                {"user": {"username": "boss", "name": "老闆", "is_platform_admin": True}}
+            )
+
+        async def form(self):
+            return self._form_data
+
+    def _valid_pairs(self, **overrides):
+        pairs = {
+            "username": "newuser", "password": "pw12345", "name": "新同仁",
+            "department": "管理部", "rank": "specialist",
+        }
+        pairs.update(overrides)
+        return list(pairs.items())
+
+    def test_department_not_in_master_list_blocks_submit(self):
+        form = _FakeFormData(self._valid_pairs(department="不存在的部門"))
+        with mock.patch.object(accounts_routes.platform_departments, "department_name_exists", return_value=False):
+            with mock.patch.object(accounts_routes.platform_departments, "list_departments", return_value=[]):
+                with mock.patch.object(accounts_routes.platform_accounts, "list_accounts", return_value=[]):
+                    with mock.patch.object(accounts_routes, "templates") as mock_templates:
+                        with mock.patch.object(accounts_routes.platform_accounts, "create_account") as mock_create:
+                            asyncio.run(accounts_routes.create_account_submit(self._FakeRequest(form), redirect=None))
+        mock_create.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("部門", context["error"])
+
+    def test_invalid_rank_blocks_submit(self):
+        form = _FakeFormData(self._valid_pairs(rank="not-a-real-rank"))
+        with mock.patch.object(accounts_routes.platform_departments, "department_name_exists", return_value=True):
+            with mock.patch.object(accounts_routes.platform_departments, "list_departments", return_value=[]):
+                with mock.patch.object(accounts_routes.platform_accounts, "list_accounts", return_value=[]):
+                    with mock.patch.object(accounts_routes, "templates") as mock_templates:
+                        with mock.patch.object(accounts_routes.platform_accounts, "create_account") as mock_create:
+                            asyncio.run(accounts_routes.create_account_submit(self._FakeRequest(form), redirect=None))
+        mock_create.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("職級", context["error"])
+
+    def test_valid_submission_creates_account_with_list_modules_and_rank(self):
+        form = _FakeFormData(self._valid_pairs() + [("module_delivery", "on")])
+        with mock.patch.object(accounts_routes.platform_departments, "department_name_exists", return_value=True):
+            with mock.patch.object(accounts_routes.platform_accounts, "account_exists", return_value=False):
+                with mock.patch.object(accounts_routes.platform_accounts, "create_account") as mock_create:
+                    result = asyncio.run(accounts_routes.create_account_submit(self._FakeRequest(form), redirect=None))
+        mock_create.assert_called_once_with(
+            "newuser", "pw12345", "新同仁", ["delivery"],
+            manager_usernames=[], department="管理部", rank="specialist",
+        )
+        self.assertEqual(result.status_code, 303)
+
+
 if __name__ == "__main__":
     unittest.main()

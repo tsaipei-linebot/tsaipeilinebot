@@ -74,7 +74,10 @@ class RequireAccessDependencyTests(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_logged_in_with_admin_module_access_returns_none(self):
-        account = {"username": "carol", "name": "Carol", "modules": {"chicken_points": "admin"}, "is_platform_admin": False}
+        account = {
+            "username": "carol", "name": "Carol", "modules": {"chicken_points": "admin"},
+            "rank": "manager", "is_platform_admin": False,
+        }
         result = chicken_points_routes._require_access(self._FakeRequest(account))
         self.assertIsNone(result)
 
@@ -106,7 +109,10 @@ class RoleBasedRecordVisibilityTests(unittest.TestCase):
         mock_all.assert_not_called()
 
     def test_admin_role_calls_list_all_requests(self):
-        account = {"username": "carol", "name": "Carol", "modules": {"chicken_points": "admin"}, "is_platform_admin": False}
+        account = {
+            "username": "carol", "name": "Carol", "modules": {"chicken_points": "admin"},
+            "rank": "manager", "is_platform_admin": False,
+        }
         with mock.patch.object(chicken_points_routes, "list_all_requests", return_value=[]) as mock_all:
             with mock.patch.object(chicken_points_routes, "list_requests_by_username") as mock_by_user:
                 with mock.patch.object(chicken_points_routes, "templates"):
@@ -195,7 +201,10 @@ class DeletePermissionTests(unittest.TestCase):
         self.assertEqual(result.headers["location"], "/chicken-points")
 
     def test_admin_role_is_allowed(self):
-        account = {"username": "carol", "name": "Carol", "modules": {"chicken_points": "admin"}, "is_platform_admin": False}
+        account = {
+            "username": "carol", "name": "Carol", "modules": {"chicken_points": "admin"},
+            "rank": "manager", "is_platform_admin": False,
+        }
         result = chicken_points_routes._require_admin_access(self._FakeRequest(account))
         self.assertIsNone(result)
 
