@@ -16,6 +16,7 @@ import accounts_routes
 import client_contract_routes
 import company_routes
 import chicken_points_routes
+import department_routes
 import dispatch_contract_routes
 import job_listing_routes
 import project_contract_routes
@@ -57,6 +58,9 @@ app.add_middleware(
     max_age=14 * 24 * 3600,
 )
 app.include_router(accounts_routes.router, prefix="/accounts")
+# /departments：部門主檔（2026-09-12 新增），只有全平台管理員看得到，跟
+# /accounts 一樣直接掛在根 app（見 department_routes.py）。
+app.include_router(department_routes.router, prefix="/departments")
 # /companies：材霈旗下派遣公司牌照主檔，只有全平台管理員看得到，跟
 # /accounts 一樣直接掛在根 app（見 company_routes.py）。
 app.include_router(company_routes.router, prefix="/companies")

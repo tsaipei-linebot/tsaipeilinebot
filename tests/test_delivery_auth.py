@@ -33,7 +33,13 @@ class CurrentUserBackwardCompatRoleTests(unittest.TestCase):
         self.assertIsNone(current_user(_FakeRequest()))
 
     def test_delivery_admin_gets_role_admin(self):
-        account = {"username": "alice", "name": "Alice", "modules": {"delivery": "admin"}, "is_platform_admin": False}
+        # 2026-09-12 起，模組裡算不算 admin 改看職級（rank），不是 modules
+        # 字典裡存的舊角色值——這裡的 "admin" 字面值已經不影響判斷，只是
+        # 保留舊格式相容的測試資料，rank 才是真正決定角色的欄位。
+        account = {
+            "username": "alice", "name": "Alice", "modules": {"delivery": "admin"},
+            "rank": "manager", "is_platform_admin": False,
+        }
         user = current_user(_FakeRequest(account))
         self.assertEqual(user["role"], "admin")
 

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ '編輯部門' if department else '新增部門' }} - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ '編輯部門' if department else '新增部門' }}</h1>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="{{ '/departments/' + department.id + '/edit' if department and department.id else '/departments/new' }}" class="form-stack form-narrow">
+    <label>部門名稱
+        <input type="text" name="name" value="{{ department.name if department else '' }}" required autofocus>
+    </label>
+    <button type="submit" class="btn btn-primary">{{ '儲存' if department and department.id else '建立部門' }}</button>
+</form>
+<p class="back-link"><a href="/departments">&larr; 回部門管理</a></p>
+{% endblock %}

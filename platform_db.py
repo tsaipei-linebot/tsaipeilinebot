@@ -25,6 +25,7 @@ from config import GCP_PROJECT_ID
 USERS_COLLECTION = "delivery_users"
 COMPANIES_COLLECTION = "companies"
 VENDORS_COLLECTION = "platform_vendors"
+DEPARTMENTS_COLLECTION = "platform_departments"
 
 _client = None
 
@@ -46,3 +47,7 @@ def companies_ref():
 
 def vendors_ref():
     return get_db().collection(VENDORS_COLLECTION)
+
+
+def departments_ref():
+    return get_db().collection(DEPARTMENTS_COLLECTION)

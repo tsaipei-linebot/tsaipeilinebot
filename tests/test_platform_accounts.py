@@ -15,6 +15,7 @@ from platform_accounts import (
     ROLE_STAFF,
     has_module_access,
     hash_password,
+    is_manager_rank,
     module_role,
     validate_account_deletion,
     verify_password,
@@ -39,41 +40,79 @@ class PasswordHashingTests(unittest.TestCase):
         self.assertFalse(verify_password("anything", None))
 
 
+class IsManagerRankTests(unittest.TestCase):
+    """2026-09-12 新增：職級副主任（含）以上算管理權限，不在清單裡的職級
+    代碼（含空字串、還沒設定）一律當作沒有管理權限，不會誤放行。"""
+
+    def test_deputy_supervisor_and_above_are_manager_rank(self):
+        for rank in ("manager", "deputy_manager", "supervisor", "deputy_supervisor"):
+            self.assertTrue(is_manager_rank(rank), rank)
+
+    def test_specialist_is_not_manager_rank(self):
+        self.assertFalse(is_manager_rank("specialist"))
+
+    def test_unknown_or_missing_rank_is_not_manager_rank(self):
+        self.assertFalse(is_manager_rank(""))
+        self.assertFalse(is_manager_rank("not-a-real-rank"))
+        self.assertFalse(is_manager_rank(None))
+
+
 class ModuleRoleTests(unittest.TestCase):
-    """一個帳號可能同時橫跨好幾個部門模組，每個模組各自的角色（主管/專員）
-    分開存在 modules 這個 dict 裡；全平台管理員（is_platform_admin）視同
-    任何模組的管理員。"""
+    """一個帳號可能同時橫跨好幾個部門模組。2026-09-12 起，modules 只存
+    「開放了哪些模組」的清單，模組內算不算管理權限（"admin"/"staff"）
+    改由職級（rank）決定，不是新增/編輯帳號時針對每個模組各自指定；
+    全平台管理員（is_platform_admin）視同任何模組的管理員。"""
 
     def test_no_account_has_no_access(self):
         self.assertIsNone(module_role(None, "delivery"))
         self.assertFalse(has_module_access(None, "delivery"))
 
     def test_account_without_module_has_no_access(self):
-        account = {"modules": {"management": "admin"}, "is_platform_admin": False}
+        account = {"modules": ["management"], "rank": "manager", "is_platform_admin": False}
         self.assertIsNone(module_role(account, "delivery"))
         self.assertFalse(has_module_access(account, "delivery"))
 
-    def test_account_with_staff_role_in_one_module(self):
-        account = {"modules": {"delivery": "staff"}, "is_platform_admin": False}
+    def test_open_module_with_specialist_rank_is_staff(self):
+        account = {"modules": ["delivery"], "rank": "specialist", "is_platform_admin": False}
         self.assertEqual(module_role(account, "delivery"), ROLE_STAFF)
         self.assertTrue(has_module_access(account, "delivery"))
 
-    def test_account_with_admin_role_in_one_module_only(self):
-        account = {"modules": {"delivery": "admin", "management": "staff"}, "is_platform_admin": False}
+    def test_open_module_without_rank_defaults_to_staff_not_admin(self):
+        # 還沒補職級的帳號（例如舊資料剛遷移過來），一律當作一般權限，
+        # 不會因為欄位空白就意外拿到管理權限。
+        account = {"modules": ["delivery"], "rank": "", "is_platform_admin": False}
+        self.assertEqual(module_role(account, "delivery"), ROLE_STAFF)
+
+    def test_open_module_with_manager_rank_is_admin(self):
+        account = {"modules": ["delivery", "management"], "rank": "deputy_supervisor", "is_platform_admin": False}
         self.assertEqual(module_role(account, "delivery"), ROLE_ADMIN)
-        self.assertEqual(module_role(account, "management"), ROLE_STAFF)
+        self.assertEqual(module_role(account, "management"), ROLE_ADMIN)
+
+    def test_manager_rank_alone_is_not_enough_without_module_open(self):
+        # 職級再高，模組沒開放一樣看不到——「開放與否」跟「職級」是兩件
+        # 各自獨立要滿足的條件。
+        account = {"modules": [], "rank": "manager", "is_platform_admin": False}
+        self.assertIsNone(module_role(account, "delivery"))
 
     def test_platform_admin_is_admin_of_every_module_even_without_explicit_entry(self):
-        account = {"modules": {}, "is_platform_admin": True}
+        account = {"modules": [], "rank": "", "is_platform_admin": True}
         self.assertEqual(module_role(account, "delivery"), ROLE_ADMIN)
         self.assertEqual(module_role(account, "management"), ROLE_ADMIN)
         self.assertEqual(module_role(account, "some_future_module"), ROLE_ADMIN)
 
+    def test_legacy_dict_format_modules_still_grants_access_regardless_of_stored_role(self):
+        # 2026-09-12 之前存的舊資料格式（模組→角色字典）：不管字典裡原本
+        # 存的角色值是什麼，模組存在就算「有開放」，角色一律改看職級，不
+        # 是讀字典裡的舊角色值。
+        legacy_account = {"modules": {"delivery": "admin"}, "rank": "specialist", "is_platform_admin": False}
+        self.assertTrue(has_module_access(legacy_account, "delivery"))
+        self.assertEqual(module_role(legacy_account, "delivery"), ROLE_STAFF)
+
 
 class ToAccountTests(unittest.TestCase):
-    """帳號資料多了 manager_usernames／department 兩個欄位（在 /accounts
-    網頁上設定），確認舊資料（沒有這兩個欄位）讀出來會是安全的預設值，不會
-    噴 KeyError。"""
+    """帳號資料多了 manager_usernames／department／rank 幾個欄位（在
+    /accounts 網頁上設定），確認舊資料（沒有這些欄位）讀出來會是安全的
+    預設值，不會噴 KeyError。"""
 
     def test_defaults_manager_usernames_and_department_when_missing(self):
         account = platform_accounts._to_account("alice", {"name": "Alice"})
@@ -94,6 +133,26 @@ class ToAccountTests(unittest.TestCase):
     def test_preserves_sort_index_when_present(self):
         account = platform_accounts._to_account("alice", {"name": "Alice", "sort_index": 3})
         self.assertEqual(account["sort_index"], 3)
+
+    def test_defaults_rank_to_empty_string_when_missing(self):
+        account = platform_accounts._to_account("alice", {"name": "Alice"})
+        self.assertEqual(account["rank"], "")
+
+    def test_preserves_rank_when_present(self):
+        account = platform_accounts._to_account("alice", {"name": "Alice", "rank": "supervisor"})
+        self.assertEqual(account["rank"], "supervisor")
+
+    def test_normalizes_legacy_dict_modules_to_list_of_codes(self):
+        account = platform_accounts._to_account("alice", {"name": "Alice", "modules": {"delivery": "admin", "hr": "staff"}})
+        self.assertEqual(set(account["modules"]), {"delivery", "hr"})
+
+    def test_preserves_new_list_modules_format(self):
+        account = platform_accounts._to_account("alice", {"name": "Alice", "modules": ["delivery", "hr"]})
+        self.assertEqual(set(account["modules"]), {"delivery", "hr"})
+
+    def test_defaults_modules_to_empty_list_when_missing(self):
+        account = platform_accounts._to_account("alice", {"name": "Alice"})
+        self.assertEqual(account["modules"], [])
 
 
 class ListAccountsSortingTests(unittest.TestCase):

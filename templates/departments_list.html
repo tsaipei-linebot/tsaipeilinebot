@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}部門管理 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">部門管理</h1>
+    <a class="btn btn-primary" href="/departments/new">新增部門</a>
+</div>
+<p class="hint">
+    這裡的部門清單是新增/編輯帳號時「部門」欄位可以選的選項，之後要新增部門或調整名稱，直接在這裡操作即可，不用改程式碼。
+    可以直接拖曳「⠿」調整順序，放開就會自動存檔，帳號權限管理頁面也會照這個順序分組顯示。
+    <b>改掉一個部門的名稱不會自動更新已經設定成那個部門的帳號</b>，需要另外到「帳號權限管理」把那些帳號的部門重新選一次。
+</p>
+
+{% if error == "not_found" %}
+<p class="error">找不到這個部門，可能已經被刪除了。</p>
+{% elif error == "in_use" %}
+<p class="error">還有帳號設定成這個部門，沒辦法刪除——請先到「帳號權限管理」把那些帳號改成別的部門，再回來刪除。</p>
+{% endif %}
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th style="width: 32px;"></th>
+            <th>部門</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody class="draggable-departments">
+        {% for d in departments %}
+        <tr draggable="true" data-id="{{ d.id }}">
+            <td class="drag-handle" title="拖曳調整順序">⠿</td>
+            <td>{{ d.name }}</td>
+            <td>
+                <a href="/departments/{{ d.id }}/edit">編輯</a>
+                <form method="post" action="/departments/{{ d.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除部門「{{ d.name }}」嗎？');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if not departments %}
+<p class="empty">目前還沒有任何部門資料。</p>
+{% endif %}
+
+<script>
+// 拖曳排序：跟 /accounts 帳號權限管理同一種做法，原生 HTML5 drag and drop，
+// 放開滑鼠後把目前畫面上的順序整包送到 /departments/reorder 存檔。
+(function () {
+    var tbody = document.querySelector('tbody.draggable-departments');
+    if (!tbody) return;
+    var draggedRow = null;
+
+    function saveOrder() {
+        var ids = Array.from(tbody.querySelectorAll('tr[data-id]')).map(function (tr) {
+            return tr.dataset.id;
+        });
+        fetch('/departments/reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: ids }),
+        }).catch(function () {});
+    }
+
+    tbody.querySelectorAll('tr[draggable="true"]').forEach(function (row) {
+        row.addEventListener('dragstart', function () {
+            draggedRow = row;
+            row.classList.add('dragging');
+        });
+        row.addEventListener('dragend', function () {
+            row.classList.remove('dragging');
+            draggedRow = null;
+            saveOrder();
+        });
+        row.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            if (!draggedRow || draggedRow === row) return;
+            var rect = row.getBoundingClientRect();
+            var isAfter = (e.clientY - rect.top) > rect.height / 2;
+            tbody.insertBefore(draggedRow, isAfter ? row.nextSibling : row);
+        });
+    });
+})();
+</script>
+{% endblock %}

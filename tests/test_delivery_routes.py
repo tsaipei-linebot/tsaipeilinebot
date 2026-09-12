@@ -34,7 +34,7 @@ class DeliveryRoutingSmokeTests(unittest.TestCase):
     def test_login_page_renders(self):
         resp = self.client.get("/delivery/login")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("配送部系統", resp.text)
+        self.assertIn("新北所(配送組)系統", resp.text)
 
     def test_static_css_is_served(self):
         resp = self.client.get("/delivery/static/style.css")
