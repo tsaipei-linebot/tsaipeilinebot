@@ -32,7 +32,7 @@
             <select id="client-contract-picker">
                 <option value="">不使用，我要自己手動填寫</option>
                 {% for opt in client_contract_options %}
-                <option value="{{ opt.id }}" data-party-a-name="{{ opt.party_a_name }}" data-project-contract-mode="{{ opt.project_contract_mode }}">
+                <option value="{{ opt.id }}" data-party-a-name="{{ opt.party_a_name }}" data-project-contract-mode="{{ opt.project_contract_mode }}" data-coop-category="{{ opt.project_contract_coop_category }}">
                     {{ opt.party_a_name }}（{{ opt.created_at }}）
                 </option>
                 {% endfor %}
@@ -172,8 +172,9 @@
             }
             document.getElementById('vendor').value = option.dataset.partyAName || '';
             var coopCategorySelect = document.getElementById('coop_category');
-            if ([].some.call(coopCategorySelect.options, function (o) { return o.value === '派遣'; })) {
-                coopCategorySelect.value = '派遣';
+            var coopCategory = option.dataset.coopCategory || '派遣';
+            if ([].some.call(coopCategorySelect.options, function (o) { return o.value === coopCategory; })) {
+                coopCategorySelect.value = coopCategory;
             }
             var contractModeSelect = document.getElementById('contract_mode');
             var mode = option.dataset.projectContractMode;

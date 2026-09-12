@@ -14,6 +14,18 @@ services/client_contract_service.py 開頭的說明，這裡只負責表單頁�
 的全部欄位（含合約期間、費率）預先帶入新增表單——給年底要用同樣條件
 續下一年度合約的情境用，日期同仁還是要自己改成新的年度，這裡不會自動
 幫忙加一年，避免猜錯使用者實際要的日期。
+
+**「刪除」功能（2026-09-12 新增）**：合約要作廢時，`POST /client-
+contracts/{id}/delete` 把 Firestore 那筆紀錄跟 GCS 上存的 Word/PDF 檔案
+一起刪掉，能不能刪一樣走 `can_view_submission()` 那套可見範圍判斷（看
+得到才能刪），沒有另外設更嚴格的權限——反正看不到的人本來就點不到
+刪除連結。刪除沒有回收機制，是真的整筆刪掉，不是標記隱藏。
+
+**第三個合約版本「白領代招」（2026-09-12 新增）**：`white_collar_referral`
+這個版本的主文結構跟前兩版（時薪一口價／實支實付）完全不同，也沒有
+「簽約日期」「撤換條款」這兩組共用欄位，`CONTRACT_VERSIONS[版本代碼]` 的
+`requires_sign_date`／`requires_severance_clause` 決定這裡的表單驗證要不要
+擋這些欄位——詳見 services/client_contract_service.py 開頭的版本說明。
 """
 from datetime import date, datetime
 from urllib.parse import quote
@@ -30,10 +42,12 @@ from services.client_contract_service import (
     DEFAULT_CONTRACT_VERSION,
     DEFAULT_REMIT_DAY,
     DEFAULT_REPLACE_NOTICE_DAYS,
+    DEFAULT_SERVICE_MONTHS,
     SEVERANCE_PAYER_OPTIONS,
     can_view_submission,
     convert_docx_to_pdf,
     default_contract_end_date,
+    delete_submission,
     get_submission,
     list_visible_submissions,
     render_contract_docx,
@@ -46,11 +60,12 @@ router = APIRouter()
 MODULE_CODE = "client_contracts"
 
 # 各合約版本各自需要哪些報價欄位才算填完整——時薪一口價要員工薪資+管理費
-# 兩個數字，實支實付只要服務費那一格文字，兩者互不相干，送出時只檢查
-# 這次選的版本實際用得到的欄位。
+# 兩個數字，實支實付只要服務費那一格文字，白領代招要服務費金額+收費月數
+# 上限，三者互不相干，送出時只檢查這次選的版本實際用得到的欄位。
 _PRICING_FIELDS_BY_VERSION = {
     "hourly_flat_rate": ["hourly_wage", "management_fee"],
     "actual_paid": ["service_fee"],
+    "white_collar_referral": ["fee_amount", "service_months"],
 }
 
 
@@ -99,6 +114,8 @@ def _duplicate_form_values(record: dict) -> dict:
         "hourly_wage": record.get("hourly_wage", ""),
         "management_fee": record.get("management_fee", ""),
         "service_fee": record.get("service_fee", ""),
+        "fee_amount": record.get("fee_amount", ""),
+        "service_months": record.get("service_months", ""),
         "contract_version": record.get("contract_version", DEFAULT_CONTRACT_VERSION),
     }
 
@@ -115,6 +132,7 @@ def _form_context(*, user: dict, error: str = "", form: dict = None) -> dict:
         "severance_payer_options": SEVERANCE_PAYER_OPTIONS,
         "default_replace_notice_days": DEFAULT_REPLACE_NOTICE_DAYS,
         "default_remit_day": DEFAULT_REMIT_DAY,
+        "default_service_months": DEFAULT_SERVICE_MONTHS,
         "default_sign_date": today.isoformat(),
         "default_contract_end_date": default_contract_end_date(today).isoformat(),
     }
@@ -185,9 +203,20 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
     hourly_wage = (form.get("hourly_wage") or "").strip()
     management_fee = (form.get("management_fee") or "").strip()
     service_fee = (form.get("service_fee") or "").strip()
+    fee_amount = (form.get("fee_amount") or "").strip()
+    service_months = (form.get("service_months") or "").strip()
     contract_version = (form.get("contract_version") or DEFAULT_CONTRACT_VERSION).strip()
+    version_config = CONTRACT_VERSIONS.get(contract_version, {})
+    requires_sign_date = version_config.get("requires_sign_date", True)
+    requires_severance_clause = version_config.get("requires_severance_clause", True)
 
-    pricing_values = {"hourly_wage": hourly_wage, "management_fee": management_fee, "service_fee": service_fee}
+    pricing_values = {
+        "hourly_wage": hourly_wage,
+        "management_fee": management_fee,
+        "service_fee": service_fee,
+        "fee_amount": fee_amount,
+        "service_months": service_months,
+    }
 
     form_values = {
         **party_a,
@@ -210,15 +239,15 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         error = "請填寫甲方（客戶公司）的公司名稱、代表人、地址、統一編號。"
     elif not party_b_company:
         error = "請選擇乙方（材霈旗下派遣公司）。"
-    elif sign_date is None:
+    elif requires_sign_date and sign_date is None:
         error = "請填寫簽約日期。"
     elif contract_start_date is None:
         error = "請填寫合約起始日期。"
     elif contract_end_date is None:
         error = "請填寫合約結束日期。"
-    elif not replace_notice_days:
+    elif requires_severance_clause and not replace_notice_days:
         error = "請填寫撤換人員的通知期限（天數）。"
-    elif severance_payer not in SEVERANCE_PAYER_OPTIONS:
+    elif requires_severance_clause and severance_payer not in SEVERANCE_PAYER_OPTIONS:
         error = "請選擇資遣費用及預告工資由甲方或乙方負擔。"
     elif not remit_day:
         error = "請填寫匯款截止日。"
@@ -242,7 +271,7 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
     docx_bytes = render_contract_docx(
         party_a=party_a,
         party_b=party_b,
-        sign_date=sign_date,
+        sign_date=sign_date if requires_sign_date else None,
         contract_start_date=contract_start_date,
         contract_end_date=contract_end_date,
         replace_notice_days=replace_notice_days,
@@ -252,6 +281,8 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         hourly_wage=hourly_wage,
         management_fee=management_fee,
         service_fee=service_fee,
+        fee_amount=fee_amount,
+        service_months=service_months,
     )
 
     filename = _build_filename(party_a["name"], contract_start_date.year, "docx")
@@ -271,7 +302,7 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         party_a=party_a,
         party_b_company_id=party_b_company_id,
         party_b=party_b,
-        sign_date=form.get("sign_date"),
+        sign_date=form.get("sign_date") if requires_sign_date else "",
         contract_start_date=form.get("contract_start_date"),
         contract_end_date=form.get("contract_end_date"),
         replace_notice_days=replace_notice_days,
@@ -280,6 +311,8 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         hourly_wage=hourly_wage,
         management_fee=management_fee,
         service_fee=service_fee,
+        fee_amount=fee_amount,
+        service_months=service_months,
         blob_path=blob_path,
         pdf_blob_path=pdf_blob_path,
     )
@@ -342,3 +375,16 @@ def client_contract_preview(submission_id: str, request: Request, redirect=Depen
         media_type=content_type or "application/pdf",
         headers={"Content-Disposition": f"inline; filename*=UTF-8''{encoded_filename}"},
     )
+
+
+@router.post("/client-contracts/{submission_id}/delete")
+def client_contract_delete(submission_id: str, request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    account = platform_accounts.current_account(request)
+    record = get_submission(submission_id)
+    if record and can_view_submission(account, record):
+        client_contract_storage.delete_file(record.get("blob_path", ""))
+        client_contract_storage.delete_file(record.get("pdf_blob_path", ""))
+        delete_submission(submission_id)
+    return RedirectResponse(url="/client-contracts", status_code=303)

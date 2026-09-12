@@ -177,6 +177,83 @@ class RenderActualPaidContractDocxTests(unittest.TestCase):
         self.assertEqual(table.rows[7].cells[2].text, "實支實付")
 
 
+class RenderWhiteCollarReferralContractDocxTests(unittest.TestCase):
+    """white_collar_referral（白領代招）：跟另外兩個版本的合約主文完全不
+    同（獨立的「人力代招服務合約書」條文），也沒有 sign_date／
+    replace_notice_days／severance_payer 這幾個共用欄位，只需要
+    fee_amount／service_months 這兩個這個版本獨有的報價欄位。"""
+
+    def _render(self, **overrides):
+        defaults = dict(
+            party_a=_PARTY_A,
+            party_b=_PARTY_B,
+            contract_start_date=date(2026, 4, 16),
+            contract_end_date=date(2026, 12, 31),
+            remit_day="10",
+            contract_version="white_collar_referral",
+            fee_amount="二千五百元整",
+            service_months="12",
+        )
+        defaults.update(overrides)
+        content = render_contract_docx(**defaults)
+        path = "/tmp/_test_client_contract_white_collar_referral_render.docx"
+        with open(path, "wb") as f:
+            f.write(content)
+        return docx.Document(path)
+
+    def test_no_leftover_jinja_tags(self):
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    full_text += "\n" + cell.text
+        self.assertNotIn("{{", full_text)
+        self.assertNotIn("{%", full_text)
+
+    def test_party_a_and_b_names_and_dates_appear(self):
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("測試客戶股份有限公司", full_text)
+        self.assertIn("瑋政有限公司", full_text)
+        self.assertIn("115年04月16日", full_text)
+        self.assertIn("115年12月31日", full_text)
+
+    def test_no_separate_sign_date_reuses_contract_start_date_for_tail_signature(self):
+        # 這個版本沒有獨立的簽約日期，合約書末尾的簽署日期直接沿用合約
+        # 起始日——2026-09-12 使用者確認的行為。
+        doc = self._render(contract_start_date=date(2026, 4, 16))
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("中華民國115年04月16日", full_text)
+
+    def test_remit_day_substituted(self):
+        doc = self._render(remit_day="20")
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("甲方應於次月20日前匯款", full_text)
+
+    def test_no_replace_notice_or_severance_clause_in_body(self):
+        # 這個版本沒有撤換條款，主文不該出現另外兩版才有的撤換用字。
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertNotIn("撤換", full_text)
+        self.assertNotIn("資遣費用", full_text)
+
+    def test_attachment_two_sentence_is_removed(self):
+        # 使用者明確要求把提到附件二的句子整句拿掉（原始合約書範本裡的
+        # 附件二沒有對應內容）。
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertNotIn("附件二", full_text)
+
+    def test_fee_amount_and_service_months_substituted_in_table(self):
+        doc = self._render(fee_amount="三千元整", service_months="6")
+        table = doc.tables[0]
+        fee_cell_text = table.rows[1].cells[1].text
+        note_cell_text = table.rows[1].cells[2].text
+        self.assertIn("三千元整", fee_cell_text)
+        self.assertIn("6個月", note_cell_text)
+
+
 class ContractVersionConfigTests(unittest.TestCase):
     def test_default_version_exists_in_registry(self):
         self.assertIn(DEFAULT_CONTRACT_VERSION, CONTRACT_VERSIONS)
@@ -184,7 +261,7 @@ class ContractVersionConfigTests(unittest.TestCase):
     def test_severance_payer_options_are_the_two_parties(self):
         self.assertEqual(set(SEVERANCE_PAYER_OPTIONS), {"甲方", "乙方"})
 
-    def test_both_versions_have_existing_template_files(self):
+    def test_all_versions_have_existing_template_files(self):
         for code, version in CONTRACT_VERSIONS.items():
             self.assertTrue(
                 os.path.exists(version["template_path"]),
@@ -193,6 +270,19 @@ class ContractVersionConfigTests(unittest.TestCase):
 
     def test_actual_paid_version_maps_to_matching_project_contract_mode(self):
         self.assertEqual(CONTRACT_VERSIONS["actual_paid"]["project_contract_mode"], "實支實付")
+
+    def test_white_collar_referral_does_not_require_sign_date_or_severance_clause(self):
+        version = CONTRACT_VERSIONS["white_collar_referral"]
+        self.assertFalse(version["requires_sign_date"])
+        self.assertFalse(version["requires_severance_clause"])
+        self.assertEqual(version["project_contract_coop_category"], "代招")
+
+    def test_hourly_and_actual_paid_require_sign_date_and_severance_clause(self):
+        for code in ("hourly_flat_rate", "actual_paid"):
+            version = CONTRACT_VERSIONS[code]
+            self.assertTrue(version["requires_sign_date"], code)
+            self.assertTrue(version["requires_severance_clause"], code)
+            self.assertEqual(version["project_contract_coop_category"], "派遣", code)
 
 
 class CanViewSubmissionTests(unittest.TestCase):

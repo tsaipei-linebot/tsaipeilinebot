@@ -30,6 +30,7 @@
                 <th>預覽</th>
                 <th>下載</th>
                 <th>複製</th>
+                <th>刪除</th>
             </tr>
         </thead>
         <tbody>
@@ -64,6 +65,12 @@
                 </td>
                 <td>
                     <a href="/client-contracts/new?duplicate_from={{ record.id }}" class="btn btn-small" title="用這筆合約的內容預填新增表單，年底續下一年度合約時用">複製</a>
+                </td>
+                <td>
+                    <form method="post" action="/client-contracts/{{ record.id }}/delete" style="display:inline"
+                          onsubmit="return confirm('確定要刪除「{{ record.party_a_name }}」這筆合約紀錄嗎？刪除後無法復原。');">
+                        <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                    </form>
                 </td>
             </tr>
             {% endfor %}
