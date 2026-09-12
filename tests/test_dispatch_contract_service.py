@@ -123,6 +123,17 @@ class RenderContractDocxTests(unittest.TestCase):
         self.assertIn("這是測試用的自訂福利說明ABC", full_text)
         self.assertNotIn(CLAUSE_DEFAULTS["benefits_note"], full_text)
 
+    def test_pap_sign_boxes_keep_their_border(self):
+        """${pap_sign} 出現的兩個地方（第二條後面、文件最後）在真實範本裡是
+        用段落框線圍成一個方框，給另一套簽署系統貼簽名圖檔用——2026-09-12
+        發現第一版整理 master template 時這個框線被拿掉了（文字沒變但視覺
+        格式不見了），修正後這裡加一個回歸測試，確保之後改範本不會又不小心
+        把框線拿掉。"""
+        doc = self._render()
+        full_xml = doc.element.xml
+        self.assertEqual(full_xml.count("${pap_sign}"), 2)
+        self.assertEqual(full_xml.count("<w:pBdr>"), 6)
+
 
 class ClauseConfigConsistencyTests(unittest.TestCase):
     def test_clause_defaults_has_exactly_the_clause_order_keys(self):
