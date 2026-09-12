@@ -112,12 +112,14 @@
             {{ multiselect_native_select('foreign_student', foreign_student_options) }}
             <div class="field-block"><span class="field-caption">職缺週期 *（可複選）</span>{{ multiselect_widget('job_cycle') }}</div>
             {{ multiselect_native_select('job_cycle', job_cycle_options) }}
-            <label class="full-width"><span class="field-caption">工作內容(對內) *</span>
-                <textarea name="internal_desc" rows="3" placeholder="內部專員招募備忘、機台操作規範..." required>{{ form.internal_desc or '' }}</textarea>
-            </label>
-            <label class="full-width"><span class="field-caption">工作內容(對外) *</span>
-                <textarea name="external_desc" rows="3" placeholder="對外公開刊登文案、工作項目..." required>{{ form.external_desc or '' }}</textarea>
-            </label>
+            <div class="full-width job-desc-grid">
+                <label><span class="field-caption">工作內容(對內) *</span>
+                    <textarea name="internal_desc" rows="9" placeholder="內部專員招募備忘、機台操作規範..." required>{{ form.internal_desc or '' }}</textarea>
+                </label>
+                <label><span class="field-caption">工作內容(對外) *</span>
+                    <textarea name="external_desc" rows="9" placeholder="對外公開刊登文案、工作項目..." required>{{ form.external_desc or '' }}</textarea>
+                </label>
+            </div>
         </div>
     </div>
 
