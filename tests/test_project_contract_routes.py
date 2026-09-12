@@ -120,6 +120,15 @@ class ClientContractOptionsTests(unittest.TestCase):
             options = project_contract_routes._client_contract_options(account)
         self.assertEqual(options[0]["project_contract_coop_category"], "派遣")
 
+    def test_taiwanese_referral_maps_to_referral_coop_category(self):
+        # 2026-09-12 新增「台籍代招」版本：跟白領代招一樣對應「代招」。
+        account = {"username": "bob", "is_platform_admin": False}
+        records = [{"id": "1", "party_a_name": "A公司", "blob_path": "client_contracts/1/a.docx",
+                    "contract_version": "taiwanese_referral", "created_at": "2026-01-01"}]
+        with mock.patch.object(project_contract_routes, "list_visible_client_contracts", return_value=records):
+            options = project_contract_routes._client_contract_options(account)
+        self.assertEqual(options[0]["project_contract_coop_category"], "代招")
+
 
 class MarkClientContractSentTests(unittest.TestCase):
     """_mark_client_contract_sent_if_applicable()：送出成功後如果有帶

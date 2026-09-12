@@ -134,6 +134,18 @@
         </div>
     </div>
 
+    <div class="repayment-section" id="pricing-taiwanese_referral" data-pricing-for="taiwanese_referral" hidden>
+        <div class="repayment-section-title">五、附件費率（台籍代招）</div>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">代招服務費（佔薪資比例）*</span>
+                <input type="text" name="referral_fee_percentage" value="{{ form.referral_fee_percentage or '' }}" placeholder="如：人員應領薪資的15%">
+            </label>
+            <label><span class="field-caption">收取時間上限（個月）*</span>
+                <input type="text" name="referral_service_months" value="{{ form.referral_service_months or default_referral_service_months }}" placeholder="如：6">
+            </label>
+        </div>
+    </div>
+
     <button type="submit" class="btn btn-primary btn-block" id="client-contract-submit-btn">產生 Word 合約並下載</button>
 </form>
 <p class="back-link"><a href="/client-contracts">&larr; 回合約產生器歷史紀錄</a></p>

@@ -355,6 +355,51 @@ class SubmitValidationTests(unittest.TestCase):
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertIn("報價", context["error"])
 
+    def test_taiwanese_referral_does_not_require_sign_date_or_severance_fields(self):
+        form = self._multidict(self._full_valid_pairs(
+            contract_version="taiwanese_referral",
+            sign_date="", replace_notice_days="", severance_payer="",
+            hourly_wage="", management_fee="",
+            referral_fee_percentage="人員應領薪資的15%", referral_service_months="6",
+        ))
+        fake_bytes = b"FAKE-DOCX-BYTES"
+        with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                        return_value=self._fake_company()):
+                    with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                        result = asyncio.run(client_contract_routes.client_contract_submit(
+                            self._FakeRequest(self._account(), form), redirect=None,
+                        ))
+        mock_render.assert_called_once()
+        render_kwargs = mock_render.call_args.kwargs
+        self.assertIsNone(render_kwargs["sign_date"])
+        self.assertEqual(render_kwargs["referral_fee_percentage"], "人員應領薪資的15%")
+        self.assertEqual(render_kwargs["referral_service_months"], "6")
+        mock_save.assert_called_once()
+        save_kwargs = mock_save.call_args.kwargs
+        self.assertEqual(save_kwargs["sign_date"], "")
+        self.assertEqual(result.body, fake_bytes)
+
+    def test_missing_pricing_fields_blocks_submit_for_taiwanese_referral(self):
+        form = self._multidict(self._full_valid_pairs(
+            contract_version="taiwanese_referral",
+            sign_date="", replace_notice_days="", severance_payer="",
+            hourly_wage="", management_fee="",
+            referral_fee_percentage="", referral_service_months="",
+        ))
+        with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                        return_value=self._fake_company()):
+                    with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+                        asyncio.run(client_contract_routes.client_contract_submit(
+                            self._FakeRequest(self._account(), form), redirect=None,
+                        ))
+        mock_save.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("報價", context["error"])
+
 
 class DuplicateFromTests(unittest.TestCase):
     """GET /client-contracts/new?duplicate_from=xxx：把既有紀錄的欄位帶入
