@@ -24,6 +24,9 @@
     <label>電話
         <input type="text" name="phone" value="{{ company.phone if company else '' }}">
     </label>
+    <label>地址
+        <input type="text" name="address" value="{{ company.address if company else '' }}">
+    </label>
     <label>統一編號
         <input type="text" name="tax_id" value="{{ company.tax_id if company else '' }}" required>
     </label>

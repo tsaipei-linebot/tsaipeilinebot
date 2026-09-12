@@ -13,6 +13,7 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, ImageMessage
 
 import accounts_routes
+import client_contract_routes
 import company_routes
 import chicken_points_routes
 import dispatch_contract_routes
@@ -84,6 +85,11 @@ app.include_router(chicken_points_routes.router)
 # 模組（模組代碼 dispatch_contracts，見 platform_accounts.MODULES），直接
 # 掛在根 app（見 dispatch_contract_routes.py）。
 app.include_router(dispatch_contract_routes.router)
+# /client-contracts：合約產生器（材霈跟客戶公司的企業對企業服務合約，跟
+# dispatch_contracts 的個別派遣員工契約是完全不同的兩份文件），一樣是
+# 獨立的部門模組（模組代碼 client_contracts，見 platform_accounts.MODULES），
+# 直接掛在根 app（見 client_contract_routes.py）。
+app.include_router(client_contract_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，

@@ -1,6 +1,8 @@
+import asyncio
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -74,6 +76,118 @@ class RequireAccessDependencyTests(unittest.TestCase):
         account = {"username": "boss", "name": "Boss", "modules": {}, "is_platform_admin": True}
         result = project_contract_routes._require_access(self._FakeRequest(account))
         self.assertIsNone(result)
+
+
+class ClientContractOptionsTests(unittest.TestCase):
+    """_client_contract_options()：2026-09-12 新增「從合約產生器帶入」選單，
+    只列出這個帳號看得到、而且真的有存到 Word 檔的紀錄，並且依
+    contract_version 對應出這裡的「簽約模式」給前端 JS 自動帶入用。"""
+
+    def test_filters_out_records_without_blob_path(self):
+        account = {"username": "bob", "is_platform_admin": False}
+        records = [
+            {"id": "1", "party_a_name": "A公司", "blob_path": "client_contracts/1/a.docx",
+             "contract_version": "hourly_flat_rate", "created_at": "2026-01-01"},
+            {"id": "2", "party_a_name": "B公司", "blob_path": "", "contract_version": "hourly_flat_rate"},
+        ]
+        with mock.patch.object(project_contract_routes, "list_visible_client_contracts", return_value=records):
+            options = project_contract_routes._client_contract_options(account)
+        self.assertEqual([o["id"] for o in options], ["1"])
+
+    def test_maps_contract_version_to_project_contract_mode(self):
+        account = {"username": "bob", "is_platform_admin": False}
+        records = [{"id": "1", "party_a_name": "A公司", "blob_path": "client_contracts/1/a.docx",
+                    "contract_version": "hourly_flat_rate", "created_at": "2026-01-01"}]
+        with mock.patch.object(project_contract_routes, "list_visible_client_contracts", return_value=records):
+            options = project_contract_routes._client_contract_options(account)
+        self.assertEqual(options[0]["project_contract_mode"], "一口價")
+
+
+class MarkClientContractSentTests(unittest.TestCase):
+    """_mark_client_contract_sent_if_applicable()：送出成功後如果有帶
+    from_client_contract_id 才標記，而且要先確認這個帳號真的看得到那筆
+    合約產生器紀錄，避免竄改表單欄位去標記別人的紀錄。"""
+
+    def test_blank_id_is_noop(self):
+        with mock.patch.object(project_contract_routes, "mark_sent_to_project_contracts") as mock_mark:
+            project_contract_routes._mark_client_contract_sent_if_applicable({"username": "bob"}, "")
+        mock_mark.assert_not_called()
+
+    def test_record_not_found_is_noop(self):
+        with mock.patch.object(project_contract_routes, "get_client_contract", return_value=None):
+            with mock.patch.object(project_contract_routes, "mark_sent_to_project_contracts") as mock_mark:
+                project_contract_routes._mark_client_contract_sent_if_applicable({"username": "bob"}, "x")
+        mock_mark.assert_not_called()
+
+    def test_no_view_permission_is_noop(self):
+        record = {"id": "x", "submitted_by": "alice"}
+        with mock.patch.object(project_contract_routes, "get_client_contract", return_value=record):
+            with mock.patch.object(project_contract_routes, "can_view_client_contract", return_value=False):
+                with mock.patch.object(project_contract_routes, "mark_sent_to_project_contracts") as mock_mark:
+                    project_contract_routes._mark_client_contract_sent_if_applicable({"username": "bob"}, "x")
+        mock_mark.assert_not_called()
+
+    def test_visible_record_gets_marked(self):
+        record = {"id": "x", "submitted_by": "bob"}
+        with mock.patch.object(project_contract_routes, "get_client_contract", return_value=record):
+            with mock.patch.object(project_contract_routes, "can_view_client_contract", return_value=True):
+                with mock.patch.object(project_contract_routes, "mark_sent_to_project_contracts") as mock_mark:
+                    project_contract_routes._mark_client_contract_sent_if_applicable({"username": "bob"}, "x")
+        mock_mark.assert_called_once_with("x")
+
+
+class SubmitMarksClientContractOnSuccessTests(unittest.TestCase):
+    """POST /project-contracts 送出成功、且表單帶了 from_client_contract_id
+    時，要呼叫 _mark_client_contract_sent_if_applicable()。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user, form_data):
+            self.session = SubmitMarksClientContractOnSuccessTests._FakeSession({"user": user})
+            self._form_data = form_data
+
+        async def form(self):
+            return self._form_data
+
+    class _FakeUploadFile:
+        def __init__(self, filename="合約.docx", content=b"fake docx", content_type="application/msword"):
+            self.filename = filename
+            self.content_type = content_type
+            self._content = content
+
+        async def read(self):
+            return self._content
+
+    def _multidict(self, pairs):
+        class _Fake:
+            def __init__(self, pairs):
+                self._pairs = pairs
+
+            def get(self, key, default=None):
+                for k, v in self._pairs:
+                    if k == key:
+                        return v
+                return default
+
+        return _Fake(pairs)
+
+    def test_from_client_contract_id_triggers_mark(self):
+        account = {"username": "bob", "name": "Bob", "modules": {"project_contracts": "staff"}, "is_platform_admin": False}
+        form = self._multidict([
+            ("vendor", "測試客戶"), ("coop_category", "派遣"), ("contract_mode", "一口價"),
+            ("interview_specialist", "王大明"), ("visit_supervisor", "李協理"),
+            ("from_client_contract_id", "cc-123"),
+        ])
+        with mock.patch.object(project_contract_routes, "submit_project_contract",
+                                return_value={"status": "success"}):
+            with mock.patch.object(project_contract_routes, "_mark_client_contract_sent_if_applicable") as mock_mark:
+                asyncio.run(project_contract_routes.project_contract_submit(
+                    self._FakeRequest(account, form), self._FakeUploadFile(), redirect=None,
+                ))
+        mock_mark.assert_called_once_with(account, "cc-123")
 
 
 if __name__ == "__main__":

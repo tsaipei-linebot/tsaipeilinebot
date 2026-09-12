@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}合約產生器 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">合約產生器</h1>
+</div>
+<p class="hint">這裡列出你自己送出過、或你的部屬送出過的合約紀錄，方便之後同一個客戶要用時直接重新下載。</p>
+
+{% if generated %}
+<p class="success">合約已產生並下載，紀錄也已存檔。</p>
+{% endif %}
+
+<p><a href="/client-contracts/new" class="btn btn-primary">+ 產生新的合約</a></p>
+
+{% if not records %}
+<p class="empty">目前還沒有任何紀錄。</p>
+{% else %}
+<input type="text" class="sheet-search" data-search-for="client-contracts-table" placeholder="搜尋客戶名稱...">
+<div class="table-scroll">
+    <table class="data-table sticky-head" id="client-contracts-table">
+        <thead>
+            <tr>
+                <th>甲方（客戶）</th>
+                <th>乙方</th>
+                <th>合約版本</th>
+                <th>合約期間</th>
+                <th>送出人</th>
+                <th>送出時間</th>
+                <th>專案合約維護</th>
+                <th>預覽</th>
+                <th>下載</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for record in records %}
+            <tr>
+                <td>{{ record.party_a_name }}</td>
+                <td>{{ record.party_b_name }}</td>
+                <td>{{ contract_versions.get(record.contract_version, {}).get("label", record.contract_version) }}</td>
+                <td>{{ record.contract_start_date }} ~ {{ record.contract_end_date }}</td>
+                <td>{{ record.submitted_by }}</td>
+                <td>{{ record.created_at }}</td>
+                <td>
+                    {% if record.sent_to_project_contracts_at %}
+                    <span class="success" style="margin:0;">已送出</span>
+                    {% else %}
+                    <span title="還沒被拿去專案合約維護送出過">-</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if record.pdf_blob_path %}
+                    <a href="/client-contracts/{{ record.id }}/preview" target="_blank" class="btn btn-small">預覽</a>
+                    {% else %}
+                    <span title="這筆紀錄沒有預覽檔，可能是產生當下 PDF 轉檔失敗，Word 檔案不受影響，仍可正常下載">-</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if record.blob_path %}
+                    <a href="/client-contracts/{{ record.id }}/download" class="btn btn-small">下載</a>
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<script>
+document.querySelectorAll('.sheet-search').forEach(function (input) {
+    input.addEventListener('input', function () {
+        var table = document.getElementById(input.dataset.searchFor);
+        var keyword = input.value.trim().toLowerCase();
+        table.querySelectorAll('tbody tr').forEach(function (tr) {
+            tr.hidden = keyword.length > 0 && tr.textContent.toLowerCase().indexOf(keyword) === -1;
+        });
+    });
+});
+</script>
+{% endif %}
+<p class="back-link"><a href="/portal">&larr; 回內部系統入口</a></p>
+{% endblock %}

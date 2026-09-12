@@ -60,6 +60,12 @@ _MODULE_CARD_INFO = {
         # 沒有獨立的登入頁。
         "href": "/dispatch-contracts",
     },
+    "client_contracts": {
+        "description": "填入客戶公司資料、合約期間與費率，自動套版產生企業服務合約 Word 檔並存檔",
+        # 跟 job_listings 一樣直接掛在根 app（見 client_contract_routes.py），
+        # 沒有獨立的登入頁。
+        "href": "/client-contracts",
+    },
 }
 
 

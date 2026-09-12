@@ -47,15 +47,13 @@ LibreOffice（``soffice --convert-to pdf``，見 ``convert_docx_to_pdf()``）
 """
 import io
 import os
-import subprocess
-import tempfile
-import uuid
 from datetime import datetime, timezone
 
 from docxtpl import DocxTemplate
 
 import platform_accounts
 from platform_db import get_db
+from services.docx_pdf_conversion import convert_docx_to_pdf as _convert_docx_to_pdf
 
 CONTRACTS_COLLECTION = "dispatch_contracts"
 
@@ -170,35 +168,10 @@ def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
     """把 Word 檔內容轉成 PDF（給列表頁內嵌預覽用），失敗回傳 ``None``
     （逾時、找不到 ``soffice``、輸出檔案不存在都算失敗），呼叫端不應該讓
     這一步的失敗擋住整個契約產生流程——見本檔案開頭「Word 排版預覽」的
-    說明。每次呼叫都用一個全新的暫存目錄當 LibreOffice 的
-    ``UserInstallation``（``-env:UserInstallation``），避免多個請求同時
-    轉檔時搶用同一份使用者設定檔互相卡住。"""
-    with tempfile.TemporaryDirectory(prefix="dispatch_contract_pdf_") as tmpdir:
-        docx_path = os.path.join(tmpdir, "input.docx")
-        with open(docx_path, "wb") as f:
-            f.write(docx_bytes)
-        profile_dir = os.path.join(tmpdir, f"lo_profile_{uuid.uuid4().hex}")
-        try:
-            subprocess.run(
-                [
-                    "soffice", "--headless", "--norestore",
-                    f"-env:UserInstallation=file://{profile_dir}",
-                    "--convert-to", "pdf", "--outdir", tmpdir, docx_path,
-                ],
-                check=True,
-                capture_output=True,
-                timeout=60,
-            )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError) as err:
-            print(f"[派遣契約 PDF 轉檔失敗] {err}")
-            return None
-
-        pdf_path = os.path.join(tmpdir, "input.pdf")
-        if not os.path.exists(pdf_path):
-            print("[派遣契約 PDF 轉檔失敗] LibreOffice 執行完成但找不到輸出的 PDF 檔案")
-            return None
-        with open(pdf_path, "rb") as f:
-            return f.read()
+    說明。實際轉檔邏輯在 ``services/docx_pdf_conversion.py``（跟
+    ``client_contract_service.py`` 共用），這裡只是保留原本的函式名稱/
+    匯入路徑，呼叫端（``dispatch_contract_routes.py``、既有測試）不用改。"""
+    return _convert_docx_to_pdf(docx_bytes, log_prefix="[派遣契約 PDF 轉檔失敗]")
 
 
 def save_submission(*, submitted_by: str, client_name: str, work_address: str, work_content: str,
