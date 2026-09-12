@@ -1069,7 +1069,14 @@ webhook 端點/密鑰（`delivery/incident_report.py` + `/delivery/api/incident-
    （`/delivery/api/incident-weekly-reminder-text`）取得未結案案件的提醒文字，
    有內容才用 GAS 自己手上的 `CHANNEL1_LINE_TOKEN` 推播回**原群組**（跟車輛
    回報同一個群組，不是上面那個「第二個群組」）——這樣 CHANNEL1 的 Token
-   全程只存在 GAS 那邊，Python／Cloud Run 完全不需要它。
+   全程只存在 GAS 那邊，Python／Cloud Run 完全不需要它。提醒文字
+   （`delivery/incident_report.py` 的 `format_weekly_reminder()`）每一筆
+   都會還原成當初回報時的完整 11 個欄位格式（`_format_incident_detail()`），
+   不是只顯示姓名/廠商/時間/地點的一行摘要，方便主管不用登入系統也看得懂
+   整起事件。因為單筆內容變長很多，`_MAX_ITEMS_IN_WEEKLY_REMINDER` 從原本
+   的 20 筆調低成 8 筆，避免真的遇到未結案案件很多時整則訊息超過 LINE
+   文字訊息的長度上限、被 API 直接拒收（超過的部分一樣會用「還有 N 筆，
+   請登入系統查看」補一句，不會靜默漏掉）。
 
 系統登入時的提醒（首頁看到「⚠️ 目前有 N 筆未結案意外事件」）是純網頁功能，
 `home_routes.py` 讀 `repository.list_open_incident_events()` 的筆數，跟 LINE
