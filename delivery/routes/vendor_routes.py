@@ -260,7 +260,15 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
         if file_path is not None or resolved_expiry_date is not None:
             repository.update_personnel_document(personnel_id, code, file_path=file_path, expiry_date=resolved_expiry_date)
 
-    redirect_url = f"/delivery/personnel/{personnel_id}"
     if id_number_error:
-        redirect_url += "?error=id_number"
-    return RedirectResponse(url=redirect_url, status_code=303)
+        return RedirectResponse(url=f"/delivery/personnel/{personnel_id}?error=id_number", status_code=303)
+
+    # 送出成功後跳回原本的「人員狀況」清單頁（2026-09-13 使用者要求），
+    # 不是留在詳細頁——用 person（送出前查到的舊資料）裡的廠商，不是
+    # 更新後的新廠商：同仁通常是從這個廠商的清單點進來改一筆人員，
+    # 改完理所當然是要回到「原本待處理的清單」，就算這次同時把所屬廠商
+    # 改到別的廠商去了，也是回到原本這個清單。
+    old_vendor_code = person.get("vendor")
+    if old_vendor_code in VENDOR_MAP:
+        return RedirectResponse(url=f"/delivery/vendor/{old_vendor_code}", status_code=303)
+    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
