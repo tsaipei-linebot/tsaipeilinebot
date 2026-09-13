@@ -17,6 +17,8 @@
 <p class="error">不能刪除擁有全平台管理權限的帳號。</p>
 {% elif error == "not_found" %}
 <p class="error">找不到這個帳號，可能已經被刪除了。</p>
+{% elif error == "cannot_impersonate_admin" %}
+<p class="error">不能切換成全平台管理員帳號的視角。</p>
 {% endif %}
 
 {% for department, dept_accounts in grouped_accounts %}
@@ -59,7 +61,10 @@
                 </td>
                 <td>
                     <a href="/accounts/{{ a.username }}/edit">編輯</a>
-                    {% if not a.is_platform_admin %}
+                    {% if not a.is_platform_admin and a.username != user.username %}
+                    <form method="post" action="/accounts/{{ a.username }}/impersonate" style="display:inline">
+                        <button type="submit" class="btn btn-small" title="切換成這個帳號的視角，用來確認畫面或協助操作">檢視此帳號</button>
+                    </form>
                     <form method="post" action="/accounts/{{ a.username }}/delete" style="display:inline"
                           onsubmit="return confirm('確定要刪除帳號「{{ a.username }}」嗎？');">
                         <button type="submit" class="btn btn-danger btn-small">刪除</button>

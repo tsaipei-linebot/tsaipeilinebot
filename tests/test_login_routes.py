@@ -58,5 +58,31 @@ class LoginPageRoutingTests(unittest.TestCase):
         self.assertEqual(resp.headers["location"], "/login")
 
 
+class StopImpersonationRouteTests(unittest.TestCase):
+    """POST /impersonate/stop（2026-09-13 新增）：把 session 換回管理員原本
+    的帳號，見 accounts_routes.py 的 impersonate_account()。"""
+
+    class _FakeRequest:
+        def __init__(self, session):
+            self.session = session
+
+    def test_restores_admin_account_from_impersonator(self):
+        admin = {"username": "boss", "name": "老闆", "is_platform_admin": True}
+        staff = {"username": "staff1", "name": "小明", "is_platform_admin": False}
+        request = self._FakeRequest({"user": staff, "impersonator": admin})
+        result = login_routes.stop_impersonation(request)
+        self.assertEqual(result.status_code, 303)
+        self.assertTrue(result.headers["location"].endswith("/accounts"))
+        self.assertEqual(request.session["user"], admin)
+        self.assertNotIn("impersonator", request.session)
+
+    def test_noop_when_not_impersonating(self):
+        staff = {"username": "staff1", "name": "小明", "is_platform_admin": False}
+        request = self._FakeRequest({"user": staff})
+        result = login_routes.stop_impersonation(request)
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(request.session["user"], staff)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3652,3 +3652,49 @@ repo 裡，跟其他版本一樣走 `git push` ＋ Cloud Run 重新部署。
 `dispatch_contract_storage.delete_file()`、`services/dispatch_contract_
 service.py` 的 `delete_submission()`，跟 `client_contract_storage.py`／
 `services/client_contract_service.py` 的對應函式是同一種寫法。
+
+## 新增：全平台管理員可以切換帳號視角（2026-09-13）
+
+使用者的需求：「能讓最高權限管理員有一個功能請自己切換任何人帳號視角
+嗎」——目前所有帳號都是老闆本人在維護，這個功能讓老闆不用知道對方密碼，
+就能暫時用某個同仁帳號的視角看畫面（例如同仁反應「我這邊看到的權限
+好像不對」，老闆可以直接切過去確認，而不是用猜的）。
+
+**機制**：所有權限判斷都只看 `request.session["user"]`（見
+`platform_accounts.current_account()`），所以「切換視角」只要換掉這個
+session 欄位就好，不用改任何一支既有的權限檢查程式碼：
+
+- `POST /accounts/{username}/impersonate`（`accounts_routes.py`）：只有
+  `require_platform_admin` 擋得住。把目前的管理員帳號存進
+  `session["impersonator"]`，`session["user"]` 換成目標帳號的最新資料
+  （`platform_accounts.get_account()` 現查，不是拿列表頁快取的舊資料）。
+  目標帳號如果本身也是全平台管理員則拒絕切換（避免以後多組管理員帳號
+  互相切換的邊角案例，雖然目前只有一組管理員用不到）。
+- `POST /impersonate/stop`（`login_routes.py`）：把 `session["user"]`
+  換回 `session.pop("impersonator")`，回到 `/accounts`。沒有在切換視角
+  中就直接呼叫，安靜跳過（不算錯誤）。
+- **不會有巢狀切換**：切換視角後 `current_account()` 回傳的就是目標
+  帳號（一定不是全平台管理員，因為上面擋住了），所以
+  `require_platform_admin` 這一關本身就會擋住「切換到別人視角後，
+  再切到第三個人視角」這件事，不用另外寫檢查邏輯。
+- **畫面**：`templates/base.html` 最上面（`{% if request.session.get(
+  'impersonator') %}`）顯示一條提醒橫幅「目前正在以「某某人」的視角
+  檢視系統（您本人的帳號是「老闆」）」＋「停止檢視，返回我的帳號」
+  按鈕，全站每一頁都看得到（不管在哪個模組，因為 Starlette 的
+  `Jinja2Templates.TemplateResponse()` 本來就會自動把 `request` 塞進
+  每個樣板的 context，不用每支路由額外傳一個變數進去）。因為切換後
+  `user.is_platform_admin` 是 `False`，導覽列原本「帳號權限管理／部門
+  管理／公司管理／廠商管理」這幾個管理員專屬連結會自動消失，不用另外
+  處理。
+- **列表頁**：`templates/accounts_list.html` 每個非管理員、非自己的
+  帳號那一列多一個「檢視此帳號」按鈕（不用確認對話框，這不是刪除性
+  操作，隨時可以按「停止檢視」退回來）。
+
+**沒有新增環境變數，也沒有需要額外部署的步驟**——純粹是 session
+（cookie）裡多存一個欄位，跟既有的登入機制共用同一套 `SessionMiddleware`，
+`git pull` 之後照平常的部署流程重新部署 Cloud Run 就會生效。
+
+測試：`tests/test_accounts_routes.py` 的 `ImpersonateAccountRouteTests`
+（切換成功、目標帳號不存在、目標帳號是管理員時擋下來、`redirect` 已經
+擋過時不重複判斷）、`tests/test_login_routes.py` 的
+`StopImpersonationRouteTests`（正常換回來、沒在切換視角時安靜跳過）。

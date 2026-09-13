@@ -53,3 +53,14 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse(url="/login", status_code=303)
+
+
+@router.post("/impersonate/stop")
+def stop_impersonation(request: Request):
+    """結束「切換帳號視角」，把 session 換回管理員自己的帳號——見
+    accounts_routes.py 的 impersonate_account()。沒有在切換視角中就直接
+    導回 /accounts，不算錯誤（例如按兩次、或分頁沒同步到最新狀態）。"""
+    impersonator = request.session.pop("impersonator", None)
+    if impersonator:
+        request.session["user"] = impersonator
+    return RedirectResponse(url="/accounts", status_code=303)
