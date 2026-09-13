@@ -15,10 +15,26 @@ Run 服務（不只配送部，其他子系統也一起）啟動失敗，風險�
 欄位裡的 `company_id` 對應 `platform_companies.py` 那份公司主檔的文件
 ID（也就是公司的「簡稱」），允許空白——不是每個廠商當下都已經確定簽約
 公司，先讓廠商本身可以建起來，保險相關欄位跟公司欄位晚點再補都可以。
+
+**2026-09-13 新增 `tax_id`（統一編號）／`contract_year`（合約年）兩個
+欄位，並新增 `create_vendor_auto()`／`vendor_name_exists()` 兩支函式**，
+給合約產生器／派遣契約產生器送出成功後自動同步資料用（見
+`services/vendor_sync.py`）：
+- 合約產生器每次送出都會呼叫 `create_vendor_auto()` 新增一筆，同一家
+  客戶簽了好幾年、甚至同一年簽了好幾份，都各自留一筆，不會互相覆蓋，
+  除非同仁自己到 `/vendors` 手動刪除。
+- 派遣契約產生器沒有統一編號/合約年這些資料，送出時只會先用
+  `vendor_name_exists()` 查廠商管理裡有沒有同名紀錄，沒有才呼叫
+  `create_vendor_auto()` 補一筆只有名稱的陽春紀錄，避免同一個客戶重複
+  產生很多份派遣契約時，把廠商管理灌爆一堆重複的同名紀錄。
+
+跟同仁在 `/vendors` 網頁手動建立廠商（`create_vendor()`，代號當文件 ID）
+不同，`create_vendor_auto()` 的文件 ID 是交給 Firestore 自動配發——因為
+統一編號以後會對到好幾筆不同年份的紀錄，不能拿來當唯一的文件 ID。
 """
 from platform_db import vendors_ref
 
-FIELDS = ("code", "name", "company_id", "note")
+FIELDS = ("code", "name", "company_id", "note", "tax_id", "contract_year")
 
 
 def _to_vendor(vendor_id: str, data: dict) -> dict:
@@ -57,6 +73,32 @@ def update_vendor(vendor_id: str, fields: dict):
 
 def delete_vendor(vendor_id: str):
     vendors_ref().document(vendor_id).delete()
+
+
+def create_vendor_auto(fields: dict) -> str:
+    """自動建立一筆廠商紀錄，文件 ID 交給 Firestore 自動配發（不像
+    `create_vendor()` 那樣需要呼叫端指定代號）——合約產生器／派遣契約
+    產生器送出成功後自動同步資料時呼叫這支，不是同仁在 /vendors 網頁上
+    手動建立廠商的那個流程。「代號」這欄如果呼叫端沒指定，預設帶入統一
+    編號（沒有的話退而求其次用廠商名稱）方便同仁在列表上辨識，之後仍可
+    自己到 /vendors 修改，不影響文件本身的識別。回傳新建立的文件 ID。"""
+    payload = {field: (fields.get(field) or "").strip() for field in FIELDS}
+    if not payload["code"]:
+        payload["code"] = payload["tax_id"] or payload["name"]
+    doc_ref = vendors_ref().document()
+    doc_ref.set(payload)
+    return doc_ref.id
+
+
+def vendor_name_exists(name: str) -> bool:
+    """廠商管理裡有沒有已經存在同名（去除頭尾空白後完全相同）的紀錄——
+    只比對名稱，不看統一編號／合約年／代號，派遣契約產生器同步資料時用
+    這支判斷「要不要自動補一筆」，見 create_vendor_auto() 的說明。"""
+    name = (name or "").strip()
+    if not name:
+        return False
+    query = vendors_ref().where("name", "==", name).limit(1)
+    return next(iter(query.stream()), None) is not None
 
 
 def validate_vendor_fields(fields: dict) -> str:

@@ -59,6 +59,14 @@ lookup.py`），查得到就自動帶入，查不到就手動輸入全部欄位�
 MODULES`），跟派遣契約產生器一樣，只有送出者本人、送出者的主管
 （`manager_usernames`）、或全平台管理員看得到某筆紀錄。
 
+**同步到廠商管理（2026-09-13 新增）**：每次送出成功，`client_contract_
+routes.py` 都會呼叫 `services/vendor_sync.py` 的
+`sync_vendor_from_client_contract()`，把這次的甲方名稱/統一編號/合約年/
+乙方公司自動存一筆到廠商管理（`/vendors`，`platform_vendors.py`）——不
+檢查重複，同一家客戶簽了好幾年、甚至同一年簽了好幾份合約，都各自留
+一筆，之後要清理由同仁自己到 /vendors 手動刪除，詳見
+`services/vendor_sync.py` 開頭的說明。
+
 **Word 排版預覽**：產生 Word 檔的同時，另外用 LibreOffice 轉一份 PDF
 存起來（見 `services/docx_pdf_conversion.py`，跟派遣契約產生器共用同一支
 轉檔工具），失敗容錯設計跟派遣契約產生器一致，轉檔失敗不影響 Word 檔案
