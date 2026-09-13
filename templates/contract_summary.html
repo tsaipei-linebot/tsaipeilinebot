@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}總表 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">總表</h1>
+</div>
+<p class="hint">
+    整理「合約產生器」「派遣契約產生器」的紀錄，方便年底盤點隔年所有客戶的合約方式、薪資、服務費計算。
+    只看得到自己送出、或自己部屬送出的紀錄，跟兩個產生器本身的可見範圍規則一致。
+</p>
+
+{% if has_client_access %}
+<h2>合約產生器總表</h2>
+<form method="get" action="/contract-summary" class="filter-bar">
+    {% for year in available_years %}
+    <label style="margin-right:1em;">
+        <input type="checkbox" name="years" value="{{ year }}" {% if year in selected_years %}checked{% endif %}
+               onchange="this.form.submit()">
+        {{ year }} 年
+    </label>
+    {% endfor %}
+</form>
+<p><a href="/contract-summary/export/client-contracts.xlsx?{% for year in selected_years %}years={{ year }}&{% endfor %}"
+      class="btn btn-small">匯出 Excel</a></p>
+
+{% if not client_rows %}
+<p class="empty">勾選的年份目前還沒有任何合約紀錄。</p>
+{% else %}
+<div class="table-scroll">
+    <table class="data-table sticky-head">
+        <thead>
+            <tr>
+                <th>客戶名稱</th>
+                <th>統一編號</th>
+                <th>合約年</th>
+                <th>簽約公司</th>
+                <th>合約版本</th>
+                <th>報價方式</th>
+                <th>匯款截止日</th>
+                <th>送出人</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in client_rows %}
+            <tr>
+                <td>{{ row.client_name }}</td>
+                <td>{{ row.tax_id }}</td>
+                <td>{{ row.year }}</td>
+                <td>{{ row.party_b_name }}</td>
+                <td>{{ contract_versions.get(row.contract_version, {}).get("label", row.contract_version) }}</td>
+                <td>{{ row.pricing_summary }}</td>
+                <td>{{ row.remit_day }}</td>
+                <td>{{ row.submitted_by }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endif %}
+
+{% if has_dispatch_access %}
+<h2>派遣契約總表</h2>
+<p class="hint">每個客戶只顯示最新一份送出的派遣契約，不分年份；同一份契約裡的每個班別各自一列。</p>
+<p><a href="/contract-summary/export/dispatch-contracts.xlsx" class="btn btn-small">匯出 Excel</a></p>
+
+{% if not dispatch_rows %}
+<p class="empty">目前還沒有任何派遣契約紀錄。</p>
+{% else %}
+<div class="table-scroll">
+    <table class="data-table sticky-head">
+        <thead>
+            <tr>
+                <th>客戶名稱</th>
+                <th>最近異動年份</th>
+                <th>職稱/班別</th>
+                <th>工作時間</th>
+                <th>時薪</th>
+                <th>工時獎金</th>
+                <th>加班</th>
+                <th>結薪週期</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in dispatch_rows %}
+            <tr>
+                <td>{{ row.client_name }}</td>
+                <td>{{ row.updated_year or "-" }}</td>
+                <td>{{ row.title }}</td>
+                <td>{{ row.hours }}</td>
+                <td>{{ row.wage }}</td>
+                <td>{{ row.bonus }}</td>
+                <td>{{ row.overtime }}</td>
+                <td>{{ row.pay_cycle }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endif %}
+
+<p class="back-link"><a href="/portal">&larr; 回內部系統入口</a></p>
+{% endblock %}

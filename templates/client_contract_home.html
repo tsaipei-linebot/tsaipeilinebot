@@ -10,7 +10,12 @@
 <p class="success">合約已產生並下載，紀錄也已存檔。</p>
 {% endif %}
 
-<p><a href="/client-contracts/new" class="btn btn-primary">+ 產生新的合約</a></p>
+<p>
+    <a href="/client-contracts/new" class="btn btn-primary">+ 產生新的合約</a>
+    {% if show_summary_link %}
+    <a href="/contract-summary" class="btn">查看總表</a>
+    {% endif %}
+</p>
 
 {% if not records %}
 <p class="empty">目前還沒有任何紀錄。</p>
