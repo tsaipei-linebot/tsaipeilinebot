@@ -17,7 +17,7 @@ class ParsePersonnelCsvTests(unittest.TestCase):
     def test_valid_rows_with_vendor_name_and_code(self):
         content = (
             "廠商,姓名,身分證字號,電話\n"
-            "蝦皮,王小明,A123456789,0912345678\n"
+            "蝦皮三輪,王小明,A123456789,0912345678\n"
             "ud,李小華,,\n"
         ).encode("utf-8")
         rows, header_error = parse_personnel_csv(content)
@@ -36,7 +36,7 @@ class ParsePersonnelCsvTests(unittest.TestCase):
         self.assertIn("黑貓", rows[0]["error"])
 
     def test_missing_name_is_reported_as_error(self):
-        content = "廠商,姓名\n蝦皮,\n".encode("utf-8")
+        content = "廠商,姓名\n蝦皮三輪,\n".encode("utf-8")
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertEqual(len(rows), 1)
@@ -44,13 +44,13 @@ class ParsePersonnelCsvTests(unittest.TestCase):
         self.assertEqual(rows[0]["error"], "姓名為空")
 
     def test_completely_blank_row_is_skipped_silently(self):
-        content = "廠商,姓名\n蝦皮,王小明\n,\n".encode("utf-8")
+        content = "廠商,姓名\n蝦皮三輪,王小明\n,\n".encode("utf-8")
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertEqual(len(rows), 1)
 
     def test_missing_required_header_returns_header_error(self):
-        content = "廠商\n蝦皮\n".encode("utf-8")
+        content = "廠商\n蝦皮三輪\n".encode("utf-8")
         rows, header_error = parse_personnel_csv(content)
         self.assertEqual(rows, [])
         self.assertIn("姓名", header_error)
@@ -61,48 +61,48 @@ class ParsePersonnelCsvTests(unittest.TestCase):
         self.assertIsNotNone(header_error)
 
     def test_big5_encoded_file_is_decoded_correctly(self):
-        content = "廠商,姓名\n蝦皮,王小明\n".encode("cp950")
+        content = "廠商,姓名\n蝦皮三輪,王小明\n".encode("cp950")
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertEqual(rows[0]["name"], "王小明")
 
     def test_utf8_bom_is_stripped(self):
-        content = "廠商,姓名\n蝦皮,王小明\n".encode("utf-8-sig")
+        content = "廠商,姓名\n蝦皮三輪,王小明\n".encode("utf-8-sig")
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["ok"])
 
     def test_hire_date_with_dash_separator_is_normalized(self):
-        content = "廠商,姓名,到職日期\n蝦皮,王小明,2024-01-31\n".encode("utf-8")
+        content = "廠商,姓名,到職日期\n蝦皮三輪,王小明,2024-01-31\n".encode("utf-8")
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertTrue(rows[0]["ok"])
         self.assertEqual(rows[0]["hire_date"], "2024-01-31")
 
     def test_hire_date_with_slash_separator_is_normalized(self):
-        content = "廠商,姓名,到職日期\n蝦皮,王小明,2024/1/31\n".encode("utf-8")
+        content = "廠商,姓名,到職日期\n蝦皮三輪,王小明,2024/1/31\n".encode("utf-8")
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertTrue(rows[0]["ok"])
         self.assertEqual(rows[0]["hire_date"], "2024-01-31")
 
     def test_hire_date_left_blank_is_valid(self):
-        content = "廠商,姓名,到職日期\n蝦皮,王小明,\n".encode("utf-8")
+        content = "廠商,姓名,到職日期\n蝦皮三輪,王小明,\n".encode("utf-8")
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertTrue(rows[0]["ok"])
         self.assertEqual(rows[0]["hire_date"], "")
 
     def test_hire_date_missing_column_is_valid(self):
-        content = "廠商,姓名\n蝦皮,王小明\n".encode("utf-8")
+        content = "廠商,姓名\n蝦皮三輪,王小明\n".encode("utf-8")
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertTrue(rows[0]["ok"])
         self.assertEqual(rows[0]["hire_date"], "")
 
     def test_unrecognizable_hire_date_is_reported_as_error(self):
-        content = "廠商,姓名,到職日期\n蝦皮,王小明,113年3月1日\n".encode("utf-8")
+        content = "廠商,姓名,到職日期\n蝦皮三輪,王小明,113年3月1日\n".encode("utf-8")
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertFalse(rows[0]["ok"])
@@ -167,7 +167,7 @@ class ImportSubmitHireDateTests(unittest.TestCase):
     def test_hire_date_from_csv_is_passed_to_create_personnel(self):
         import asyncio
 
-        content = "廠商,姓名,到職日期\n蝦皮,王小明,2024-01-31\n".encode("utf-8")
+        content = "廠商,姓名,到職日期\n蝦皮三輪,王小明,2024-01-31\n".encode("utf-8")
         with mock.patch.object(import_routes.repository, "find_active_personnel_by_name_and_phone", return_value=None):
             with mock.patch.object(import_routes.repository, "create_personnel") as mock_create:
                 with mock.patch.object(import_routes, "templates") as mock_templates:
@@ -182,7 +182,7 @@ class ImportSubmitHireDateTests(unittest.TestCase):
     def test_blank_hire_date_from_csv_is_passed_as_empty_string(self):
         import asyncio
 
-        content = "廠商,姓名,到職日期\n蝦皮,王小明,\n".encode("utf-8")
+        content = "廠商,姓名,到職日期\n蝦皮三輪,王小明,\n".encode("utf-8")
         with mock.patch.object(import_routes.repository, "find_active_personnel_by_name_and_phone", return_value=None):
             with mock.patch.object(import_routes.repository, "create_personnel") as mock_create:
                 with mock.patch.object(import_routes, "templates"):

@@ -31,9 +31,27 @@ VEHICLE_REPORT_WEBHOOK_SECRET = os.getenv("DELIVERY_VEHICLE_REPORT_SECRET", "")
 # 避免車輛回報跟意外事件回報這兩個不相干的功能共用同一支端點。
 INCIDENT_REPORT_WEBHOOK_SECRET = os.getenv("DELIVERY_INCIDENT_REPORT_SECRET", "")
 
-# 廠商清單（選擇廠商 / 人員所屬廠商）
+# 廠商清單（選擇廠商 / 人員所屬廠商）。
+# 2026-09-13：原本單一的「蝦皮」拆成 4 個更細的廠商，代碼 "shopee" 保留
+# 給改名後的「蝦皮三輪」（沿用同一個代碼，既有人員/車輛/應徵者資料不用
+# 改任何欄位值，畫面上顯示的名稱自動變成新名稱），另外三個是全新代碼。
+# 拆分後這三個新代碼底下的人員，應備文件/保險規則直接綁代碼本身
+# （見下面 DOC_TYPES 的 shopee_contract_*／shopee_employed_own_car_*
+# 那幾項），不再像「蝦皮三輪」那樣要另外選「合作方式」才能決定——「合作
+# 方式」下拉選單只保留給 "shopee" 這個代碼用（COOPERATION_TYPE_VENDORS
+# 沒有一併把三個新代碼加進去），純粹是為了不去動既有「蝦皮」人員資料
+# 尚未被同仁手動改分類前的既有行為，見 HANDOFF.md 的說明。
+#
+# 已知限制（不是這裡的程式碼能處理的）：應徵名單目前是由外部 Google
+# 表單自己的 Apps Script 觸發器寫死帶 vendor="shopee" 過來（見
+# routes/webhook_routes.py 開頭說明），這支腳本不在這個 repo 裡，如果
+# 想讓新進的應徵者一開始就分類到新的三個代碼，需要同仁自己去改那支
+# 外部 Apps Script，材霈平台這邊改不到。
 VENDORS = [
-    {"code": "shopee", "name": "蝦皮"},
+    {"code": "shopee", "name": "蝦皮三輪"},
+    {"code": "shopee_company_car", "name": "蝦皮二輪公司車"},
+    {"code": "shopee_employed_own_car", "name": "蝦皮二輪雇傭自備車"},
+    {"code": "shopee_contract", "name": "蝦皮承攬"},
     {"code": "ud", "name": "UD"},
     {"code": "uc", "name": "UC"},
     {"code": "sf", "name": "順豐"},
@@ -65,6 +83,12 @@ CLIENT_MAP = {c["code"]: c["name"] for c in CLIENTS}
 # 哪些廠商的人員詳細頁要顯示「合作方式」「負責客戶」這兩個選單。這兩個欄位
 # 本身是全域欄位（值不因廠商而異），但畫面上只有真的會用到的廠商才顯示，
 # 避免同仁在用不到的廠商頁面上看到無意義的選單。
+#
+# 2026-09-13 蝦皮廠商拆分後，"shopee_company_car"／"shopee_employed_own_car"／
+# "shopee_contract" 這三個新代碼刻意沒有加進來：這三個代碼本身已經講清楚
+# 雇用/承攬關係跟保險規則（見 DOC_TYPES），不需要再選一次「合作方式」；
+# 只有 "shopee"（改名後的「蝦皮三輪」）維持原本的行為，讓還沒被同仁手動
+# 改分類到新代碼的既有蝦皮人員資料不受影響。
 COOPERATION_TYPE_VENDORS = ["shopee"]
 CLIENT_VENDORS = ["ud"]
 
@@ -88,7 +112,12 @@ DOC_TYPES = [
     {"code": "id_card", "name": "身分證", "kind": "id_number"},
     {"code": "driver_license", "name": "駕照", "kind": "checkbox"},
     {"code": "contract", "name": "合約簽定", "kind": "checkbox"},
-    {"code": "police_clearance", "name": "良民證", "kind": "file_expiry", "exclude_vendors": ["shopee"]},
+    {
+        "code": "police_clearance",
+        "name": "良民證",
+        "kind": "file_expiry",
+        "exclude_vendors": ["shopee", "shopee_company_car", "shopee_employed_own_car", "shopee_contract"],
+    },
     {
         "code": "insurance",
         "name": "強制險",
@@ -107,6 +136,37 @@ DOC_TYPES = [
         "name": "營業用第三責任險",
         "kind": "file_expiry",
         "cooperation_types": ["two_wheel_employed"],
+    },
+    # 蝦皮承攬／蝦皮二輪雇傭自備車專屬（2026-09-13 蝦皮廠商拆分後新增）：
+    # 這兩個是全新的廠商代碼，不會有「合作方式」欄位可以選（見上面
+    # VENDORS 的說明），保險規則直接綁廠商代碼本身，跟下面順豐的
+    # sf_insurance／sf_guild_insurance 是同一種寫法。「蝦皮二輪公司車」
+    # 依使用者確認，強制險等保險文件由公司統一投保，不需要同仁個人上傳，
+    # 所以沒有對應的項目。
+    {
+        "code": "shopee_contract_insurance",
+        "name": "強制險",
+        "kind": "file_expiry",
+        "include_vendors": ["shopee_contract"],
+    },
+    {
+        "code": "shopee_contract_guild_insurance",
+        "name": "公會加保證明",
+        "kind": "file_expiry",
+        "include_vendors": ["shopee_contract"],
+        "required": False,
+    },
+    {
+        "code": "shopee_employed_own_car_insurance",
+        "name": "強制險",
+        "kind": "file_expiry",
+        "include_vendors": ["shopee_employed_own_car"],
+    },
+    {
+        "code": "shopee_employed_own_car_liability_insurance",
+        "name": "營業用第三責任險",
+        "kind": "file_expiry",
+        "include_vendors": ["shopee_employed_own_car"],
     },
     # UD/UC 專屬（不用合作方式判斷，直接綁廠商）
     {"code": "uber_system", "name": "UBER系統", "kind": "checkbox", "include_vendors": ["ud", "uc"]},
