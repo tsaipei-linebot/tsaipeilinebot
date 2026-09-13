@@ -162,7 +162,13 @@ def client_contract_home(request: Request, generated: str = "", redirect=Depends
     return templates.TemplateResponse(
         request,
         "client_contract_home.html",
-        {"user": account, "records": records, "generated": generated, "contract_versions": CONTRACT_VERSIONS},
+        {
+            "user": account,
+            "records": records,
+            "generated": generated,
+            "contract_versions": CONTRACT_VERSIONS,
+            "show_summary_link": platform_accounts.module_role(account, MODULE_CODE) == platform_accounts.ROLE_ADMIN,
+        },
     )
 
 

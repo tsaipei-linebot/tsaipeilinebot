@@ -106,7 +106,12 @@ def dispatch_contract_home(request: Request, generated: str = "", redirect=Depen
     return templates.TemplateResponse(
         request,
         "dispatch_contract_home.html",
-        {"user": account, "records": records, "generated": generated},
+        {
+            "user": account,
+            "records": records,
+            "generated": generated,
+            "show_summary_link": platform_accounts.module_role(account, MODULE_CODE) == platform_accounts.ROLE_ADMIN,
+        },
     )
 
 

@@ -16,6 +16,7 @@ import accounts_routes
 import client_contract_routes
 import company_routes
 import chicken_points_routes
+import contract_summary_routes
 import department_routes
 import dispatch_contract_routes
 import job_listing_routes
@@ -94,6 +95,11 @@ app.include_router(dispatch_contract_routes.router)
 # 獨立的部門模組（模組代碼 client_contracts，見 platform_accounts.MODULES），
 # 直接掛在根 app（見 client_contract_routes.py）。
 app.include_router(client_contract_routes.router)
+# /contract-summary：總表（2026-09-13 新增），整理合約產生器／派遣契約
+# 產生器的紀錄給主管年底盤點客戶用。沒有自己的模組代碼，能不能看到完全
+# 借用上面這兩個模組既有的角色判斷（見 contract_summary_routes.py 開頭
+# 說明），直接掛在根 app。
+app.include_router(contract_summary_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，
