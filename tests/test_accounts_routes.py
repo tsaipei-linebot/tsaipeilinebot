@@ -173,6 +173,38 @@ class DepartmentManagersTests(unittest.TestCase):
         self.assertEqual(result, {})
 
 
+class AccountFormContextManagerOptionsTests(unittest.TestCase):
+    """新增/編輯帳號表單的「所屬主管」下拉選單（2026-09-13 改版）：只列出
+    職級副主任（含）以上的帳號，一般專員不會是別人的主管，不該出現在
+    候選名單裡，選單才不會因為列出全部同仁而變得又長又難找。"""
+
+    class _FakeRequest:
+        def __init__(self):
+            self.session = {"user": {"username": "boss", "is_platform_admin": True}}
+
+    def test_only_manager_rank_accounts_are_offered(self):
+        accounts = [
+            {"username": "u1", "name": "主任", "department": "管理部", "rank": "supervisor"},
+            {"username": "u2", "name": "副主任", "department": "管理部", "rank": "deputy_supervisor"},
+            {"username": "u3", "name": "專員", "department": "管理部", "rank": "specialist"},
+        ]
+        with mock.patch.object(accounts_routes.platform_accounts, "list_accounts", return_value=accounts):
+            with mock.patch.object(accounts_routes.platform_departments, "list_departments", return_value=[]):
+                context = accounts_routes._account_form_context(self._FakeRequest(), None, "")
+        self.assertEqual({a["username"] for a in context["manager_options"]}, {"u1", "u2"})
+
+    def test_excludes_self_even_if_manager_rank(self):
+        accounts = [
+            {"username": "u1", "name": "主任", "department": "管理部", "rank": "supervisor"},
+            {"username": "u2", "name": "副主任", "department": "管理部", "rank": "deputy_supervisor"},
+        ]
+        editing_account = {"username": "u1", "name": "主任", "department": "管理部", "rank": "supervisor"}
+        with mock.patch.object(accounts_routes.platform_accounts, "list_accounts", return_value=accounts):
+            with mock.patch.object(accounts_routes.platform_departments, "list_departments", return_value=[]):
+                context = accounts_routes._account_form_context(self._FakeRequest(), editing_account, "")
+        self.assertEqual({a["username"] for a in context["manager_options"]}, {"u2"})
+
+
 class CreateAccountSubmitValidationTests(unittest.TestCase):
     """新增帳號：部門要在部門主檔清單裡才算合法選項，職級要是清單裡的
     代碼——2026-09-12 新增，取代原本只檢查「部門不能空白」的規則。"""

@@ -59,12 +59,16 @@ def _department_managers(all_accounts: list, exclude_username: str = None) -> di
 
 
 def _account_form_context(request: Request, account: dict, error: str) -> dict:
-    """新增/編輯帳號表單共用的 context：「所屬主管」下拉選單要列出除了自己
-    以外的所有帳號可以選（可以選多個），編輯自己時排除自己，避免選到自己
-    當自己的主管。"""
+    """新增/編輯帳號表單共用的 context：「所屬主管」下拉選單只列出職級副
+    主任（含）以上的帳號可以選（可以選多個）——一般專員不會是別人的主管，
+    列出來只是讓選單變長、更難找，2026-09-13 改成用 `is_manager_rank()`
+    過濾。編輯自己時排除自己，避免選到自己當自己的主管。"""
     all_accounts = platform_accounts.list_accounts()
     current_username = account["username"] if account else None
-    manager_options = [a for a in all_accounts if a["username"] != current_username]
+    manager_options = [
+        a for a in all_accounts
+        if a["username"] != current_username and platform_accounts.is_manager_rank(a.get("rank", ""))
+    ]
     return {
         "user": platform_accounts.current_account(request),
         "account": account,

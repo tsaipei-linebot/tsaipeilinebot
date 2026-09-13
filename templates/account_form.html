@@ -38,13 +38,28 @@
             {% endfor %}
         </select>
     </label>
-    <label>所屬主管（可複選；選好部門後會自動預帶這個部門目前的主管人選，仍可手動調整；沒有主管、或是最高層級就不用選）
-        <select name="manager_usernames" id="manager_usernames" multiple size="6">
-            {% for m in manager_options %}
-            <option value="{{ m.username }}" {% if account and m.username in account.manager_usernames %}selected{% endif %}>{{ m.name }}（{{ m.username }}）</option>
-            {% endfor %}
-        </select>
-    </label>
+    {# 這裡故意用 <div class="field-block"> 不用 <label> 包住下拉選單元件——
+       瀏覽器對 <label> 有個原生行為：點擊 <label> 裡任何地方，都會「順便」
+       對它裡面第一個可以當標籤對象的表單控制項補送一次 click，如果把下面
+       這個隱藏的 <select multiple> 包在同一個 <label> 裡，點擊自訂下拉框
+       時就會多觸發一次隱藏 <select> 的 click，冒泡到 document 的「點擊
+       外面就關閉選單」判斷會誤判成「點在元件外面」，選單開了又馬上被關掉
+       ——跟 templates/job_listing_form.html 的 multiselect_widget() 是同一個
+       已經踩過的雷，做法照抄。 #}
+    <div class="field-block">
+        所屬主管（可複選，只列出職級主任、副主任、經理等主管級同仁；選好部門後會自動預帶這個部門目前的主管人選，仍可手動調整；沒有主管、或本身就是最高層級就不用選）
+        <div class="multiselect" data-field="manager_usernames">
+            <div class="multiselect-box" id="box_manager_usernames" onclick="toggleManagerDropdown()">
+                <div class="multiselect-tags" id="tags_manager_usernames"></div>
+            </div>
+            <div class="multiselect-menu" id="menu_manager_usernames" hidden></div>
+        </div>
+    </div>
+    <select name="manager_usernames" id="native_manager_usernames" multiple hidden>
+        {% for m in manager_options %}
+        <option value="{{ m.username }}" {% if account and m.username in account.manager_usernames %}selected{% endif %}>{{ m.name }}（{{ m.username }}）</option>
+        {% endfor %}
+    </select>
 
     <table class="data-table">
         <thead>
@@ -73,26 +88,96 @@
 <p class="back-link"><a href="/accounts">&larr; 回帳號權限管理</a></p>
 
 <script>
+// 「所屬主管」下拉式多選元件：可見的標籤選取框（.multiselect-box）跟
+// 實際負責表單送出資料的隱藏 <select multiple id="native_manager_usernames">
+// 分開處理，元件本身只是操作 selectedManagers 這個陣列，每次異動後才
+// 同步回隱藏的 <select>——跟 job_listing_form.html 的多選元件是同一套
+// 概念，但這裡只有單一欄位，不需要它那套多欄位共用的通用機制。
+var MANAGER_OPTIONS = [
+    {% for m in manager_options %}
+    { value: {{ m.username | tojson }}, label: {{ (m.name + '（' + m.username + '）') | tojson }} }{{ "," if not loop.last }}
+    {% endfor %}
+];
+var selectedManagers = Array.from(document.getElementById('native_manager_usernames').selectedOptions).map(function (o) { return o.value; });
+
+function escapeHtmlManager(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function syncNativeManagerSelect() {
+    var select = document.getElementById('native_manager_usernames');
+    var valueSet = new Set(selectedManagers);
+    Array.from(select.options).forEach(function (o) { o.selected = valueSet.has(o.value); });
+}
+
+function renderManagerTags() {
+    var container = document.getElementById('tags_manager_usernames');
+    if (selectedManagers.length === 0) {
+        container.innerHTML = '<span class="multiselect-placeholder">請點選以選擇...</span>';
+        return;
+    }
+    var byValue = {};
+    MANAGER_OPTIONS.forEach(function (o) { byValue[o.value] = o.label; });
+    container.innerHTML = selectedManagers.map(function (val) {
+        return '<span class="multiselect-tag">' + escapeHtmlManager(byValue[val] || val) + '</span>';
+    }).join('');
+}
+
+function renderManagerMenu() {
+    var menu = document.getElementById('menu_manager_usernames');
+    if (MANAGER_OPTIONS.length === 0) {
+        menu.innerHTML = '<div class="multiselect-empty">目前沒有職級副主任以上的同仁可以選</div>';
+        return;
+    }
+    menu.innerHTML = MANAGER_OPTIONS.map(function (o) {
+        var isSelected = selectedManagers.indexOf(o.value) > -1;
+        return '<div class="multiselect-option' + (isSelected ? ' selected' : '') + '" onclick="toggleManagerOption(\'' + o.value + '\')">' +
+            '<span>' + escapeHtmlManager(o.label) + '</span>' + (isSelected ? '<span>&check;</span>' : '') + '</div>';
+    }).join('');
+}
+
+function toggleManagerOption(value) {
+    managerTouched = true;
+    var idx = selectedManagers.indexOf(value);
+    if (idx > -1) selectedManagers.splice(idx, 1); else selectedManagers.push(value);
+    renderManagerTags();
+    renderManagerMenu();
+    syncNativeManagerSelect();
+}
+
+function toggleManagerDropdown() {
+    var menu = document.getElementById('menu_manager_usernames');
+    var wasHidden = menu.hidden;
+    menu.hidden = true;
+    if (wasHidden) {
+        renderManagerMenu();
+        menu.hidden = false;
+    }
+}
+
+document.addEventListener('click', function (e) {
+    if (!e.target.closest('.multiselect')) {
+        document.getElementById('menu_manager_usernames').hidden = true;
+    }
+});
+
+renderManagerTags();
+
 // 部門 -> 目前職級副主任以上的帳號清單，選了部門之後自動預帶進「所屬
-// 主管」多選欄位——只是預帶，選好之後同仁還是可以手動調整/清空，不是
-// 強制套用。只要「所屬主管」欄位還沒被手動動過，就會跟著部門選擇一起
-// 更新；一旦手動選過（change 事件），就不再自動覆蓋，避免蓋掉已經手動
-// 調整過的結果。
+// 主管」欄位——只是預帶，選好之後同仁還是可以手動調整/清空，不是強制
+// 套用。只要「所屬主管」欄位還沒被手動動過，就會跟著部門選擇一起更新；
+// 一旦手動選過（toggleManagerOption()），就不再自動覆蓋，避免蓋掉已經
+// 手動調整過的結果。
 var DEPARTMENT_MANAGERS = {{ department_managers | tojson }};
-(function () {
-    var departmentSelect = document.getElementById('department');
-    var managerSelect = document.getElementById('manager_usernames');
-    var managerTouched = false;
-
-    managerSelect.addEventListener('change', function () { managerTouched = true; });
-
-    departmentSelect.addEventListener('change', function () {
-        if (managerTouched) return;
-        var suggested = DEPARTMENT_MANAGERS[departmentSelect.value] || [];
-        Array.from(managerSelect.options).forEach(function (opt) {
-            opt.selected = suggested.indexOf(opt.value) !== -1;
-        });
-    });
-})();
+var managerTouched = false;
+document.getElementById('department').addEventListener('change', function () {
+    if (managerTouched) return;
+    selectedManagers = (DEPARTMENT_MANAGERS[this.value] || []).slice();
+    renderManagerTags();
+    renderManagerMenu();
+    syncNativeManagerSelect();
+});
 </script>
 {% endblock %}
