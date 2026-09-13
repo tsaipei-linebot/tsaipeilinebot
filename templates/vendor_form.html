@@ -15,6 +15,12 @@
     <label>廠商名稱
         <input type="text" name="name" value="{{ vendor.name if vendor else '' }}" required>
     </label>
+    <label>統一編號（選填；合約產生器送出後會自動帶入）
+        <input type="text" name="tax_id" value="{{ vendor.tax_id if vendor else '' }}" maxlength="8">
+    </label>
+    <label>合約年（選填；合約產生器送出後會自動帶入合約起始日期的年份）
+        <input type="text" name="contract_year" value="{{ vendor.contract_year if vendor else '' }}">
+    </label>
     <label>簽約公司（選填，之後補上即可）
         <select name="company_id">
             <option value="" {% if not (vendor and vendor.company_id) %}selected{% endif %}>尚未設定</option>

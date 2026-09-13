@@ -276,12 +276,13 @@ class SubmitValidationTests(unittest.TestCase):
         fake_bytes = b"FAKE-DOCX-BYTES"
         with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes):
             with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
-                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
-                                        return_value=self._fake_company()):
-                    with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
-                        result = asyncio.run(client_contract_routes.client_contract_submit(
-                            self._FakeRequest(self._account(), form), redirect=None,
-                        ))
+                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract"):
+                    with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                            return_value=self._fake_company()):
+                        with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                            result = asyncio.run(client_contract_routes.client_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
         mock_save.assert_called_once()
         self.assertEqual(result.body, fake_bytes)
 
@@ -290,17 +291,21 @@ class SubmitValidationTests(unittest.TestCase):
         fake_bytes = b"FAKE-DOCX-BYTES"
         with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
             with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
-                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
-                                        return_value=self._fake_company()):
-                    with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
-                        result = asyncio.run(client_contract_routes.client_contract_submit(
-                            self._FakeRequest(self._account(), form), redirect=None,
-                        ))
+                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract") as mock_sync:
+                    with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                            return_value=self._fake_company()):
+                        with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                            result = asyncio.run(client_contract_routes.client_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
         mock_render.assert_called_once()
         render_kwargs = mock_render.call_args.kwargs
         self.assertEqual(render_kwargs["party_a"]["name"], "測試客戶股份有限公司")
         self.assertEqual(render_kwargs["party_b"]["name"], "瑋政有限公司")
         mock_save.assert_called_once()
+        mock_sync.assert_called_once_with(
+            name="測試客戶股份有限公司", tax_id="12345678", contract_year=2026, company_id="weizheng",
+        )
         self.assertEqual(result.body, fake_bytes)
         self.assertIn("attachment", result.headers["content-disposition"])
         # 2026-09-12 使用者要求檔名要帶「合約年」（合約起始日期的年份，
@@ -320,12 +325,13 @@ class SubmitValidationTests(unittest.TestCase):
         fake_bytes = b"FAKE-DOCX-BYTES"
         with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
             with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
-                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
-                                        return_value=self._fake_company()):
-                    with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
-                        result = asyncio.run(client_contract_routes.client_contract_submit(
-                            self._FakeRequest(self._account(), form), redirect=None,
-                        ))
+                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract"):
+                    with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                            return_value=self._fake_company()):
+                        with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                            result = asyncio.run(client_contract_routes.client_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
         mock_render.assert_called_once()
         render_kwargs = mock_render.call_args.kwargs
         self.assertIsNone(render_kwargs["sign_date"])
@@ -365,12 +371,13 @@ class SubmitValidationTests(unittest.TestCase):
         fake_bytes = b"FAKE-DOCX-BYTES"
         with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
             with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
-                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
-                                        return_value=self._fake_company()):
-                    with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
-                        result = asyncio.run(client_contract_routes.client_contract_submit(
-                            self._FakeRequest(self._account(), form), redirect=None,
-                        ))
+                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract"):
+                    with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                            return_value=self._fake_company()):
+                        with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                            result = asyncio.run(client_contract_routes.client_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
         mock_render.assert_called_once()
         render_kwargs = mock_render.call_args.kwargs
         self.assertIsNone(render_kwargs["sign_date"])

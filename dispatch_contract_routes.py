@@ -17,6 +17,13 @@ contracts/{id}/delete` 把 Firestore 那筆紀錄跟 GCS 上存的 Word/PDF 檔�
 得到才能刪），沒有另外設更嚴格的權限，跟 `client_contract_routes.py`
 的刪除功能是同一套做法。刪除沒有回收機制，是真的整筆刪掉，不是標記
 隱藏。
+
+**廠商管理連動（2026-09-13 新增）**：「客戶名稱」欄位的自動完成清單
+（`_client_name_suggestions()`）優先列出廠商管理（`/vendors`）裡的
+廠商名稱，再補上這個模組自己歷史紀錄裡用過的名稱；送出成功後呼叫
+`services/vendor_sync.py` 的 `sync_vendor_from_dispatch_contract()`，
+廠商管理裡沒有同名紀錄才自動補一筆（只有名稱），詳見該檔案開頭的
+說明。
 """
 from urllib.parse import quote
 
@@ -25,6 +32,7 @@ from fastapi.responses import RedirectResponse, Response
 
 import dispatch_contract_storage
 import platform_accounts
+import platform_vendors
 from platform_templating import templates
 from services.dispatch_contract_service import (
     CLAUSE_DEFAULTS,
@@ -41,6 +49,7 @@ from services.dispatch_contract_service import (
     render_contract_docx,
     save_submission,
 )
+from services.vendor_sync import sync_vendor_from_dispatch_contract
 
 router = APIRouter()
 
@@ -56,6 +65,24 @@ def _require_access(request: Request):
     return None
 
 
+def _client_name_suggestions() -> list:
+    """客戶名稱欄位的自動完成清單：廠商管理（/vendors）裡的廠商名稱優先，
+    再補上這個模組自己歷史紀錄裡用過、但廠商管理還沒有的名稱（2026-09-13
+    廠商管理連動新增前既有的行為，保留著不讓舊的建議消失）。"""
+    names = []
+    seen = set()
+    for v in platform_vendors.list_vendors():
+        name = v["name"]
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    for name in list_recent_client_names():
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
 def _form_context(*, user: dict, error: str = "", form: dict = None, shift_rows: list = None) -> dict:
     return {
         "user": user,
@@ -66,7 +93,7 @@ def _form_context(*, user: dict, error: str = "", form: dict = None, shift_rows:
         "clause_order": CLAUSE_ORDER,
         "clause_labels": CLAUSE_LABELS,
         "clause_defaults": CLAUSE_DEFAULTS,
-        "recent_client_names": list_recent_client_names(),
+        "recent_client_names": _client_name_suggestions(),
     }
 
 
@@ -187,6 +214,7 @@ async def dispatch_contract_submit(request: Request, redirect=Depends(_require_a
         blob_path=blob_path,
         pdf_blob_path=pdf_blob_path,
     )
+    sync_vendor_from_dispatch_contract(client_name)
 
     encoded_filename = quote(filename)
     return Response(

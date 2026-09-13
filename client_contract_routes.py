@@ -62,6 +62,7 @@ from services.client_contract_service import (
     save_submission,
 )
 from services.company_registry_lookup import lookup_company
+from services.vendor_sync import sync_vendor_from_client_contract
 
 router = APIRouter()
 
@@ -337,6 +338,12 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         referral_service_months=referral_service_months,
         blob_path=blob_path,
         pdf_blob_path=pdf_blob_path,
+    )
+    sync_vendor_from_client_contract(
+        name=party_a["name"],
+        tax_id=party_a["tax_id"],
+        contract_year=contract_start_date.year,
+        company_id=party_b_company_id,
     )
 
     encoded_filename = quote(filename)
