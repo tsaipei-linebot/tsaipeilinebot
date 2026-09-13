@@ -279,16 +279,32 @@ def personnel_matches_filters(
     return True
 
 
-def search_personnel(keyword: str) -> list:
-    """簡易查詢：抓全部在職人員後在應用程式端比對姓名/身分證字號（人數規模小，
-    不需要為此另外接全文檢索服務）。"""
+def search_personnel(keyword: str = "", vendor: str = "", employment_status: str = "") -> list:
+    """簡易查詢：抓全部在職人員後在應用程式端比對姓名/身分證字號/廠商/報到
+    狀態（人數規模小，不需要為此另外接全文檢索服務）。
+
+    2026-09-13 新增 vendor／employment_status 兩個篩選條件：「人員狀況」
+    （/delivery/vendor/{廠商}）預設會隱藏「缺件齊全」跟「離職／放棄報到」
+    的人，如果一個廠商底下的人都已經備齊文件，畫面上就會整個空白，沒有
+    地方能單純看「這個廠商目前有哪些人」。這裡刻意**不**套用那些預設
+    隱藏規則——呼叫端（search_routes.py）就是要讓同仁能看到完整名單，
+    包不包含離職/放棄報到的人，交給 employment_status 這個篩選條件決定，
+    不是內建的預設行為。三個條件都是「有給值才篩」，同時給多個條件是
+    AND 的關係（例如選了廠商又打了關鍵字，就是在那個廠商裡搜姓名）。"""
     keyword = (keyword or "").strip()
+    vendor = (vendor or "").strip()
+    employment_status = (employment_status or "").strip()
     result = []
     for snapshot in personnel_ref().where("status", "==", "active").stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
-        if not keyword or keyword in data.get("name", "") or keyword in data.get("id_number", ""):
-            result.append(data)
+        if keyword and keyword not in data.get("name", "") and keyword not in data.get("id_number", ""):
+            continue
+        if vendor and data.get("vendor") != vendor:
+            continue
+        if employment_status and personnel_employment_status(data) != employment_status:
+            continue
+        result.append(data)
     result.sort(key=lambda p: p.get("name", ""))
     return result
 
