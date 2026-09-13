@@ -3698,3 +3698,40 @@ session 欄位就好，不用改任何一支既有的權限檢查程式碼：
 （切換成功、目標帳號不存在、目標帳號是管理員時擋下來、`redirect` 已經
 擋過時不重複判斷）、`tests/test_login_routes.py` 的
 `StopImpersonationRouteTests`（正常換回來、沒在切換視角時安靜跳過）。
+
+## 新增/編輯帳號表單：「所屬主管」改成下拉式多選＋只列主管級同仁（2026-09-13）
+
+使用者反映：「所屬主管」欄位（`/accounts/new`、`/accounts/{username}/edit`）
+原本是瀏覽器原生的 `<select multiple size="6">`，要按住 Ctrl/Cmd 才能
+多選、清單裡連專員都列出來，不好用。改成兩件事：
+
+1. **只列出職級副主任（含）以上的帳號**：一般專員本來就不會是別人的
+   主管，列出來只會讓清單變長、更難找到真正要選的人。
+   `accounts_routes.py` 的 `_account_form_context()` 用既有的
+   `platform_accounts.is_manager_rank()` 過濾 `manager_options`（跟
+   `_department_managers()` 自動預帶用的過濾邏輯一致，這兩處篩選規則
+   本來就該一樣）。
+2. **改成下拉式的標籤選取元件**（點一下才展開選單，選好的人顯示成
+   一個個標籤），而不是常駐展開的清單框。做法比照
+   `templates/job_listing_form.html` 既有的 `multiselect_widget()`
+   （`.multiselect`／`.multiselect-box`／`.multiselect-menu`／
+   `.multiselect-tag`／`.multiselect-option` 這幾個共用 CSS class），
+   但這裡只有單一欄位，沒有沿用它那套多欄位共用的通用 JS 機制，另外寫
+   一份只服務 `manager_usernames` 這一個欄位的精簡版（`account_form.html`
+   底部的 `renderManagerTags()`／`renderManagerMenu()`／
+   `toggleManagerOption()`）。可見的下拉框跟實際負責表單送出資料的
+   `<select name="manager_usernames" multiple hidden>` 分開兩塊 HTML，
+   刻意不用 `<label>` 包住隱藏的 `<select>`——原因跟 `job_listing_form.html`
+   開頭註解說的一樣：`<label>` 包住表單控制項時，瀏覽器點擊會「順便」
+   對它補送一次 click，跟自訂下拉框的「點外面關閉選單」判斷互相打架。
+   選好部門後自動預帶主管人選的邏輯（`DEPARTMENT_MANAGERS`）維持原本
+   行為不變，只是改成操作 JS 陣列＋重新畫标籤/選單，不再是操作
+   `<option>.selected`。
+
+`_manager_usernames_from_form()`（表單送出時讀取勾選結果）完全沒改，
+因為隱藏的 `<select multiple>` 送出的資料格式跟原本一樣，`getlist()`
+讀出來的東西沒有變。
+
+測試：`tests/test_accounts_routes.py` 新增
+`AccountFormContextManagerOptionsTests`（確認 `manager_options` 只含
+副主任以上、且會排除自己）。
