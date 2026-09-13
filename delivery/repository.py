@@ -363,6 +363,15 @@ def update_personnel_cooperation_type(personnel_id: str, cooperation_type: str):
     personnel_ref().document(personnel_id).update({"cooperation_type": cooperation_type, "updated_at": time.time()})
 
 
+def update_personnel_vendor(personnel_id: str, vendor: str):
+    """修改人員所屬廠商（2026-09-13 新增）——人員建立後原本沒有地方可以
+    再改廠商，蝦皮廠商拆分成 4 個代碼之後，既有蝦皮人員要靠這個功能手動
+    重新分類到正確的新代碼。改了廠商不會連動清掉 cooperation_type／client／
+    documents 這些欄位——新廠商用不到的欄位就只是不會顯示在畫面上，跟
+    改變 cooperation_type 後其他廠商專屬欄位一樣維持原值不特別清除。"""
+    personnel_ref().document(personnel_id).update({"vendor": vendor, "updated_at": time.time()})
+
+
 def update_personnel_client(personnel_id: str, client: str):
     personnel_ref().document(personnel_id).update({"client": client, "updated_at": time.time()})
 

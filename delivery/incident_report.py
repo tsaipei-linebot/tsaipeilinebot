@@ -66,7 +66,7 @@ _YES_NO_FIELD_NAMES = {
 
 PARSE_ERROR_MESSAGES = {
     "missing_fields": "❌ 回報格式有誤：11 個欄位都要填，請照範本重新回覆。",
-    "invalid_vendor": "❌ 廠商名稱看不懂，請填蝦皮／UD／UC／順豐其中一個。",
+    "invalid_vendor": "❌ 廠商名稱看不懂，請填蝦皮三輪／蝦皮二輪公司車／蝦皮二輪雇傭自備車／蝦皮承攬／UD／UC／順豐其中一個。",
     "invalid_identity_type": "❌ 身分類別請填「雇傭」或「承攬」。",
     "invalid_duty_status": "❌ 第 6 項請填「執行勤務中」或「上下班途中」。",
     "invalid_datetime": "❌ 發生時間格式看不懂，請用「9/4 11:00」這種「月/日 時:分」的格式重新回覆。",

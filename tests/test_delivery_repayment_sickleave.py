@@ -238,7 +238,7 @@ class ExcelExportTests(unittest.TestCase):
         header = [cell.value for cell in ws[1]]
         row = [cell.value for cell in ws[2]]
         self.assertEqual(header, ["日期", "廠商", "人員", "金額", "原因", "核准狀態"])
-        self.assertEqual(row, ["2026-03-15", "蝦皮", "王小明", 500, "遺失商品", "已核准"])
+        self.assertEqual(row, ["2026-03-15", "蝦皮三輪", "王小明", 500, "遺失商品", "已核准"])
 
     def test_sick_leave_workbook_contains_expected_rows(self):
         records = [

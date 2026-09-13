@@ -15,6 +15,14 @@
 <form method="post" action="/delivery/personnel/{{ person.id }}/bulk-update" enctype="multipart/form-data">
     <div class="filter-bar">
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+            所屬廠商
+            <select name="vendor">
+                {% for v in vendors %}
+                <option value="{{ v.code }}" {% if person.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
             人員狀態
             <select name="employment_status">
                 {% for s in personnel_statuses %}

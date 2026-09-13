@@ -81,7 +81,7 @@ class ParseVehicleReportTests(unittest.TestCase):
             "✅ 回報格式（照填即可）\n"
             "請用以下格式回覆\n"
             "車輛管理\n"
-            "廠商：蝦皮\n"
+            "廠商：蝦皮三輪\n"
             "姓名：王小明\n"
             "開始日期：2026-1-2\n"
             "結束日期：\n"

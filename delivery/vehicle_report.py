@@ -53,7 +53,7 @@ def _is_blank_placeholder(value: str) -> bool:
 
 PARSE_ERROR_MESSAGES = {
     "missing_fields": "❌ 回報格式有誤：廠商、姓名、車號、開始或結束日期（擇一）、地點都要填，請照範本重新回覆。",
-    "invalid_vendor": "❌ 廠商看不懂，請填蝦皮／UD／UC／順豐其中一個。",
+    "invalid_vendor": "❌ 廠商看不懂，請填蝦皮三輪／蝦皮二輪公司車／蝦皮二輪雇傭自備車／蝦皮承攬／UD／UC／順豐其中一個。",
     "ambiguous_dates": "❌ 開始日期跟結束日期不能同時填：領車只填開始日期，還車只填結束日期。",
     "invalid_date": "❌ 日期格式看不懂，請用「2026-8-25」這種年-月-日的格式重新回覆。",
 }

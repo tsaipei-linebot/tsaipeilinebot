@@ -93,6 +93,48 @@ class ApplicableDocTypesTests(unittest.TestCase):
         self.assertNotIn("sf_insurance", ud_codes)
         self.assertNotIn("sf_guild_insurance", ud_codes)
 
+    def test_shopee_split_vendors_still_exclude_police_clearance(self):
+        # 蝦皮廠商拆分（2026-09-13）後的三個新代碼跟改名後的「蝦皮三輪」
+        # (代碼還是 "shopee") 一樣都不用交良民證。
+        for vendor in ("shopee", "shopee_company_car", "shopee_employed_own_car", "shopee_contract"):
+            codes = {d["code"] for d in applicable_doc_types(vendor, "")}
+            self.assertNotIn("police_clearance", codes, vendor)
+
+    def test_shopee_contract_requires_insurance_and_guild_without_cooperation_type(self):
+        # 蝦皮承攬（shopee_contract）沒有「合作方式」欄位，cooperation_type
+        # 一律是空字串，保險規則要直接綁代碼本身，不能靠 cooperation_type 判斷。
+        codes = {d["code"] for d in applicable_doc_types("shopee_contract", "")}
+        self.assertIn("shopee_contract_insurance", codes)
+        self.assertIn("shopee_contract_guild_insurance", codes)
+        self.assertNotIn("shopee_employed_own_car_insurance", codes)
+        self.assertNotIn("shopee_employed_own_car_liability_insurance", codes)
+        # 舊的、綁「合作方式」的 insurance/guild_insurance/liability_insurance
+        # 不會被這個新代碼觸發（cooperation_type 是空字串）。
+        self.assertNotIn("insurance", codes)
+        self.assertNotIn("guild_insurance", codes)
+        self.assertNotIn("liability_insurance", codes)
+
+    def test_shopee_employed_own_car_requires_insurance_and_liability_without_cooperation_type(self):
+        codes = {d["code"] for d in applicable_doc_types("shopee_employed_own_car", "")}
+        self.assertIn("shopee_employed_own_car_insurance", codes)
+        self.assertIn("shopee_employed_own_car_liability_insurance", codes)
+        self.assertNotIn("shopee_contract_insurance", codes)
+        self.assertNotIn("shopee_contract_guild_insurance", codes)
+
+    def test_shopee_company_car_requires_no_insurance_documents(self):
+        # 使用者確認：公司車由公司統一投保，不需要同仁個人上傳任何保險文件。
+        codes = {d["code"] for d in applicable_doc_types("shopee_company_car", "")}
+        for insurance_code in (
+            "insurance", "guild_insurance", "liability_insurance",
+            "shopee_contract_insurance", "shopee_contract_guild_insurance",
+            "shopee_employed_own_car_insurance", "shopee_employed_own_car_liability_insurance",
+        ):
+            self.assertNotIn(insurance_code, codes)
+        # 基本項目照樣要有。
+        self.assertIn("id_card", codes)
+        self.assertIn("driver_license", codes)
+        self.assertIn("contract", codes)
+
     def test_momo_test_requires_ud_and_momo_client(self):
         self.assertIn("momo_test", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "momo")})
         self.assertNotIn("momo_test", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "pchome")})

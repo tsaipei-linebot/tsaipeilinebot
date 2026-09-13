@@ -16,6 +16,7 @@ from delivery.config import (
     PERSONNEL_STATUS_MAP,
     PERSONNEL_STATUSES,
     VENDOR_MAP,
+    VENDORS,
 )
 from delivery.ocr import extract_expiry_date
 from delivery.storage import StorageNotConfigured, delete_entity_files, is_configured, upload_file
@@ -143,6 +144,7 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
             "user": current_user(request),
             "person": person,
             "vendor_name": VENDOR_MAP.get(vendor_code, vendor_code),
+            "vendors": VENDORS,
             "cooperation_types": COOPERATION_TYPES,
             "clients": CLIENTS,
             "personnel_statuses": PERSONNEL_STATUSES,
@@ -187,6 +189,11 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
         return RedirectResponse(url="/delivery/", status_code=303)
 
     form = await request.form()
+
+    if "vendor" in form:
+        vendor = form.get("vendor", "")
+        if vendor in VENDOR_MAP:
+            repository.update_personnel_vendor(personnel_id, vendor)
 
     if "cooperation_type" in form:
         cooperation_type = form.get("cooperation_type", "")
