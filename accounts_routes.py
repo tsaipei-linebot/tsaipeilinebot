@@ -214,6 +214,28 @@ async def edit_account_submit(username: str, request: Request, redirect=Depends(
     return RedirectResponse(url="/accounts", status_code=303)
 
 
+@router.post("/{username}/impersonate")
+def impersonate_account(username: str, request: Request, redirect=Depends(platform_accounts.require_platform_admin)):
+    """全平台管理員切換視角看某個帳號看到的畫面（2026-09-13 新增）：把目前
+    這組管理員帳號存進 session 的 `impersonator`，`user` 換成目標帳號，
+    之後所有權限判斷都照舊只看 `session["user"]`，不用改任何其他程式碼。
+    只有 `require_platform_admin` 擋得住這支路由，而切換視角後
+    `current_account()` 回傳的就是目標帳號，不會再是管理員本人，所以
+    「連續切換到別人視角底下的視角」這件事本來就進不了這支路由，不需要
+    另外擋巢狀切換。目標帳號如果本身也是全平台管理員則不給切換（雖然
+    目前只有一組管理員帳號用不到，但避免以後多組管理員互相切換）。"""
+    if redirect:
+        return redirect
+    target = platform_accounts.get_account(username)
+    if not target:
+        return RedirectResponse(url="/accounts?error=not_found", status_code=303)
+    if target.get("is_platform_admin"):
+        return RedirectResponse(url="/accounts?error=cannot_impersonate_admin", status_code=303)
+    request.session["impersonator"] = platform_accounts.current_account(request)
+    request.session["user"] = target
+    return RedirectResponse(url="/portal", status_code=303)
+
+
 @router.post("/{username}/delete")
 def delete_account_submit(username: str, request: Request, redirect=Depends(platform_accounts.require_platform_admin)):
     if redirect:

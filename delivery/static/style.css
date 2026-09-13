@@ -85,6 +85,25 @@ body {
 .topnav a:hover { text-decoration: underline; }
 .topnav-user { color: var(--muted); }
 
+.impersonation-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 10px 24px;
+    background: var(--warn-bg);
+    color: var(--warn);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    position: sticky;
+    top: 57px;
+    z-index: 19;
+}
+
+.impersonation-banner form { margin: 0; }
+
 /* ==========================================
    版面容器
    ========================================== */

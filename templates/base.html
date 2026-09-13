@@ -32,6 +32,14 @@
             {% endif %}
         </nav>
     </header>
+    {% if request.session.get('impersonator') %}
+    <div class="impersonation-banner">
+        目前正在以「{{ user.name }}」的視角檢視系統（您本人的帳號是「{{ request.session.impersonator.name }}」）
+        <form method="post" action="/impersonate/stop">
+            <button type="submit" class="btn btn-small">停止檢視，返回我的帳號</button>
+        </form>
+    </div>
+    {% endif %}
     <main class="container">
         {% block content %}{% endblock %}
     </main>

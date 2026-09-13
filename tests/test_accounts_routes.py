@@ -236,5 +236,55 @@ class CreateAccountSubmitValidationTests(unittest.TestCase):
         self.assertEqual(result.status_code, 303)
 
 
+class ImpersonateAccountRouteTests(unittest.TestCase):
+    """全平台管理員切換帳號視角（2026-09-13 新增）：POST /accounts/{username}/
+    impersonate 把 session["user"] 換成目標帳號，原本的管理員帳號存進
+    session["impersonator"]，之後 stop_impersonation()（login_routes.py）
+    再換回來。"""
+
+    class _FakeRequest:
+        def __init__(self, admin_account):
+            self.session = {"user": admin_account}
+
+    ADMIN = {"username": "boss", "name": "老闆", "is_platform_admin": True}
+    STAFF = {"username": "staff1", "name": "小明", "is_platform_admin": False}
+    OTHER_ADMIN = {"username": "boss2", "name": "老闆二號", "is_platform_admin": True}
+
+    def test_impersonate_swaps_session_user_and_stores_impersonator(self):
+        request = self._FakeRequest(dict(self.ADMIN))
+        with mock.patch.object(accounts_routes.platform_accounts, "get_account", return_value=dict(self.STAFF)):
+            result = accounts_routes.impersonate_account("staff1", request, redirect=None)
+        self.assertEqual(result.status_code, 303)
+        self.assertTrue(result.headers["location"].endswith("/portal"))
+        self.assertEqual(request.session["user"], self.STAFF)
+        self.assertEqual(request.session["impersonator"], self.ADMIN)
+
+    def test_impersonate_missing_target_redirects_with_error(self):
+        request = self._FakeRequest(dict(self.ADMIN))
+        with mock.patch.object(accounts_routes.platform_accounts, "get_account", return_value=None):
+            result = accounts_routes.impersonate_account("ghost", request, redirect=None)
+        self.assertEqual(result.status_code, 303)
+        self.assertIn("not_found", result.headers["location"])
+        self.assertEqual(request.session["user"], self.ADMIN)
+        self.assertNotIn("impersonator", request.session)
+
+    def test_impersonate_platform_admin_target_is_blocked(self):
+        request = self._FakeRequest(dict(self.ADMIN))
+        with mock.patch.object(accounts_routes.platform_accounts, "get_account", return_value=dict(self.OTHER_ADMIN)):
+            result = accounts_routes.impersonate_account("boss2", request, redirect=None)
+        self.assertEqual(result.status_code, 303)
+        self.assertIn("cannot_impersonate_admin", result.headers["location"])
+        self.assertEqual(request.session["user"], self.ADMIN)
+        self.assertNotIn("impersonator", request.session)
+
+    def test_redirect_present_skips_impersonation(self):
+        fake_redirect = object()
+        request = self._FakeRequest(dict(self.ADMIN))
+        with mock.patch.object(accounts_routes.platform_accounts, "get_account") as mock_get_account:
+            result = accounts_routes.impersonate_account("staff1", request, redirect=fake_redirect)
+        mock_get_account.assert_not_called()
+        self.assertIs(result, fake_redirect)
+
+
 if __name__ == "__main__":
     unittest.main()
