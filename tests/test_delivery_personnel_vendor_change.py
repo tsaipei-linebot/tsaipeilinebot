@@ -65,5 +65,46 @@ class BulkUpdatePersonnelVendorFieldTests(unittest.TestCase):
         mock_update.assert_not_called()
 
 
+class BulkUpdatePersonnelRedirectTests(unittest.TestCase):
+    """一鍵全部更新送出成功後，2026-09-13 改成跳回原本的「人員狀況」清單頁
+    （不是留在詳細頁）——但驗證失敗（身分證字號格式錯誤）時還是要留在
+    詳細頁顯示錯誤訊息，不能跳走讓同仁看不到哪裡沒填對。"""
+
+    PERSON = {"id": "p1", "vendor": "shopee", "cooperation_type": "", "client": ""}
+
+    def test_successful_update_redirects_to_vendor_list(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
+            with mock.patch.object(vendor_routes.repository, "applicable_doc_types", return_value=[]):
+                result = asyncio.run(
+                    vendor_routes.bulk_update_personnel("p1", _FakeRequest({}), redirect=None)
+                )
+        self.assertEqual(result.status_code, 303)
+        self.assertTrue(result.headers["location"].endswith("/delivery/vendor/shopee"))
+
+    def test_redirect_uses_vendor_from_before_this_submission(self):
+        # 就算這次同時把所屬廠商改到別的廠商，也是跳回「送出前」那個
+        # 廠商的清單——同仁是從那個清單點進來的，改完理所當然回到那裡。
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
+            with mock.patch.object(vendor_routes.repository, "applicable_doc_types", return_value=[]):
+                with mock.patch.object(vendor_routes.repository, "update_personnel_vendor"):
+                    result = asyncio.run(
+                        vendor_routes.bulk_update_personnel(
+                            "p1", _FakeRequest({"vendor": "shopee_contract"}), redirect=None
+                        )
+                    )
+        self.assertTrue(result.headers["location"].endswith("/delivery/vendor/shopee"))
+
+    def test_id_number_error_stays_on_detail_page(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
+            with mock.patch.object(vendor_routes.repository, "applicable_doc_types", return_value=[]):
+                result = asyncio.run(
+                    vendor_routes.bulk_update_personnel(
+                        "p1", _FakeRequest({"id_number": "not-a-valid-id"}), redirect=None
+                    )
+                )
+        self.assertEqual(result.status_code, 303)
+        self.assertTrue(result.headers["location"].endswith("/delivery/personnel/p1?error=id_number"))
+
+
 if __name__ == "__main__":
     unittest.main()
