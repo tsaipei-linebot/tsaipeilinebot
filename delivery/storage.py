@@ -57,3 +57,19 @@ def download_file(blob_path: str):
         return None, None
     blob.reload()
     return blob.download_as_bytes(), blob.content_type
+
+
+def delete_entity_files(category: str, entity_id: str):
+    """刪除某個人員/事件底下上傳過的所有檔案——人員一筆紀錄底下可能有身分證、
+    良民證、強制險等好幾個各自獨立上傳的檔案（存在 `documents` 這個子物件裡，
+    每個應備項目各自一個 file_path），不是單一一個 blob_path 欄位，所以刪除
+    整筆人員紀錄時，用 `upload_file()` 存檔時就固定好的路徑前綴
+    `delivery/{category}/{entity_id}/` 一次列出、一次刪光，不用逐一項目讀
+    file_path 再各自刪一次。沒設定好 bucket、或這個人本來就沒有任何檔案，
+    安靜跳過，不算錯誤——呼叫端（刪除整筆人員紀錄）不應該因為這裡失敗就
+    整個中斷。"""
+    if not is_configured() or not entity_id:
+        return
+    prefix = f"delivery/{category}/{entity_id}/"
+    for blob in _bucket().list_blobs(prefix=prefix):
+        blob.delete()

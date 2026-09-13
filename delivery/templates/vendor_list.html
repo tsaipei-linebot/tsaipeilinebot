@@ -59,7 +59,15 @@
                 {% endif %}
             </td>
             <td><span class="badge {{ row.employment_status_badge_class }}">{{ row.employment_status_name }}</span></td>
-            <td><a href="/delivery/personnel/{{ row.person.id }}">查看詳細</a></td>
+            <td>
+                <a href="/delivery/personnel/{{ row.person.id }}">查看詳細</a>
+                {% if user.role == "admin" %}
+                <form method="post" action="/delivery/personnel/{{ row.person.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除「{{ row.person.name }}」這筆人員紀錄嗎？上傳過的所有檔案也會一併刪除，刪除後無法復原。');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>

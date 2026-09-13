@@ -220,6 +220,15 @@ def get_personnel(personnel_id: str):
     return data
 
 
+def delete_personnel(personnel_id: str):
+    """整筆刪除人員紀錄（2026-09-13 新增，主管專用）——真的從 Firestore
+    刪掉，不是標記隱藏，沒有回收機制，跟合約產生器／派遣契約產生器既有的
+    刪除功能是同一種做法。呼叫端（routes/vendor_routes.py 的刪除路由）
+    要負責在這之前先呼叫 storage.delete_entity_files() 清掉上傳過的檔案，
+    這裡只處理 Firestore 那筆文件本身。"""
+    personnel_ref().document(personnel_id).delete()
+
+
 def list_personnel_by_vendor(vendor: str) -> list:
     query = personnel_ref().where("vendor", "==", vendor).where("status", "==", "active")
     result = []
