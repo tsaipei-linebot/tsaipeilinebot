@@ -59,6 +59,10 @@
             <input type="text" id="job-search-input" list="job-datalist" placeholder="請輸入廠商名稱搜尋或選取..." autocomplete="off">
             <datalist id="job-datalist"></datalist>
         </label>
+        <div style="margin-top: 8px; display: flex; align-items: center; gap: 10px;">
+            <button type="button" class="btn btn-small" id="reload-jobs-btn" onclick="loadMaintainableJobs()">🔄 重新載入 Notion 職缺</button>
+            <span id="reload-jobs-status" class="hint" style="margin: 0;"></span>
+        </div>
         <div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 16px;">
             <label style="display: inline-flex; align-items: center; gap: 6px;">
                 <input type="radio" name="updateActionType" value="active_update" checked> 內容更新（核准後狀態為「一週內有更新」）
@@ -433,6 +437,16 @@ document.querySelectorAll('input[name="updateActionType"]').forEach(function (r)
 });
 
 function loadMaintainableJobs() {
+    // 「重新載入 Notion 職缺」按鈕（2026-09-13 新增，比照原本 Netlify
+    // 職缺維護網頁既有的同名功能）呼叫的就是這支函式——跟頁面載入時
+    // 自動呼叫的是同一支，重新打一次 /job-listings/api/jobs（材霈平台
+    // 這邊沒有另外快取，每次都是即時轉呼叫 GAS 的 GET_JOBS），讓「維護
+    // 既有職缺」的搜尋清單不用整頁重新整理就能抓到剛剛才在 Notion／
+    // GAS 那邊異動過的資料（例如同仁剛送出一筆新職缺，想馬上編輯它）。
+    var btn = document.getElementById('reload-jobs-btn');
+    var status = document.getElementById('reload-jobs-status');
+    if (btn) { btn.disabled = true; }
+    if (status) { status.textContent = '載入中...'; status.className = 'hint'; }
     fetch('/job-listings/api/jobs').then(function (r) { return r.json(); }).then(function (data) {
         cachedJobs = data.jobs || [];
         var datalist = document.getElementById('job-datalist');
@@ -440,15 +454,20 @@ function loadMaintainableJobs() {
         datalist.innerHTML = '';
         if (cachedJobs.length === 0) {
             input.placeholder = '您目前無可維護之職缺（需為原刊登人或其主管）';
-            return;
+        } else {
+            input.placeholder = '請輸入廠商名稱搜尋 (可維護共 ' + cachedJobs.length + ' 筆)...';
+            cachedJobs.forEach(function (j) {
+                var opt = document.createElement('option');
+                opt.value = j.title || j.label || '';
+                datalist.appendChild(opt);
+            });
         }
-        input.placeholder = '請輸入廠商名稱搜尋 (可維護共 ' + cachedJobs.length + ' 筆)...';
-        cachedJobs.forEach(function (j) {
-            var opt = document.createElement('option');
-            opt.value = j.title || j.label || '';
-            datalist.appendChild(opt);
-        });
-    }).catch(function () {});
+        if (status) { status.textContent = '已重新載入，共 ' + cachedJobs.length + ' 筆可維護職缺'; status.className = 'success'; }
+    }).catch(function () {
+        if (status) { status.textContent = '載入失敗，請稍後再試一次'; status.className = 'error'; }
+    }).finally(function () {
+        if (btn) { btn.disabled = false; }
+    });
 }
 
 document.getElementById('job-search-input').addEventListener('input', function (e) {

@@ -3735,3 +3735,29 @@ session 欄位就好，不用改任何一支既有的權限檢查程式碼：
 測試：`tests/test_accounts_routes.py` 新增
 `AccountFormContextManagerOptionsTests`（確認 `manager_options` 只含
 副主任以上、且會排除自己）。
+
+## 職缺維護頁面補上「重新載入 Notion 職缺」按鈕（2026-09-13）
+
+使用者反映：職缺維護頁面（`/job-listings`）「維護既有職缺」模式底下的
+搜尋清單，只有在頁面剛載入時打一次 `/job-listings/api/jobs` 抓資料
+（`templates/job_listing_form.html` 底部 `loadMaintainableJobs()`，
+頁面載入時自動呼叫一次），跟原本 Netlify 職缺維護網頁有一顆可以手動
+重新整理清單的「重新載入 NOTION 職缺」按鈕不一樣——同仁如果剛送出一筆
+新職缺、或別人剛好在 Notion／GAS 那邊異動過資料，想要不整頁重新整理
+就馬上編輯到最新資料，原本沒有辦法。
+
+做法：在「搜尋既有職缺」欄位下面加一顆「🔄 重新載入 Notion 職缺」按鈕，
+點下去就是重新呼叫一次 `loadMaintainableJobs()`（跟頁面載入時自動呼叫
+的是同一支函式，材霈平台這邊的 `/job-listings/api/jobs` 本來就沒有
+快取，每次都是即時轉呼叫 GAS 的 `GET_JOBS`，見
+`services/job_listing_submit_service.py` 的 `fetch_maintainable_jobs()`），
+重新整理搜尋建議清單（`<datalist>`）跟可維護筆數提示文字，並新增按鈕
+旁的載入狀態文字（載入中/已重新載入共 N 筆/載入失敗）。純前端變更，
+沒有新增或修改任何後端路由或 API。
+
+**已知限制（不是這次要處理的範圍）**：如果 GAS 那支 Web App 自己在
+`GET_JOBS` 端點內部也有另外做快取（例如常見的 Google Apps Script
+`CacheService`），這顆按鈕只能保證材霈平台這邊即時重新呼叫一次 GAS，
+不保證 GAS 回傳的資料本身是不是即時的——這跟原本 Netlify 網頁上同一顆
+按鈕的行為原理相同，材霈平台這邊沒有、也不需要另外處理 GAS 內部的
+快取邏輯。
