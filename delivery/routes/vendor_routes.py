@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 
 from delivery import repository
-from delivery.auth import current_user, login_required
+from delivery.auth import admin_required, current_user, login_required
 from delivery.config import (
     ALLOWED_UPLOAD_CONTENT_TYPES,
     CLIENT_MAP,
@@ -18,7 +18,7 @@ from delivery.config import (
     VENDOR_MAP,
 )
 from delivery.ocr import extract_expiry_date
-from delivery.storage import StorageNotConfigured, is_configured, upload_file
+from delivery.storage import StorageNotConfigured, delete_entity_files, is_configured, upload_file
 from delivery.templating import templates
 from delivery.validators import is_valid_taiwan_id
 
@@ -154,6 +154,25 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
             "error": error,
         },
     )
+
+
+@router.post("/personnel/{personnel_id}/delete")
+def delete_personnel_submit(personnel_id: str, request: Request, redirect=Depends(admin_required)):
+    """整筆刪除人員紀錄（2026-09-13 新增），只有主管能刪——跟這個模組裡
+    其他有實質後果、不可逆的動作（核准補款/病假、結案事故）一樣走
+    admin_required，不是任何有配送部權限的帳號都能刪。真的整筆刪掉
+    Firestore 紀錄跟上傳過的所有檔案（身分證、良民證、強制險等），沒有
+    回收機制，前端要先跳確認對話框。"""
+    if redirect:
+        return redirect
+    person = repository.get_personnel(personnel_id)
+    if not person:
+        return RedirectResponse(url="/delivery/", status_code=303)
+    vendor_code = person.get("vendor")
+    delete_entity_files("personnel-docs", personnel_id)
+    repository.delete_personnel(personnel_id)
+    redirect_url = f"/delivery/vendor/{vendor_code}" if vendor_code in VENDOR_MAP else "/delivery/"
+    return RedirectResponse(url=redirect_url, status_code=303)
 
 
 @router.post("/personnel/{personnel_id}/bulk-update")
