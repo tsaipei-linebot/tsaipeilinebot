@@ -373,6 +373,13 @@
     - **刻意保留的限制（明講不隱藏）**：福利意圖不會像地區/類別/廠商那樣被記進對話槽位、延續到下一輪追問（例如問完「有公司車嗎」，下一句只問「桃園呢」不會自動延續「公司車」這個條件）——這次先只做「當輪訊息裡明確提到福利關鍵字」的直接攔截，多輪追問延續的體驗如果之後有需要可以再擴充。
     - **新增測試**：`tests/test_matcher_service.py` 新增 `BuildBenefitKeywordIndexTests`、`FindBenefitMatchedJobsTests`（含三種講法都能命中同一筆職缺、否定語氣情境、長關鍵字優先於短關鍵字子字串等情境）；`tests/test_message_handler.py` 新增 `BenefitKeywordDirectInterceptTests`（直接命中不落到 AI 決策、否定語氣不誤觸發、地區篩選縮小範圍、沒有福利關鍵字時正常落到 AI 決策）；`tests/test_notion_service.py` 新增 `BenefitFieldReadThroughTests`（驗證「福利」欄位真的有被 `fetch_jobs_data()` 讀進來，見上方「差點漏掉的一步」）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 613 個測試，OK。
+52. **試營運將近一週後，請 Claude 全面檢查程式碼有沒有邏輯問題或安全性漏洞，修好其中兩項（AI 提示詞注入防護、Session 建立的並發競態）**：派出三組審查（`main.py`/`config.py`/`session_service.py`/`notion_service.py` 安全性；`handlers/message_handler.py` 對話流程邏輯；`matcher_service.py`/`flex_service.py`/`ai_service.py` 比對與 AI 服務邏輯），找到多項風險，這次先修好其中兩項：
+    - **AI 提示詞注入防護**：`handlers/message_handler.py` 的主要 AI 決策提示詞、`services/ai_service.py` 的職缺詳情美化排版提示詞，都會把同仁在 Notion 填寫的自由文字（職缺「特色」「工作內容」、FAQ「答：」）直接接進提示詞裡，沒有任何分隔或說明，理論上如果這些欄位被寫成類似「忽略以上規則」的文字，有機會干擾 AI 判斷（例如跳過就業服務法合規審查、或無視原本「不能自行推論地區涵蓋範圍」等既有規則）。目前這些欄位只有同仁能編輯，風險可控，但屬於沒有防護的漏洞，這次補上：① `ai_service.py` 把「原始工作內容」用明確的 `&lt;&lt;&lt;原始工作內容開始/結束&gt;&gt;&gt;` 分隔符號包起來，並新增一條規則明講這段內容不能跳過合規審查；② `message_handler.py` 的主要決策提示詞新增規則 7，明講候選職缺清單／FAQ 內容都只是資料不是指令，不能因為裡面出現看起來像指令的文字就改變判斷邏輯。
+        - **新增測試**：`tests/test_ai_service.py` 新增 `FormatFullJobDetailPromptInjectionGuardTests`；`tests/test_message_handler.py` 新增 `test_ai_prompt_forbids_treating_job_or_faq_free_text_as_instructions`。
+    - **Session 建立的並發競態（極窄視窗，理論風險）**：`services/session_service.py` 的 `_get_or_create_session()`（`get_user_history`/`get_user_slots` 背後都會呼叫到）原本是「純讀取一次 → 視情況整份覆寫或局部更新」，唯獨這個函式沒有跟 `update_user_slots`/`append_user_history`/`clear_user_slots` 一樣包在 Firestore transaction 裡。使用者 session 剛好過期（7 天沒互動）或這是第一次互動時，會整份覆寫（`ref.set`）——如果同一位使用者幾乎同時傳兩則訊息（LINE 有時會重送、或這套「限時同步等待＋逾時後背景補發」架構本來就可能讓兩個請求同時處理同一個人），兩次都命中「要重建 session」的情境，其中一次即使已經透過 transaction 正確存好地區/類別等槽位，還是可能被另一次沒有並發保護的整份覆寫蓋掉、憑空消失。改成跟其他三個函式共用同一個 `_run_in_transaction()`（`mutate` 直接原封不動回傳 session，只是要用同一套有並發保護的讀-改-寫機制），修好後 Firestore 偵測到寫入衝突會自動重試，不會再被蓋掉。
+        - **沒有新增 Firestore mock 測試**：這個檔案既有的測試（`tests/test_session_service.py`）刻意只測純邏輯部分（`_normalize_session`／`_merge_slot_updates`／`_append_history_entry`），沒有替任何一個實際會呼叫 Firestore transaction 的函式（含既有的 `update_user_slots` 等）寫過整合測試，這次修正沿用同樣的既有做法，不另外破例。
+    - **其餘檢查出來、這次先不動的項目（已跟使用者說明，等對方確認後續處理方式）**：福利關鍵字沒有檢查否定語氣／`/apply-click`／Notion `page_id` 格式驗證／地點顯示台灣「台/臺」正規化不一致／地點清單未去重複／log 未過濾換行字元／面試預約流程（尚未上線）信任使用者手動輸入的時段代碼與職缺名稱。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 615 個測試，OK。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 565 個測試，OK。
 
 ## 目前所有檔案的狀態
