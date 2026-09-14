@@ -101,6 +101,54 @@ class FormatCleanLocationSameCountyScopeTests(unittest.TestCase):
         )
 
 
+class FormatCleanLocationTaiVariantNormalizationTests(unittest.TestCase):
+    """安全性檢查發現：format_clean_location() 的 target_location／
+    same_county_scope 比對，沒有像 _strip_county_prefix() 一樣處理「台/臺」
+    全半形不一致的情況。matcher_service.py 傳進來的 target_location／
+    same_county_scope 一律已經正規化成「台」，但同仁在 Notion 填「縣市」
+    「行政區」欄位時可能寫成正體全形「臺」（例如「臺南市」），兩邊沒有統一
+    比對基準的話，退讓建議會整個比對不到、退化成只顯示縣市名稱，看不到
+    行政區細節——這正是這個功能原本要解決的問題，換一種寫法又會重演。"""
+
+    def test_target_location_matches_district_written_with_tai_variant(self):
+        job = {"縣市": "臺南市", "行政區": "臺南市佳里區", "行業別": "服務業"}
+        self.assertEqual(f.format_clean_location(job, "佳里"), "佳里區")
+
+    def test_target_location_falls_back_to_county_written_with_tai_variant(self):
+        job = {"縣市": "臺南市", "行政區": "", "行業別": "服務業"}
+        self.assertEqual(f.format_clean_location(job, "台南"), "臺南市 各區據點（自選區域）")
+
+    def test_same_county_scope_matches_district_written_with_tai_variant(self):
+        job = {
+            "縣市": "宜蘭縣,桃園市,臺南市,基隆市,新竹縣,嘉義縣,彰化縣,台中市,台北市,新竹市,屏東縣,高雄市,澎湖縣,雲林縣,苗栗縣",
+            "行政區": "臺南市下營區,臺南市佳里區",
+            "行業別": "服務業",
+        }
+        self.assertEqual(f.format_clean_location(job, same_county_scope="台南市"), "台南市（下營區、佳里區）")
+
+
+class FormatCleanLocationDedupTests(unittest.TestCase):
+    """安全性檢查發現：一般的「智慧地點聚合」分支沒有像 target_location／
+    same_county_scope 兩個分支一樣去除重複值。同仁複製貼上「行政區」欄位
+    時偶爾會不小心貼出重複的行政區名稱，去重複前會讓行政區數量被灌水，
+    可能誤觸發「≥5 個行政區時改用概括描述」這條規則，或顯示文字重複列出
+    同一個行政區。"""
+
+    def test_duplicated_district_entries_are_collapsed(self):
+        job = {"縣市": "新北市", "行政區": "板橋區,板橋區,三重區", "行業別": "服務業"}
+        self.assertEqual(f.format_clean_location(job), "新北市（板橋區、三重區）")
+
+    def test_duplicates_do_not_inflate_count_past_the_generic_threshold(self):
+        # 5 個「行政區」token，但只有 4 個不重複的地名，去重複後應該落在
+        # <=4 分支、逐一列出行政區，而不是因為重複灌水誤判成 >=5 改用概括描述。
+        job = {
+            "縣市": "新北市", "行政區": "板橋區,板橋區,三重區,中和區,永和區",
+            "行業別": "服務業",
+        }
+        result = f.format_clean_location(job)
+        self.assertEqual(result, "新北市（板橋區、三重區、中和區、永和區）")
+
+
 class CreateJobFlexCardPayMethodTests(unittest.TestCase):
     def test_shows_pay_method_line_when_present(self):
         job = {

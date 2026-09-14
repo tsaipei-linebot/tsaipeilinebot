@@ -322,6 +322,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history[-6:]])
         user_slots = get_user_slots(user_id)
         clean_input = clean_text_for_search(raw_msg)
+        # 提前到這裡計算（原本在步驟 1 才算），讓步驟 0-4「全部瀏覽攔截」也能
+        # 用同一份否定語氣判斷——修正前「不要都給我看」這種明確否定的話，
+        # 因為 is_negative 那時候還沒算出來，一樣會被判斷成「要看全部」，
+        # 答非所問。
+        is_negative = has_negative_intent(raw_msg)
 
         # 「都可以」「隨便」「都好」這種泛用表態語氣，講的通常是「我很有彈性」，
         # 不是特別針對地區/類別/廠商哪一個維度──跟真人招募專員的理解一樣，
@@ -423,7 +428,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             or detected_category_from_text
             or has_recognizable_category_or_brand_keyword(clean_input)
         )
-        is_show_all = any(k in clean_input for k in show_all_keywords) and not has_specific_intent
+        is_show_all = any(k in clean_input for k in show_all_keywords) and not has_specific_intent and not is_negative
 
         if is_show_all:
             matched_show_all = []
@@ -481,7 +486,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             return
 
         # ---------------- 步驟 1：精準工種直達攔截（含否定語氣防呆）[cite: 6] ----------------
-        is_negative = has_negative_intent(raw_msg)
+        # is_negative 已經在步驟 0-3 提前算好，這裡直接沿用。
         # 同樣改用 CATEGORY_KEYWORDS/KNOWN_BRANDS 當唯一來源，跟 has_specific_intent
         # 共用同一份清單，避免各處關鍵字覆蓋範圍互相兜不起來。
         is_delivery_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["外送"]) and not is_negative
