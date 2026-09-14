@@ -69,6 +69,33 @@ class ClientContractRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.json(), {"found": False})
 
 
+class HomeRouteShowSummaryLinkTests(unittest.TestCase):
+    """首頁要不要顯示「查看總表」連結：2026-09-14 改成完全看
+    viewer_has_any_department_access()（服務部門規則），不再看
+    client_contracts 模組本身有沒有主管角色。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = HomeRouteShowSummaryLinkTests._FakeSession({"user": user})
+
+    def test_reflects_department_access_check(self):
+        account = {"username": "carol", "is_platform_admin": False}
+        with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(client_contract_routes, "list_visible_submissions", return_value=[]):
+                with mock.patch.object(client_contract_routes, "build_vendor_lookup", return_value={"v1": {}}):
+                    with mock.patch.object(client_contract_routes, "viewer_has_any_department_access", return_value=True) as mock_check:
+                        client_contract_routes.client_contract_home(
+                            self._FakeRequest(account), generated="", redirect=None,
+                        )
+        mock_check.assert_called_once_with(account, {"v1": {}})
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertTrue(context["show_summary_link"])
+
+
 class RequireAccessDependencyTests(unittest.TestCase):
     class _FakeSession(dict):
         def get(self, key, default=None):
@@ -291,7 +318,7 @@ class SubmitValidationTests(unittest.TestCase):
         fake_bytes = b"FAKE-DOCX-BYTES"
         with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
             with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
-                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract") as mock_sync:
+                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract", return_value="vendor-abc") as mock_sync:
                     with mock.patch.object(client_contract_routes.platform_companies, "get_company",
                                             return_value=self._fake_company()):
                         with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
@@ -306,6 +333,9 @@ class SubmitValidationTests(unittest.TestCase):
         mock_sync.assert_called_once_with(
             name="測試客戶股份有限公司", tax_id="12345678", contract_year=2026, company_id="weizheng",
         )
+        # 同步廠商管理要先跑，拿到的廠商 ID 要跟著存進這筆合約紀錄，
+        # 之後總表／廠商管理預覽連動才找得到對應的廠商資料。
+        self.assertEqual(mock_save.call_args.kwargs["vendor_id"], "vendor-abc")
         self.assertEqual(result.body, fake_bytes)
         self.assertIn("attachment", result.headers["content-disposition"])
         # 2026-09-12 使用者要求檔名要帶「合約年」（合約起始日期的年份，
@@ -547,6 +577,22 @@ class DownloadRouteVisibilityTests(unittest.TestCase):
         self.assertEqual(result.body, b"DOCX-DATA")
         self.assertIn("2026", result.headers["content-disposition"])
 
+    def test_service_department_manager_can_download_even_if_not_submitter_chain(self):
+        """不是送出者、不是送出者的主管，但服務這筆合約連到的廠商的部門
+        主管，一樣要能下載——跟原本送出人鏈的規則是「兩者符合一個即可」。"""
+        record = {"id": "x", "party_a_name": "測試客戶", "blob_path": "client_contracts/x/a.docx",
+                  "submitted_by": "alice", "vendor_id": "v1", "contract_start_date": "2026-01-01"}
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(client_contract_routes, "can_view_via_vendor_department_single", return_value=True):
+                    with mock.patch.object(client_contract_routes.client_contract_storage, "download_file",
+                                            return_value=(b"DOCX-DATA", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")):
+                        result = client_contract_routes.client_contract_download(
+                            "x", self._FakeRequest({"username": "carol", "is_platform_admin": False}), redirect=None,
+                        )
+        self.assertEqual(result.body, b"DOCX-DATA")
+
 
 class PreviewRouteTests(unittest.TestCase):
     class _FakeSession(dict):
@@ -586,6 +632,20 @@ class PreviewRouteTests(unittest.TestCase):
         self.assertEqual(result.body, b"%PDF-DATA")
         self.assertIn("inline", result.headers["content-disposition"])
         self.assertIn("2026", result.headers["content-disposition"])
+
+    def test_service_department_manager_can_preview_even_if_not_submitter_chain(self):
+        record = {"id": "x", "party_a_name": "測試客戶", "pdf_blob_path": "client_contracts/x/a.pdf",
+                  "submitted_by": "alice", "vendor_id": "v1", "contract_start_date": "2026-01-01"}
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(client_contract_routes, "can_view_via_vendor_department_single", return_value=True):
+                    with mock.patch.object(client_contract_routes.client_contract_storage, "download_file",
+                                            return_value=(b"%PDF-DATA", "application/pdf")):
+                        result = client_contract_routes.client_contract_preview(
+                            "x", self._FakeRequest({"username": "carol", "is_platform_admin": False}), redirect=None,
+                        )
+        self.assertEqual(result.body, b"%PDF-DATA")
 
 
 if __name__ == "__main__":

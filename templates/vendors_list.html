@@ -6,48 +6,108 @@
     <a class="btn btn-primary" href="/vendors/new">新增廠商</a>
 </div>
 <p class="hint">
-    記錄每個合作廠商的派遣員工要用哪家公司簽約加保。這份資料跟配送部系統既有的廠商清單是分開的，還沒有互相串接。
+    記錄每個合作廠商的派遣員工要用哪家公司簽約加保、由哪個部門服務。這份資料跟配送部系統既有的廠商清單是分開的，還沒有互相串接。
     合約產生器每次送出合約都會自動在這裡新增一筆（同一家客戶不同年份、甚至同一年不同合約都各自保留一筆）；
     派遣契約產生器送出時，如果這裡還沒有同名紀錄，也會自動補一筆只有名稱的紀錄。
+    自動新增的紀錄「服務部門」欄位一律空白，要同仁自己到這裡手動補上，才會出現在「總表」裡對應部門主管看得到的範圍。
 </p>
 
 {% if error == "not_found" %}
 <p class="error">找不到這個廠商，可能已經被刪除了。</p>
 {% endif %}
 
-<table class="data-table">
-    <thead>
-        <tr>
-            <th>代號</th>
-            <th>廠商名稱</th>
-            <th>統一編號</th>
-            <th>合約年</th>
-            <th>簽約公司</th>
-            <th>備註</th>
-            <th></th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for v in vendors %}
-        <tr>
-            <td>{{ v.code }}</td>
-            <td>{{ v.name }}</td>
-            <td>{{ v.tax_id or "-" }}</td>
-            <td>{{ v.contract_year or "-" }}</td>
-            <td>{{ v.company_name or "尚未設定" }}</td>
-            <td>{{ v.note or "-" }}</td>
-            <td>
-                <a href="/vendors/{{ v.id }}/edit">編輯</a>
-                <form method="post" action="/vendors/{{ v.id }}/delete" style="display:inline"
-                      onsubmit="return confirm('確定要刪除廠商「{{ v.name }}」嗎？');">
-                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
-                </form>
-            </td>
-        </tr>
+<div class="filter-bar">
+    <input type="text" id="vendor-name-filter" placeholder="搜尋廠商名稱...">
+    <select id="vendor-year-filter">
+        <option value="">全部合約年</option>
+        {% for year in contract_years %}
+        <option value="{{ year }}">{{ year }}</option>
         {% endfor %}
-    </tbody>
-</table>
+    </select>
+</div>
+
+<div class="table-scroll">
+    <table class="data-table sticky-head" id="vendors-table">
+        <thead>
+            <tr>
+                <th>代號</th>
+                <th>廠商名稱</th>
+                <th>統一編號</th>
+                <th>合約年</th>
+                <th>簽約公司</th>
+                <th>服務部門</th>
+                <th>連動合約</th>
+                <th>連動契約</th>
+                <th>備註</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in vendors %}
+            <tr data-vendor-name="{{ v.name }}" data-contract-year="{{ v.contract_year }}">
+                <td>{{ v.code }}</td>
+                <td>{{ v.name }}</td>
+                <td>{{ v.tax_id or "-" }}</td>
+                <td>{{ v.contract_year or "-" }}</td>
+                <td>{{ v.company_name or "尚未設定" }}</td>
+                <td>{{ v.service_departments|join("、") if v.service_departments else "-" }}</td>
+                <td>
+                    {% if v.linked_client_contract %}
+                    <a href="/client-contracts/{{ v.linked_client_contract.id }}/preview" target="_blank" class="btn btn-small">預覽</a>
+                    <a href="/client-contracts/{{ v.linked_client_contract.id }}/download" class="btn btn-small">下載</a>
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td>
+                    {% if v.linked_dispatch_contracts %}
+                    {% for d in v.linked_dispatch_contracts %}
+                    <div>
+                        <a href="/dispatch-contracts/{{ d.id }}/preview" target="_blank" class="btn btn-small">預覽</a>
+                        <a href="/dispatch-contracts/{{ d.id }}/download" class="btn btn-small">下載</a>
+                        <span class="hint" style="margin:0;">（{{ d.submitted_by }}）</span>
+                    </div>
+                    {% endfor %}
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td>{{ v.note or "-" }}</td>
+                <td>
+                    <a href="/vendors/{{ v.id }}/edit">編輯</a>
+                    <form method="post" action="/vendors/{{ v.id }}/delete" style="display:inline"
+                          onsubmit="return confirm('確定要刪除廠商「{{ v.name }}」嗎？');">
+                        <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% if not vendors %}
 <p class="empty">目前還沒有任何廠商資料。</p>
 {% endif %}
+
+<script>
+(function () {
+    var nameInput = document.getElementById('vendor-name-filter');
+    var yearSelect = document.getElementById('vendor-year-filter');
+    var table = document.getElementById('vendors-table');
+    if (!nameInput || !yearSelect || !table) { return; }
+
+    function applyFilter() {
+        var name = nameInput.value.trim().toLowerCase();
+        var year = yearSelect.value;
+        table.querySelectorAll('tbody tr').forEach(function (tr) {
+            var matchesName = !name || (tr.dataset.vendorName || '').toLowerCase().indexOf(name) !== -1;
+            var matchesYear = !year || tr.dataset.contractYear === year;
+            tr.hidden = !(matchesName && matchesYear);
+        });
+    }
+
+    nameInput.addEventListener('input', applyFilter);
+    yearSelect.addEventListener('change', applyFilter);
+})();
+</script>
 {% endblock %}

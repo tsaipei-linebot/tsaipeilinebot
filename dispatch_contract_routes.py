@@ -24,6 +24,16 @@ contracts/{id}/delete` 把 Firestore 那筆紀錄跟 GCS 上存的 Word/PDF 檔�
 `services/vendor_sync.py` 的 `sync_vendor_from_dispatch_contract()`，
 廠商管理裡沒有同名紀錄才自動補一筆（只有名稱），詳見該檔案開頭的
 說明。
+
+**連動指定的合約（2026-09-14 新增）**：表單多了「選擇對應的合約」下拉
+選單，選了某一份合約產生器的紀錄後，客戶名稱、`vendor_id` 都直接沿用
+那份合約的（見 `services/dispatch_contract_service.py` 開頭的說明），
+這種情況下**不會**呼叫 `sync_vendor_from_dispatch_contract()`——廠商資料
+已經確定是哪一筆了，不用再靠名稱猜。沒有選合約時才會走原本手動輸入
+客戶名稱、呼叫 `sync_vendor_from_dispatch_contract()` 的路徑。下拉選單
+只列出這個帳號看得到的合約（跟 `/client-contracts` 首頁同一套可見範圍
+規則），送出時也會重新驗證選的那筆合約這個帳號真的看得到，避免有人
+把網址列裡的 id 換成別人的合約 id 硬送。
 """
 from urllib.parse import quote
 
@@ -34,6 +44,16 @@ import dispatch_contract_storage
 import platform_accounts
 import platform_vendors
 from platform_templating import templates
+from services.client_contract_service import (
+    can_view_submission as can_view_client_contract_submission,
+    get_submission as get_client_contract_submission,
+    list_visible_submissions as list_visible_client_contracts,
+)
+from services.contract_summary_service import (
+    build_vendor_lookup,
+    can_view_via_vendor_department_single,
+    viewer_has_any_department_access,
+)
 from services.dispatch_contract_service import (
     CLAUSE_DEFAULTS,
     CLAUSE_LABELS,
@@ -83,6 +103,20 @@ def _client_name_suggestions() -> list:
     return names
 
 
+def _client_contract_options(account: dict) -> list:
+    """「選擇對應的合約」下拉選單的選項：這個帳號看得到的合約產生器紀錄
+    （跟 /client-contracts 首頁同一套可見範圍），依客戶名稱＋合約起始
+    日期年份組出畫面上顯示的文字，方便同仁辨識是哪一份。"""
+    options = []
+    for record in list_visible_client_contracts(account):
+        year = (record.get("contract_start_date") or "")[:4]
+        label = record.get("party_a_name", "")
+        if year.isdigit():
+            label = f"{label}（{year}年）"
+        options.append({"id": record["id"], "label": label})
+    return options
+
+
 def _form_context(*, user: dict, error: str = "", form: dict = None, shift_rows: list = None) -> dict:
     return {
         "user": user,
@@ -94,6 +128,7 @@ def _form_context(*, user: dict, error: str = "", form: dict = None, shift_rows:
         "clause_labels": CLAUSE_LABELS,
         "clause_defaults": CLAUSE_DEFAULTS,
         "recent_client_names": _client_name_suggestions(),
+        "client_contract_options": _client_contract_options(user),
     }
 
 
@@ -110,7 +145,7 @@ def dispatch_contract_home(request: Request, generated: str = "", redirect=Depen
             "user": account,
             "records": records,
             "generated": generated,
-            "show_summary_link": platform_accounts.module_role(account, MODULE_CODE) == platform_accounts.ROLE_ADMIN,
+            "show_summary_link": viewer_has_any_department_access(account, build_vendor_lookup()),
         },
     )
 
@@ -156,6 +191,21 @@ async def dispatch_contract_submit(request: Request, redirect=Depends(_require_a
     enabled_columns = form.getlist("enabled_columns")
     raw_shift_rows = _parse_shift_rows(form)
     clauses = {key: (form.get(f"clause_{key}") or "").strip() for key in CLAUSE_ORDER}
+    linked_client_contract_id = (form.get("linked_client_contract_id") or "").strip()
+
+    # 選了「選擇對應的合約」的話，客戶名稱、廠商關聯一律直接沿用那份
+    # 合約的資料（見 services/dispatch_contract_service.py 開頭的說明），
+    # 不管這個欄位本來打了什麼都會被蓋掉；重新驗證這個帳號真的看得到
+    # 選的那筆合約，避免有人把網址列/表單裡的 id 換成別人的合約硬送。
+    linked_vendor_id = ""
+    error = ""
+    if linked_client_contract_id:
+        chosen_contract = get_client_contract_submission(linked_client_contract_id)
+        if not chosen_contract or not can_view_client_contract_submission(account, chosen_contract):
+            error = "選擇的合約已經不存在或您無法查看，請重新選擇，或改為手動輸入客戶名稱。"
+        else:
+            client_name = chosen_contract.get("party_a_name", "") or client_name
+            linked_vendor_id = chosen_contract.get("vendor_id", "")
 
     form_values = {
         "client_name": client_name,
@@ -163,17 +213,18 @@ async def dispatch_contract_submit(request: Request, redirect=Depends(_require_a
         "work_content": work_content,
         "pay_cycle": pay_cycle,
         "enabled_columns": enabled_columns,
+        "linked_client_contract_id": linked_client_contract_id,
     }
 
-    error = ""
-    if not client_name:
-        error = "請填寫客戶名稱。"
-    elif not work_address:
-        error = "請填寫工作地址。"
-    elif not work_content:
-        error = "請填寫工作內容。"
-    elif not enabled_columns:
-        error = "班別薪資表格請至少勾選一個欄位。"
+    if not error:
+        if not client_name:
+            error = "請填寫客戶名稱。"
+        elif not work_address:
+            error = "請填寫工作地址。"
+        elif not work_content:
+            error = "請填寫工作內容。"
+        elif not enabled_columns:
+            error = "班別薪資表格請至少勾選一個欄位。"
 
     shifts = build_shift_rows(raw_shift_rows, enabled_columns) if not error else []
     if not error and not shifts:
@@ -207,6 +258,13 @@ async def dispatch_contract_submit(request: Request, redirect=Depends(_require_a
                 pdf_bytes, f"派遣契約_{client_name}.pdf"
             )
 
+    # 有選「對應的合約」就直接沿用那份合約帶出來的廠商 ID，不用再靠名稱
+    # 去廠商管理猜；沒選的話才走原本「找同名沿用、沒有就新建」的備案路徑。
+    if linked_client_contract_id:
+        vendor_id = linked_vendor_id
+    else:
+        vendor_id = sync_vendor_from_dispatch_contract(client_name)
+
     save_submission(
         submitted_by=account["username"],
         client_name=client_name,
@@ -218,14 +276,26 @@ async def dispatch_contract_submit(request: Request, redirect=Depends(_require_a
         clauses=clauses,
         blob_path=blob_path,
         pdf_blob_path=pdf_blob_path,
+        vendor_id=vendor_id,
+        linked_client_contract_id=linked_client_contract_id,
     )
-    sync_vendor_from_dispatch_contract(client_name)
 
     encoded_filename = quote(filename)
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"},
+    )
+
+
+def _can_preview_or_download(account: dict, record: dict) -> bool:
+    """預覽／下載額外多開放給「服務部門主管」——跟原本送出人鏈的
+    `can_view_submission()` 是「兩者符合一個即可」，不是取代掉原本的
+    規則（刪除還是只看 `can_view_submission()`，見
+    `dispatch_contract_delete()`）。這樣總表上列出來的紀錄，服務部門
+    主管點進去的預覽/下載連結才不會變成「找不到」。"""
+    return can_view_submission(account, record) or can_view_via_vendor_department_single(
+        account, record.get("vendor_id", "")
     )
 
 
@@ -237,7 +307,7 @@ def dispatch_contract_download(submission_id: str, request: Request, redirect=De
     record = get_submission(submission_id)
     if not record or not record.get("blob_path"):
         return Response(status_code=404)
-    if not can_view_submission(account, record):
+    if not _can_preview_or_download(account, record):
         return Response(status_code=404)
     content, content_type = dispatch_contract_storage.download_file(record["blob_path"])
     if content is None:
@@ -263,7 +333,7 @@ def dispatch_contract_preview(submission_id: str, request: Request, redirect=Dep
     record = get_submission(submission_id)
     if not record or not record.get("pdf_blob_path"):
         return Response(status_code=404)
-    if not can_view_submission(account, record):
+    if not _can_preview_or_download(account, record):
         return Response(status_code=404)
     content, content_type = dispatch_contract_storage.download_file(record["pdf_blob_path"])
     if content is None:

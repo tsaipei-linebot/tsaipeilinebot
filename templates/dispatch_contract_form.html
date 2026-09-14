@@ -16,8 +16,16 @@
     <div class="repayment-section">
         <div class="repayment-section-title">一、客戶與工作內容</div>
         <div class="repayment-basic-grid">
+            <label><span class="field-caption">選擇對應的合約（選填）</span>
+                <select name="linked_client_contract_id" id="linked-client-contract-select">
+                    <option value="">-- 沒有對應的合約，手動輸入客戶名稱 --</option>
+                    {% for c in client_contract_options %}
+                    <option value="{{ c.id }}" {% if form.linked_client_contract_id == c.id %}selected{% endif %}>{{ c.label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
             <label><span class="field-caption">客戶名稱 *</span>
-                <input type="text" name="client_name" list="client-names-datalist"
+                <input type="text" name="client_name" list="client-names-datalist" id="client-name-input"
                        value="{{ form.client_name or '' }}" placeholder="如：pchome" required>
                 <datalist id="client-names-datalist">
                     {% for name in recent_client_names %}
@@ -94,6 +102,24 @@
 <script>
 (function () {
     var COLUMNS = ['title', 'hours', 'wage', 'bonus', 'overtime'];
+
+    // 選了「選擇對應的合約」時，把客戶名稱欄位自動帶成那份合約的名稱
+    // （純粹方便同仁畫面上立刻看到，真正的客戶名稱送出時後端會直接照
+    // 選的那份合約覆蓋，不依賴這段 JS 有沒有跑成功）。
+    var linkedSelect = document.getElementById('linked-client-contract-select');
+    var clientNameInput = document.getElementById('client-name-input');
+    if (linkedSelect && clientNameInput) {
+        linkedSelect.addEventListener('change', function () {
+            var option = linkedSelect.options[linkedSelect.selectedIndex];
+            if (linkedSelect.value && option) {
+                var label = option.textContent || '';
+                clientNameInput.value = label.replace(/（\d{4}年）$/, '');
+                clientNameInput.readOnly = true;
+            } else {
+                clientNameInput.readOnly = false;
+            }
+        });
+    }
 
     function addShiftRow() {
         var tbody = document.getElementById('shift-rows-tbody');

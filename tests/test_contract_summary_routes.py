@@ -14,25 +14,21 @@ import main
 from fastapi.testclient import TestClient
 
 
-def _manager_account(username, modules):
-    return {"username": username, "modules": modules, "rank": "manager", "is_platform_admin": False}
+def _manager(department="業務一部", is_platform_admin=False):
+    return {"username": "carol", "rank": "manager", "department": department, "is_platform_admin": is_platform_admin}
 
 
-def _staff_account(username, modules):
-    return {"username": username, "modules": modules, "rank": "specialist", "is_platform_admin": False}
+def _staff(department="業務一部"):
+    return {"username": "bob", "rank": "specialist", "department": department, "is_platform_admin": False}
 
 
-def _no_access_account(username):
-    return {"username": username, "modules": [], "rank": "specialist", "is_platform_admin": False}
-
-
-def _platform_admin_account(username):
-    return {"username": username, "modules": [], "rank": "", "is_platform_admin": True}
+def _admin():
+    return {"username": "boss", "rank": "", "department": "", "is_platform_admin": True}
 
 
 class ContractSummaryRoutingSmokeTests(unittest.TestCase):
-    """跟其他模組（client_contract_routes.py／dispatch_contract_routes.py）
-    的既有分工一致，只涵蓋不需要真的打 Firestore 的部分：未登入時的導向。"""
+    """跟其他模組的既有分工一致，只涵蓋不需要真的打 Firestore 的部分：
+    未登入時的導向。"""
 
     def setUp(self):
         self.client = TestClient(main.app)
@@ -52,11 +48,16 @@ class ContractSummaryRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/contract-summary")
 
+    def test_export_merged_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/contract-summary/export/merged.xlsx", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/contract-summary")
+
 
 class RequireAccessDependencyTests(unittest.TestCase):
-    """_require_access()：專員（不管開放哪個模組）跟完全沒開放這兩個模組
-    的帳號都導去 /portal，只有主管角色（其中一個模組是主管即可）或全平台
-    管理員才放行——這是使用者明確要求的規則。"""
+    """_require_access()：2026-09-14 改版，完全看「服務部門」規則——
+    專員、或部門沒有服務任何廠商的帳號一律導去 /portal，不再看有沒有
+    開通合約產生器／派遣契約產生器模組。"""
 
     class _FakeSession(dict):
         def get(self, key, default=None):
@@ -74,33 +75,52 @@ class RequireAccessDependencyTests(unittest.TestCase):
         self.assertEqual(result.status_code, 303)
         self.assertEqual(result.headers["location"], "/login?next=/contract-summary")
 
-    def test_no_access_to_either_module_redirects_to_portal(self):
-        result = contract_summary_routes._require_access(self._FakeRequest(_no_access_account("dave")))
+    def test_no_department_access_redirects_to_portal(self):
+        with mock.patch.object(contract_summary_routes, "build_vendor_lookup", return_value={}):
+            with mock.patch.object(contract_summary_routes, "viewer_has_any_department_access", return_value=False):
+                result = contract_summary_routes._require_access(self._FakeRequest(_staff()))
         self.assertIsNotNone(result)
         self.assertEqual(result.headers["location"], "/portal")
 
-    def test_staff_role_in_both_modules_redirects_to_portal(self):
-        account = _staff_account("bob", ["client_contracts", "dispatch_contracts"])
-        result = contract_summary_routes._require_access(self._FakeRequest(account))
-        self.assertIsNotNone(result)
-        self.assertEqual(result.headers["location"], "/portal")
-
-    def test_manager_of_client_contracts_only_has_access(self):
-        account = _manager_account("carol", ["client_contracts"])
-        self.assertIsNone(contract_summary_routes._require_access(self._FakeRequest(account)))
-
-    def test_manager_of_dispatch_contracts_only_has_access(self):
-        account = _manager_account("carol", ["dispatch_contracts"])
-        self.assertIsNone(contract_summary_routes._require_access(self._FakeRequest(account)))
+    def test_department_access_allows_through(self):
+        with mock.patch.object(contract_summary_routes, "build_vendor_lookup", return_value={"v1": {}}):
+            with mock.patch.object(contract_summary_routes, "viewer_has_any_department_access", return_value=True) as mock_check:
+                result = contract_summary_routes._require_access(self._FakeRequest(_manager()))
+        self.assertIsNone(result)
+        mock_check.assert_called_once_with(_manager(), {"v1": {}})
 
     def test_platform_admin_always_has_access(self):
-        self.assertIsNone(contract_summary_routes._require_access(self._FakeRequest(_platform_admin_account("boss"))))
+        with mock.patch.object(contract_summary_routes, "build_vendor_lookup", return_value={}):
+            result = contract_summary_routes._require_access(self._FakeRequest(_admin()))
+        self.assertIsNone(result)
+
+
+class VisibleRecordsHelperTests(unittest.TestCase):
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = VisibleRecordsHelperTests._FakeSession({"user": user})
+
+    def test_prepares_vendor_lookup_and_filters_both_record_types(self):
+        account = _manager()
+        with mock.patch.object(contract_summary_routes, "build_vendor_lookup", return_value={"v1": {}}) as mock_lookup:
+            with mock.patch.object(contract_summary_routes, "list_all_client_contracts", return_value=["c1"]) as mock_client:
+                with mock.patch.object(contract_summary_routes, "list_all_dispatch_contracts", return_value=["d1"]) as mock_dispatch:
+                    with mock.patch.object(contract_summary_routes, "visible_client_contract_records", return_value=["c1-visible"]) as mock_visible_client:
+                        with mock.patch.object(contract_summary_routes, "visible_dispatch_contract_records", return_value=["d1-visible"]) as mock_visible_dispatch:
+                            client_records, dispatch_records = contract_summary_routes._visible_records(account)
+        mock_client.assert_called_once_with(limit=contract_summary_routes._RECORDS_LIMIT)
+        mock_dispatch.assert_called_once_with(limit=contract_summary_routes._RECORDS_LIMIT)
+        mock_visible_client.assert_called_once_with(["c1"], account, {"v1": {}})
+        mock_visible_dispatch.assert_called_once_with(["d1"], account, {"v1": {}})
+        self.assertEqual(client_records, ["c1-visible"])
+        self.assertEqual(dispatch_records, ["d1-visible"])
 
 
 class ContractSummaryHomeTests(unittest.TestCase):
-    """只有帳號有存取權的那一半（合約產生器總表／派遣契約總表）才會去查
-    對應產生器的紀錄——沒權限的那一半完全不用打 Firestore。"""
-
     class _FakeSession(dict):
         def get(self, key, default=None):
             return dict.get(self, key, default)
@@ -109,60 +129,28 @@ class ContractSummaryHomeTests(unittest.TestCase):
         def __init__(self, user):
             self.session = ContractSummaryHomeTests._FakeSession({"user": user})
 
-    def test_only_queries_client_contracts_when_only_client_access(self):
-        account = _manager_account("carol", ["client_contracts"])
+    def test_builds_all_three_sections_from_visible_records(self):
+        account = _manager()
         with mock.patch.object(contract_summary_routes, "templates") as mock_templates:
-            with mock.patch.object(contract_summary_routes, "list_visible_client_contracts", return_value=["r1"]) as mock_client_list:
-                with mock.patch.object(contract_summary_routes, "list_visible_dispatch_contracts") as mock_dispatch_list:
-                    with mock.patch.object(contract_summary_routes, "available_client_contract_years", return_value=[2026, 2027]) as mock_years:
-                        with mock.patch.object(contract_summary_routes, "parse_selected_years", return_value=[2026]) as mock_parse:
-                            with mock.patch.object(contract_summary_routes, "build_client_contract_summary_rows", return_value=["row"]) as mock_build_client:
-                                with mock.patch.object(contract_summary_routes, "build_dispatch_contract_summary_rows") as mock_build_dispatch:
+            with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"])):
+                with mock.patch.object(contract_summary_routes, "available_client_contract_years", return_value=[2026, 2027]) as mock_years:
+                    with mock.patch.object(contract_summary_routes, "parse_selected_years", return_value=[2026]) as mock_parse:
+                        with mock.patch.object(contract_summary_routes, "build_client_contract_summary_rows", return_value=["crow"]) as mock_build_client:
+                            with mock.patch.object(contract_summary_routes, "build_dispatch_contract_summary_rows", return_value=["drow"]) as mock_build_dispatch:
+                                with mock.patch.object(contract_summary_routes, "build_merged_summary_rows", return_value=(["mrow"], 2)) as mock_build_merged:
                                     contract_summary_routes.contract_summary_home(
                                         self._FakeRequest(account), years=["2026"], redirect=None,
                                     )
-        mock_client_list.assert_called_once_with(account, limit=contract_summary_routes._RECORDS_LIMIT)
-        mock_dispatch_list.assert_not_called()
-        mock_years.assert_called_once_with(["r1"])
+        mock_years.assert_called_once_with(["c1"])
         mock_parse.assert_called_once_with(["2026"], [2026, 2027])
-        mock_build_client.assert_called_once_with(["r1"], [2026])
-        mock_build_dispatch.assert_not_called()
-        context = mock_templates.TemplateResponse.call_args[0][2]
-        self.assertTrue(context["has_client_access"])
-        self.assertFalse(context["has_dispatch_access"])
-        self.assertEqual(context["client_rows"], ["row"])
-        self.assertEqual(context["dispatch_rows"], [])
-
-    def test_only_queries_dispatch_contracts_when_only_dispatch_access(self):
-        account = _manager_account("carol", ["dispatch_contracts"])
-        with mock.patch.object(contract_summary_routes, "templates"):
-            with mock.patch.object(contract_summary_routes, "list_visible_client_contracts") as mock_client_list:
-                with mock.patch.object(contract_summary_routes, "list_visible_dispatch_contracts", return_value=["d1"]) as mock_dispatch_list:
-                    with mock.patch.object(contract_summary_routes, "build_dispatch_contract_summary_rows", return_value=["drow"]) as mock_build_dispatch:
-                        result_context = contract_summary_routes.contract_summary_home(
-                            self._FakeRequest(account), years=[], redirect=None,
-                        )
-        mock_client_list.assert_not_called()
-        mock_dispatch_list.assert_called_once_with(account, limit=contract_summary_routes._RECORDS_LIMIT)
+        mock_build_client.assert_called_once_with(["c1"], [2026])
         mock_build_dispatch.assert_called_once_with(["d1"])
-
-    def test_both_access_queries_both(self):
-        account = _platform_admin_account("boss")
-        with mock.patch.object(contract_summary_routes, "templates") as mock_templates:
-            with mock.patch.object(contract_summary_routes, "list_visible_client_contracts", return_value=["r1"]):
-                with mock.patch.object(contract_summary_routes, "list_visible_dispatch_contracts", return_value=["d1"]):
-                    with mock.patch.object(contract_summary_routes, "available_client_contract_years", return_value=[2026]):
-                        with mock.patch.object(contract_summary_routes, "parse_selected_years", return_value=[2026]):
-                            with mock.patch.object(contract_summary_routes, "build_client_contract_summary_rows", return_value=["row"]):
-                                with mock.patch.object(contract_summary_routes, "build_dispatch_contract_summary_rows", return_value=["drow"]):
-                                    contract_summary_routes.contract_summary_home(
-                                        self._FakeRequest(account), years=[], redirect=None,
-                                    )
+        mock_build_merged.assert_called_once_with(["c1"], ["d1"], [2026])
         context = mock_templates.TemplateResponse.call_args[0][2]
-        self.assertTrue(context["has_client_access"])
-        self.assertTrue(context["has_dispatch_access"])
-        self.assertEqual(context["client_rows"], ["row"])
+        self.assertEqual(context["client_rows"], ["crow"])
         self.assertEqual(context["dispatch_rows"], ["drow"])
+        self.assertEqual(context["merged_rows"], ["mrow"])
+        self.assertEqual(list(context["shift_range"]), [0, 1])
 
 
 class ExportClientContractsTests(unittest.TestCase):
@@ -174,16 +162,9 @@ class ExportClientContractsTests(unittest.TestCase):
         def __init__(self, user):
             self.session = ExportClientContractsTests._FakeSession({"user": user})
 
-    def test_returns_404_when_not_manager_of_client_contracts(self):
-        account = _manager_account("carol", ["dispatch_contracts"])
-        result = contract_summary_routes.contract_summary_export_client_contracts(
-            self._FakeRequest(account), years=[], redirect=None,
-        )
-        self.assertEqual(result.status_code, 404)
-
-    def test_returns_xlsx_content_when_manager_of_client_contracts(self):
-        account = _manager_account("carol", ["client_contracts"])
-        with mock.patch.object(contract_summary_routes, "list_visible_client_contracts", return_value=["r1"]):
+    def test_returns_xlsx_content(self):
+        account = _manager()
+        with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"])):
             with mock.patch.object(contract_summary_routes, "available_client_contract_years", return_value=[2026]):
                 with mock.patch.object(contract_summary_routes, "parse_selected_years", return_value=[2026]):
                     with mock.patch.object(contract_summary_routes, "build_client_contract_summary_rows", return_value=["row"]):
@@ -205,16 +186,9 @@ class ExportDispatchContractsTests(unittest.TestCase):
         def __init__(self, user):
             self.session = ExportDispatchContractsTests._FakeSession({"user": user})
 
-    def test_returns_404_when_not_manager_of_dispatch_contracts(self):
-        account = _manager_account("carol", ["client_contracts"])
-        result = contract_summary_routes.contract_summary_export_dispatch_contracts(
-            self._FakeRequest(account), redirect=None,
-        )
-        self.assertEqual(result.status_code, 404)
-
-    def test_returns_xlsx_content_when_manager_of_dispatch_contracts(self):
-        account = _manager_account("carol", ["dispatch_contracts"])
-        with mock.patch.object(contract_summary_routes, "list_visible_dispatch_contracts", return_value=["d1"]):
+    def test_returns_xlsx_content(self):
+        account = _manager()
+        with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"])):
             with mock.patch.object(contract_summary_routes, "build_dispatch_contract_summary_rows", return_value=["drow"]):
                 with mock.patch.object(contract_summary_routes, "build_dispatch_contract_summary_workbook", return_value=b"XLSX2") as mock_build:
                     result = contract_summary_routes.contract_summary_export_dispatch_contracts(
@@ -222,6 +196,31 @@ class ExportDispatchContractsTests(unittest.TestCase):
                     )
         mock_build.assert_called_once_with(["drow"])
         self.assertEqual(result.body, b"XLSX2")
+        self.assertIn("attachment", result.headers["content-disposition"])
+
+
+class ExportMergedTests(unittest.TestCase):
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = ExportMergedTests._FakeSession({"user": user})
+
+    def test_returns_xlsx_content(self):
+        account = _manager()
+        with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"])):
+            with mock.patch.object(contract_summary_routes, "available_client_contract_years", return_value=[2026]):
+                with mock.patch.object(contract_summary_routes, "parse_selected_years", return_value=[2026]):
+                    with mock.patch.object(contract_summary_routes, "build_merged_summary_rows", return_value=(["mrow"], 3)) as mock_build_rows:
+                        with mock.patch.object(contract_summary_routes, "build_merged_summary_workbook", return_value=b"XLSX3") as mock_build:
+                            result = contract_summary_routes.contract_summary_export_merged(
+                                self._FakeRequest(account), years=["2026"], redirect=None,
+                            )
+        mock_build_rows.assert_called_once_with(["c1"], ["d1"], [2026])
+        mock_build.assert_called_once_with(["mrow"], 3, contract_summary_routes.CONTRACT_VERSIONS)
+        self.assertEqual(result.body, b"XLSX3")
         self.assertIn("attachment", result.headers["content-disposition"])
 
 
