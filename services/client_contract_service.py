@@ -82,7 +82,22 @@ routes.py` 改成先呼叫同步、拿到 ID 後才呼叫 `save_submission()`，
 的表單挑選帶入（廠商名稱＝甲方公司名稱、合作類別預設「派遣」、簽約模式
 依 `CONTRACT_VERSIONS` 對應），送出成功後這裡的紀錄會標記
 `sent_to_project_contracts_at`，避免同仁不小心對同一份合約重複送出——
-見 `project_contract_routes.py`。
+見 `project_contract_routes.py`。這個串接讀的是套版產生的 `blob_path`
+（公司標準版 Word 檔），跟下面「上傳廠商版本合約」完全無關，不會互相
+影響。
+
+**上傳廠商版本合約（2026-09-14 新增）**：有些客戶規定要用廠商自己指定
+格式的合約書，不能用材霈自己的版本。這種情況同仁還是照舊用這裡的表單
+填資料、系統一樣會產生我們公司自己的標準版（`blob_path`／
+`pdf_blob_path`）——這份不能省略，因為總表、跟派遣契約產生器的連動都是
+讀這裡送出的**表單資料欄位**（甲方名稱、`vendor_id` 等），不是讀合約
+檔案本身，所以不管有沒有另外上傳廠商版本都不影響那些功能。額外多一個
+`set_vendor_contract_file()`，讓同仁把廠商簽回來的正式合約另外上傳存
+成 `vendor_contract_blob_path`（跟 `blob_path` 是完全獨立的欄位，兩份
+並存，不會互相覆蓋），畫面上會多一個「下載廠商版」的連結。這個功能不
+限定廠商，任何一筆合約都可以選擇性上傳——多數客戶用我們自己的版本就好
+，用不到這個欄位，見 `client_contract_routes.py` 的
+`client_contract_upload_vendor_file()`。
 """
 import io
 import os
@@ -342,6 +357,24 @@ def get_submission(submission_id: str):
     if not snapshot.exists:
         return None
     return _doc_to_dict(snapshot)
+
+
+def set_vendor_contract_file(submission_id: str, blob_path: str, filename: str, uploaded_by: str):
+    """同仁另外補上傳「廠商自己版本」的合約檔案（2026-09-14 新增）——有些
+    客戶規定要用廠商指定格式的合約書，這種情況同仁還是照舊用這裡的表單
+    填資料、產生我們公司自己的標準版（`blob_path`／`pdf_blob_path`），
+    另外把廠商簽回來的正式合約也上傳存檔，兩份並存，不會互相覆蓋。多數
+    客戶用我們自己的版本就好，不會用到這個欄位。重複上傳會直接覆蓋掉
+    上一次的檔案路徑跟時間戳記，舊檔案本身不會自動清掉（GCS 上的舊檔
+    留著沒有實際影響，只是不會再被任何連結指到）。"""
+    contracts_ref().document(submission_id).update(
+        {
+            "vendor_contract_blob_path": blob_path,
+            "vendor_contract_filename": filename,
+            "vendor_contract_uploaded_by": uploaded_by,
+            "vendor_contract_uploaded_at": datetime.now(timezone.utc),
+        }
+    )
 
 
 def mark_sent_to_project_contracts(submission_id: str):

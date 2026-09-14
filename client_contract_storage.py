@@ -54,6 +54,17 @@ def upload_contract_pdf(content: bytes, filename: str) -> str:
     return blob_path
 
 
+def upload_vendor_contract_file(content: bytes, filename: str, content_type: str) -> str:
+    """上傳同仁另外補的「廠商自己版本」合約檔案（不是我們套版產生的，
+    2026-09-14 新增）。跟 upload_contract_docx／upload_contract_pdf 共用
+    同一個 bucket、同一個 "client_contracts/" 路徑前綴，所以
+    download_file()／delete_file() 既有的前綴檢查不用另外調整。"""
+    blob_path = f"client_contracts/{uuid.uuid4().hex}/{filename}"
+    blob = _bucket().blob(blob_path)
+    blob.upload_from_string(content, content_type=content_type)
+    return blob_path
+
+
 def download_file(blob_path: str):
     """回傳 (bytes, content_type)；檔案不存在時回傳 (None, None)。"""
     if not blob_path.startswith("client_contracts/"):

@@ -37,7 +37,7 @@ services/client_contract_service.py 開頭的版本說明。這兩個版本彼�
 from datetime import date, datetime
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 
 import client_contract_storage
@@ -60,9 +60,11 @@ from services.client_contract_service import (
     list_visible_submissions,
     render_contract_docx,
     save_submission,
+    set_vendor_contract_file,
 )
 from services.company_registry_lookup import lookup_company
 from services.contract_summary_service import build_vendor_lookup, can_view_via_vendor_department_single, viewer_has_any_department_access
+from services.project_contract_submit_service import CONTRACT_FILE_ALLOWED_EXTENSIONS, CONTRACT_FILE_MAX_BYTES
 from services.vendor_sync import sync_vendor_from_client_contract
 
 router = APIRouter()
@@ -79,6 +81,18 @@ _PRICING_FIELDS_BY_VERSION = {
     "actual_paid": ["service_fee"],
     "white_collar_referral": ["fee_amount", "service_months"],
     "taiwanese_referral": ["referral_fee_percentage", "referral_service_months"],
+}
+
+# 上傳「廠商版本合約」失敗時的提示文字，見 client_contract_upload_vendor_
+# file()。格式/大小限制沿用「專案合約維護」（/project-contracts）已經有
+# 的規則（CONTRACT_FILE_ALLOWED_EXTENSIONS／CONTRACT_FILE_MAX_BYTES），
+# 不另外重訂一套。
+_UPLOAD_VENDOR_FILE_ERROR_MESSAGES = {
+    "no_file": "請選擇要上傳的檔案。",
+    "bad_format": "廠商版本合約僅支援 PDF 或 WORD (.doc, .docx) 檔案格式，請換一個檔案再試一次。",
+    "too_large": "檔案超過 20MB 上限，請換一個檔案較小的檔案。",
+    "not_configured": "尚未設定檔案儲存空間，請聯絡系統管理員設定後再試一次。",
+    "not_found": "找不到這筆合約紀錄，或您沒有權限操作。",
 }
 
 
@@ -155,7 +169,9 @@ def _form_context(*, user: dict, error: str = "", form: dict = None) -> dict:
 
 
 @router.get("/client-contracts")
-def client_contract_home(request: Request, generated: str = "", redirect=Depends(_require_access)):
+def client_contract_home(
+    request: Request, generated: str = "", upload_error: str = "", redirect=Depends(_require_access)
+):
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
@@ -169,6 +185,8 @@ def client_contract_home(request: Request, generated: str = "", redirect=Depends
             "generated": generated,
             "contract_versions": CONTRACT_VERSIONS,
             "show_summary_link": viewer_has_any_department_access(account, build_vendor_lookup()),
+            "upload_error": upload_error,
+            "upload_error_messages": _UPLOAD_VENDOR_FILE_ERROR_MESSAGES,
         },
     )
 
@@ -429,6 +447,76 @@ def client_contract_preview(submission_id: str, request: Request, redirect=Depen
     )
 
 
+@router.get("/client-contracts/{submission_id}/vendor-file")
+def client_contract_download_vendor_file(submission_id: str, request: Request, redirect=Depends(_require_access)):
+    """下載同仁另外上傳的「廠商版本合約」，權限比照公司標準版的下載/
+    預覽（見 _can_preview_or_download），不是另外一套規則。"""
+    if redirect:
+        return redirect
+    account = platform_accounts.current_account(request)
+    record = get_submission(submission_id)
+    if not record or not record.get("vendor_contract_blob_path"):
+        return Response(status_code=404)
+    if not _can_preview_or_download(account, record):
+        return Response(status_code=404)
+    content, content_type = client_contract_storage.download_file(record["vendor_contract_blob_path"])
+    if content is None:
+        return Response(status_code=404)
+    filename = record.get("vendor_contract_filename") or f"廠商版合約_{record.get('party_a_name', '')}"
+    encoded_filename = quote(filename)
+    return Response(
+        content=content,
+        media_type=content_type or "application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"},
+    )
+
+
+@router.post("/client-contracts/{submission_id}/upload-vendor-file")
+async def client_contract_upload_vendor_file(
+    submission_id: str,
+    request: Request,
+    vendor_file: UploadFile = File(None),
+    redirect=Depends(_require_access),
+):
+    """讓同仁補上傳「廠商自己版本」的合約檔案——有些客戶規定要用廠商指定
+    格式的合約書，這個功能不限定廠商，任何一筆合約都可以選擇性上傳；
+    不會取代系統自動產生的公司標準版，兩份並存（見 services/client_
+    contract_service.py 的 set_vendor_contract_file() 說明）。格式/大小
+    驗證沿用「專案合約維護」已經有的規則（CONTRACT_FILE_ALLOWED_
+    EXTENSIONS／CONTRACT_FILE_MAX_BYTES）。權限比照下載/預覽，不是只看
+    送出人鏈——服務部門主管也能幫忙補上傳廠商簽回來的合約。失敗一律導回
+    列表頁、帶對應的錯誤代碼顯示提示訊息，不會讓同仁對著一片空白的畫面
+    不知道發生什麼事。"""
+    if redirect:
+        return redirect
+    account = platform_accounts.current_account(request)
+    record = get_submission(submission_id)
+    if not record or not _can_preview_or_download(account, record):
+        return RedirectResponse(url="/client-contracts?upload_error=not_found", status_code=303)
+
+    error_code = ""
+    if vendor_file is None or not vendor_file.filename:
+        error_code = "no_file"
+    elif not vendor_file.filename.lower().endswith(CONTRACT_FILE_ALLOWED_EXTENSIONS):
+        error_code = "bad_format"
+    elif not client_contract_storage.is_configured():
+        error_code = "not_configured"
+    else:
+        content = await vendor_file.read()
+        if len(content) > CONTRACT_FILE_MAX_BYTES:
+            error_code = "too_large"
+        else:
+            blob_path = client_contract_storage.upload_vendor_contract_file(
+                content, vendor_file.filename, vendor_file.content_type or "application/octet-stream"
+            )
+            set_vendor_contract_file(submission_id, blob_path, vendor_file.filename, account["username"])
+
+    redirect_url = "/client-contracts"
+    if error_code:
+        redirect_url += f"?upload_error={error_code}"
+    return RedirectResponse(url=redirect_url, status_code=303)
+
+
 @router.post("/client-contracts/{submission_id}/delete")
 def client_contract_delete(submission_id: str, request: Request, redirect=Depends(_require_access)):
     if redirect:
@@ -438,5 +526,6 @@ def client_contract_delete(submission_id: str, request: Request, redirect=Depend
     if record and can_view_submission(account, record):
         client_contract_storage.delete_file(record.get("blob_path", ""))
         client_contract_storage.delete_file(record.get("pdf_blob_path", ""))
+        client_contract_storage.delete_file(record.get("vendor_contract_blob_path", ""))
         delete_submission(submission_id)
     return RedirectResponse(url="/client-contracts", status_code=303)

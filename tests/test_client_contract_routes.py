@@ -509,6 +509,7 @@ class DeleteRouteTests(unittest.TestCase):
         record = {
             "id": "x", "submitted_by": "bob",
             "blob_path": "client_contracts/x/a.docx", "pdf_blob_path": "client_contracts/x/a.pdf",
+            "vendor_contract_blob_path": "client_contracts/x/vendor.pdf",
         }
         with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
             with mock.patch.object(client_contract_routes, "delete_submission") as mock_delete:
@@ -519,6 +520,8 @@ class DeleteRouteTests(unittest.TestCase):
         mock_delete.assert_called_once_with("x")
         mock_delete_file.assert_any_call("client_contracts/x/a.docx")
         mock_delete_file.assert_any_call("client_contracts/x/a.pdf")
+        # 上傳過的廠商版本合約也要一起清掉，不留孤兒檔案。
+        mock_delete_file.assert_any_call("client_contracts/x/vendor.pdf")
         self.assertEqual(result.status_code, 303)
         self.assertEqual(result.headers["location"], "/client-contracts")
 
@@ -646,6 +649,202 @@ class PreviewRouteTests(unittest.TestCase):
                             "x", self._FakeRequest({"username": "carol", "is_platform_admin": False}), redirect=None,
                         )
         self.assertEqual(result.body, b"%PDF-DATA")
+
+
+class DownloadVendorFileRouteTests(unittest.TestCase):
+    """GET /client-contracts/{id}/vendor-file：下載同仁另外上傳的廠商版本
+    合約，權限比照 _can_preview_or_download（跟公司標準版下載/預覽同一套
+    規則）。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = DownloadVendorFileRouteTests._FakeSession({"user": user})
+
+    def test_no_vendor_file_returns_404(self):
+        record = {"id": "x", "submitted_by": "bob", "vendor_contract_blob_path": ""}
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            result = client_contract_routes.client_contract_download_vendor_file(
+                "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+            )
+        self.assertEqual(result.status_code, 404)
+
+    def test_other_user_returns_404(self):
+        record = {
+            "id": "x", "party_a_name": "測試客戶", "submitted_by": "alice",
+            "vendor_contract_blob_path": "client_contracts/x/vendor.pdf",
+        }
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                result = client_contract_routes.client_contract_download_vendor_file(
+                    "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                )
+        self.assertEqual(result.status_code, 404)
+
+    def test_owner_can_download(self):
+        record = {
+            "id": "x", "party_a_name": "測試客戶", "submitted_by": "bob",
+            "vendor_contract_blob_path": "client_contracts/x/vendor.pdf",
+            "vendor_contract_filename": "廠商版合約.pdf",
+        }
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.client_contract_storage, "download_file",
+                                    return_value=(b"VENDOR-PDF-DATA", "application/pdf")):
+                result = client_contract_routes.client_contract_download_vendor_file(
+                    "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
+                )
+        self.assertEqual(result.body, b"VENDOR-PDF-DATA")
+        self.assertIn("attachment", result.headers["content-disposition"])
+
+    def test_service_department_manager_can_download_even_if_not_submitter_chain(self):
+        record = {
+            "id": "x", "party_a_name": "測試客戶", "submitted_by": "alice", "vendor_id": "v1",
+            "vendor_contract_blob_path": "client_contracts/x/vendor.pdf",
+        }
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(client_contract_routes, "can_view_via_vendor_department_single", return_value=True):
+                    with mock.patch.object(client_contract_routes.client_contract_storage, "download_file",
+                                            return_value=(b"VENDOR-PDF-DATA", "application/pdf")):
+                        result = client_contract_routes.client_contract_download_vendor_file(
+                            "x", self._FakeRequest({"username": "carol", "is_platform_admin": False}), redirect=None,
+                        )
+        self.assertEqual(result.body, b"VENDOR-PDF-DATA")
+
+
+class UploadVendorFileRouteTests(unittest.TestCase):
+    """POST /client-contracts/{id}/upload-vendor-file：2026-09-14 新增，
+    多數合約用公司自己產生的標準版就好，這個功能是給規定要用廠商指定
+    格式合約書的少數客戶用的附加上傳，不限定廠商、不取代公司標準版。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = UploadVendorFileRouteTests._FakeSession({"user": user})
+
+    class _FakeUploadFile:
+        def __init__(self, content: bytes, filename: str = "vendor.pdf", content_type: str = "application/pdf"):
+            self._content = content
+            self.filename = filename
+            self.content_type = content_type
+
+        async def read(self):
+            return self._content
+
+    def _record(self, **overrides):
+        record = {"id": "x", "party_a_name": "測試客戶", "submitted_by": "bob"}
+        record.update(overrides)
+        return record
+
+    def test_no_access_redirects_with_not_found_error(self):
+        record = self._record(submitted_by="alice")
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(client_contract_routes.client_contract_storage,
+                                        "upload_vendor_contract_file") as mock_upload:
+                    result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                        "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
+                        vendor_file=self._FakeUploadFile(b"data"), redirect=None,
+                    ))
+        mock_upload.assert_not_called()
+        self.assertEqual(result.status_code, 303)
+        self.assertIn("upload_error=not_found", result.headers["location"])
+
+    def test_missing_record_redirects_with_not_found_error(self):
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=None):
+            result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
+                vendor_file=self._FakeUploadFile(b"data"), redirect=None,
+            ))
+        self.assertIn("upload_error=not_found", result.headers["location"])
+
+    def test_no_file_selected_redirects_with_no_file_error(self):
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=self._record()):
+            result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
+                vendor_file=None, redirect=None,
+            ))
+        self.assertIn("upload_error=no_file", result.headers["location"])
+
+    def test_blank_filename_redirects_with_no_file_error(self):
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=self._record()):
+            result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
+                vendor_file=self._FakeUploadFile(b"data", filename=""), redirect=None,
+            ))
+        self.assertIn("upload_error=no_file", result.headers["location"])
+
+    def test_bad_extension_redirects_with_bad_format_error(self):
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=self._record()):
+            result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
+                vendor_file=self._FakeUploadFile(b"data", filename="vendor.png"), redirect=None,
+            ))
+        self.assertIn("upload_error=bad_format", result.headers["location"])
+
+    def test_storage_not_configured_redirects_with_not_configured_error(self):
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=self._record()):
+            with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                    "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
+                    vendor_file=self._FakeUploadFile(b"data"), redirect=None,
+                ))
+        self.assertIn("upload_error=not_configured", result.headers["location"])
+
+    def test_file_too_large_redirects_with_too_large_error(self):
+        oversized = b"x" * (client_contract_routes.CONTRACT_FILE_MAX_BYTES + 1)
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=self._record()):
+            with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=True):
+                with mock.patch.object(client_contract_routes.client_contract_storage,
+                                        "upload_vendor_contract_file") as mock_upload:
+                    result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                        "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
+                        vendor_file=self._FakeUploadFile(oversized), redirect=None,
+                    ))
+        mock_upload.assert_not_called()
+        self.assertIn("upload_error=too_large", result.headers["location"])
+
+    def test_valid_upload_saves_and_redirects_without_error(self):
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=self._record()):
+            with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=True):
+                with mock.patch.object(client_contract_routes.client_contract_storage, "upload_vendor_contract_file",
+                                        return_value="client_contracts/x/vendor.pdf") as mock_upload:
+                    with mock.patch.object(client_contract_routes, "set_vendor_contract_file") as mock_set:
+                        result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                            "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
+                            vendor_file=self._FakeUploadFile(b"data", filename="vendor.pdf"), redirect=None,
+                        ))
+        mock_upload.assert_called_once_with(b"data", "vendor.pdf", "application/pdf")
+        mock_set.assert_called_once_with("x", "client_contracts/x/vendor.pdf", "vendor.pdf", "bob")
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(result.headers["location"], "/client-contracts")
+
+    def test_service_department_manager_can_upload_even_if_not_submitter_chain(self):
+        record = self._record(submitted_by="alice", vendor_id="v1")
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(client_contract_routes, "can_view_via_vendor_department_single", return_value=True):
+                    with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=True):
+                        with mock.patch.object(client_contract_routes.client_contract_storage,
+                                                "upload_vendor_contract_file", return_value="client_contracts/x/vendor.pdf"):
+                            with mock.patch.object(client_contract_routes, "set_vendor_contract_file") as mock_set:
+                                result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                                    "x", self._FakeRequest({"username": "carol", "is_platform_admin": False}),
+                                    vendor_file=self._FakeUploadFile(b"data"), redirect=None,
+                                ))
+        mock_set.assert_called_once()
+        self.assertEqual(result.status_code, 303)
+        self.assertNotIn("upload_error", result.headers["location"])
 
 
 if __name__ == "__main__":
