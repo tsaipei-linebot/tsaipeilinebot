@@ -53,7 +53,15 @@ from fastapi.responses import RedirectResponse
 
 from platform_db import get_db, users_ref
 
-PBKDF2_ITERATIONS = 200_000
+# 2026-09-14 依業界建議（OWASP 現行建議 PBKDF2-SHA256 至少 60 萬次）調高。
+# 直接改這個數字不會讓舊密碼失效：`verify_password()` 會從雜湊字串裡讀出
+# 「當初雜湊時用的是幾次」來驗證，不是每次都套用這個常數，所以新舊密碼
+# 都驗證得到，見下面 `_LEGACY_PBKDF2_ITERATIONS`／`hash_password()` 的說明。
+PBKDF2_ITERATIONS = 600_000
+# 2026-09-14 之前建立的密碼雜湊沒有把迭代次數存進雜湊字串裡（格式只有
+# `鹽值$雜湊值` 兩段），一律當作是用這個次數雜湊出來的——這是改版前
+# `PBKDF2_ITERATIONS` 原本的值，不能更動，否則所有舊密碼會全部驗證失敗。
+_LEGACY_PBKDF2_ITERATIONS = 200_000
 
 ROLE_ADMIN = "admin"
 ROLE_STAFF = "staff"
@@ -113,18 +121,40 @@ def is_manager_rank(rank: str) -> bool:
 
 
 def hash_password(password: str) -> str:
+    """一律用目前的 `PBKDF2_ITERATIONS` 雜湊，並把用的次數存進雜湊字串
+    （`次數$鹽值$雜湊值` 三段格式），之後即使再調整 `PBKDF2_ITERATIONS`，
+    `verify_password()` 都能照雜湊字串裡記錄的次數驗證，不會讓這組密碼
+    失效。同仁下次改密碼（或新建帳號）時就會自動套用最新的次數，不需要
+    另外跑遷移程式、也不用強迫全公司重設密碼。"""
     salt = os.urandom(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
-    return f"{salt.hex()}${digest.hex()}"
+    return f"{PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
-    try:
-        salt_hex, digest_hex = stored_hash.split("$", 1)
-    except (ValueError, AttributeError):
+    """相容兩種雜湊字串格式：新格式「次數$鹽值$雜湊值」三段（`hash_password()`
+    現在存的格式），舊格式「鹽值$雜湊值」兩段（2026-09-14 調高迭代次數之前
+    存的密碼，沒有記錄次數，一律當作是用 `_LEGACY_PBKDF2_ITERATIONS` 雜湊
+    出來的）。"""
+    if not isinstance(stored_hash, str):
         return False
-    salt = bytes.fromhex(salt_hex)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
+    parts = stored_hash.split("$")
+    if len(parts) == 3:
+        iterations_str, salt_hex, digest_hex = parts
+        try:
+            iterations = int(iterations_str)
+        except ValueError:
+            return False
+    elif len(parts) == 2:
+        salt_hex, digest_hex = parts
+        iterations = _LEGACY_PBKDF2_ITERATIONS
+    else:
+        return False
+    try:
+        salt = bytes.fromhex(salt_hex)
+    except ValueError:
+        return False
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
     return hmac.compare_digest(digest.hex(), digest_hex)
 
 

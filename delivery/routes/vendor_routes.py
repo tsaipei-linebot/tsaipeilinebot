@@ -22,6 +22,7 @@ from delivery.ocr import extract_expiry_date
 from delivery.storage import StorageNotConfigured, delete_entity_files, is_configured, upload_file
 from delivery.templating import templates
 from delivery.validators import is_valid_taiwan_id
+from file_type_sniff import is_allowed_upload
 
 router = APIRouter()
 
@@ -247,7 +248,7 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
         if file is not None and getattr(file, "filename", None):
             content = await file.read()
             content_type = file.content_type or "application/octet-stream"
-            if len(content) <= MAX_UPLOAD_BYTES and content_type in ALLOWED_UPLOAD_CONTENT_TYPES:
+            if len(content) <= MAX_UPLOAD_BYTES and is_allowed_upload(content, content_type, ALLOWED_UPLOAD_CONTENT_TYPES):
                 try:
                     file_path = upload_file("personnel-docs", personnel_id, file.filename, content, content_type)
                 except StorageNotConfigured:

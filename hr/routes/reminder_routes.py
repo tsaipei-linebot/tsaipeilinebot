@@ -7,6 +7,8 @@
 - 公司證照到期提醒：推播對象沿用管理部「門號繳費提醒」現有的群組設定，
   不用另外指定推播對象。
 """
+import hmac
+
 from fastapi import APIRouter, Header, HTTPException
 
 from hr import repository
@@ -25,7 +27,9 @@ router = APIRouter()
 
 @router.post("/api/incident-weekly-reminder-check")
 def incident_weekly_reminder_check(x_hr_incident_reminder_secret: str = Header(None)):
-    if not HR_INCIDENT_REMINDER_SECRET or x_hr_incident_reminder_secret != HR_INCIDENT_REMINDER_SECRET:
+    if not HR_INCIDENT_REMINDER_SECRET or not x_hr_incident_reminder_secret or not hmac.compare_digest(
+        x_hr_incident_reminder_secret, HR_INCIDENT_REMINDER_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     items = repository.list_open_incident_events()
@@ -47,7 +51,9 @@ def _format_license_message(items: list) -> str:
 
 @router.post("/api/license-reminder-check")
 def license_reminder_check(x_hr_license_reminder_secret: str = Header(None)):
-    if not HR_LICENSE_REMINDER_SECRET or x_hr_license_reminder_secret != HR_LICENSE_REMINDER_SECRET:
+    if not HR_LICENSE_REMINDER_SECRET or not x_hr_license_reminder_secret or not hmac.compare_digest(
+        x_hr_license_reminder_secret, HR_LICENSE_REMINDER_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     items = repository.list_expiring_licenses(LICENSE_REMINDER_DAYS_AHEAD, LICENSE_REMINDER_RESEND_INTERVAL_DAYS)

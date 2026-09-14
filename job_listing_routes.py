@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
 
 import platform_accounts
+from file_type_sniff import looks_like_image
 from platform_templating import templates
 from services.job_listing_submit_service import (
     BRANCH_OPTIONS,
@@ -179,6 +180,12 @@ async def job_listing_submit(
         content = await image.read()
         if len(content) > _MAX_IMAGE_BYTES:
             context = {"user": account, "error": "圖檔超過 20MB 上限，請換一張檔案較小的圖片。", "form": form_values}
+            context.update(_dropdown_options_context())
+            return templates.TemplateResponse(request, "job_listing_form.html", context, status_code=400)
+        if not looks_like_image(content):
+            # 之前這裡完全沒檢查檔案內容是不是真的圖片，只要有檔名就直接
+            # 轉 base64 送給 GAS——理論上可以夾帶任何檔案偽裝成圖片上傳。
+            context = {"user": account, "error": "圖檔格式不支援，請上傳 JPG 或 PNG 圖片檔案。", "form": form_values}
             context.update(_dropdown_options_context())
             return templates.TemplateResponse(request, "job_listing_form.html", context, status_code=400)
         image_base64 = base64.b64encode(content).decode("ascii")

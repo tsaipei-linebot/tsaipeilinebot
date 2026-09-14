@@ -6,6 +6,8 @@
 對應到職缺系統的自動登入身分（見 job_portal_sso.py），比對得到就直接
 免登入進去，比對不到就照舊導去手動輸入姓名/PIN 的畫面，不會擋人。
 """
+import hmac
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
@@ -142,7 +144,9 @@ def sync_job_system_identities(request: Request):
     X-Job-Sheet-Sync-Secret header 才受理，沒設定密鑰的話這支端點一律
     回傳 403，等同不存在。"""
     secret = request.headers.get("X-Job-Sheet-Sync-Secret", "")
-    if not job_portal_sso.SYNC_TRIGGER_SECRET or secret != job_portal_sso.SYNC_TRIGGER_SECRET:
+    if not job_portal_sso.SYNC_TRIGGER_SECRET or not secret or not hmac.compare_digest(
+        secret, job_portal_sso.SYNC_TRIGGER_SECRET
+    ):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     count = job_portal_sso.sync_identities_from_sheet()
     return {"synced": count}

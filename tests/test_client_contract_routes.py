@@ -791,6 +791,21 @@ class UploadVendorFileRouteTests(unittest.TestCase):
             ))
         self.assertIn("upload_error=bad_format", result.headers["location"])
 
+    def test_content_not_matching_extension_redirects_with_bad_format_error(self):
+        """2026-09-14 新增：副檔名合法（.pdf），但檔案開頭的實際內容不是
+        真正的 PDF——例如把別的檔案改副檔名偽裝上傳，一樣要擋下來，不能
+        只看副檔名就放行（見 file_type_sniff.py 的說明）。"""
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=self._record()):
+            with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=True):
+                with mock.patch.object(client_contract_routes.client_contract_storage,
+                                        "upload_vendor_contract_file") as mock_upload:
+                    result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
+                        "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
+                        vendor_file=self._FakeUploadFile(b"not actually a pdf", filename="vendor.pdf"), redirect=None,
+                    ))
+        mock_upload.assert_not_called()
+        self.assertIn("upload_error=bad_format", result.headers["location"])
+
     def test_storage_not_configured_redirects_with_not_configured_error(self):
         with mock.patch.object(client_contract_routes, "get_submission", return_value=self._record()):
             with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
@@ -821,9 +836,10 @@ class UploadVendorFileRouteTests(unittest.TestCase):
                     with mock.patch.object(client_contract_routes, "set_vendor_contract_file") as mock_set:
                         result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
                             "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}),
-                            vendor_file=self._FakeUploadFile(b"data", filename="vendor.pdf"), redirect=None,
+                            vendor_file=self._FakeUploadFile(b"%PDF-1.4 fake but valid pdf header", filename="vendor.pdf"),
+                            redirect=None,
                         ))
-        mock_upload.assert_called_once_with(b"data", "vendor.pdf", "application/pdf")
+        mock_upload.assert_called_once_with(b"%PDF-1.4 fake but valid pdf header", "vendor.pdf", "application/pdf")
         mock_set.assert_called_once_with("x", "client_contracts/x/vendor.pdf", "vendor.pdf", "bob")
         self.assertEqual(result.status_code, 303)
         self.assertEqual(result.headers["location"], "/client-contracts")
@@ -840,7 +856,8 @@ class UploadVendorFileRouteTests(unittest.TestCase):
                             with mock.patch.object(client_contract_routes, "set_vendor_contract_file") as mock_set:
                                 result = asyncio.run(client_contract_routes.client_contract_upload_vendor_file(
                                     "x", self._FakeRequest({"username": "carol", "is_platform_admin": False}),
-                                    vendor_file=self._FakeUploadFile(b"data"), redirect=None,
+                                    vendor_file=self._FakeUploadFile(b"%PDF-1.4 fake but valid pdf header"),
+                                    redirect=None,
                                 ))
         mock_set.assert_called_once()
         self.assertEqual(result.status_code, 303)

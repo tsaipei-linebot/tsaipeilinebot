@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import RedirectResponse
 
 import platform_accounts
+from file_type_sniff import content_matches_claimed_extension
 from platform_templating import templates
 from services.client_contract_service import CONTRACT_VERSIONS as CLIENT_CONTRACT_VERSIONS
 from services.client_contract_service import can_view_submission as can_view_client_contract
@@ -168,6 +169,17 @@ async def project_contract_submit(
     content = await contract_file.read()
     if len(content) > CONTRACT_FILE_MAX_BYTES:
         context = {"user": account, "error": "合約檔案超過 20MB 上限，請換一個檔案較小的檔案。", "form": form_values}
+        context.update(_dropdown_options_context(account))
+        return templates.TemplateResponse(request, "project_contract_form.html", context, status_code=400)
+
+    if not content_matches_claimed_extension(content, contract_file.filename):
+        # 副檔名合法，但檔案開頭的實際內容跟副檔名宣稱的不符（例如把別的
+        # 檔案改副檔名偽裝成 .pdf），一樣視為格式錯誤擋下來。
+        context = {
+            "user": account,
+            "error": "合約檔案內容跟副檔名不符，請確認上傳的是真正的 PDF 或 WORD 檔案。",
+            "form": form_values,
+        }
         context.update(_dropdown_options_context(account))
         return templates.TemplateResponse(request, "project_contract_form.html", context, status_code=400)
 

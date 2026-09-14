@@ -39,6 +39,30 @@ class PasswordHashingTests(unittest.TestCase):
         self.assertFalse(verify_password("anything", ""))
         self.assertFalse(verify_password("anything", None))
 
+    def test_malformed_iteration_count_returns_false_instead_of_raising(self):
+        self.assertFalse(verify_password("anything", "not-a-number$aabbcc$ddeeff"))
+
+    def test_malformed_salt_returns_false_instead_of_raising(self):
+        self.assertFalse(verify_password("anything", "not-hex-salt$ddeeff"))
+
+    def test_new_hash_embeds_current_iteration_count(self):
+        stored = hash_password("hello-world-123")
+        iterations_str, _, _ = stored.split("$")
+        self.assertEqual(int(iterations_str), platform_accounts.PBKDF2_ITERATIONS)
+
+    def test_legacy_two_part_hash_still_verifies(self):
+        """2026-09-14 調高迭代次數之前存的舊格式（鹽值$雜湊值，沒有迭代
+        次數）要能繼續正確驗證，不然全公司會被強制登出，見
+        `_LEGACY_PBKDF2_ITERATIONS` 的說明。"""
+        import hashlib
+        salt = b"\x01" * 16
+        digest = hashlib.pbkdf2_hmac(
+            "sha256", "old-password".encode("utf-8"), salt, platform_accounts._LEGACY_PBKDF2_ITERATIONS
+        )
+        legacy_stored = f"{salt.hex()}${digest.hex()}"
+        self.assertTrue(verify_password("old-password", legacy_stored))
+        self.assertFalse(verify_password("wrong-password", legacy_stored))
+
 
 class IsManagerRankTests(unittest.TestCase):
     """2026-09-12 新增：職級副主任（含）以上算管理權限，不在清單裡的職級
