@@ -28,6 +28,12 @@ def _admin_account():
     return {"username": "alice", "modules": {"delivery": "staff"}, "is_platform_admin": False, "rank": "manager"}
 
 
+def _staff_account():
+    # 一般專員職級，不是管理員——新增意外事件比照 LINE 群組任何人都能
+    # 回報，不限管理員，跟編輯/風險等級/結案是不同層級的操作。
+    return {"username": "bob", "modules": {"delivery": "staff"}, "is_platform_admin": False, "rank": "specialist"}
+
+
 _VALID_FORM = dict(
     vendor="ud",
     identity_type="雇傭",
@@ -41,6 +47,69 @@ _VALID_FORM = dict(
     third_party_involved="有",
     description="行進其間與汽車後照鏡擦撞",
 )
+
+
+class NewIncidentFormTests(unittest.TestCase):
+    def test_renders_with_blank_form_data(self):
+        with mock.patch.object(incident_routes, "templates") as mock_templates:
+            incident_routes.new_incident_form(_FakeRequest(_staff_account()), redirect=None)
+        mock_templates.TemplateResponse.assert_called_once()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["form_data"], {})
+
+
+class NewIncidentSubmitTests(unittest.TestCase):
+    """2026-09-14 新增：意外事件除了 LINE 群組回報，也能直接在網站新增，
+    跟車輛管理（LINE 回報 + 網站手動補登）看齊。"""
+
+    def test_valid_submit_creates_and_redirects_to_detail(self):
+        form = dict(_VALID_FORM, occurred_at="2026-09-04T11:00")  # datetime-local 輸入格式
+        with mock.patch.object(
+            incident_routes.repository, "create_incident_event", return_value=("inc1", True)
+        ) as mock_create:
+            resp = incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **form, redirect=None)
+        mock_create.assert_called_once()
+        created_data = mock_create.call_args.args[0]
+        # "T" 分隔符要換成空白，跟 LINE 群組回報正規化出來的格式對齊。
+        self.assertEqual(created_data["occurred_at"], "2026-09-04 11:00")
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/delivery/incidents/inc1"))
+
+    def test_non_admin_staff_can_create(self):
+        # 跟編輯/風險等級/結案不同，新增比照 LINE 群組任何人都能回報，
+        # 不限管理員（呼叫時 redirect=None 已經跳過 admin_required 的判斷，
+        # 這裡驗證的是路由本身沒有另外用 module_role 之類的邏輯二次擋人）。
+        with mock.patch.object(incident_routes.repository, "create_incident_event", return_value=("inc1", True)):
+            resp = incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **_VALID_FORM, redirect=None)
+        self.assertEqual(resp.status_code, 303)
+
+    def test_invalid_vendor_shows_error_without_creating(self):
+        bad_form = dict(_VALID_FORM, vendor="黑貓")
+        with mock.patch.object(incident_routes.repository, "create_incident_event") as mock_create:
+            with mock.patch.object(incident_routes, "templates") as mock_templates:
+                incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **bad_form, redirect=None)
+        mock_create.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertTrue(context["error"])
+        self.assertEqual(context["form_data"]["vendor"], "黑貓")
+
+    def test_missing_field_shows_error_without_creating(self):
+        bad_form = dict(_VALID_FORM, description="   ")
+        with mock.patch.object(incident_routes.repository, "create_incident_event") as mock_create:
+            with mock.patch.object(incident_routes, "templates"):
+                incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **bad_form, redirect=None)
+        mock_create.assert_not_called()
+
+    def test_repository_dedup_result_still_redirects_normally(self):
+        # repository.create_incident_event 本身已經有「人員名稱＋發生時間」
+        # 相同就覆寫既有那筆（created=False）的邏輯，這裡只驗證路由把表單
+        # 資料原封不動交給它，並且用它回傳的 id 導頁，不會自己另外判斷。
+        with mock.patch.object(
+            incident_routes.repository, "create_incident_event", return_value=("existing-inc", False)
+        ) as mock_create:
+            resp = incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **_VALID_FORM, redirect=None)
+        mock_create.assert_called_once()
+        self.assertTrue(resp.headers["location"].endswith("/delivery/incidents/existing-inc"))
 
 
 class EditIncidentFormTests(unittest.TestCase):

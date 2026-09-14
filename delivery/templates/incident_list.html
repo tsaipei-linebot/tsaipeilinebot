@@ -1,8 +1,11 @@
 {% extends "base.html" %}
 {% block title %}意外事件 - 材霈有限公司-新北所(配送組)系統{% endblock %}
 {% block content %}
-<h1 class="page-title">意外事件</h1>
-<p class="hint">同仁在 LINE 群組回報意外事件會自動寫進這裡，風險等級與結案由管理員在詳細頁設定。</p>
+<div class="page-head">
+    <h1 class="page-title">意外事件</h1>
+    <a class="btn btn-primary" href="/delivery/incidents/new">新增意外事件</a>
+</div>
+<p class="hint">同仁可以在 LINE 群組回報，也可以直接在這裡新增；風險等級與結案由管理員在詳細頁設定。</p>
 
 <form method="get" action="/delivery/incidents" class="filter-bar">
     <input type="text" name="personnel_name" value="{{ filter_personnel_name }}" placeholder="搜尋人員姓名">

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}新增意外事件 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<h1 class="page-title">新增意外事件</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<p class="hint">跟 LINE 群組回報是同一套資料：如果人員名稱＋發生時間跟既有紀錄完全相同，會直接更新那一筆，不會產生重複紀錄。</p>
+
+<form method="post" action="/delivery/incidents/new" class="form-stack form-narrow">
+    <label>廠商名稱
+        <select name="vendor" required>
+            <option value="">請選擇</option>
+            {% for v in vendors %}
+            <option value="{{ v.code }}" {% if form_data.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>身分類別
+        <select name="identity_type" required>
+            <option value="">請選擇</option>
+            {% for t in identity_types %}
+            <option value="{{ t }}" {% if form_data.identity_type == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>人員名稱
+        <input type="text" name="personnel_name" value="{{ form_data.personnel_name or '' }}" required>
+    </label>
+    <label>發生時間
+        <input type="datetime-local" name="occurred_at" value="{{ (form_data.occurred_at or '').replace(' ', 'T') }}" required>
+    </label>
+    <label>發生地點
+        <input type="text" name="location" value="{{ form_data.location or '' }}" required>
+    </label>
+    <label>執行勤務中/上下班途中
+        <select name="duty_status" required>
+            <option value="">請選擇</option>
+            {% for d in duty_statuses %}
+            <option value="{{ d }}" {% if form_data.duty_status == d %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>是否報警
+        <select name="police_called" required>
+            <option value="">請選擇</option>
+            {% for y in yes_no_values %}
+            <option value="{{ y }}" {% if form_data.police_called == y %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>受傷情形
+        <input type="text" name="injury" value="{{ form_data.injury or '' }}" required>
+    </label>
+    <label>是否聯繫家屬
+        <select name="family_contacted" required>
+            <option value="">請選擇</option>
+            {% for y in yes_no_values %}
+            <option value="{{ y }}" {% if form_data.family_contacted == y %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>是否牽扯他人
+        <select name="third_party_involved" required>
+            <option value="">請選擇</option>
+            {% for y in yes_no_values %}
+            <option value="{{ y }}" {% if form_data.third_party_involved == y %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>意外事件經過
+        <textarea name="description" rows="3" required>{{ form_data.description or '' }}</textarea>
+    </label>
+    <button type="submit" class="btn btn-primary">送出</button>
+</form>
+
+<p class="back-link"><a href="/delivery/incidents">&larr; 回意外事件清單</a></p>
+{% endblock %}
