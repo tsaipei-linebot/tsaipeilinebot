@@ -262,6 +262,24 @@ body {
 
 .form-narrow { max-width: 480px; }
 
+/* 「一鍵整理車輛狀況」報告文字框（templates/vehicle_status_report.html）：
+   獨立於 .form-stack 之外的唯讀 textarea，用等寬字體讓地區分布那幾行的
+   數字對齊，方便同仁閱讀後直接複製貼到 LINE 群組。 */
+.report-textarea {
+    display: block;
+    width: 100%;
+    max-width: 640px;
+    font-family: "SFMono-Regular", Consolas, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    resize: vertical;
+}
+
 /* 薪資補款申請表單（templates/salary_repayment_form.html）：照抄現有
    Netlify 表單畫面的分區塊/小計顯示方式，同仁才不會覺得換了一套系統。 */
 .repayment-section {

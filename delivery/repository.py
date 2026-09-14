@@ -23,6 +23,7 @@ from delivery.config import (
     LEGACY_PERSONNEL_STATUS,
     RISK_LEVELS,
     SELECTABLE_APPLICANT_STATUSES,
+    SERVICE_AREA_MAP,
     WORKDAY_HOURS,
     TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
     TEST_DRIVE_REQUIRED_VENDORS,
@@ -977,9 +978,17 @@ def _normalize_vehicle_no(value: str) -> str:
     return (value or "").strip().upper()
 
 
-def create_vehicle(vehicle_no: str, vendor: str, created_by: str, wheel_type: str = DEFAULT_WHEEL_TYPE) -> bool:
+def create_vehicle(
+    vehicle_no: str,
+    vendor: str,
+    created_by: str,
+    wheel_type: str = DEFAULT_WHEEL_TYPE,
+    service_area: str = "",
+) -> bool:
     """新增車輛，車號當文件 ID、全公司唯一。已經存在就回傳 False、不會覆蓋
-    既有資料；成功新增回傳 True。wheel_type 沒特別指定時預設三輪。"""
+    既有資料；成功新增回傳 True。wheel_type 沒特別指定時預設三輪；
+    service_area 沒有通用預設值，沒特別指定就存空字串（見 config.py 的
+    說明，報告裡會歸類到「未分區」）。"""
     vehicle_no = _normalize_vehicle_no(vehicle_no)
     ref = vehicles_ref().document(vehicle_no)
     if ref.get().exists:
@@ -989,6 +998,7 @@ def create_vehicle(vehicle_no: str, vendor: str, created_by: str, wheel_type: st
             "vehicle_no": vehicle_no,
             "vendor": vendor,
             "wheel_type": wheel_type or DEFAULT_WHEEL_TYPE,
+            "service_area": service_area,
             "status": DEFAULT_VEHICLE_STATUS,
             "current_holder": "",
             "current_location": "",
@@ -1007,9 +1017,11 @@ def get_vehicle(vehicle_no: str):
         return None
     data = snapshot.to_dict() or {}
     data["vehicle_no"] = snapshot.id
-    # 這個欄位是 2026-09-14 才新增的，舊資料的 Firestore 文件裡沒有這個
-    # 欄位；沒特別遷移舊資料，統一在讀取時當成三輪（見 config.py 的說明）。
+    # 這兩個欄位是陸續才新增的，舊資料的 Firestore 文件裡沒有；wheel_type
+    # 統一當成三輪，service_area 沒有通用預設值，統一當成空字串（見
+    # config.py 的說明）。
     data.setdefault("wheel_type", DEFAULT_WHEEL_TYPE)
+    data.setdefault("service_area", "")
     return data
 
 
@@ -1019,6 +1031,7 @@ def vehicle_matches_filters(
     status_filter: str = "",
     vehicle_no_filter: str = "",
     wheel_type_filter: str = "",
+    service_area_filter: str = "",
 ) -> bool:
     """判斷這台車要不要出現在車輛清單裡（純函式）。"""
     if vendor_filter and vehicle.get("vendor") != vendor_filter:
@@ -1029,23 +1042,33 @@ def vehicle_matches_filters(
         return False
     if wheel_type_filter and vehicle.get("wheel_type", DEFAULT_WHEEL_TYPE) != wheel_type_filter:
         return False
+    if service_area_filter and vehicle.get("service_area", "") != service_area_filter:
+        return False
     return True
 
 
 def list_vehicles(
-    vendor_filter: str = "", status_filter: str = "", vehicle_no_filter: str = "", wheel_type_filter: str = ""
+    vendor_filter: str = "",
+    status_filter: str = "",
+    vehicle_no_filter: str = "",
+    wheel_type_filter: str = "",
+    service_area_filter: str = "",
 ) -> list:
     vendor_filter = (vendor_filter or "").strip()
     status_filter = (status_filter or "").strip()
     vehicle_no_filter = (vehicle_no_filter or "").strip()
     wheel_type_filter = (wheel_type_filter or "").strip()
+    service_area_filter = (service_area_filter or "").strip()
 
     result = []
     for snapshot in vehicles_ref().stream():
         data = snapshot.to_dict() or {}
         data["vehicle_no"] = snapshot.id
         data.setdefault("wheel_type", DEFAULT_WHEEL_TYPE)
-        if vehicle_matches_filters(data, vendor_filter, status_filter, vehicle_no_filter, wheel_type_filter):
+        data.setdefault("service_area", "")
+        if vehicle_matches_filters(
+            data, vendor_filter, status_filter, vehicle_no_filter, wheel_type_filter, service_area_filter
+        ):
             result.append(data)
     result.sort(key=lambda v: v.get("vehicle_no", ""))
     return result
@@ -1085,6 +1108,20 @@ def set_vehicle_wheel_type(vehicle_no: str, wheel_type: str) -> bool:
     if not ref.get().exists:
         return False
     ref.update({"wheel_type": wheel_type})
+    return True
+
+
+def set_vehicle_service_area(vehicle_no: str, service_area: str) -> bool:
+    """網頁上手動設定/修正車輛的服務區域。空字串代表「未分區」，一樣接受
+    （等於清空這個欄位）；有填就要是合法的代碼。車輛不存在或代碼不合法
+    都回傳 False、不會寫入。"""
+    if service_area and service_area not in SERVICE_AREA_MAP:
+        return False
+    vehicle_no = _normalize_vehicle_no(vehicle_no)
+    ref = vehicles_ref().document(vehicle_no)
+    if not ref.get().exists:
+        return False
+    ref.update({"service_area": service_area})
     return True
 
 

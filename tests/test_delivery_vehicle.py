@@ -213,6 +213,16 @@ class VehicleMatchesFiltersTests(unittest.TestCase):
         self.assertTrue(vehicle_matches_filters(vehicle_without_field, wheel_type_filter="three_wheel"))
         self.assertFalse(vehicle_matches_filters(vehicle_without_field, wheel_type_filter="two_wheel"))
 
+    def test_service_area_filter_matches(self):
+        self.assertTrue(vehicle_matches_filters(self._vehicle(service_area="taipei"), service_area_filter="taipei"))
+
+    def test_service_area_filter_excludes_non_matching(self):
+        self.assertFalse(vehicle_matches_filters(self._vehicle(service_area="taipei"), service_area_filter="tainan"))
+
+    def test_service_area_filter_excludes_vehicle_with_no_area_set(self):
+        vehicle_without_area = {"vehicle_no": "ERV-9999", "vendor": "ud", "status": "available"}
+        self.assertFalse(vehicle_matches_filters(vehicle_without_area, service_area_filter="taipei"))
+
     def test_vendor_filter_excludes_non_matching(self):
         self.assertFalse(vehicle_matches_filters(self._vehicle(), vendor_filter="shopee"))
 

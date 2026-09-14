@@ -349,6 +349,25 @@ WHEEL_TYPES = [
 WHEEL_TYPE_MAP = {w["code"]: w["name"] for w in WHEEL_TYPES}
 DEFAULT_WHEEL_TYPE = "three_wheel"
 
+# 服務區域（車輛實際派駐/服務的縣市）：2026-09-14 新增，給「一鍵整理車輛
+# 狀況」報告（見 delivery/vehicle_status_report.py）分區統計用。固定清單
+# （不開放自由輸入文字）是刻意的：同仁自己打字容易「台北」跟「台北市」
+# 這種寫法不一致，分區統計就會對不起來。新增車輛時必填（沒有像輪別那樣
+# 的通用預設值可以套），既有車輛（這個欄位還沒存在之前建立的舊資料）
+# 讀取時當成空字串，報告裡會歸類到「未分區」，不會悄悄消失，管理員可以
+# 之後在車輛詳細頁個別補上。之後公司拓點到清單外的縣市，需要請 Claude
+# 加代碼進這個清單，不是同仁自己能在網頁上新增的欄位。
+SERVICE_AREAS = [
+    {"code": "taipei", "name": "台北"},
+    {"code": "new_taipei", "name": "新北"},
+    {"code": "taoyuan", "name": "桃園"},
+    {"code": "hsinchu", "name": "新竹"},
+    {"code": "taichung", "name": "台中"},
+    {"code": "tainan", "name": "台南"},
+    {"code": "kaohsiung", "name": "高雄"},
+]
+SERVICE_AREA_MAP = {a["code"]: a["name"] for a in SERVICE_AREAS}
+
 # ==========================================
 # 意外事件回報
 # 跟車輛回報同一個 LINE 群組回報格式（見 delivery/incident_report.py），

@@ -5,6 +5,8 @@ from delivery import repository
 from delivery.auth import current_user, login_required
 from delivery.config import (
     DEFAULT_WHEEL_TYPE,
+    SERVICE_AREA_MAP,
+    SERVICE_AREAS,
     VEHICLE_STATUS_MAP,
     VEHICLE_STATUSES,
     VENDOR_MAP,
@@ -14,6 +16,7 @@ from delivery.config import (
 )
 from delivery.templating import templates
 from delivery.vehicle_report import EVENT_ERROR_MESSAGES
+from delivery.vehicle_status_report import build_fleet_status_report
 
 router = APIRouter()
 
@@ -25,12 +28,17 @@ def vehicle_list(
     vendor: str = "",
     status: str = "",
     wheel_type: str = "",
+    service_area: str = "",
     redirect=Depends(login_required),
 ):
     if redirect:
         return redirect
     vehicles = repository.list_vehicles(
-        vendor_filter=vendor, status_filter=status, vehicle_no_filter=vehicle_no, wheel_type_filter=wheel_type
+        vendor_filter=vendor,
+        status_filter=status,
+        vehicle_no_filter=vehicle_no,
+        wheel_type_filter=wheel_type,
+        service_area_filter=service_area,
     )
     return templates.TemplateResponse(
         request,
@@ -43,12 +51,31 @@ def vehicle_list(
             "vendor_map": VENDOR_MAP,
             "wheel_types": WHEEL_TYPES,
             "wheel_type_map": WHEEL_TYPE_MAP,
+            "service_areas": SERVICE_AREAS,
+            "service_area_map": SERVICE_AREA_MAP,
             "vehicles": vehicles,
             "filter_vehicle_no": vehicle_no,
             "filter_vendor": vendor,
             "filter_status": status,
             "filter_wheel_type": wheel_type,
+            "filter_service_area": service_area,
         },
+    )
+
+
+@router.get("/vehicles/status-report")
+def vehicle_status_report_page(request: Request, redirect=Depends(login_required)):
+    """「一鍵整理車輛狀況」：把全部車輛（不套用清單頁上的篩選條件，永遠是
+    全部車輛）依廠商/服務區域彙整成文字報告，方便同仁複製貼到 LINE 群組。
+    這個路由要註冊在 `/vehicles/{vehicle_no}` 之前，不然 "status-report"
+    會被當成車號吃掉，永遠進不到這支函式。"""
+    if redirect:
+        return redirect
+    report_text = build_fleet_status_report(repository.list_vehicles())
+    return templates.TemplateResponse(
+        request,
+        "vehicle_status_report.html",
+        {"user": current_user(request), "report_text": report_text},
     )
 
 
@@ -64,6 +91,7 @@ def new_vehicle_form(request: Request, redirect=Depends(login_required)):
             "vendors": VENDORS,
             "wheel_types": WHEEL_TYPES,
             "default_wheel_type": DEFAULT_WHEEL_TYPE,
+            "service_areas": SERVICE_AREAS,
             "error": "",
         },
     )
@@ -75,6 +103,7 @@ def create_vehicle_submit(
     vehicle_no: str = Form(...),
     vendor: str = Form(...),
     wheel_type: str = Form(DEFAULT_WHEEL_TYPE),
+    service_area: str = Form(...),
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -85,7 +114,11 @@ def create_vehicle_submit(
     error = ""
     if not vehicle_no or vendor not in VENDOR_MAP or wheel_type not in WHEEL_TYPE_MAP:
         error = "車號、廠商都要填。"
-    elif not repository.create_vehicle(vehicle_no, vendor, user["username"], wheel_type=wheel_type):
+    elif service_area not in SERVICE_AREA_MAP:
+        error = "服務區域請重新選擇。"
+    elif not repository.create_vehicle(
+        vehicle_no, vendor, user["username"], wheel_type=wheel_type, service_area=service_area
+    ):
         error = "這個車號已經存在，請確認後再新增。"
 
     if error:
@@ -97,6 +130,7 @@ def create_vehicle_submit(
                 "vendors": VENDORS,
                 "wheel_types": WHEEL_TYPES,
                 "default_wheel_type": wheel_type or DEFAULT_WHEEL_TYPE,
+                "service_areas": SERVICE_AREAS,
                 "error": error,
             },
             status_code=400,
@@ -123,6 +157,8 @@ def vehicle_detail(vehicle_no: str, request: Request, error: str = "", redirect=
             "vendors": VENDORS,
             "wheel_types": WHEEL_TYPES,
             "wheel_type_map": WHEEL_TYPE_MAP,
+            "service_areas": SERVICE_AREAS,
+            "service_area_map": SERVICE_AREA_MAP,
             "events": repository.list_vehicle_events(vehicle_no),
             "error": error,
             "error_message": EVENT_ERROR_MESSAGES.get(error, "這筆事件無法處理。") if error else "",
@@ -147,6 +183,16 @@ def update_vehicle_wheel_type(
     if redirect:
         return redirect
     repository.set_vehicle_wheel_type(vehicle_no, wheel_type)
+    return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
+
+
+@router.post("/vehicles/{vehicle_no}/service-area")
+def update_vehicle_service_area(
+    vehicle_no: str, request: Request, service_area: str = Form(""), redirect=Depends(login_required)
+):
+    if redirect:
+        return redirect
+    repository.set_vehicle_service_area(vehicle_no, service_area)
     return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
 
 

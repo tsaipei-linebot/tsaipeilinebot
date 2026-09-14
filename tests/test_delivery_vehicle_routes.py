@@ -32,9 +32,14 @@ class CreateVehicleWheelTypeTests(unittest.TestCase):
     def test_valid_wheel_type_is_passed_to_repository(self):
         with mock.patch.object(vehicle_routes.repository, "create_vehicle", return_value=True) as mock_create:
             resp = vehicle_routes.create_vehicle_submit(
-                _FakeRequest(_staff_account()), vehicle_no="ERV-1", vendor="ud", wheel_type="two_wheel", redirect=None
+                _FakeRequest(_staff_account()),
+                vehicle_no="ERV-1",
+                vendor="ud",
+                wheel_type="two_wheel",
+                service_area="taipei",
+                redirect=None,
             )
-        mock_create.assert_called_once_with("ERV-1", "ud", "bob", wheel_type="two_wheel")
+        mock_create.assert_called_once_with("ERV-1", "ud", "bob", wheel_type="two_wheel", service_area="taipei")
         self.assertEqual(resp.status_code, 303)
 
     def test_default_wheel_type_constant_is_three_wheel(self):
@@ -44,11 +49,93 @@ class CreateVehicleWheelTypeTests(unittest.TestCase):
         with mock.patch.object(vehicle_routes.repository, "create_vehicle") as mock_create:
             with mock.patch.object(vehicle_routes, "templates") as mock_templates:
                 vehicle_routes.create_vehicle_submit(
-                    _FakeRequest(_staff_account()), vehicle_no="ERV-1", vendor="ud", wheel_type="four_wheel", redirect=None
+                    _FakeRequest(_staff_account()),
+                    vehicle_no="ERV-1",
+                    vendor="ud",
+                    wheel_type="four_wheel",
+                    service_area="taipei",
+                    redirect=None,
                 )
         mock_create.assert_not_called()
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertTrue(context["error"])
+
+
+class CreateVehicleServiceAreaTests(unittest.TestCase):
+    """2026-09-14 新增：新增車輛時要選服務區域（固定清單，必填）。"""
+
+    def test_valid_service_area_is_passed_to_repository(self):
+        with mock.patch.object(vehicle_routes.repository, "create_vehicle", return_value=True) as mock_create:
+            resp = vehicle_routes.create_vehicle_submit(
+                _FakeRequest(_staff_account()),
+                vehicle_no="ERV-1",
+                vendor="ud",
+                wheel_type="three_wheel",
+                service_area="kaohsiung",
+                redirect=None,
+            )
+        mock_create.assert_called_once_with(
+            "ERV-1", "ud", "bob", wheel_type="three_wheel", service_area="kaohsiung"
+        )
+        self.assertEqual(resp.status_code, 303)
+
+    def test_invalid_service_area_is_rejected_without_creating(self):
+        with mock.patch.object(vehicle_routes.repository, "create_vehicle") as mock_create:
+            with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                vehicle_routes.create_vehicle_submit(
+                    _FakeRequest(_staff_account()),
+                    vehicle_no="ERV-1",
+                    vendor="ud",
+                    wheel_type="three_wheel",
+                    service_area="chiayi",
+                    redirect=None,
+                )
+        mock_create.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertTrue(context["error"])
+
+    def test_blank_service_area_is_rejected_without_creating(self):
+        with mock.patch.object(vehicle_routes.repository, "create_vehicle") as mock_create:
+            with mock.patch.object(vehicle_routes, "templates"):
+                vehicle_routes.create_vehicle_submit(
+                    _FakeRequest(_staff_account()),
+                    vehicle_no="ERV-1",
+                    vendor="ud",
+                    wheel_type="three_wheel",
+                    service_area="",
+                    redirect=None,
+                )
+        mock_create.assert_not_called()
+
+
+class UpdateVehicleServiceAreaTests(unittest.TestCase):
+    def test_calls_repository_and_redirects(self):
+        with mock.patch.object(vehicle_routes.repository, "set_vehicle_service_area", return_value=True) as mock_set:
+            resp = vehicle_routes.update_vehicle_service_area(
+                "ERV-1", _FakeRequest(_staff_account()), service_area="tainan", redirect=None
+            )
+        mock_set.assert_called_once_with("ERV-1", "tainan")
+        self.assertEqual(resp.status_code, 303)
+
+    def test_blank_service_area_clears_it(self):
+        # 空字串是合法值（代表「未設定」），用來清掉之前選錯的服務區域。
+        with mock.patch.object(vehicle_routes.repository, "set_vehicle_service_area", return_value=True) as mock_set:
+            resp = vehicle_routes.update_vehicle_service_area(
+                "ERV-1", _FakeRequest(_staff_account()), service_area="", redirect=None
+            )
+        mock_set.assert_called_once_with("ERV-1", "")
+        self.assertEqual(resp.status_code, 303)
+
+
+class VehicleStatusReportPageTests(unittest.TestCase):
+    def test_fetches_all_vehicles_and_renders_report(self):
+        vehicles = [{"vendor": "ud", "status": "available", "service_area": "taipei"}]
+        with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles) as mock_list:
+            with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                vehicle_routes.vehicle_status_report_page(_FakeRequest(_staff_account()), redirect=None)
+        mock_list.assert_called_once_with()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("UD", context["report_text"])
 
 
 class UpdateVehicleWheelTypeTests(unittest.TestCase):
