@@ -10,6 +10,10 @@
 <p class="success">合約已產生並下載，紀錄也已存檔。</p>
 {% endif %}
 
+{% if upload_error %}
+<p class="error">{{ upload_error_messages.get(upload_error, "上傳失敗，請稍後再試。") }}</p>
+{% endif %}
+
 <p>
     <a href="/client-contracts/new" class="btn btn-primary">+ 產生新的合約</a>
     {% if show_summary_link %}
@@ -34,6 +38,7 @@
                 <th>專案合約維護</th>
                 <th>預覽</th>
                 <th>下載</th>
+                <th>廠商版本合約</th>
                 <th>複製</th>
                 <th>刪除</th>
             </tr>
@@ -67,6 +72,15 @@
                     {% else %}
                     -
                     {% endif %}
+                </td>
+                <td>
+                    {% if record.vendor_contract_blob_path %}
+                    <a href="/client-contracts/{{ record.id }}/vendor-file" class="btn btn-small" title="{{ record.vendor_contract_filename }}（{{ record.vendor_contract_uploaded_by }} 上傳）">下載廠商版</a><br>
+                    {% endif %}
+                    <form method="post" action="/client-contracts/{{ record.id }}/upload-vendor-file" enctype="multipart/form-data" class="inline-form" style="margin-top:4px;">
+                        <input type="file" name="vendor_file" accept=".pdf,.doc,.docx" style="max-width:130px;">
+                        <button type="submit" class="btn btn-small">{{ "重新上傳" if record.vendor_contract_blob_path else "上傳" }}</button>
+                    </form>
                 </td>
                 <td>
                     <a href="/client-contracts/new?duplicate_from={{ record.id }}" class="btn btn-small" title="用這筆合約的內容預填新增表單，年底續下一年度合約時用">複製</a>

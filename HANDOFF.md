@@ -4529,3 +4529,81 @@ Jinja2 環境確認 `vehicle_form.html`／`import_form.html` 都能正常渲染
 應備文件規則會跟「蝦皮三輪」一模一樣。之後如果這批人員的規則需要改成
 跟「蝦皮三輪」不一樣（例如發現實際上不用備哪個文件、或要多備哪個
 文件），需要再回來請 Claude 調整 `DOC_TYPES`。
+
+## 合約產生器新增「上傳廠商版本合約」（2026-09-14）
+
+使用者提出：有些客戶規定要用廠商自己指定格式的合約書，不能用材霈自己
+的版本，問能不能在合約產生器一樣填表單產生我們的標準版，但另外把
+廠商的版本也存進系統留底。討論了幾輪才定案，過程中確認了兩個關鍵
+決策：
+
+1. **不是「二選一」，是「兩份並存」**：系統照舊自動產生材霈自己的標準
+   版合約（表單填寫、套版產生 Word/PDF 這整段完全不動），廠商版本合約
+   是**額外多上傳**的附件，不會取代、也不會被取代。這樣做的原因是總表
+   （`/contract-summary`）、跟派遣契約產生器的連動，讀的都是這裡送出的
+   **表單資料欄位**（甲方名稱、`vendor_id` 等），不是讀合約檔案本身，
+   所以有沒有另外上傳廠商版本完全不影響那些功能，也不用擔心「改了合約
+   產生器的檔案產出邏輯結果連動壞掉」這種風險。
+2. **不限定廠商、預設隱藏**：不在廠商管理額外維護一份「哪些廠商規定用
+   自己合約」的名單，改成每一筆合約列表上都有一個「上傳」的入口，同仁
+   自己判斷要不要用；只有真的上傳過，才會多顯示一個「下載廠商版」的
+   按鈕，沒上傳的合約畫面跟以前一模一樣，不會多出一堆空欄位。另外也
+   跟使用者確認過：這個改動**完全不會動到**另一個完全獨立的功能「專案
+   合約維護」（`/project-contracts`，送資料到外部 Google 試算表/Apps
+   Script 那一套）——那邊「從合約產生器帶入」讀的是既有的 `blob_path`
+   （公司標準版），這次新增的欄位它不會去讀，兩邊互不影響。
+
+### 這次做了什麼
+
+1. **`client_contract_storage.py`** 新增 `upload_vendor_contract_file()`
+   ——跟既有的 `upload_contract_docx()`／`upload_contract_pdf()` 共用同一
+   個 bucket、同一個 `"client_contracts/"` 路徑前綴，`download_file()`／
+   `delete_file()` 既有的前綴檢查不用另外調整。
+2. **`services/client_contract_service.py`** 新增
+   `set_vendor_contract_file(submission_id, blob_path, filename,
+   uploaded_by)`——寫入四個新欄位（`vendor_contract_blob_path`／
+   `vendor_contract_filename`／`vendor_contract_uploaded_by`／
+   `vendor_contract_uploaded_at`），跟 `blob_path`／`pdf_blob_path` 是
+   完全獨立的欄位，不會互相覆蓋。重複上傳直接覆蓋掉上一次的路徑跟時間
+   戳記，GCS 上的舊檔案不會自動清掉（沒有實際影響，只是不會再被任何
+   連結指到）。
+3. **`client_contract_routes.py`** 新增兩個路由：
+   - `POST /client-contracts/{id}/upload-vendor-file`：格式（僅 PDF／
+     WORD）跟大小（20MB）限制沿用「專案合約維護」既有的
+     `CONTRACT_FILE_ALLOWED_EXTENSIONS`／`CONTRACT_FILE_MAX_BYTES`，不
+     另外重訂一套；權限比照下載/預覽的 `_can_preview_or_download()`
+     （送出者本人/主管/平台管理員，加上服務部門主管），不是只看送出人
+     鏈——服務部門主管也能幫忙補上傳廠商簽回來的合約。失敗一律帶錯誤
+     代碼（`upload_error` 查詢參數）導回列表頁顯示對應提示訊息，不會
+     讓同仁對著空白畫面不知道發生什麼事。
+   - `GET /client-contracts/{id}/vendor-file`：下載廠商版本合約，權限
+     跟上傳同一套規則。
+   - 刪除整筆合約紀錄時（`client_contract_delete()`），
+     `vendor_contract_blob_path` 也會一併清掉，不留孤兒檔案。
+4. **`templates/client_contract_home.html`** 列表新增「廠商版本合約」
+   欄位：有上傳過的話顯示「下載廠商版」連結（滑鼠移過去可以看到檔名跟
+   上傳人），下面永遠有一個小型上傳表單（已上傳過的話按鈕文字變成
+   「重新上傳」，方便換版本）；頁面上方新增 `upload_error` 錯誤訊息
+   橫幅。
+
+### 測試
+
+`tests/test_client_contract_routes.py` 新增 `UploadVendorFileRouteTests`
+（9 個：沒有權限/找不到紀錄/沒選檔案/檔名空白/副檔名不對/儲存空間未
+設定/檔案太大/正常上傳/服務部門主管也能上傳）跟
+`DownloadVendorFileRouteTests`（4 個：沒有廠商檔案/其他人看不到/本人
+可下載/服務部門主管可下載）；`DeleteRouteTests.
+test_owner_can_delete_record_and_its_files` 擴充驗證刪除紀錄時廠商版本
+檔案也會一起清掉。全部測試（`python3 -m unittest discover -s tests -p
+"test_*.py"`）1209 個全數通過；另外用實際的 Jinja2 環境確認
+`client_contract_home.html` 在有/沒有上傳過廠商版本、以及顯示錯誤訊息
+橫幅的情況下都能正常渲染；用 `TestClient` 確認兩個新路由沒有被既有的
+`/client-contracts/{submission_id}/...` 路由蓋掉。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**（沒有新的環境變數、沒有需要另外
+執行的遷移指令，用的還是既有的 GCS 儲存設定）。合約產生器列表頁上
+每一筆合約都會多一個「上傳廠商版本合約」的小表單，平常用不到可以
+完全忽略，畫面上不會有任何變化；真的需要用廠商指定格式合約的客戶，
+上傳之後同一列會多一個「下載廠商版」的按鈕。
