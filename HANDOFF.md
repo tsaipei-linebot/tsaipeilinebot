@@ -4236,3 +4236,33 @@ routes.py` 大幅改寫（權限模型、分組邏輯、合併視圖都是全新
 `vendor_form.html`／`dispatch_contract_form.html`／`contract_summary.
 html`，確認樣板語法沒問題。全部測試（`python3 -m unittest discover
 -s tests -p "test_*.py"`）1135 個全數通過。
+
+### 追加修正：「選擇對應的合約」改成看部門，不是看送出人（2026-09-14）
+
+上線後使用者發現一個沒設想到的漏洞：「選擇對應的合約」下拉選單原本是
+照「跟 `/client-contracts` 首頁同一套可見範圍」（送出人本人／送出人的
+主管）過濾——如果合約是 A 送出的，契約是跟 A 沒有主管/部屬關係的 B 要
+送出，B 在下拉選單裡完全看不到 A 送出的那份合約，選不到，送出時系統
+也會再擋一次。這不符合實際「業務出合約、另一位不相干的同仁出契約」的
+作業情境。
+
+**修正**：改成用「這個帳號的部門有沒有被勾在那份合約連到的廠商紀錄的
+服務部門裡」判斷（`services/contract_summary_service.py` 新增
+`viewer_can_link_contract_vendor()`）——**不要求主管職級**，這點跟
+總表的 `can_view_via_vendor_department()` 不一樣：總表是「看得到完整
+內容」的權限，這裡只是「能不能連結」，一般同仁（專員）本來就常常是
+實際負責送出契約的人。選了之後契約端只會帶走合約的客戶名稱跟廠商 ID，
+不會因此看到合約本身的價格、統一編號等完整內容，那些還是要透過
+`can_view_submission()` 才看得到。
+
+**代價／同仁需要知道的事**：這代表合約送出後，**要先到廠商管理把服務
+部門勾好，契約端的同仁才有辦法在下拉選單選到那份合約**——如果同一個
+客戶的合約跟契約是不同部門的人負責，記得把廠商紀錄的服務部門同時勾上
+雙方的部門（服務部門本來就是可複選）。這不是新增的限制，是延續「服務
+部門要同仁自己維護」的既有設計，只是這次讓它同時控制「能不能連結」跟
+「總表看不看得到」兩件事。
+
+測試：`tests/test_contract_summary_service.py` 新增
+`ViewerCanLinkContractVendorTests`；`tests/test_dispatch_contract_
+routes.py` 的 `ClientContractOptionsTests`／`LinkedClientContractTests`
+改用新的部門判斷重寫。全部測試 1144 個全數通過。

@@ -97,6 +97,30 @@ def can_view_via_vendor_department_single(viewer_account: dict, vendor_id: str) 
     return _account_can_claim_department(viewer_account, platform_vendors.get_vendor(vendor_id))
 
 
+def viewer_can_link_contract_vendor(viewer_account: dict, vendor_id: str, vendor_lookup: dict) -> bool:
+    """2026-09-14 新增，給派遣契約產生器「選擇對應的合約」下拉選單／送出
+    驗證用：這個帳號的部門有沒有被勾在 `vendor_id` 這筆廠商紀錄的服務
+    部門裡——**不要求主管職級**，跟 `can_view_via_vendor_department()`
+    用途不一樣（那支是「總表能不能看到完整內容」，這支只是「能不能把
+    這份契約連到那份合約」，一般同仁本來就常常是實際送出派遣契約的人，
+    不會因為不是主管就連不到自己部門負責的合約）。選了之後契約那邊只會
+    帶走合約的客戶名稱跟廠商 ID，不會因此看到合約本身的價格/統編等完整
+    內容——那些還是要透過 `can_view_submission()` 才看得到。全平台管理員
+    永遠可以。沒有連到廠商、或廠商還沒被勾任何服務部門的合約，一律不能
+    連結（含這次上線前就有的舊合約）。"""
+    if viewer_account.get("is_platform_admin"):
+        return True
+    if not vendor_id:
+        return False
+    vendor = vendor_lookup.get(vendor_id)
+    if not vendor:
+        return False
+    department = viewer_account.get("department") or ""
+    if not department:
+        return False
+    return department in (vendor.get("service_departments") or [])
+
+
 def viewer_has_any_department_access(viewer_account: dict, vendor_lookup: dict) -> bool:
     """能不能打開 `/contract-summary` 這個頁面：全平台管理員可以；其他
     帳號要「主管職級」＋「自己的部門有被勾在任何一筆廠商紀錄的服務部門

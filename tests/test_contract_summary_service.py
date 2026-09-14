@@ -95,6 +95,40 @@ class CanViewViaVendorDepartmentSingleTests(unittest.TestCase):
             self.assertFalse(contract_summary_service.can_view_via_vendor_department_single(_manager(), "v1"))
 
 
+class ViewerCanLinkContractVendorTests(unittest.TestCase):
+    """派遣契約產生器「選擇對應的合約」用：不要求主管職級，一般同仁也能
+    連結自己部門負責的合約——跟 can_view_via_vendor_department() 不同。"""
+
+    def test_platform_admin_always_true(self):
+        self.assertTrue(contract_summary_service.viewer_can_link_contract_vendor(_admin(), "v1", {}))
+
+    def test_staff_with_matching_department_is_true(self):
+        lookup = {"v1": {"service_departments": ["業務一部"]}}
+        self.assertTrue(contract_summary_service.viewer_can_link_contract_vendor(_staff("業務一部"), "v1", lookup))
+
+    def test_manager_with_matching_department_is_also_true(self):
+        lookup = {"v1": {"service_departments": ["業務一部"]}}
+        self.assertTrue(contract_summary_service.viewer_can_link_contract_vendor(_manager("業務一部"), "v1", lookup))
+
+    def test_non_matching_department_is_false(self):
+        lookup = {"v1": {"service_departments": ["業務二部"]}}
+        self.assertFalse(contract_summary_service.viewer_can_link_contract_vendor(_staff("業務一部"), "v1", lookup))
+
+    def test_no_vendor_id_is_false(self):
+        self.assertFalse(contract_summary_service.viewer_can_link_contract_vendor(_staff(), "", {}))
+
+    def test_unknown_vendor_id_is_false(self):
+        self.assertFalse(contract_summary_service.viewer_can_link_contract_vendor(_staff(), "missing", {}))
+
+    def test_blank_department_is_false(self):
+        lookup = {"v1": {"service_departments": ["業務一部"]}}
+        self.assertFalse(contract_summary_service.viewer_can_link_contract_vendor(_staff(""), "v1", lookup))
+
+    def test_vendor_with_no_service_departments_is_false(self):
+        lookup = {"v1": {"service_departments": []}}
+        self.assertFalse(contract_summary_service.viewer_can_link_contract_vendor(_staff("業務一部"), "v1", lookup))
+
+
 class ViewerHasAnyDepartmentAccessTests(unittest.TestCase):
     def test_platform_admin_always_true(self):
         self.assertTrue(contract_summary_service.viewer_has_any_department_access(_admin(), {}))
