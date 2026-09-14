@@ -44,6 +44,17 @@ LibreOffice（``soffice --convert-to pdf``，見 ``convert_docx_to_pdf()``）
 真的產生契約時，要麻煩使用者確認一下列表頁看不看得到預覽**，如果看不到、
 但 Word 檔案下載正常，去 Cloud Run 的 log 找
 `[派遣契約 PDF 轉檔失敗]` 開頭的訊息，會有實際的失敗原因。
+
+**連動指定的合約（2026-09-14 新增）**：因為使用者實際的作業流程是「先
+產生合約、再產生契約」，表單新增「選擇對應的合約」下拉選單（列出這個
+帳號看得到的合約產生器紀錄），選了之後：客戶名稱直接沿用那份合約的
+甲方名稱（不管這個欄位本來打了什麼都會被蓋掉，避免兩邊名稱打法不一致），
+並把那份合約的 `vendor_id`（連到廠商管理哪一筆）原封不動存進這筆契約
+紀錄的 `vendor_id`／`linked_client_contract_id` 兩個欄位——完全不用再
+靠名稱去廠商管理猜。**沒有選合約時維持原本的手動輸入客戶名稱備案**
+（`dispatch_contract_routes.py` 改呼叫 `services/vendor_sync.py` 的
+`sync_vendor_from_dispatch_contract()` 取得 `vendor_id`），這是過渡期
+用的路徑，等系統上的合約資料齊全之後再評估要不要拿掉。
 """
 import io
 import os
@@ -176,7 +187,7 @@ def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
 
 def save_submission(*, submitted_by: str, client_name: str, work_address: str, work_content: str,
                      pay_cycle: str, enabled_columns: list, shifts: list, clauses: dict, blob_path: str,
-                     pdf_blob_path: str = "") -> dict:
+                     pdf_blob_path: str = "", vendor_id: str = "", linked_client_contract_id: str = "") -> dict:
     data = {
         "submitted_by": submitted_by,
         "client_name": client_name,
@@ -188,6 +199,8 @@ def save_submission(*, submitted_by: str, client_name: str, work_address: str, w
         "clauses": clauses,
         "blob_path": blob_path,
         "pdf_blob_path": pdf_blob_path,
+        "vendor_id": vendor_id,
+        "linked_client_contract_id": linked_client_contract_id,
         "created_at": datetime.now(timezone.utc),
     }
     doc_ref = contracts_ref().document()

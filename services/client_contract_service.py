@@ -65,7 +65,13 @@ routes.py` 都會呼叫 `services/vendor_sync.py` 的
 乙方公司自動存一筆到廠商管理（`/vendors`，`platform_vendors.py`）——不
 檢查重複，同一家客戶簽了好幾年、甚至同一年簽了好幾份合約，都各自留
 一筆，之後要清理由同仁自己到 /vendors 手動刪除，詳見
-`services/vendor_sync.py` 開頭的說明。
+`services/vendor_sync.py` 開頭的說明。**2026-09-14 起，這次新建的廠商
+文件 ID 會存進這筆合約紀錄自己的 `vendor_id` 欄位**（`client_contract_
+routes.py` 改成先呼叫同步、拿到 ID 後才呼叫 `save_submission()`，不是
+先存合約再同步）——「服務部門主管看不看得到這筆合約」「廠商管理能不能
+預覽連動的合約」都是照這個 ID 查，不再靠名稱比對，詳見
+`services/contract_summary_service.py`。舊的歷史紀錄沒有這個欄位
+（`vendor_id` 讀出來是空字串），不會回填。
 
 **Word 排版預覽**：產生 Word 檔的同時，另外用 LibreOffice 轉一份 PDF
 存起來（見 `services/docx_pdf_conversion.py`，跟派遣契約產生器共用同一支
@@ -251,9 +257,11 @@ def save_submission(
     referral_fee_percentage: str = "",
     referral_service_months: str = "",
     pdf_blob_path: str = "",
+    vendor_id: str = "",
 ) -> dict:
     data = {
         "submitted_by": submitted_by,
+        "vendor_id": vendor_id,
         "contract_version": contract_version,
         "party_a_name": party_a["name"],
         "party_a_representative": party_a["representative"],

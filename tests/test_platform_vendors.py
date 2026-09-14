@@ -19,12 +19,56 @@ class ToVendorTests(unittest.TestCase):
         self.assertEqual(vendor["name"], "蝦皮")
         self.assertEqual(vendor["company_id"], "")
         self.assertEqual(vendor["note"], "")
+        self.assertEqual(vendor["service_departments"], [])
 
     def test_preserves_all_fields_when_present(self):
         data = {field: f"v-{field}" for field in platform_vendors.FIELDS}
         vendor = platform_vendors._to_vendor("abc", data)
         for field in platform_vendors.FIELDS:
             self.assertEqual(vendor[field], f"v-{field}")
+
+    def test_preserves_service_departments(self):
+        vendor = platform_vendors._to_vendor("abc", {"service_departments": ["業務一部", "業務二部"]})
+        self.assertEqual(vendor["service_departments"], ["業務一部", "業務二部"])
+
+
+class NormalizeServiceDepartmentsTests(unittest.TestCase):
+    def test_strips_and_sorts_and_dedupes(self):
+        result = platform_vendors._normalize_service_departments(
+            {"service_departments": [" 業務二部", "業務一部", "業務一部", ""]}
+        )
+        self.assertEqual(result, ["業務一部", "業務二部"])
+
+    def test_missing_key_returns_empty_list(self):
+        self.assertEqual(platform_vendors._normalize_service_departments({}), [])
+
+    def test_single_string_value_treated_as_one_item(self):
+        # <select multiple> 只選一個的話，有些表單解析方式會給單一字串而
+        # 不是清單，這裡保險起見兩種輸入都要能處理。
+        self.assertEqual(platform_vendors._normalize_service_departments({"service_departments": "業務一部"}), ["業務一部"])
+        self.assertEqual(platform_vendors._normalize_service_departments({"service_departments": ""}), [])
+
+
+class CreateVendorTests(unittest.TestCase):
+    def test_stores_normalized_service_departments(self):
+        fake_ref = mock.Mock()
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_ref
+        with mock.patch.object(platform_vendors, "vendors_ref", return_value=fake_collection):
+            platform_vendors.create_vendor("shopee", {"code": "shopee", "name": "蝦皮", "service_departments": ["業務一部"]})
+        payload = fake_ref.set.call_args[0][0]
+        self.assertEqual(payload["service_departments"], ["業務一部"])
+
+
+class UpdateVendorTests(unittest.TestCase):
+    def test_stores_normalized_service_departments(self):
+        fake_ref = mock.Mock()
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_ref
+        with mock.patch.object(platform_vendors, "vendors_ref", return_value=fake_collection):
+            platform_vendors.update_vendor("shopee", {"code": "shopee", "name": "蝦皮", "service_departments": []})
+        payload = fake_ref.update.call_args[0][0]
+        self.assertEqual(payload["service_departments"], [])
 
 
 class ValidateVendorFieldsTests(unittest.TestCase):
@@ -83,28 +127,40 @@ class CreateVendorAutoTests(unittest.TestCase):
         self.assertEqual(payload["code"], "custom-code")
 
 
-class VendorNameExistsTests(unittest.TestCase):
-    def test_blank_name_returns_false_without_querying(self):
+class FindVendorIdByNameTests(unittest.TestCase):
+    def test_blank_name_returns_none_without_querying(self):
         fake_collection = mock.Mock()
         with mock.patch.object(platform_vendors, "vendors_ref", return_value=fake_collection):
-            self.assertFalse(platform_vendors.vendor_name_exists("  "))
+            self.assertIsNone(platform_vendors.find_vendor_id_by_name("  "))
         fake_collection.where.assert_not_called()
 
-    def test_returns_true_when_a_matching_document_exists(self):
+    def test_returns_matching_document_id(self):
+        fake_doc = mock.Mock()
+        fake_doc.id = "auto-id-456"
         fake_query = mock.Mock()
-        fake_query.stream.return_value = iter([mock.Mock()])
+        fake_query.stream.return_value = iter([fake_doc])
         fake_collection = mock.Mock()
         fake_collection.where.return_value.limit.return_value = fake_query
         with mock.patch.object(platform_vendors, "vendors_ref", return_value=fake_collection):
-            self.assertTrue(platform_vendors.vendor_name_exists("蝦皮三輪"))
+            self.assertEqual(platform_vendors.find_vendor_id_by_name("蝦皮三輪"), "auto-id-456")
         fake_collection.where.assert_called_once_with("name", "==", "蝦皮三輪")
 
-    def test_returns_false_when_no_matching_document(self):
+    def test_returns_none_when_no_matching_document(self):
         fake_query = mock.Mock()
         fake_query.stream.return_value = iter([])
         fake_collection = mock.Mock()
         fake_collection.where.return_value.limit.return_value = fake_query
         with mock.patch.object(platform_vendors, "vendors_ref", return_value=fake_collection):
+            self.assertIsNone(platform_vendors.find_vendor_id_by_name("查無此廠商"))
+
+
+class VendorNameExistsTests(unittest.TestCase):
+    def test_true_when_find_vendor_id_by_name_returns_an_id(self):
+        with mock.patch.object(platform_vendors, "find_vendor_id_by_name", return_value="abc"):
+            self.assertTrue(platform_vendors.vendor_name_exists("蝦皮三輪"))
+
+    def test_false_when_find_vendor_id_by_name_returns_none(self):
+        with mock.patch.object(platform_vendors, "find_vendor_id_by_name", return_value=None):
             self.assertFalse(platform_vendors.vendor_name_exists("查無此廠商"))
 
 

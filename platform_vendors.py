@@ -31,16 +31,38 @@ ID（也就是公司的「簡稱」），允許空白——不是每個廠商當
 跟同仁在 `/vendors` 網頁手動建立廠商（`create_vendor()`，代號當文件 ID）
 不同，`create_vendor_auto()` 的文件 ID 是交給 Firestore 自動配發——因為
 統一編號以後會對到好幾筆不同年份的紀錄，不能拿來當唯一的文件 ID。
+
+**2026-09-14 新增「服務部門」欄位（`service_departments`，可複選，存部門
+名稱字串清單，選項來自 `platform_departments.py`）**：給「總表」功能判斷
+「服務這個廠商的部門主管可以看到這個廠商的合約/契約」用（見
+`services/contract_summary_service.py`）。這欄是**同仁自己到 `/vendors`
+手動勾選的**，合約/契約產生器自動同步新增的廠商紀錄一律從空清單開始，
+系統不會自動幫忙猜要勾哪個部門——同一個客戶名稱底下可能同時存在好幾筆
+廠商紀錄（合約產生器每次送出都新建一筆），每一筆的服務部門要各自勾選，
+不會互相沿用。這欄不是 `FIELDS` 裡的字串欄位（是清單），`_to_vendor()`／
+`create_vendor()`／`update_vendor()` 額外處理，`create_vendor_auto()`
+刻意不處理這欄（自動建立的紀錄永遠是空清單）。
 """
 from platform_db import vendors_ref
 
 FIELDS = ("code", "name", "company_id", "note", "tax_id", "contract_year")
 
 
+def _normalize_service_departments(fields: dict) -> list:
+    """把表單送來的服務部門清單整理乾淨：去除頭尾空白、丟掉空白值、排序
+    （方便畫面顯示穩定、也方便測試斷言），不去重複勾選理論上不會發生
+    （`<input type=checkbox>` 天生就不會有重複值），這裡多做一次保險。"""
+    departments = fields.get("service_departments") or []
+    if isinstance(departments, str):
+        departments = [departments] if departments.strip() else []
+    return sorted({d.strip() for d in departments if (d or "").strip()})
+
+
 def _to_vendor(vendor_id: str, data: dict) -> dict:
     vendor = {"id": vendor_id}
     for field in FIELDS:
         vendor[field] = data.get(field, "") or ""
+    vendor["service_departments"] = list(data.get("service_departments") or [])
     return vendor
 
 
@@ -63,11 +85,13 @@ def vendor_exists(vendor_id: str) -> bool:
 
 def create_vendor(vendor_id: str, fields: dict):
     payload = {field: (fields.get(field) or "").strip() for field in FIELDS}
+    payload["service_departments"] = _normalize_service_departments(fields)
     vendors_ref().document(vendor_id).set(payload)
 
 
 def update_vendor(vendor_id: str, fields: dict):
     payload = {field: (fields.get(field) or "").strip() for field in FIELDS}
+    payload["service_departments"] = _normalize_service_departments(fields)
     vendors_ref().document(vendor_id).update(payload)
 
 
@@ -90,15 +114,24 @@ def create_vendor_auto(fields: dict) -> str:
     return doc_ref.id
 
 
-def vendor_name_exists(name: str) -> bool:
-    """廠商管理裡有沒有已經存在同名（去除頭尾空白後完全相同）的紀錄——
-    只比對名稱，不看統一編號／合約年／代號，派遣契約產生器同步資料時用
-    這支判斷「要不要自動補一筆」，見 create_vendor_auto() 的說明。"""
+def find_vendor_id_by_name(name: str):
+    """廠商管理裡有沒有已經存在同名（去除頭尾空白後完全相同）的紀錄，有的話
+    回傳那一筆的文件 ID，沒有回傳 ``None``——2026-09-14 新增，派遣契約
+    產生器同步資料時用這支決定「沿用既有這一筆的 ID」還是「新建一筆」，
+    回傳值會直接存進契約紀錄的 `vendor_id` 欄位（見
+    `services/vendor_sync.py`），不用再靠名稱比對去反查廠商資料。"""
     name = (name or "").strip()
     if not name:
-        return False
+        return None
     query = vendors_ref().where("name", "==", name).limit(1)
-    return next(iter(query.stream()), None) is not None
+    doc = next(iter(query.stream()), None)
+    return doc.id if doc else None
+
+
+def vendor_name_exists(name: str) -> bool:
+    """廠商管理裡有沒有已經存在同名（去除頭尾空白後完全相同）的紀錄——
+    只比對名稱，不看統一編號／合約年／代號。"""
+    return find_vendor_id_by_name(name) is not None
 
 
 def validate_vendor_fields(fields: dict) -> str:

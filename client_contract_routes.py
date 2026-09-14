@@ -62,6 +62,7 @@ from services.client_contract_service import (
     save_submission,
 )
 from services.company_registry_lookup import lookup_company
+from services.contract_summary_service import build_vendor_lookup, can_view_via_vendor_department_single, viewer_has_any_department_access
 from services.vendor_sync import sync_vendor_from_client_contract
 
 router = APIRouter()
@@ -167,7 +168,7 @@ def client_contract_home(request: Request, generated: str = "", redirect=Depends
             "records": records,
             "generated": generated,
             "contract_versions": CONTRACT_VERSIONS,
-            "show_summary_link": platform_accounts.module_role(account, MODULE_CODE) == platform_accounts.ROLE_ADMIN,
+            "show_summary_link": viewer_has_any_department_access(account, build_vendor_lookup()),
         },
     )
 
@@ -323,6 +324,16 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
             pdf_filename = _build_filename(party_a["name"], contract_start_date.year, "pdf")
             pdf_blob_path = client_contract_storage.upload_contract_pdf(pdf_bytes, pdf_filename)
 
+    # 先同步廠商管理、拿到這次用到的廠商文件 ID，再存合約紀錄本身——這樣
+    # 合約紀錄的 vendor_id 才能在同一次送出裡就記下來，不用事後再補一次
+    # update（見 services/client_contract_service.py 開頭的說明）。
+    vendor_id = sync_vendor_from_client_contract(
+        name=party_a["name"],
+        tax_id=party_a["tax_id"],
+        contract_year=contract_start_date.year,
+        company_id=party_b_company_id,
+    )
+
     save_submission(
         submitted_by=account["username"],
         contract_version=contract_version,
@@ -344,12 +355,7 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         referral_service_months=referral_service_months,
         blob_path=blob_path,
         pdf_blob_path=pdf_blob_path,
-    )
-    sync_vendor_from_client_contract(
-        name=party_a["name"],
-        tax_id=party_a["tax_id"],
-        contract_year=contract_start_date.year,
-        company_id=party_b_company_id,
+        vendor_id=vendor_id,
     )
 
     encoded_filename = quote(filename)
@@ -368,6 +374,17 @@ def _contract_year(record: dict) -> str:
     return value[:4] if len(value) >= 4 and value[:4].isdigit() else ""
 
 
+def _can_preview_or_download(account: dict, record: dict) -> bool:
+    """預覽／下載額外多開放給「服務部門主管」——跟原本送出人鏈的
+    `can_view_submission()` 是「兩者符合一個即可」，不是取代掉原本的
+    規則（刪除還是只看 `can_view_submission()`，見
+    `client_contract_delete()`）。這樣總表上列出來的紀錄，服務部門主管
+    點進去的預覽/下載連結才不會變成「找不到」。"""
+    return can_view_submission(account, record) or can_view_via_vendor_department_single(
+        account, record.get("vendor_id", "")
+    )
+
+
 @router.get("/client-contracts/{submission_id}/download")
 def client_contract_download(submission_id: str, request: Request, redirect=Depends(_require_access)):
     if redirect:
@@ -376,7 +393,7 @@ def client_contract_download(submission_id: str, request: Request, redirect=Depe
     record = get_submission(submission_id)
     if not record or not record.get("blob_path"):
         return Response(status_code=404)
-    if not can_view_submission(account, record):
+    if not _can_preview_or_download(account, record):
         return Response(status_code=404)
     content, content_type = client_contract_storage.download_file(record["blob_path"])
     if content is None:
@@ -398,7 +415,7 @@ def client_contract_preview(submission_id: str, request: Request, redirect=Depen
     record = get_submission(submission_id)
     if not record or not record.get("pdf_blob_path"):
         return Response(status_code=404)
-    if not can_view_submission(account, record):
+    if not _can_preview_or_download(account, record):
         return Response(status_code=404)
     content, content_type = client_contract_storage.download_file(record["pdf_blob_path"])
     if content is None:

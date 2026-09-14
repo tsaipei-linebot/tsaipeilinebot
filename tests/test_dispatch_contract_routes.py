@@ -15,6 +15,22 @@ import main
 from fastapi.testclient import TestClient
 
 
+class ClientContractOptionsTests(unittest.TestCase):
+    """「選擇對應的合約」下拉選單的選項組法：客戶名稱＋合約起始日期年份。"""
+
+    def test_appends_year_when_parsable(self):
+        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts",
+                                return_value=[{"id": "c1", "party_a_name": "測試客戶", "contract_start_date": "2027-01-01"}]):
+            options = dispatch_contract_routes._client_contract_options({"username": "bob"})
+        self.assertEqual(options, [{"id": "c1", "label": "測試客戶（2027年）"}])
+
+    def test_missing_year_shows_name_only(self):
+        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts",
+                                return_value=[{"id": "c1", "party_a_name": "測試客戶", "contract_start_date": ""}]):
+            options = dispatch_contract_routes._client_contract_options({"username": "bob"})
+        self.assertEqual(options, [{"id": "c1", "label": "測試客戶"}])
+
+
 class DispatchContractRoutingSmokeTests(unittest.TestCase):
     """/dispatch-contracts 是派遣契約產生器的獨立模組，跟
     test_project_contract_routes.py 的既有分工一致，只涵蓋不需要真的打
@@ -137,9 +153,10 @@ class SubmitValidationTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
-                            self._FakeRequest(self._account(), form), redirect=None,
-                        ))
+                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                            asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
         mock_save.assert_not_called()
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertIn("客戶名稱", context["error"])
@@ -153,9 +170,10 @@ class SubmitValidationTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
-                            self._FakeRequest(self._account(), form), redirect=None,
-                        ))
+                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                            asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
         mock_save.assert_not_called()
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertIn("欄位", context["error"])
@@ -170,9 +188,10 @@ class SubmitValidationTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
-                            self._FakeRequest(self._account(), form), redirect=None,
-                        ))
+                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                            asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
         mock_save.assert_not_called()
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertIn("班別", context["error"])
@@ -191,10 +210,11 @@ class SubmitValidationTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "is_configured", return_value=False):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract"):
-                            result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
-                                self._FakeRequest(self._account(), form), redirect=None,
-                            ))
+                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                            with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract"):
+                                result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                    self._FakeRequest(self._account(), form), redirect=None,
+                                ))
         mock_render.assert_called_once()
         render_kwargs = mock_render.call_args.kwargs
         self.assertEqual(render_kwargs["shifts"], [{"title": "日班", "hours": "－", "wage": "196/hr", "bonus": "－", "overtime": "－"}])
@@ -221,10 +241,11 @@ class SubmitValidationTests(unittest.TestCase):
                         with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_docx", return_value="dispatch_contracts/x/a.docx"):
                             with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_pdf", return_value="dispatch_contracts/x/a.pdf") as mock_upload_pdf:
                                 with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                                    with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract"):
-                                        asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
-                                            self._FakeRequest(self._account(), self._minimal_form()), redirect=None,
-                                        ))
+                                    with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                                        with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract"):
+                                            asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                                self._FakeRequest(self._account(), self._minimal_form()), redirect=None,
+                                            ))
         mock_convert.assert_called_once_with(b"DOCX")
         mock_upload_pdf.assert_called_once()
         self.assertEqual(mock_save.call_args.kwargs["pdf_blob_path"], "dispatch_contracts/x/a.pdf")
@@ -239,13 +260,125 @@ class SubmitValidationTests(unittest.TestCase):
                         with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_docx", return_value="dispatch_contracts/x/a.docx"):
                             with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_pdf") as mock_upload_pdf:
                                 with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                                    with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract"):
-                                        result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
-                                            self._FakeRequest(self._account(), self._minimal_form()), redirect=None,
-                                        ))
+                                    with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                                        with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract"):
+                                            result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                                self._FakeRequest(self._account(), self._minimal_form()), redirect=None,
+                                            ))
         mock_upload_pdf.assert_not_called()
         self.assertEqual(mock_save.call_args.kwargs["pdf_blob_path"], "")
         self.assertEqual(result.body, b"DOCX")
+
+
+class LinkedClientContractTests(unittest.TestCase):
+    """派遣契約表單「選擇對應的合約」（2026-09-14 新增）：選了合約的話，
+    客戶名稱／vendor_id 都直接沿用那份合約的，不會再呼叫
+    sync_vendor_from_dispatch_contract() 去靠名稱猜；選的合約不存在或
+    這個帳號看不到的話要擋下來，不能送出。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user, form_data):
+            self.session = LinkedClientContractTests._FakeSession({"user": user})
+            self._form_data = form_data
+
+        async def form(self):
+            return self._form_data
+
+    def _account(self):
+        return {"username": "bob", "modules": {"dispatch_contracts": "staff"}, "is_platform_admin": False}
+
+    def _multidict(self, pairs):
+        class _Fake:
+            def __init__(self, pairs):
+                self._pairs = pairs
+
+            def get(self, key, default=None):
+                for k, v in self._pairs:
+                    if k == key:
+                        return v
+                return default
+
+            def getlist(self, key):
+                return [v for k, v in self._pairs if k == key]
+
+        return _Fake(pairs)
+
+    def _minimal_form(self, linked_id=""):
+        pairs = [
+            ("client_name", "手動打的名稱"), ("work_address", "台北市"), ("work_content", "收銀"),
+            ("enabled_columns", "title"), ("shift_title", "日班"),
+            ("clause_leave_policy", ""), ("clause_overtime_allowance_note", ""),
+            ("clause_dress_deposit_note", ""), ("clause_benefits_note", ""), ("clause_onboarding_note", ""),
+        ]
+        if linked_id:
+            pairs.append(("linked_client_contract_id", linked_id))
+        return self._multidict(pairs)
+
+    def test_linked_contract_overrides_client_name_and_vendor_id(self):
+        contract = {"id": "c1", "party_a_name": "測試客戶股份有限公司", "vendor_id": "vendor-abc"}
+        with mock.patch.object(dispatch_contract_routes, "render_contract_docx", return_value=b"DOCX"):
+            with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "is_configured", return_value=False):
+                    with mock.patch.object(dispatch_contract_routes, "get_client_contract_submission", return_value=contract):
+                        with mock.patch.object(dispatch_contract_routes, "can_view_client_contract_submission", return_value=True):
+                            with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract") as mock_sync:
+                                result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                    self._FakeRequest(self._account(), self._minimal_form(linked_id="c1")), redirect=None,
+                                ))
+        mock_sync.assert_not_called()
+        self.assertEqual(mock_save.call_args.kwargs["client_name"], "測試客戶股份有限公司")
+        self.assertEqual(mock_save.call_args.kwargs["vendor_id"], "vendor-abc")
+        self.assertEqual(mock_save.call_args.kwargs["linked_client_contract_id"], "c1")
+        self.assertEqual(result.body, b"DOCX")
+
+    def test_missing_linked_contract_blocks_submit(self):
+        with mock.patch.object(dispatch_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
+                    with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
+                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                            with mock.patch.object(dispatch_contract_routes, "get_client_contract_submission", return_value=None):
+                                asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                    self._FakeRequest(self._account(), self._minimal_form(linked_id="does-not-exist")), redirect=None,
+                                ))
+        mock_save.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("合約", context["error"])
+
+    def test_invisible_linked_contract_blocks_submit(self):
+        contract = {"id": "c1", "party_a_name": "別人的客戶", "vendor_id": "vendor-xyz"}
+        with mock.patch.object(dispatch_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
+                    with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
+                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                            with mock.patch.object(dispatch_contract_routes, "get_client_contract_submission", return_value=contract):
+                                with mock.patch.object(dispatch_contract_routes, "can_view_client_contract_submission", return_value=False):
+                                    asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                        self._FakeRequest(self._account(), self._minimal_form(linked_id="c1")), redirect=None,
+                                    ))
+        mock_save.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("合約", context["error"])
+
+    def test_no_linked_contract_falls_back_to_name_sync(self):
+        with mock.patch.object(dispatch_contract_routes, "render_contract_docx", return_value=b"DOCX"):
+            with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "is_configured", return_value=False):
+                    with mock.patch.object(dispatch_contract_routes, "get_client_contract_submission") as mock_get:
+                        with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract", return_value="fallback-id") as mock_sync:
+                            asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                self._FakeRequest(self._account(), self._minimal_form()), redirect=None,
+                            ))
+        mock_get.assert_not_called()
+        mock_sync.assert_called_once_with("手動打的名稱")
+        self.assertEqual(mock_save.call_args.kwargs["client_name"], "手動打的名稱")
+        self.assertEqual(mock_save.call_args.kwargs["vendor_id"], "fallback-id")
+        self.assertEqual(mock_save.call_args.kwargs["linked_client_contract_id"], "")
 
 
 class HomeRouteTests(unittest.TestCase):
@@ -265,10 +398,24 @@ class HomeRouteTests(unittest.TestCase):
         account = {"username": "bob", "is_platform_admin": False}
         with mock.patch.object(dispatch_contract_routes, "templates") as mock_templates:
             with mock.patch.object(dispatch_contract_routes, "list_visible_submissions", return_value=[]) as mock_list:
-                dispatch_contract_routes.dispatch_contract_home(
-                    self._FakeRequest(account), generated="", redirect=None,
-                )
+                with mock.patch.object(dispatch_contract_routes, "build_vendor_lookup", return_value={}):
+                    dispatch_contract_routes.dispatch_contract_home(
+                        self._FakeRequest(account), generated="", redirect=None,
+                    )
         mock_list.assert_called_once_with(account)
+
+    def test_show_summary_link_reflects_department_access_check(self):
+        account = {"username": "carol", "is_platform_admin": False}
+        with mock.patch.object(dispatch_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(dispatch_contract_routes, "list_visible_submissions", return_value=[]):
+                with mock.patch.object(dispatch_contract_routes, "build_vendor_lookup", return_value={"v1": {}}):
+                    with mock.patch.object(dispatch_contract_routes, "viewer_has_any_department_access", return_value=True) as mock_check:
+                        dispatch_contract_routes.dispatch_contract_home(
+                            self._FakeRequest(account), generated="", redirect=None,
+                        )
+        mock_check.assert_called_once_with(account, {"v1": {}})
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertTrue(context["show_summary_link"])
         self.assertEqual(mock_templates.TemplateResponse.call_args[0][2]["records"], [])
 
 
@@ -302,6 +449,20 @@ class DownloadRouteVisibilityTests(unittest.TestCase):
                 result = dispatch_contract_routes.dispatch_contract_download(
                     "x", self._FakeRequest({"username": "bob", "is_platform_admin": False}), redirect=None,
                 )
+        self.assertEqual(result.body, b"DOCX-DATA")
+
+    def test_service_department_manager_can_download_even_if_not_submitter_chain(self):
+        record = {"id": "x", "client_name": "pchome", "blob_path": "dispatch_contracts/x/a.docx",
+                  "submitted_by": "alice", "vendor_id": "v1"}
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(dispatch_contract_routes, "can_view_via_vendor_department_single", return_value=True):
+                    with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "download_file",
+                                            return_value=(b"DOCX-DATA", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")):
+                        result = dispatch_contract_routes.dispatch_contract_download(
+                            "x", self._FakeRequest({"username": "carol", "is_platform_admin": False}), redirect=None,
+                        )
         self.assertEqual(result.body, b"DOCX-DATA")
 
 
@@ -345,6 +506,22 @@ class PreviewRouteTests(unittest.TestCase):
         self.assertEqual(result.body, b"%PDF-DATA")
         self.assertIn("inline", result.headers["content-disposition"])
         self.assertIn("pchome", result.headers["content-disposition"])
+
+    def test_service_department_manager_can_preview_even_if_not_submitter_chain(self):
+        record = {
+            "id": "x", "client_name": "pchome", "pdf_blob_path": "dispatch_contracts/x/a.pdf",
+            "submitted_by": "alice", "vendor_id": "v1",
+        }
+        with mock.patch.object(dispatch_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(dispatch_contract_routes.platform_accounts, "get_account",
+                                    return_value={"username": "alice", "manager_usernames": []}):
+                with mock.patch.object(dispatch_contract_routes, "can_view_via_vendor_department_single", return_value=True):
+                    with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "download_file",
+                                            return_value=(b"%PDF-DATA", "application/pdf")):
+                        result = dispatch_contract_routes.dispatch_contract_preview(
+                            "x", self._FakeRequest({"username": "carol", "is_platform_admin": False}), redirect=None,
+                        )
+        self.assertEqual(result.body, b"%PDF-DATA")
 
     def test_other_user_record_returns_404(self):
         """不是送出者、不是送出者的主管、也不是平台管理員的話，即使

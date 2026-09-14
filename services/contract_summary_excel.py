@@ -44,10 +44,11 @@ def build_client_contract_summary_workbook(rows: list, contract_versions: dict) 
 
 
 def build_dispatch_contract_summary_workbook(rows: list) -> bytes:
-    header = ["客戶名稱", "最近異動年份", "職稱/班別", "工作時間", "時薪", "工時獎金", "加班", "結薪週期"]
+    header = ["客戶名稱", "送出人", "最近異動年份", "職稱/班別", "工作時間", "時薪", "工時獎金", "加班", "結薪週期"]
     sheet_rows = [
         [
             r["client_name"],
+            r["submitted_by"],
             r["updated_year"] or "",
             r["title"],
             r["hours"],
@@ -59,3 +60,35 @@ def build_dispatch_contract_summary_workbook(rows: list) -> bytes:
         for r in rows
     ]
     return _build_workbook("派遣契約總表", header, sheet_rows)
+
+
+def build_merged_summary_workbook(rows: list, max_shifts: int, contract_versions: dict) -> bytes:
+    """合併視圖的匯出：左半段是合約產生器總表既有的欄位，右半段是契約側的
+    資訊——班別固定切成「班別N-欄位」幾組（組數＝`max_shifts`，見
+    `services/contract_summary_service.build_merged_summary_rows()`），
+    不是每個班別各自一個工作表分頁，方便同仁一次匯出、一次篩選。"""
+    header = [
+        "客戶名稱", "統一編號", "合約年", "簽約公司", "合約版本", "報價方式", "匯款截止日", "合約送出人",
+        "契約結薪週期", "契約送出人",
+    ]
+    for i in range(max_shifts):
+        header += [f"班別{i + 1}-職稱", f"班別{i + 1}-工作時間", f"班別{i + 1}-時薪", f"班別{i + 1}-工時獎金", f"班別{i + 1}-加班"]
+
+    sheet_rows = []
+    for r in rows:
+        row = [
+            r["client_name"],
+            r["tax_id"],
+            r["year"],
+            r["party_b_name"],
+            contract_versions.get(r["contract_version"], {}).get("label", r["contract_version"]),
+            r["pricing_summary"],
+            r["remit_day"],
+            r["submitted_by"],
+            r["dispatch_pay_cycle"],
+            r["dispatch_submitted_by"],
+        ]
+        for col in r["shift_columns"]:
+            row += [col["title"], col["hours"], col["wage"], col["bonus"], col["overtime"]]
+        sheet_rows.append(row)
+    return _build_workbook("合約契約合併總表", header, sheet_rows)

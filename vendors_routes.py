@@ -6,20 +6,64 @@
 `delivery/routes/vendor_routes.py` 搞混——那支是配送部「依廠商篩選人員
 清單」的頁面，用的是寫死在 `delivery/config.py` 的舊廠商清單，跟這裡是
 完全獨立的兩份資料，見 platform_vendors.py 開頭的說明。
+
+**2026-09-14 新增：列表頁顯示每一筆連動的合約/契約，可以直接點進去
+預覽/下載**。合約產生器每次送出都新建一筆廠商紀錄、一對一連過去，所以
+`client_contract_by_vendor_id` 最多一筆；派遣契約產生器可能被好幾個人
+各自負責同一個廠商（見 `services/contract_summary_service.py` 的分組
+說明），所以 `dispatch_contracts_by_vendor_id` 是清單，依送出人分組各
+留最新一筆。這裡不用 `services/contract_summary_service.py` 的權限
+過濾——`/vendors` 本來就是全平台管理員限定的頁面，管理員本來就看得到
+全部，不用另外判斷服務部門。
 """
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
 import platform_accounts
 import platform_companies
+import platform_departments
 import platform_vendors
 from platform_templating import templates
+from services.client_contract_service import list_submissions as list_client_contract_submissions
+from services.dispatch_contract_service import list_submissions as list_dispatch_contract_submissions
 
 router = APIRouter()
 
 
 def _fields_from_form(form_data) -> dict:
-    return {field: form_data.get(field, "") for field in platform_vendors.FIELDS}
+    fields = {field: form_data.get(field, "") for field in platform_vendors.FIELDS}
+    fields["service_departments"] = form_data.getlist("service_departments")
+    return fields
+
+
+def _client_contract_by_vendor_id(limit: int = 5000) -> dict:
+    """廠商文件 ID -> 連到的那一份合約產生器紀錄——每個廠商紀錄本來就是
+    合約送出時一對一新建的，理論上最多一筆，用字典存第一筆遇到的即可。"""
+    result = {}
+    for record in list_client_contract_submissions(limit=limit):
+        vendor_id = record.get("vendor_id")
+        if vendor_id and vendor_id not in result:
+            result[vendor_id] = record
+    return result
+
+
+def _dispatch_contracts_by_vendor_id(limit: int = 5000) -> dict:
+    """廠商文件 ID -> 連到的派遣契約產生器紀錄清單，依「送出人」分組各自
+    只留最新一筆（同一個廠商可能被不同人／不同團隊各自負責，見
+    `services/contract_summary_service.py` 的分組說明），紀錄本身已經是
+    依送出時間新到舊排序，遇到的第一筆就是最新的。"""
+    result = {}
+    seen_groups = set()
+    for record in list_dispatch_contract_submissions(limit=limit):
+        vendor_id = record.get("vendor_id")
+        if not vendor_id:
+            continue
+        group_key = (vendor_id, record.get("submitted_by", ""))
+        if group_key in seen_groups:
+            continue
+        seen_groups.add(group_key)
+        result.setdefault(vendor_id, []).append(record)
+    return result
 
 
 @router.get("/")
@@ -28,12 +72,22 @@ def vendors_list(request: Request, error: str = "", redirect=Depends(platform_ac
         return redirect
     vendors = platform_vendors.list_vendors()
     company_name_by_id = {c["id"]: c["name"] for c in platform_companies.list_companies()}
+    client_contract_by_vendor_id = _client_contract_by_vendor_id()
+    dispatch_contracts_by_vendor_id = _dispatch_contracts_by_vendor_id()
+    contract_years = sorted({v["contract_year"] for v in vendors if v["contract_year"]}, reverse=True)
     for v in vendors:
         v["company_name"] = company_name_by_id.get(v["company_id"], v["company_id"] or "")
+        v["linked_client_contract"] = client_contract_by_vendor_id.get(v["id"])
+        v["linked_dispatch_contracts"] = dispatch_contracts_by_vendor_id.get(v["id"], [])
     return templates.TemplateResponse(
         request,
         "vendors_list.html",
-        {"user": platform_accounts.current_account(request), "vendors": vendors, "error": error},
+        {
+            "user": platform_accounts.current_account(request),
+            "vendors": vendors,
+            "error": error,
+            "contract_years": contract_years,
+        },
     )
 
 
@@ -48,6 +102,7 @@ def new_vendor_form(request: Request, redirect=Depends(platform_accounts.require
             "user": platform_accounts.current_account(request),
             "vendor": None,
             "companies": platform_companies.list_companies(),
+            "department_options": platform_departments.list_department_names(),
             "error": "",
         },
     )
@@ -73,6 +128,7 @@ async def create_vendor_submit(request: Request, redirect=Depends(platform_accou
                 "user": platform_accounts.current_account(request),
                 "vendor": fields,
                 "companies": platform_companies.list_companies(),
+                "department_options": platform_departments.list_department_names(),
                 "error": error,
             },
             status_code=400,
@@ -96,6 +152,7 @@ def edit_vendor_form(vendor_id: str, request: Request, redirect=Depends(platform
             "user": platform_accounts.current_account(request),
             "vendor": vendor,
             "companies": platform_companies.list_companies(),
+            "department_options": platform_departments.list_department_names(),
             "error": "",
         },
     )
@@ -123,6 +180,7 @@ async def edit_vendor_submit(vendor_id: str, request: Request, redirect=Depends(
                 "user": platform_accounts.current_account(request),
                 "vendor": {**fields, "id": vendor_id},
                 "companies": platform_companies.list_companies(),
+                "department_options": platform_departments.list_department_names(),
                 "error": error,
             },
             status_code=400,

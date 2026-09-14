@@ -21,6 +21,21 @@
     <label>合約年（選填；合約產生器送出後會自動帶入合約起始日期的年份）
         <input type="text" name="contract_year" value="{{ vendor.contract_year if vendor else '' }}">
     </label>
+    <div>
+        <span class="field-caption">服務部門（選填，可複選；決定服務這個廠商的部門主管能不能看到連動的合約/契約）</span>
+        <div class="shift-column-toggles">
+            {% for dept in department_options %}
+            <label class="shift-column-toggle">
+                <input type="checkbox" name="service_departments" value="{{ dept }}"
+                       {% if vendor and dept in (vendor.service_departments or []) %}checked{% endif %}>
+                {{ dept }}
+            </label>
+            {% endfor %}
+        </div>
+        {% if not department_options %}
+        <p class="hint">目前還沒有任何部門，先到「部門管理」建立部門才能勾選。</p>
+        {% endif %}
+    </div>
     <label>簽約公司（選填，之後補上即可）
         <select name="company_id">
             <option value="" {% if not (vendor and vendor.company_id) %}selected{% endif %}>尚未設定</option>
