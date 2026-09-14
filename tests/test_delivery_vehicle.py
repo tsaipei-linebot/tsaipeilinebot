@@ -193,12 +193,35 @@ class VehicleEventErrorTests(unittest.TestCase):
 
 class VehicleMatchesFiltersTests(unittest.TestCase):
     def _vehicle(self, **overrides):
-        base = {"vehicle_no": "ERV-1234", "vendor": "ud", "status": "available"}
+        base = {"vehicle_no": "ERV-1234", "vendor": "ud", "status": "available", "wheel_type": "three_wheel"}
         base.update(overrides)
         return base
 
     def test_no_filters_matches(self):
         self.assertTrue(vehicle_matches_filters(self._vehicle()))
+
+    def test_wheel_type_filter_matches(self):
+        self.assertTrue(vehicle_matches_filters(self._vehicle(wheel_type="two_wheel"), wheel_type_filter="two_wheel"))
+
+    def test_wheel_type_filter_excludes_non_matching(self):
+        self.assertFalse(vehicle_matches_filters(self._vehicle(wheel_type="three_wheel"), wheel_type_filter="two_wheel"))
+
+    def test_wheel_type_filter_treats_missing_field_as_three_wheel(self):
+        # 舊資料（新增這個欄位之前建立的車輛）Firestore 文件裡沒有這個欄位，
+        # 用「三輪」篩選時應該要找得到這些舊資料，不能因為欄位缺席就漏掉。
+        vehicle_without_field = {"vehicle_no": "ERV-9999", "vendor": "ud", "status": "available"}
+        self.assertTrue(vehicle_matches_filters(vehicle_without_field, wheel_type_filter="three_wheel"))
+        self.assertFalse(vehicle_matches_filters(vehicle_without_field, wheel_type_filter="two_wheel"))
+
+    def test_service_area_filter_matches(self):
+        self.assertTrue(vehicle_matches_filters(self._vehicle(service_area="taipei"), service_area_filter="taipei"))
+
+    def test_service_area_filter_excludes_non_matching(self):
+        self.assertFalse(vehicle_matches_filters(self._vehicle(service_area="taipei"), service_area_filter="tainan"))
+
+    def test_service_area_filter_excludes_vehicle_with_no_area_set(self):
+        vehicle_without_area = {"vehicle_no": "ERV-9999", "vendor": "ud", "status": "available"}
+        self.assertFalse(vehicle_matches_filters(vehicle_without_area, service_area_filter="taipei"))
 
     def test_vendor_filter_excludes_non_matching(self):
         self.assertFalse(vehicle_matches_filters(self._vehicle(), vendor_filter="shopee"))

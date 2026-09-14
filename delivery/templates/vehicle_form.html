@@ -15,6 +15,21 @@
             {% endfor %}
         </select>
     </label>
+    <label>輪別
+        <select name="wheel_type" required>
+            {% for w in wheel_types %}
+            <option value="{{ w.code }}" {% if default_wheel_type == w.code %}selected{% endif %}>{{ w.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>服務區域
+        <select name="service_area" required>
+            <option value="">請選擇</option>
+            {% for a in service_areas %}
+            <option value="{{ a.code }}">{{ a.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
     <button type="submit" class="btn btn-primary">新增車輛</button>
 </form>
 

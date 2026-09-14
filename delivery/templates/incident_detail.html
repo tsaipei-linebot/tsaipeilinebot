@@ -22,6 +22,8 @@
 </table>
 
 {% if user.role == "admin" %}
+<a class="btn" href="/delivery/incidents/{{ incident.id }}/edit" style="display:inline-block; margin-bottom:20px;">編輯回報內容</a>
+
 <h2 class="section-title">風險等級</h2>
 <form method="post" action="/delivery/incidents/{{ incident.id }}/risk-level" class="inline-form">
     <select name="risk_level" required>

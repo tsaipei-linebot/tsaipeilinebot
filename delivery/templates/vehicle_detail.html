@@ -4,6 +4,8 @@
 <h1 class="page-title">車輛：{{ vehicle.vehicle_no }}</h1>
 <p class="meta">
     廠商：{{ vendor_name }}
+    輪別：{{ wheel_type_map.get(vehicle.wheel_type, vehicle.wheel_type) }}
+    服務區域：{{ service_area_map.get(vehicle.service_area, "未設定") }}
     狀態：<span class="badge {{ 'badge-ok' if vehicle.status == 'available' else ('badge-missing' if vehicle.status == 'maintenance' else 'badge-pending') }}">{{ vehicle_status_map.get(vehicle.status, vehicle.status) }}</span>
     目前使用人：{{ vehicle.current_holder or "-" }}
     目前地點：{{ vehicle.current_location or "-" }}
@@ -19,6 +21,25 @@
     <input type="hidden" name="status" value="maintenance">
     <button type="submit" class="btn">標記待維修</button>
     {% endif %}
+</form>
+
+<form method="post" action="/delivery/vehicles/{{ vehicle.vehicle_no }}/wheel-type" class="inline-form" style="display:inline-block; margin-bottom:20px; margin-left:10px;">
+    <select name="wheel_type">
+        {% for w in wheel_types %}
+        <option value="{{ w.code }}" {% if vehicle.wheel_type == w.code %}selected{% endif %}>{{ w.name }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn">更新輪別</button>
+</form>
+
+<form method="post" action="/delivery/vehicles/{{ vehicle.vehicle_no }}/service-area" class="inline-form" style="display:inline-block; margin-bottom:20px; margin-left:10px;">
+    <select name="service_area">
+        <option value="" {% if not vehicle.service_area %}selected{% endif %}>未設定</option>
+        {% for a in service_areas %}
+        <option value="{{ a.code }}" {% if vehicle.service_area == a.code %}selected{% endif %}>{{ a.name }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn">更新服務區域</button>
 </form>
 
 <h2 class="section-title">手動補登事件</h2>
@@ -59,6 +80,7 @@
             <th>姓名</th>
             <th>地點</th>
             <th>來源</th>
+            <th></th>
         </tr>
     </thead>
     <tbody>
@@ -69,6 +91,7 @@
             <td>{{ e.personnel_name }}</td>
             <td>{{ e.location }}</td>
             <td>{{ "LINE 群組" if e.source == "line" else "手動補登" }}</td>
+            <td><a href="/delivery/vehicles/{{ vehicle.vehicle_no }}/events/{{ e.id }}/edit">編輯</a></td>
         </tr>
         {% endfor %}
     </tbody>

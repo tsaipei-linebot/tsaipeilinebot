@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}一鍵整理車輛狀況 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<h1 class="page-title">一鍵整理車輛狀況</h1>
+<p class="hint">下面是依廠商、服務區域整理好的車輛現況，按「複製文字」貼到 LINE 群組即可。</p>
+
+<textarea id="fleet-report-text" class="report-textarea" readonly rows="24">{{ report_text }}</textarea>
+
+<p>
+    <button type="button" class="btn btn-primary" id="copy-report-btn">複製文字</button>
+    <span id="copy-report-status" class="hint"></span>
+</p>
+
+<p class="back-link"><a href="/delivery/vehicles">&larr; 回車輛管理</a></p>
+
+<script>
+(function () {
+    var textarea = document.getElementById('fleet-report-text');
+    var button = document.getElementById('copy-report-btn');
+    var status = document.getElementById('copy-report-status');
+
+    button.addEventListener('click', function () {
+        textarea.focus();
+        textarea.select();
+        var copied = false;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(textarea.value).then(function () {
+                status.textContent = '已複製到剪貼簿！';
+            }).catch(function () {
+                status.textContent = '複製失敗，請手動全選文字後複製。';
+            });
+            copied = true;
+        }
+        if (!copied) {
+            try {
+                document.execCommand('copy');
+                status.textContent = '已複製到剪貼簿！';
+            } catch (err) {
+                status.textContent = '複製失敗，請手動全選文字後複製。';
+            }
+        }
+    });
+})();
+</script>
+{% endblock %}
