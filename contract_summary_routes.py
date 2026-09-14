@@ -46,6 +46,11 @@ router = APIRouter()
 # 兩個產生器自己的列表頁只需要「最近幾百筆」讓同仁重新下載檔案，兩邊用途
 # 不一樣，這裡刻意跟 list_submissions() 預設的 200 分開設定。
 _RECORDS_LIMIT = 5000
+# 抓回來的筆數接近上限時代表資料量已經逼近 _RECORDS_LIMIT，之後真的超過
+# 的話，最舊的紀錄會悄悄從這個總表消失（其他頁面、原始資料都不受影響，
+# 只有這個彙總畫面看不到）。訂在上限的 80%，讓使用者能提早發現、聯繫
+# 工程師調高 _RECORDS_LIMIT，而不是等資料真的消失才發現（2026-09-14 新增）。
+_NEAR_LIMIT_WARNING_THRESHOLD = int(_RECORDS_LIMIT * 0.8)
 
 
 def _require_access(request: Request):
@@ -58,15 +63,33 @@ def _require_access(request: Request):
     return None
 
 
+def _near_limit_warning(client_total: int, dispatch_total: int) -> str:
+    """任一邊抓回來的原始筆數（權限過濾前，代表系統裡實際的資料量，不是
+    這個帳號看得到的筆數）接近 _RECORDS_LIMIT 時，回傳要顯示給使用者的
+    警示文字；還早的話回傳空字串（模板用空字串判斷不顯示）。"""
+    if client_total >= _NEAR_LIMIT_WARNING_THRESHOLD or dispatch_total >= _NEAR_LIMIT_WARNING_THRESHOLD:
+        return (
+            f"⚠️ 系統目前的合約／契約紀錄筆數已接近總表顯示上限"
+            f"（{_RECORDS_LIMIT:,} 筆），日後如果繼續成長超過上限，"
+            f"最舊的紀錄將不會再出現在這個總表畫面上（原始資料不會受影響）。"
+            f"請聯繫工程師調高上限設定。"
+        )
+    return ""
+
+
 def _visible_records(account: dict):
     """建一次 vendor_lookup、抓好兩邊全部紀錄、套用「服務部門」權限過濾——
-    首頁跟三個匯出路由共用同一套準備流程，確保「看得到什麼」完全一致。"""
+    首頁跟三個匯出路由共用同一套準備流程，確保「看得到什麼」完全一致。
+    回傳值多帶一個 near_limit_warning：權限過濾前的原始筆數算出來的接近
+    上限警示文字，只有首頁會顯示，匯出路由用不到但為了共用同一套準備
+    流程還是一起回傳。"""
     vendor_lookup = build_vendor_lookup()
     client_records_all = list_all_client_contracts(limit=_RECORDS_LIMIT)
     dispatch_records_all = list_all_dispatch_contracts(limit=_RECORDS_LIMIT)
     client_records = visible_client_contract_records(client_records_all, account, vendor_lookup)
     dispatch_records = visible_dispatch_contract_records(dispatch_records_all, account, vendor_lookup)
-    return client_records, dispatch_records
+    near_limit_warning = _near_limit_warning(len(client_records_all), len(dispatch_records_all))
+    return client_records, dispatch_records, near_limit_warning
 
 
 @router.get("/contract-summary")
@@ -74,7 +97,7 @@ def contract_summary_home(request: Request, years: list = Query(default=[]), red
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
-    client_records, dispatch_records = _visible_records(account)
+    client_records, dispatch_records, near_limit_warning = _visible_records(account)
 
     available_years = available_client_contract_years(client_records)
     selected_years = parse_selected_years(years, available_years)
@@ -94,6 +117,7 @@ def contract_summary_home(request: Request, years: list = Query(default=[]), red
             "merged_rows": merged_rows,
             "shift_range": range(max_shifts),
             "contract_versions": CONTRACT_VERSIONS,
+            "near_limit_warning": near_limit_warning,
         },
     )
 
@@ -105,7 +129,7 @@ def contract_summary_export_client_contracts(
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
-    client_records, _ = _visible_records(account)
+    client_records, _, _ = _visible_records(account)
     available_years = available_client_contract_years(client_records)
     selected_years = parse_selected_years(years, available_years)
     rows = build_client_contract_summary_rows(client_records, selected_years)
@@ -123,7 +147,7 @@ def contract_summary_export_dispatch_contracts(request: Request, redirect=Depend
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
-    _, dispatch_records = _visible_records(account)
+    _, dispatch_records, _ = _visible_records(account)
     rows = build_dispatch_contract_summary_rows(dispatch_records)
     content = build_dispatch_contract_summary_workbook(rows)
     encoded_filename = quote("派遣契約總表.xlsx")
@@ -139,7 +163,7 @@ def contract_summary_export_merged(request: Request, years: list = Query(default
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
-    client_records, dispatch_records = _visible_records(account)
+    client_records, dispatch_records, _ = _visible_records(account)
     available_years = available_client_contract_years(client_records)
     selected_years = parse_selected_years(years, available_years)
     rows, max_shifts = build_merged_summary_rows(client_records, dispatch_records, selected_years)

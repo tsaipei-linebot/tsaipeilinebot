@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 
 import platform_accounts
+from file_type_sniff import looks_like_image
 from platform_templating import templates
 from services.salary_repayment_service import DISPLAY_COLUMNS, get_my_repayment_records
 from services.salary_repayment_submit_service import (
@@ -171,6 +172,15 @@ async def create_salary_repayment_submit(
                 request,
                 "salary_repayment_form.html",
                 _salary_repayment_form_context(account, "佐證照片超過 20MB 上限，請換一張檔案較小的照片。", form_values),
+                status_code=400,
+            )
+        if not looks_like_image(content):
+            # 之前這裡完全沒檢查檔案內容是不是真的圖片，只要有檔名就直接
+            # 轉 base64 送給 GAS——理論上可以夾帶任何檔案偽裝成照片上傳。
+            return templates.TemplateResponse(
+                request,
+                "salary_repayment_form.html",
+                _salary_repayment_form_context(account, "佐證照片格式不支援，請上傳 JPG 或 PNG 圖片檔案。", form_values),
                 status_code=400,
             )
         image_base64 = base64.b64encode(content).decode("ascii")

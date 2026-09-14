@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 
+from file_type_sniff import is_allowed_upload
 from management import repository
 from management.auth import admin_required, current_user, login_required
 from management.config import ALLOWED_UPLOAD_CONTENT_TYPES, MAX_UPLOAD_BYTES
@@ -47,8 +48,8 @@ async def create_kpi_report_submit(
         content_type = file.content_type or "application/octet-stream"
         if len(content) > MAX_UPLOAD_BYTES:
             error = "檔案超過 20MB 上限"
-        elif content_type not in ALLOWED_UPLOAD_CONTENT_TYPES:
-            error = "檔案格式不支援，請上傳 Excel/PDF/PPT/圖片"
+        elif not is_allowed_upload(content, content_type, ALLOWED_UPLOAD_CONTENT_TYPES):
+            error = "檔案格式不支援，或檔案內容跟副檔名不符，請確認上傳的是 Excel/PDF/PPT/圖片"
 
     if error:
         return templates.TemplateResponse(

@@ -111,13 +111,51 @@ class VisibleRecordsHelperTests(unittest.TestCase):
                 with mock.patch.object(contract_summary_routes, "list_all_dispatch_contracts", return_value=["d1"]) as mock_dispatch:
                     with mock.patch.object(contract_summary_routes, "visible_client_contract_records", return_value=["c1-visible"]) as mock_visible_client:
                         with mock.patch.object(contract_summary_routes, "visible_dispatch_contract_records", return_value=["d1-visible"]) as mock_visible_dispatch:
-                            client_records, dispatch_records = contract_summary_routes._visible_records(account)
+                            client_records, dispatch_records, near_limit_warning = contract_summary_routes._visible_records(account)
         mock_client.assert_called_once_with(limit=contract_summary_routes._RECORDS_LIMIT)
         mock_dispatch.assert_called_once_with(limit=contract_summary_routes._RECORDS_LIMIT)
         mock_visible_client.assert_called_once_with(["c1"], account, {"v1": {}})
         mock_visible_dispatch.assert_called_once_with(["d1"], account, {"v1": {}})
         self.assertEqual(client_records, ["c1-visible"])
         self.assertEqual(dispatch_records, ["d1-visible"])
+        self.assertEqual(near_limit_warning, "")
+
+    def test_near_limit_warning_uses_raw_counts_before_permission_filtering(self):
+        """near_limit_warning 要看「權限過濾前」的原始筆數（系統整體資料量），
+        不是這個帳號實際看得到的筆數，不然主管只看得到自己部門的一小部分，
+        永遠不會觸發警示。"""
+        account = _manager()
+        raw_client = ["c"] * contract_summary_routes._NEAR_LIMIT_WARNING_THRESHOLD
+        with mock.patch.object(contract_summary_routes, "build_vendor_lookup", return_value={}):
+            with mock.patch.object(contract_summary_routes, "list_all_client_contracts", return_value=raw_client):
+                with mock.patch.object(contract_summary_routes, "list_all_dispatch_contracts", return_value=[]):
+                    with mock.patch.object(contract_summary_routes, "visible_client_contract_records", return_value=["only-one-visible"]):
+                        with mock.patch.object(contract_summary_routes, "visible_dispatch_contract_records", return_value=[]):
+                            _, _, near_limit_warning = contract_summary_routes._visible_records(account)
+        self.assertNotEqual(near_limit_warning, "")
+
+
+class NearLimitWarningTests(unittest.TestCase):
+    def test_below_threshold_returns_empty_string(self):
+        self.assertEqual(contract_summary_routes._near_limit_warning(0, 0), "")
+        self.assertEqual(
+            contract_summary_routes._near_limit_warning(
+                contract_summary_routes._NEAR_LIMIT_WARNING_THRESHOLD - 1, 0
+            ),
+            "",
+        )
+
+    def test_client_total_at_threshold_triggers_warning(self):
+        warning = contract_summary_routes._near_limit_warning(
+            contract_summary_routes._NEAR_LIMIT_WARNING_THRESHOLD, 0
+        )
+        self.assertNotEqual(warning, "")
+
+    def test_dispatch_total_at_threshold_triggers_warning(self):
+        warning = contract_summary_routes._near_limit_warning(
+            0, contract_summary_routes._NEAR_LIMIT_WARNING_THRESHOLD
+        )
+        self.assertNotEqual(warning, "")
 
 
 class ContractSummaryHomeTests(unittest.TestCase):
@@ -132,7 +170,7 @@ class ContractSummaryHomeTests(unittest.TestCase):
     def test_builds_all_three_sections_from_visible_records(self):
         account = _manager()
         with mock.patch.object(contract_summary_routes, "templates") as mock_templates:
-            with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"])):
+            with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"], "")):
                 with mock.patch.object(contract_summary_routes, "available_client_contract_years", return_value=[2026, 2027]) as mock_years:
                     with mock.patch.object(contract_summary_routes, "parse_selected_years", return_value=[2026]) as mock_parse:
                         with mock.patch.object(contract_summary_routes, "build_client_contract_summary_rows", return_value=["crow"]) as mock_build_client:
@@ -151,6 +189,24 @@ class ContractSummaryHomeTests(unittest.TestCase):
         self.assertEqual(context["dispatch_rows"], ["drow"])
         self.assertEqual(context["merged_rows"], ["mrow"])
         self.assertEqual(list(context["shift_range"]), [0, 1])
+        self.assertEqual(context["near_limit_warning"], "")
+
+    def test_near_limit_warning_passed_through_to_template_context(self):
+        account = _manager()
+        with mock.patch.object(contract_summary_routes, "templates") as mock_templates:
+            with mock.patch.object(
+                contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"], "接近上限警示文字")
+            ):
+                with mock.patch.object(contract_summary_routes, "available_client_contract_years", return_value=[2026]):
+                    with mock.patch.object(contract_summary_routes, "parse_selected_years", return_value=[2026]):
+                        with mock.patch.object(contract_summary_routes, "build_client_contract_summary_rows", return_value=["crow"]):
+                            with mock.patch.object(contract_summary_routes, "build_dispatch_contract_summary_rows", return_value=["drow"]):
+                                with mock.patch.object(contract_summary_routes, "build_merged_summary_rows", return_value=(["mrow"], 2)):
+                                    contract_summary_routes.contract_summary_home(
+                                        self._FakeRequest(account), years=["2026"], redirect=None,
+                                    )
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["near_limit_warning"], "接近上限警示文字")
 
 
 class ExportClientContractsTests(unittest.TestCase):
@@ -164,7 +220,7 @@ class ExportClientContractsTests(unittest.TestCase):
 
     def test_returns_xlsx_content(self):
         account = _manager()
-        with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"])):
+        with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"], "")):
             with mock.patch.object(contract_summary_routes, "available_client_contract_years", return_value=[2026]):
                 with mock.patch.object(contract_summary_routes, "parse_selected_years", return_value=[2026]):
                     with mock.patch.object(contract_summary_routes, "build_client_contract_summary_rows", return_value=["row"]):
@@ -188,7 +244,7 @@ class ExportDispatchContractsTests(unittest.TestCase):
 
     def test_returns_xlsx_content(self):
         account = _manager()
-        with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"])):
+        with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"], "")):
             with mock.patch.object(contract_summary_routes, "build_dispatch_contract_summary_rows", return_value=["drow"]):
                 with mock.patch.object(contract_summary_routes, "build_dispatch_contract_summary_workbook", return_value=b"XLSX2") as mock_build:
                     result = contract_summary_routes.contract_summary_export_dispatch_contracts(
@@ -210,7 +266,7 @@ class ExportMergedTests(unittest.TestCase):
 
     def test_returns_xlsx_content(self):
         account = _manager()
-        with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"])):
+        with mock.patch.object(contract_summary_routes, "_visible_records", return_value=(["c1"], ["d1"], "")):
             with mock.patch.object(contract_summary_routes, "available_client_contract_years", return_value=[2026]):
                 with mock.patch.object(contract_summary_routes, "parse_selected_years", return_value=[2026]):
                     with mock.patch.object(contract_summary_routes, "build_merged_summary_rows", return_value=(["mrow"], 3)) as mock_build_rows:

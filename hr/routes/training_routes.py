@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 
 from hr import repository
+from file_type_sniff import is_allowed_upload
 from hr.auth import admin_required, current_user, login_required
 from hr.config import ALLOWED_UPLOAD_CONTENT_TYPES, MAX_UPLOAD_BYTES
 from hr.storage import StorageNotConfigured, upload_file
@@ -17,8 +18,8 @@ async def _read_optional_file(file: UploadFile):
     content_type = file.content_type or "application/octet-stream"
     if len(content) > MAX_UPLOAD_BYTES:
         return None, None, None, "檔案超過 20MB 上限"
-    if content_type not in ALLOWED_UPLOAD_CONTENT_TYPES:
-        return None, None, None, "檔案格式不支援，請上傳 PDF/Word/Excel/圖片"
+    if not is_allowed_upload(content, content_type, ALLOWED_UPLOAD_CONTENT_TYPES):
+        return None, None, None, "檔案格式不支援，或檔案內容跟副檔名不符，請確認上傳的是 PDF/Word/Excel/圖片"
     return content, content_type, file.filename, ""
 
 

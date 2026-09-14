@@ -5,6 +5,8 @@ UrlFetchApp），不是瀏覽器登入 session，改用共用密鑰驗證（跟 
 /internal/load-test-message 是同一種做法）。沒有設定 DELIVERY_FORM_WEBHOOK_SECRET
 時一律回傳 403，等同這個 webhook 不存在。
 """
+import hmac
+
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from delivery import repository
@@ -22,13 +24,30 @@ from delivery.vehicle_report import handle_vehicle_report
 router = APIRouter()
 
 
+async def _parse_json_body(request: Request) -> dict:
+    """呼叫端（GAS）送過來的資料格式不對時，統一回傳乾淨的 400 而不是
+    讓 JSON 解析失敗一路噴成 500——方便之後從錯誤紀錄分辨「呼叫端資料
+    有問題」跟「我們這邊程式真的壞了」。"""
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="收到的內容不是合法的 JSON 格式")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="收到的 JSON 格式不是預期的物件結構")
+    return body
+
+
 @router.post("/api/form-submission")
 async def form_submission(request: Request, x_delivery_form_secret: str = Header(None)):
-    if not FORM_WEBHOOK_SECRET or x_delivery_form_secret != FORM_WEBHOOK_SECRET:
+    if not FORM_WEBHOOK_SECRET or not x_delivery_form_secret or not hmac.compare_digest(
+        x_delivery_form_secret, FORM_WEBHOOK_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    body = await request.json()
+    body = await _parse_json_body(request)
     answers = body.get("answers") or {}
+    if not isinstance(answers, dict):
+        raise HTTPException(status_code=400, detail="answers 欄位格式不正確")
 
     # 廠商（跟蝦皮的合作方式，如果有）不是表單題目，是每個表單自己的 Apps
     # Script 觸發器寫死帶過來的（見 HANDOFF.md），不合法的值一律當空字串。
@@ -55,10 +74,12 @@ async def vehicle_report_webhook(request: Request, x_delivery_vehicle_secret: st
     Google Apps Script 專案（delivery-gas-project）轉發過來的群組訊息，解析
     成領車/還車回報。這支端點本身不判斷訊息來源是哪個群組——那個防呆是
     GAS 那邊做的（只有它設定的那個群組會被轉發過來），這裡只認密鑰。"""
-    if not VEHICLE_REPORT_WEBHOOK_SECRET or x_delivery_vehicle_secret != VEHICLE_REPORT_WEBHOOK_SECRET:
+    if not VEHICLE_REPORT_WEBHOOK_SECRET or not x_delivery_vehicle_secret or not hmac.compare_digest(
+        x_delivery_vehicle_secret, VEHICLE_REPORT_WEBHOOK_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    body = await request.json()
+    body = await _parse_json_body(request)
     text = body.get("text") or ""
     reply = handle_vehicle_report(text)
     return {"reply": reply}
@@ -72,10 +93,12 @@ async def incident_report_webhook(request: Request, x_delivery_incident_secret: 
     的嘗試）才會另外把同仁原始貼的完整文字推播到第二個群組（見
     delivery-gas-project 的 Project6_Incident.js），這裡不需要知道第二個
     群組是誰。"""
-    if not INCIDENT_REPORT_WEBHOOK_SECRET or x_delivery_incident_secret != INCIDENT_REPORT_WEBHOOK_SECRET:
+    if not INCIDENT_REPORT_WEBHOOK_SECRET or not x_delivery_incident_secret or not hmac.compare_digest(
+        x_delivery_incident_secret, INCIDENT_REPORT_WEBHOOK_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    body = await request.json()
+    body = await _parse_json_body(request)
     text = body.get("text") or ""
     ok, reply = handle_incident_report(text)
     return {"reply": reply, "ok": ok}
@@ -86,7 +109,9 @@ def incident_weekly_reminder_text(x_delivery_incident_secret: str = Header(None)
     """每週一由 GAS 的時間驅動觸發器呼叫，取得未結案意外事件的提醒文字。
     這裡只負責「組訊息內容」，實際推播到 LINE 群組是 GAS 那邊用它自己手上
     的 CHANNEL1 Token 做，Python 這邊不需要、也不會拿到那個 Token。"""
-    if not INCIDENT_REPORT_WEBHOOK_SECRET or x_delivery_incident_secret != INCIDENT_REPORT_WEBHOOK_SECRET:
+    if not INCIDENT_REPORT_WEBHOOK_SECRET or not x_delivery_incident_secret or not hmac.compare_digest(
+        x_delivery_incident_secret, INCIDENT_REPORT_WEBHOOK_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     items = repository.list_open_incident_events()
