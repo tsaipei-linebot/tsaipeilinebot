@@ -47,11 +47,20 @@ INCIDENT_REPORT_WEBHOOK_SECRET = os.getenv("DELIVERY_INCIDENT_REPORT_SECRET", ""
 # routes/webhook_routes.py 開頭說明），這支腳本不在這個 repo 裡，如果
 # 想讓新進的應徵者一開始就分類到新的三個代碼，需要同仁自己去改那支
 # 外部 Apps Script，材霈平台這邊改不到。
+#
+# 2026-09-14：新增「蝦皮三輪速配倉」（代碼 shopee_speed_warehouse），使用者
+# 確認這批人員的應備文件/保險規則要跟「蝦皮三輪」（shopee）完全一樣——
+# 不是像上面三個新代碼那樣直接綁代碼本身，而是比照 "shopee" 也放進下面的
+# COOPERATION_TYPE_VENDORS、以及 DOC_TYPES 裡 police_clearance 的
+# exclude_vendors，靠「合作方式」欄位決定保險規則。純粹是為了讓這批人員
+# 在系統裡（人員清單、車輛、意外事件）用獨立的廠商代碼分開追蹤，不是要
+# 另外訂一套不一樣的文件規則。
 VENDORS = [
     {"code": "shopee", "name": "蝦皮三輪"},
     {"code": "shopee_company_car", "name": "蝦皮二輪公司車"},
     {"code": "shopee_employed_own_car", "name": "蝦皮二輪雇傭自備車"},
     {"code": "shopee_contract", "name": "蝦皮承攬"},
+    {"code": "shopee_speed_warehouse", "name": "蝦皮三輪速配倉"},
     {"code": "ud", "name": "UD"},
     {"code": "uc", "name": "UC"},
     {"code": "sf", "name": "順豐"},
@@ -88,8 +97,10 @@ CLIENT_MAP = {c["code"]: c["name"] for c in CLIENTS}
 # "shopee_contract" 這三個新代碼刻意沒有加進來：這三個代碼本身已經講清楚
 # 雇用/承攬關係跟保險規則（見 DOC_TYPES），不需要再選一次「合作方式」；
 # 只有 "shopee"（改名後的「蝦皮三輪」）維持原本的行為，讓還沒被同仁手動
-# 改分類到新代碼的既有蝦皮人員資料不受影響。
-COOPERATION_TYPE_VENDORS = ["shopee"]
+# 改分類到新代碼的既有蝦皮人員資料不受影響。"shopee_speed_warehouse"
+# （蝦皮三輪速配倉，2026-09-14 新增）刻意跟 "shopee" 用同一套規則，所以
+# 也加在這裡。
+COOPERATION_TYPE_VENDORS = ["shopee", "shopee_speed_warehouse"]
 CLIENT_VENDORS = ["ud"]
 
 # 報到前應備文件（人員缺件狀況即依此清單逐項檢查）。每一項的 kind 決定要怎麼
@@ -116,7 +127,13 @@ DOC_TYPES = [
         "code": "police_clearance",
         "name": "良民證",
         "kind": "file_expiry",
-        "exclude_vendors": ["shopee", "shopee_company_car", "shopee_employed_own_car", "shopee_contract"],
+        "exclude_vendors": [
+            "shopee",
+            "shopee_company_car",
+            "shopee_employed_own_car",
+            "shopee_contract",
+            "shopee_speed_warehouse",
+        ],
     },
     {
         "code": "insurance",
