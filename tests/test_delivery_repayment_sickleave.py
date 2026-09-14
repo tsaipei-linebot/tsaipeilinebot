@@ -264,6 +264,30 @@ class ExcelExportTests(unittest.TestCase):
         self.assertEqual(header, ["申請日期", "時數", "假別", "廠商", "人員", "原因", "核准狀態"])
         self.assertEqual(row, ["2026-03-15", 8, "病假", "UD", "李小華", "感冒", "未核准"])
 
+    def test_repayment_workbook_escapes_formula_looking_reason(self):
+        # 防 Excel 公式注入：原因欄位是自由文字，如果同仁或外部資料打了
+        # 以 = 開頭的內容，Excel 打開時會被當成公式執行，這裡驗證有補上
+        # 前導單引號讓它變成純文字。
+        records = [
+            {
+                "occurred_date": "2026-03-15",
+                "vendor": "shopee",
+                "personnel_name": "王小明",
+                "amount": 500,
+                "reason": "=HYPERLINK(\"http://evil.example\",\"點我\")",
+                "approved": True,
+            }
+        ]
+        content = build_repayment_workbook(records)
+
+        import io
+        from openpyxl import load_workbook
+
+        wb = load_workbook(io.BytesIO(content))
+        cell = wb.active[2][4]
+        self.assertEqual(cell.data_type, "s")
+        self.assertTrue(cell.value.startswith("'="))
+
     def test_sick_leave_workbook_falls_back_to_old_schema(self):
         records = [
             {

@@ -51,12 +51,16 @@ app = FastAPI(
 # 根 app 自己也裝一份 SessionMiddleware（跟 delivery_app/management_app
 # 用同一組 secret key + cookie 名稱），這樣掛在根 app 上的 /accounts
 # （帳號權限管理）才讀得到跟 /delivery、/management 共用的同一顆登入
-# session cookie，不用另外登入一次。
+# session cookie，不用另外登入一次。https_only=True（2026-09-14 新增）
+# 讓瀏覽器只在 HTTPS 連線時才會送出這顆登入 cookie——Cloud Run 本來就是
+# HTTPS 終止，這裡是多一層保險，避免萬一有非 HTTPS 的路徑（例如自訂網域
+# 設定失誤）不小心讓登入憑證被明文傳輸。
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET_KEY,
     session_cookie="delivery_session",
     max_age=14 * 24 * 3600,
+    https_only=True,
 )
 app.include_router(accounts_routes.router, prefix="/accounts")
 # /departments：部門主檔（2026-09-12 新增），只有全平台管理員看得到，跟

@@ -23,11 +23,14 @@ management_app = FastAPI(title="管理部系統")
 # 讓兩邊共用同一顆瀏覽器 cookie，同仁登入一次就能在有權限的部門之間切換，
 # 不用重複登入。靜態檔案（CSS）直接沿用配送部系統的 /delivery/static，
 # 不用另外重複一份。
+# https_only=True（2026-09-14 新增）：瀏覽器只在 HTTPS 連線時才會送出這顆
+# 登入 cookie，見 main.py 同一處修改的說明。
 management_app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET_KEY,
     session_cookie="delivery_session",
     max_age=14 * 24 * 3600,
+    https_only=True,
 )
 
 management_app.include_router(auth_routes.router)

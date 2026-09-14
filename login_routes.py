@@ -42,8 +42,9 @@ def login_submit(request: Request, username: str = Form(...), password: str = Fo
     account = platform_accounts.authenticate(username, password)
     safe_next = _safe_next_path(next)
     if not account:
+        error = "登入失敗次數過多，帳號已暫時鎖定，請稍後再試。" if platform_accounts.is_locked_out(username) else "帳號或密碼錯誤"
         return templates.TemplateResponse(
-            request, "login.html", {"error": "帳號或密碼錯誤", "next": safe_next}, status_code=401
+            request, "login.html", {"error": error, "next": safe_next}, status_code=401
         )
     request.session["user"] = account
     return RedirectResponse(url=safe_next, status_code=303)

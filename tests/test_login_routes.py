@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -56,6 +57,49 @@ class LoginPageRoutingTests(unittest.TestCase):
         resp = self.client.get("/logout", follow_redirects=False)
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login")
+
+
+class LoginSubmitLockoutMessageTests(unittest.TestCase):
+    """2026-09-14 新增登入防暴力破解機制後，密碼比對失敗時要分辨是「單純
+    密碼打錯」還是「帳號已被鎖定」，顯示不同的提示文字給同仁看——見
+    platform_accounts.py 的 is_locked_out()／authenticate() 說明。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self):
+            self.session = LoginSubmitLockoutMessageTests._FakeSession()
+
+    def test_wrong_password_shows_generic_error(self):
+        with mock.patch.object(login_routes.platform_accounts, "authenticate", return_value=None):
+            with mock.patch.object(login_routes.platform_accounts, "is_locked_out", return_value=False):
+                result = login_routes.login_submit(
+                    self._FakeRequest(), username="bob", password="wrong", next="/portal"
+                )
+        self.assertEqual(result.status_code, 401)
+        self.assertIn("帳號或密碼錯誤", result.body.decode("utf-8"))
+
+    def test_locked_account_shows_lockout_message_instead(self):
+        with mock.patch.object(login_routes.platform_accounts, "authenticate", return_value=None):
+            with mock.patch.object(login_routes.platform_accounts, "is_locked_out", return_value=True):
+                result = login_routes.login_submit(
+                    self._FakeRequest(), username="bob", password="wrong", next="/portal"
+                )
+        self.assertEqual(result.status_code, 401)
+        self.assertIn("已暫時鎖定", result.body.decode("utf-8"))
+        self.assertNotIn("帳號或密碼錯誤", result.body.decode("utf-8"))
+
+    def test_successful_login_does_not_check_lockout(self):
+        account = {"username": "bob", "name": "小明", "is_platform_admin": False}
+        request = self._FakeRequest()
+        with mock.patch.object(login_routes.platform_accounts, "authenticate", return_value=account):
+            with mock.patch.object(login_routes.platform_accounts, "is_locked_out") as mock_locked:
+                result = login_routes.login_submit(request, username="bob", password="correct", next="/portal")
+        self.assertEqual(result.status_code, 303)
+        mock_locked.assert_not_called()
+        self.assertEqual(request.session["user"], account)
 
 
 class StopImpersonationRouteTests(unittest.TestCase):

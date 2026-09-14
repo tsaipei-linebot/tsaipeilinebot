@@ -4607,3 +4607,97 @@ test_owner_can_delete_record_and_its_files` 擴充驗證刪除紀錄時廠商版
 每一筆合約都會多一個「上傳廠商版本合約」的小表單，平常用不到可以
 完全忽略，畫面上不會有任何變化；真的需要用廠商指定格式合約的客戶，
 上傳之後同一列會多一個「下載廠商版」的按鈕。
+
+## 安全性修復批次：Excel 公式注入、登入防暴力破解、Cookie Secure 旗標（2026-09-14）
+
+使用者請先確認 `DELIVERY_SESSION_SECRET_KEY` 環境變數已經設定好之後
+（前一次全系統複查的🔴最高風險項目），接著請 Claude 直接動手修復複查
+報告裡列出的兩項🟠高風險、以及🟡中風險裡的兩項（其中「職缺系統免登入
+銜接的 PIN 碼只有簽章沒加密」這項使用者要求先評估能不能整個下架，
+另外討論，不在這次修復範圍內）。
+
+### 1. Excel 匯出的公式注入（🟠高風險）
+
+**問題**：合約/契約總表（`services/contract_summary_excel.py`）跟配送部
+補款/假別查詢（`delivery/excel_export.py`）匯出 Excel 時，客戶名稱、
+統編、人員、原因這些自由文字欄位如果剛好打了以 `=`／`+`／`-`／`@`
+開頭的內容，openpyxl 存進 `.xlsx` 時會被標記成公式（`data_type="f"`），
+管理員打開匯出的 Excel 時會被當成可執行的公式跑出來（例如
+`=HYPERLINK(...)` 導去釣魚網站）。
+
+**修法**：兩個檔案的 `_build_workbook()` 都新增 `_sanitize_cell()`，
+寫入儲存格前，字串開頭是那四個字元的話補一個前導單引號——比照 OWASP
+的建議做法，讓 openpyxl 存成純文字（`data_type="s"`），Excel 打開時
+只會照字面顯示（含那個單引號），不會被當成公式執行。全形符號（例如
+班別總表常用來表示「無資料」的「－」）不會被誤判，因為半形 `-` 跟全形
+`－` 是不同字元。header（欄位名稱）是程式寫死的字串，不是使用者輸入，
+不用另外處理。
+
+**測試**：`tests/test_contract_summary_excel.py` 新增
+`SanitizeCellTests`（直接測 `_sanitize_cell()` 的各種情況）跟
+`FormulaInjectionInWorkbooksTests`（驗證三個 `build_*_workbook()` 函式
+產出的 `.xlsx` 真的把公式看起來的內容存成純文字）；
+`tests/test_delivery_repayment_sickleave.py` 的 `ExcelExportTests`
+新增一個等價測試。
+
+### 2. 登入沒有防暴力破解機制（🟠高風險）
+
+**問題**：整個平台共用同一套帳密系統，有四個登入入口（`/login`、
+`/delivery/login`、`/management/login`、`/hr/login`，都呼叫同一個
+`platform_accounts.authenticate()`），原本沒有任何錯誤次數限制，理論上
+可以寫程式對著已知帳號一直亂猜密碼。
+
+**修法**：`platform_accounts.py` 新增帳號鎖定機制——連續密碼錯誤達
+`LOGIN_MAX_FAILED_ATTEMPTS`（5 次）就鎖定這個帳號
+`LOGIN_LOCKOUT_SECONDS`（15 分鐘），鎖定期間 `authenticate()` 直接擋掉、
+不會再花成本跑 PBKDF2 密碼比對；登入成功會清掉失敗次數紀錄（門檻是
+「連續」失敗，不是帳號史上累計失敗次數，同仁偶爾打錯一兩次密碼不會
+被誤鎖）。失敗次數/鎖定時間存在新的 Firestore collection
+`login_lockouts`，用 Firestore 而不是記憶體變數，是因為 Cloud Run
+服務可能會有多個執行個體，記憶體變數在個體之間不會同步，重開機/
+擴縮容也會遺失。
+
+**刻意選擇「鎖帳號」而不是「鎖 IP」**：Cloud Run 前面的請求來源 IP
+不一定可靠（共用辦公室網路、之後如果加 CDN／負載平衡器也可能只看得到
+中繼 IP），鎖帳號雖然理論上任何人知道帳號名稱就能觸發鎖定，但攻擊者
+本來就需要先知道帳號名稱才有意義去猜密碼，兩害相權取其輕。
+
+四個登入頁的錯誤訊息也都更新：密碼錯誤顯示「帳號或密碼錯誤」，帳號
+被鎖定時改顯示「登入失敗次數過多，帳號已暫時鎖定，請稍後再試。」，
+用 `platform_accounts.is_locked_out()` 判斷要顯示哪一種。
+
+**測試**：`tests/test_platform_accounts.py` 新增
+`IsLockedOutTests`／`RecordFailedLoginTests`／`ClearLoginLockoutTests`／
+`AuthenticateLockoutIntegrationTests`（共 13 個，模擬 Firestore 文件
+驗證鎖定判斷、失敗次數累加、達門檻設定鎖定時間、登入成功清除紀錄、
+不存在的帳號不會誤觸發鎖定邏輯）；`tests/test_login_routes.py` 新增
+`LoginSubmitLockoutMessageTests`（3 個，驗證 `/login` 顯示對的錯誤
+訊息）。`/delivery/login`／`/management/login`／`/hr/login` 三個備援
+登入頁的訊息切換邏輯跟 `/login` 完全相同（同一段程式碼複製四份），
+沒有另外重複寫三次測試。
+
+### 3. 登入 Cookie 沒有強制要求走 HTTPS 傳輸（🟡中風險）
+
+**問題**：四個 `SessionMiddleware`（`main.py`／`delivery/app.py`／
+`management/app.py`／`hr/app.py`）原本沒有設定 `https_only`，Starlette
+預設是 `False`，登入 cookie 沒有 `Secure` 屬性。Cloud Run 本來就是
+HTTPS 終止，實際風險低，但如果之後自訂網域設定不小心開放了 HTTP，
+登入憑證可能被明文傳輸。
+
+**修法**：四個 `SessionMiddleware` 都加上 `https_only=True`，瀏覽器
+只在 HTTPS 連線時才會送出這顆登入 cookie。這是保險性質的設定調整，
+沒有新增測試（Starlette 的行為本身有官方測試覆蓋，這裡只是改一個
+參數值）；有跑過全部測試（見下方）確認沒有意外破壞既有的登入/session
+相關測試。
+
+### 這次沒有處理的項目
+
+中風險裡「職缺系統免登入銜接的 PIN 碼只有簽章沒加密」跟「SSO 連結
+理論上可重複使用」這兩項，使用者要求先評估能不能整個下架這個功能
+（免登入銜接職缺維護系統），評估結果另外回報，不在這次的修復範圍。
+低風險項目使用者要求全部處理完這批之後再討論優先順序。
+
+### 測試
+
+全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）
+1235 個全數通過。

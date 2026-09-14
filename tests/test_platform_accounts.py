@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -225,6 +226,152 @@ class ValidateAccountDeletionTests(unittest.TestCase):
     def test_self_check_takes_priority_over_platform_admin_check(self):
         error = validate_account_deletion("alice", "alice", target_is_platform_admin=True)
         self.assertEqual(error, "self")
+
+
+class _FakeSnapshot:
+    def __init__(self, exists, data=None):
+        self.exists = exists
+        self._data = data or {}
+
+    def to_dict(self):
+        return self._data
+
+
+class IsLockedOutTests(unittest.TestCase):
+    """`is_locked_out()` 給登入頁顯示提示訊息，也是 `authenticate()`
+    內部用來擋密碼比對的判斷——2026-09-14 新增，防止有人寫程式對著
+    已知帳號一直亂猜密碼。"""
+
+    def test_blank_username_is_false(self):
+        self.assertFalse(platform_accounts.is_locked_out(""))
+
+    def test_no_lockout_doc_is_false(self):
+        fake_ref = mock.Mock()
+        fake_ref.get.return_value = _FakeSnapshot(exists=False)
+        with mock.patch.object(platform_accounts, "_login_lockout_ref", return_value=fake_ref):
+            self.assertFalse(platform_accounts.is_locked_out("bob"))
+
+    def test_locked_until_in_future_is_true(self):
+        fake_ref = mock.Mock()
+        fake_ref.get.return_value = _FakeSnapshot(exists=True, data={"locked_until": time.time() + 600})
+        with mock.patch.object(platform_accounts, "_login_lockout_ref", return_value=fake_ref):
+            self.assertTrue(platform_accounts.is_locked_out("bob"))
+
+    def test_locked_until_in_past_is_false(self):
+        # 鎖定時間已經過了——不用另外跑清除的排程，讀取當下自然判斷成
+        # 沒有鎖定，下次成功登入時 _clear_login_lockout() 才會真的清掉
+        # 這筆過期的紀錄。
+        fake_ref = mock.Mock()
+        fake_ref.get.return_value = _FakeSnapshot(exists=True, data={"locked_until": time.time() - 1})
+        with mock.patch.object(platform_accounts, "_login_lockout_ref", return_value=fake_ref):
+            self.assertFalse(platform_accounts.is_locked_out("bob"))
+
+    def test_no_locked_until_field_is_false(self):
+        # 有失敗紀錄文件，但還沒累積到門檻次數，不會有 locked_until 欄位。
+        fake_ref = mock.Mock()
+        fake_ref.get.return_value = _FakeSnapshot(exists=True, data={"failed_count": 2})
+        with mock.patch.object(platform_accounts, "_login_lockout_ref", return_value=fake_ref):
+            self.assertFalse(platform_accounts.is_locked_out("bob"))
+
+
+class RecordFailedLoginTests(unittest.TestCase):
+    def test_increments_failed_count_from_existing_record(self):
+        fake_ref = mock.Mock()
+        fake_ref.get.return_value = _FakeSnapshot(exists=True, data={"failed_count": 2})
+        with mock.patch.object(platform_accounts, "_login_lockout_ref", return_value=fake_ref):
+            platform_accounts._record_failed_login("bob")
+        payload = fake_ref.set.call_args.args[0]
+        self.assertEqual(payload["failed_count"], 3)
+        self.assertNotIn("locked_until", payload)
+
+    def test_first_failure_starts_count_at_one(self):
+        fake_ref = mock.Mock()
+        fake_ref.get.return_value = _FakeSnapshot(exists=False)
+        with mock.patch.object(platform_accounts, "_login_lockout_ref", return_value=fake_ref):
+            platform_accounts._record_failed_login("bob")
+        payload = fake_ref.set.call_args.args[0]
+        self.assertEqual(payload["failed_count"], 1)
+
+    def test_reaching_threshold_sets_locked_until_in_the_future(self):
+        fake_ref = mock.Mock()
+        fake_ref.get.return_value = _FakeSnapshot(
+            exists=True, data={"failed_count": platform_accounts.LOGIN_MAX_FAILED_ATTEMPTS - 1}
+        )
+        with mock.patch.object(platform_accounts, "_login_lockout_ref", return_value=fake_ref):
+            before = time.time()
+            platform_accounts._record_failed_login("bob")
+        payload = fake_ref.set.call_args.args[0]
+        self.assertEqual(payload["failed_count"], platform_accounts.LOGIN_MAX_FAILED_ATTEMPTS)
+        self.assertGreater(payload["locked_until"], before)
+
+    def test_set_called_with_merge_true(self):
+        fake_ref = mock.Mock()
+        fake_ref.get.return_value = _FakeSnapshot(exists=False)
+        with mock.patch.object(platform_accounts, "_login_lockout_ref", return_value=fake_ref):
+            platform_accounts._record_failed_login("bob")
+        self.assertEqual(fake_ref.set.call_args.kwargs.get("merge"), True)
+
+
+class ClearLoginLockoutTests(unittest.TestCase):
+    def test_deletes_the_lockout_document(self):
+        fake_ref = mock.Mock()
+        with mock.patch.object(platform_accounts, "_login_lockout_ref", return_value=fake_ref):
+            platform_accounts._clear_login_lockout("bob")
+        fake_ref.delete.assert_called_once()
+
+
+class AuthenticateLockoutIntegrationTests(unittest.TestCase):
+    """authenticate() 串起帳密比對跟鎖定機制——鎖定期間直接擋掉，不會
+    再花成本去跑 PBKDF2 密碼比對；密碼錯誤會記一次失敗；密碼正確會清掉
+    失敗紀錄。"""
+
+    def _fake_user_snapshot(self, password):
+        return _FakeSnapshot(exists=True, data={"password_hash": platform_accounts.hash_password(password)})
+
+    def test_locked_account_returns_none_even_with_correct_password(self):
+        fake_users = mock.Mock()
+        fake_users.document.return_value.get.return_value = self._fake_user_snapshot("correct-password")
+        with mock.patch.object(platform_accounts, "users_ref", return_value=fake_users):
+            with mock.patch.object(platform_accounts, "is_locked_out", return_value=True):
+                with mock.patch.object(platform_accounts, "verify_password") as mock_verify:
+                    result = platform_accounts.authenticate("bob", "correct-password")
+        self.assertIsNone(result)
+        mock_verify.assert_not_called()
+
+    def test_wrong_password_records_failed_login(self):
+        fake_users = mock.Mock()
+        fake_users.document.return_value.get.return_value = self._fake_user_snapshot("correct-password")
+        with mock.patch.object(platform_accounts, "users_ref", return_value=fake_users):
+            with mock.patch.object(platform_accounts, "is_locked_out", return_value=False):
+                with mock.patch.object(platform_accounts, "_record_failed_login") as mock_record:
+                    with mock.patch.object(platform_accounts, "_clear_login_lockout") as mock_clear:
+                        result = platform_accounts.authenticate("bob", "wrong-password")
+        self.assertIsNone(result)
+        mock_record.assert_called_once_with("bob")
+        mock_clear.assert_not_called()
+
+    def test_correct_password_clears_lockout(self):
+        fake_users = mock.Mock()
+        fake_users.document.return_value.get.return_value = self._fake_user_snapshot("correct-password")
+        with mock.patch.object(platform_accounts, "users_ref", return_value=fake_users):
+            with mock.patch.object(platform_accounts, "is_locked_out", return_value=False):
+                with mock.patch.object(platform_accounts, "_record_failed_login") as mock_record:
+                    with mock.patch.object(platform_accounts, "_clear_login_lockout") as mock_clear:
+                        result = platform_accounts.authenticate("bob", "correct-password")
+        self.assertIsNotNone(result)
+        mock_clear.assert_called_once_with("bob")
+        mock_record.assert_not_called()
+
+    def test_nonexistent_user_does_not_check_lockout_or_record_failure(self):
+        fake_users = mock.Mock()
+        fake_users.document.return_value.get.return_value = _FakeSnapshot(exists=False)
+        with mock.patch.object(platform_accounts, "users_ref", return_value=fake_users):
+            with mock.patch.object(platform_accounts, "is_locked_out") as mock_locked:
+                with mock.patch.object(platform_accounts, "_record_failed_login") as mock_record:
+                    result = platform_accounts.authenticate("nobody", "whatever")
+        self.assertIsNone(result)
+        mock_locked.assert_not_called()
+        mock_record.assert_not_called()
 
 
 if __name__ == "__main__":

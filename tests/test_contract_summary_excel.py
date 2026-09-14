@@ -12,6 +12,7 @@ _stub_gcp.install()
 from openpyxl import load_workbook
 
 from services.contract_summary_excel import (
+    _sanitize_cell,
     build_client_contract_summary_workbook,
     build_dispatch_contract_summary_workbook,
     build_merged_summary_workbook,
@@ -105,6 +106,72 @@ class BuildMergedSummaryWorkbookTests(unittest.TestCase):
         wb = load_workbook(io.BytesIO(content))
         header = [cell.value for cell in wb.active[1]]
         self.assertEqual(len(header), 10)
+
+
+class SanitizeCellTests(unittest.TestCase):
+    """防 Excel 公式注入：客戶名稱、統編、匯款截止日、班別這些欄位都是
+    同仁填的自由文字，開頭是 =/+/-/@ 的話 openpyxl 會標記成公式，Excel
+    打開時可能被當成可執行的公式跑出來（例如 HYPERLINK 導去釣魚網站）。"""
+
+    def test_leading_equals_sign_is_escaped(self):
+        self.assertEqual(_sanitize_cell("=HYPERLINK(\"http://evil.example\")"), "'=HYPERLINK(\"http://evil.example\")")
+
+    def test_leading_plus_minus_at_are_escaped(self):
+        self.assertEqual(_sanitize_cell("+1+1"), "'+1+1")
+        self.assertEqual(_sanitize_cell("-1+1"), "'-1+1")
+        self.assertEqual(_sanitize_cell("@SUM(A1)"), "'@SUM(A1)")
+
+    def test_normal_text_is_unchanged(self):
+        self.assertEqual(_sanitize_cell("測試客戶股份有限公司"), "測試客戶股份有限公司")
+
+    def test_fullwidth_dash_placeholder_is_unchanged(self):
+        # 「－」是全形符號，跟觸發公式的半形 "-" 不是同一個字元，班別總表
+        # 常用它當「無資料」的顯示占位符，不該被誤判成需要跳脫。
+        self.assertEqual(_sanitize_cell("－"), "－")
+
+    def test_non_string_values_are_unchanged(self):
+        self.assertEqual(_sanitize_cell(2026), 2026)
+        self.assertEqual(_sanitize_cell(None), None)
+
+
+class FormulaInjectionInWorkbooksTests(unittest.TestCase):
+    def _formula_looking_text(self):
+        return "=HYPERLINK(\"http://evil.example\",\"點我\")"
+
+    def test_client_contract_summary_escapes_client_name(self):
+        rows = [{
+            "client_name": self._formula_looking_text(), "tax_id": "", "year": 2026, "party_b_name": "",
+            "contract_version": "hourly_flat_rate", "pricing_summary": "", "remit_day": "", "submitted_by": "",
+        }]
+        content = build_client_contract_summary_workbook(rows, {})
+        wb = load_workbook(io.BytesIO(content))
+        cell = wb.active[2][0]
+        self.assertEqual(cell.data_type, "s")
+        self.assertTrue(cell.value.startswith("'="))
+
+    def test_dispatch_contract_summary_escapes_title(self):
+        rows = [{
+            "client_name": "A", "submitted_by": "bob", "updated_year": 2026,
+            "title": self._formula_looking_text(), "hours": "", "wage": "", "bonus": "", "overtime": "",
+            "pay_cycle": "",
+        }]
+        content = build_dispatch_contract_summary_workbook(rows)
+        wb = load_workbook(io.BytesIO(content))
+        cell = wb.active[2][3]
+        self.assertEqual(cell.data_type, "s")
+        self.assertTrue(cell.value.startswith("'="))
+
+    def test_merged_summary_escapes_shift_column_value(self):
+        rows = [{
+            "client_name": "A", "tax_id": "", "year": 2026, "party_b_name": "", "contract_version": "hourly_flat_rate",
+            "pricing_summary": "", "remit_day": "", "submitted_by": "", "dispatch_pay_cycle": "", "dispatch_submitted_by": "",
+            "shift_columns": [{"title": self._formula_looking_text(), "hours": "", "wage": "", "bonus": "", "overtime": ""}],
+        }]
+        content = build_merged_summary_workbook(rows, 1, {})
+        wb = load_workbook(io.BytesIO(content))
+        cell = wb.active[2][10]
+        self.assertEqual(cell.data_type, "s")
+        self.assertTrue(cell.value.startswith("'="))
 
 
 if __name__ == "__main__":
