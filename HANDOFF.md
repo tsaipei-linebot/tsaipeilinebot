@@ -4266,3 +4266,83 @@ html`，確認樣板語法沒問題。全部測試（`python3 -m unittest discov
 `ViewerCanLinkContractVendorTests`；`tests/test_dispatch_contract_
 routes.py` 的 `ClientContractOptionsTests`／`LinkedClientContractTests`
 改用新的部門判斷重寫。全部測試 1144 個全數通過。
+
+## 配送部系統：車輛新增「輪別」欄位 ＋ 車輛歷史紀錄／意外事件回報可編輯（2026-09-14）
+
+使用者提出三個配送部（`/delivery`）系統的調整需求：車輛要多一個「三輪
+／二輪」欄位（預設三輪）、車輛的領還車歷史紀錄要能編輯、意外事件回報
+的內容要能編輯。
+
+### 1. 車輛「輪別」欄位（三輪／二輪）
+
+- `delivery/config.py` 新增 `WHEEL_TYPES`／`WHEEL_TYPE_MAP`／
+  `DEFAULT_WHEEL_TYPE`（預設值 `three_wheel`＝三輪）。
+- 新增車輛（`/delivery/vehicles/new`）的表單多一個「輪別」下拉選單，
+  預設選三輪，同仁可以改選二輪。
+- **既有車輛不用手動遷移資料**：Firestore 裡舊的車輛文件沒有這個欄位，
+  `repository.get_vehicle()`／`list_vehicles()` 讀取時遇到欄位不存在
+  一律當成三輪（`data.setdefault("wheel_type", DEFAULT_WHEEL_TYPE)`），
+  車輛清單／詳細頁看起來就是「所有舊車輛都自動變成三輪」，跟這次的
+  需求（先都預設三輪）完全符合，不用另外寫遷移腳本、也不用叫使用者
+  去跑任何指令。
+- 車輛詳細頁（`/delivery/vehicles/{車號}`）新增一個小表單，可以隨時把
+  某台車的輪別改成二輪或改回三輪（`repository.set_vehicle_wheel_type`）。
+- 車輛清單頁（`/delivery/vehicles`）新增「輪別」欄位顯示，以及輪別篩選
+  下拉選單，用法跟既有的廠商／狀態篩選一致。
+
+### 2. 車輛歷史紀錄（領還車事件）可編輯
+
+- 車輛詳細頁的「歷史紀錄」表格，每一列新增「編輯」連結，進去可以修正
+  廠商、姓名、事件類型（領車/還車）、日期、地點（`vehicle_event_edit.
+  html`，新增樣板）。
+- 路由：`GET/POST /delivery/vehicles/{車號}/events/{event_id}/edit`
+  （`vehicle_routes.py`），任何登入配送部系統的同仁都能編輯（跟原本
+  「手動補登事件」的權限層級一致），會先確認這筆事件真的屬於網址上
+  那台車，避免湊網址編輯到別台車的紀錄。
+- `repository.update_vehicle_event()`：**如果編輯的剛好是這台車目前
+  反映的最新一筆事件**（用事件的建立時間戳記跟車輛主檔的
+  `last_event_at` 比對），會連動更新車輛主檔目前顯示的「使用人／地點／
+  狀態」，避免歷史紀錄改完之後跟主檔顯示的「目前狀態」兜不起來；如果
+  車輛目前是「待維修」，這個連動會跳過（待維修是管理員另外手動標記的
+  狀態，不該被歷史紀錄的編輯覆寫掉）。編輯比較舊的一筆歷史紀錄則完全
+  不影響車輛主檔目前狀態，純粹只是改歷史紀錄本身的顯示內容。
+- 編輯時**不套用**「這筆事件套用到車輛目前狀態合不合理」那套檢查
+  （`vehicle_event_error`，那是給新增事件判斷「這台車現在能不能被領/
+  還」用的）——編輯的是已經發生過的歷史紀錄，只要求欄位都有填、事件
+  類型合法即可。
+
+### 3. 意外事件回報內容可編輯
+
+- 意外事件詳細頁（`/delivery/incidents/{id}`）新增「編輯回報內容」
+  按鈕，**只有管理員看得到**（比照風險等級／結案的權限層級，這份是
+  正式的意外事件記錄，跟車輛歷史紀錄的權限層級刻意不同——任何登入的
+  同仁都能修正自己補登的領還車紀錄，但意外事件回報收斂給管理員改，
+  避免正式記錄被隨意更動）。
+- 路由：`GET/POST /delivery/incidents/{id}/edit`（`incident_routes.
+  py`，新增樣板 `incident_edit.html`），欄位跟 LINE 群組回報格式一樣
+  （廠商、身分類別、人員名稱、發生時間、地點、執行勤務中/上下班途中、
+  是否報警、受傷情形、是否聯繫家屬、是否牽扯他人、意外事件經過），
+  固定選項的欄位（廠商、身分類別、執行勤務中/上下班途中、三個是否類
+  欄位）用下拉選單，避免打錯字存進不合法的值。
+- `repository.update_incident_event()`：**只更新這 11 個回報欄位**，
+  刻意不去動 `risk_level`（風險等級）／`status`（結案狀態）——那兩個
+  欄位各自有獨立的操作入口，不該被這裡的編輯表單意外洗掉。
+
+### 測試
+
+新增 `tests/test_delivery_vehicle_routes.py`（輪別新增/修改、歷史紀錄
+編輯的表單驗證與權限）、`tests/test_delivery_incident_routes.py`（意外
+事件編輯的表單驗證，含驗證「風險等級/結案狀態不受編輯影響」）；擴充
+`tests/test_delivery_vehicle.py` 的 `VehicleMatchesFiltersTests`（輪別
+篩選，含「舊資料沒有這個欄位時當成三輪」的案例）。這幾個路由都會實際
+呼叫 Firestore 寫入，跟這個專案既有的測試慣例一樣不直接測試
+`repository.py` 裡會連線 Firestore 的函式本身，改成在路由層用
+`unittest.mock.patch.object` 模擬 `repository` 的回傳值來驗證表單驗證
+邏輯／呼叫參數是否正確。全部測試（`python3 -m unittest discover -s
+tests -p "test_*.py"`）1170 個全數通過。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**（沒有新的環境變數、沒有需要另外
+執行的遷移指令）——PR 合併之後 GitHub Actions 會自動部署到 Cloud Run，
+跟平常一樣。既有車輛登入系統後會直接顯示「三輪」，不用手動處理。

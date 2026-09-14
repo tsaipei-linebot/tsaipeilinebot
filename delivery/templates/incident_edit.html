@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}編輯意外事件：{{ incident.personnel_name }} - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<h1 class="page-title">編輯意外事件：{{ incident.personnel_name }}</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<p class="hint">這裡只修正原始回報內容，風險等級跟結案狀態請回詳細頁另外操作。</p>
+
+<form method="post" action="/delivery/incidents/{{ incident.id }}/edit" class="form-stack form-narrow">
+    <label>廠商名稱
+        <select name="vendor" required>
+            {% for v in vendors %}
+            <option value="{{ v.code }}" {% if incident.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>身分類別
+        <select name="identity_type" required>
+            {% for t in identity_types %}
+            <option value="{{ t }}" {% if incident.identity_type == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>人員名稱
+        <input type="text" name="personnel_name" value="{{ incident.personnel_name }}" required>
+    </label>
+    <label>發生時間
+        <input type="text" name="occurred_at" value="{{ incident.occurred_at }}" placeholder="YYYY-MM-DD HH:MM" required>
+    </label>
+    <label>發生地點
+        <input type="text" name="location" value="{{ incident.location }}" required>
+    </label>
+    <label>執行勤務中/上下班途中
+        <select name="duty_status" required>
+            {% for d in duty_statuses %}
+            <option value="{{ d }}" {% if incident.duty_status == d %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>是否報警
+        <select name="police_called" required>
+            {% for y in yes_no_values %}
+            <option value="{{ y }}" {% if incident.police_called == y %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>受傷情形
+        <input type="text" name="injury" value="{{ incident.injury }}" required>
+    </label>
+    <label>是否聯繫家屬
+        <select name="family_contacted" required>
+            {% for y in yes_no_values %}
+            <option value="{{ y }}" {% if incident.family_contacted == y %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>是否牽扯他人
+        <select name="third_party_involved" required>
+            {% for y in yes_no_values %}
+            <option value="{{ y }}" {% if incident.third_party_involved == y %}selected{% endif %}>{{ y }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>意外事件經過
+        <textarea name="description" rows="3" required>{{ incident.description }}</textarea>
+    </label>
+    <button type="submit" class="btn btn-primary">儲存修改</button>
+</form>
+
+<p class="back-link"><a href="/delivery/incidents/{{ incident.id }}">&larr; 回意外事件詳細</a></p>
+{% endblock %}

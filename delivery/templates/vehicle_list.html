@@ -20,8 +20,14 @@
         <option value="{{ s.code }}" {% if filter_status == s.code %}selected{% endif %}>{{ s.name }}</option>
         {% endfor %}
     </select>
+    <select name="wheel_type">
+        <option value="">全部輪別</option>
+        {% for w in wheel_types %}
+        <option value="{{ w.code }}" {% if filter_wheel_type == w.code %}selected{% endif %}>{{ w.name }}</option>
+        {% endfor %}
+    </select>
     <button type="submit" class="btn">搜尋</button>
-    {% if filter_vehicle_no or filter_vendor or filter_status %}
+    {% if filter_vehicle_no or filter_vendor or filter_status or filter_wheel_type %}
     <a class="btn" href="/delivery/vehicles">清除篩選</a>
     {% endif %}
 </form>
@@ -32,6 +38,7 @@
         <tr>
             <th>車號</th>
             <th>廠商</th>
+            <th>輪別</th>
             <th>狀態</th>
             <th>目前使用人</th>
             <th>目前地點</th>
@@ -43,6 +50,7 @@
         <tr>
             <td>{{ v.vehicle_no }}</td>
             <td>{{ vendor_map.get(v.vendor, v.vendor) }}</td>
+            <td>{{ wheel_type_map.get(v.wheel_type, v.wheel_type) }}</td>
             <td>
                 <span class="badge {{ 'badge-ok' if v.status == 'available' else ('badge-missing' if v.status == 'maintenance' else 'badge-pending') }}">
                     {{ vehicle_status_map.get(v.status, v.status) }}

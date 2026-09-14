@@ -14,6 +14,7 @@ from delivery.config import (
     DEFAULT_PERSONNEL_STATUS,
     DEFAULT_TEST_DRIVE_STATUS,
     DEFAULT_VEHICLE_STATUS,
+    DEFAULT_WHEEL_TYPE,
     DOC_TYPES,
     HIDDEN_PERSONNEL_STATUSES,
     LEAVE_QUOTA_ALERT_RATIO,
@@ -28,6 +29,7 @@ from delivery.config import (
     TEST_DRIVE_STATUS_MAP,
     VEHICLE_STATUS_MAP,
     VENDOR_MAP,
+    WHEEL_TYPE_MAP,
 )
 from delivery.db import (
     applicants_ref,
@@ -975,9 +977,9 @@ def _normalize_vehicle_no(value: str) -> str:
     return (value or "").strip().upper()
 
 
-def create_vehicle(vehicle_no: str, vendor: str, created_by: str) -> bool:
+def create_vehicle(vehicle_no: str, vendor: str, created_by: str, wheel_type: str = DEFAULT_WHEEL_TYPE) -> bool:
     """新增車輛，車號當文件 ID、全公司唯一。已經存在就回傳 False、不會覆蓋
-    既有資料；成功新增回傳 True。"""
+    既有資料；成功新增回傳 True。wheel_type 沒特別指定時預設三輪。"""
     vehicle_no = _normalize_vehicle_no(vehicle_no)
     ref = vehicles_ref().document(vehicle_no)
     if ref.get().exists:
@@ -986,6 +988,7 @@ def create_vehicle(vehicle_no: str, vendor: str, created_by: str) -> bool:
         {
             "vehicle_no": vehicle_no,
             "vendor": vendor,
+            "wheel_type": wheel_type or DEFAULT_WHEEL_TYPE,
             "status": DEFAULT_VEHICLE_STATUS,
             "current_holder": "",
             "current_location": "",
@@ -1004,11 +1007,18 @@ def get_vehicle(vehicle_no: str):
         return None
     data = snapshot.to_dict() or {}
     data["vehicle_no"] = snapshot.id
+    # 這個欄位是 2026-09-14 才新增的，舊資料的 Firestore 文件裡沒有這個
+    # 欄位；沒特別遷移舊資料，統一在讀取時當成三輪（見 config.py 的說明）。
+    data.setdefault("wheel_type", DEFAULT_WHEEL_TYPE)
     return data
 
 
 def vehicle_matches_filters(
-    vehicle: dict, vendor_filter: str = "", status_filter: str = "", vehicle_no_filter: str = ""
+    vehicle: dict,
+    vendor_filter: str = "",
+    status_filter: str = "",
+    vehicle_no_filter: str = "",
+    wheel_type_filter: str = "",
 ) -> bool:
     """判斷這台車要不要出現在車輛清單裡（純函式）。"""
     if vendor_filter and vehicle.get("vendor") != vendor_filter:
@@ -1017,19 +1027,25 @@ def vehicle_matches_filters(
         return False
     if vehicle_no_filter and vehicle_no_filter.upper() not in (vehicle.get("vehicle_no") or "").upper():
         return False
+    if wheel_type_filter and vehicle.get("wheel_type", DEFAULT_WHEEL_TYPE) != wheel_type_filter:
+        return False
     return True
 
 
-def list_vehicles(vendor_filter: str = "", status_filter: str = "", vehicle_no_filter: str = "") -> list:
+def list_vehicles(
+    vendor_filter: str = "", status_filter: str = "", vehicle_no_filter: str = "", wheel_type_filter: str = ""
+) -> list:
     vendor_filter = (vendor_filter or "").strip()
     status_filter = (status_filter or "").strip()
     vehicle_no_filter = (vehicle_no_filter or "").strip()
+    wheel_type_filter = (wheel_type_filter or "").strip()
 
     result = []
     for snapshot in vehicles_ref().stream():
         data = snapshot.to_dict() or {}
         data["vehicle_no"] = snapshot.id
-        if vehicle_matches_filters(data, vendor_filter, status_filter, vehicle_no_filter):
+        data.setdefault("wheel_type", DEFAULT_WHEEL_TYPE)
+        if vehicle_matches_filters(data, vendor_filter, status_filter, vehicle_no_filter, wheel_type_filter):
             result.append(data)
     result.sort(key=lambda v: v.get("vehicle_no", ""))
     return result
@@ -1056,6 +1072,19 @@ def set_vehicle_status(vehicle_no: str, status: str) -> bool:
     if not ref.get().exists:
         return False
     ref.update({"status": status})
+    return True
+
+
+def set_vehicle_wheel_type(vehicle_no: str, wheel_type: str) -> bool:
+    """網頁上手動修正車輛的輪別（三輪／二輪）。只接受合法的代碼，車輛不
+    存在或代碼不合法都回傳 False、不會寫入。"""
+    if wheel_type not in WHEEL_TYPE_MAP:
+        return False
+    vehicle_no = _normalize_vehicle_no(vehicle_no)
+    ref = vehicles_ref().document(vehicle_no)
+    if not ref.get().exists:
+        return False
+    ref.update({"wheel_type": wheel_type})
     return True
 
 
@@ -1126,6 +1155,65 @@ def record_vehicle_event(
         }
     )
     return True, ""
+
+
+def get_vehicle_event(event_id: str):
+    snapshot = vehicle_events_ref().document(event_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def update_vehicle_event(
+    event_id: str,
+    vendor: str,
+    personnel_name: str,
+    event_type: str,
+    event_date: str,
+    location: str,
+) -> bool:
+    """網頁上修正一筆既有的領還紀錄（例如日期、地點打錯）。只接受合法的
+    事件類型，事件不存在回傳 False、不會寫入。
+
+    如果這筆剛好是這台車目前反映的最新一筆事件（用建立時間戳記 created_at
+    跟車輛主檔的 last_event_at 比對——兩者是同一次 record_vehicle_event()
+    呼叫寫入的同一個時間戳，可以直接比對是否相等），連動更新車輛主檔目前
+    的使用人／地點／狀態，避免歷史紀錄改完之後跟主檔顯示的「目前狀態」
+    兜不起來；車輛目前是「待維修」時跳過這個連動，因為那是管理員另外
+    手動標記的狀態，不該被歷史紀錄的編輯覆寫掉。修正比較舊的一筆歷史
+    紀錄則完全不影響車輛主檔目前狀態，純粹只是改歷史紀錄本身。"""
+    if event_type not in ("checkout", "return"):
+        return False
+    ref = vehicle_events_ref().document(event_id)
+    snapshot = ref.get()
+    if not snapshot.exists:
+        return False
+    existing = snapshot.to_dict() or {}
+    vehicle_no = existing.get("vehicle_no", "")
+
+    ref.update(
+        {
+            "vendor": vendor,
+            "personnel_name": personnel_name,
+            "event_type": event_type,
+            "event_date": event_date,
+            "location": location,
+        }
+    )
+
+    vehicle = get_vehicle(vehicle_no)
+    is_latest_event = vehicle and vehicle.get("last_event_at") == existing.get("created_at")
+    if is_latest_event and vehicle.get("status") != "maintenance":
+        vehicles_ref().document(vehicle_no).update(
+            {
+                "status": "in_use" if event_type == "checkout" else "available",
+                "current_holder": personnel_name if event_type == "checkout" else "",
+                "current_location": location,
+            }
+        )
+    return True
 
 
 # ==========================================
@@ -1266,10 +1354,23 @@ def set_incident_risk_level(incident_id: str, risk_level: str) -> bool:
 
 
 def close_incident_event(incident_id: str) -> bool:
-    """標記結案，單向操作（跟補款/假別核准一樣，沒有重新打開的路徑，如果
-    真的填錯，可請管理員直接調整資料）。"""
+    """標記結案，單向操作（跟補款/假別核准一樣，沒有重新打開的路徑）。"""
     ref = incident_events_ref().document(incident_id)
     if not ref.get().exists:
         return False
     ref.update({"status": "closed"})
+    return True
+
+
+def update_incident_event(incident_id: str, data: dict) -> bool:
+    """管理員在意外事件詳細頁修正原始回報內容（例如地點打錯字、經過描述
+    要補充）。只更新 _INCIDENT_FIELDS 這 11 個回報欄位，風險等級／結案
+    狀態不受影響——那兩個欄位各自有自己的操作入口（見
+    set_incident_risk_level／close_incident_event），不該被這裡的編輯
+    表單意外洗掉。事件不存在回傳 False、不會寫入。"""
+    ref = incident_events_ref().document(incident_id)
+    if not ref.get().exists:
+        return False
+    payload = {key: data.get(key, "") for key in _INCIDENT_FIELDS}
+    ref.update(payload)
     return True

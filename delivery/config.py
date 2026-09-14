@@ -337,6 +337,18 @@ VEHICLE_STATUS_BADGE_CLASS = {
 }
 DEFAULT_VEHICLE_STATUS = "available"
 
+# 輪別（三輪／二輪）：2026-09-14 新增。這是車輛本身的固定屬性，跟廠商一樣
+# 不會因為領還車事件改變，新增車輛時預設三輪（目前車隊以三輪車為主），
+# 既有車輛（Firestore 裡還沒有這個欄位的舊資料）在讀取時一律當成三輪
+# （見 repository.get_vehicle() / list_vehicles()），不用另外寫遷移腳本
+# 補資料；管理員可以在車輛詳細頁個別修正成二輪。
+WHEEL_TYPES = [
+    {"code": "three_wheel", "name": "三輪"},
+    {"code": "two_wheel", "name": "二輪"},
+]
+WHEEL_TYPE_MAP = {w["code"]: w["name"] for w in WHEEL_TYPES}
+DEFAULT_WHEEL_TYPE = "three_wheel"
+
 # ==========================================
 # 意外事件回報
 # 跟車輛回報同一個 LINE 群組回報格式（見 delivery/incident_report.py），

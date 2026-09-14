@@ -3,7 +3,15 @@ from fastapi.responses import RedirectResponse
 
 from delivery import repository
 from delivery.auth import current_user, login_required
-from delivery.config import VEHICLE_STATUS_MAP, VEHICLE_STATUSES, VENDOR_MAP, VENDORS
+from delivery.config import (
+    DEFAULT_WHEEL_TYPE,
+    VEHICLE_STATUS_MAP,
+    VEHICLE_STATUSES,
+    VENDOR_MAP,
+    VENDORS,
+    WHEEL_TYPE_MAP,
+    WHEEL_TYPES,
+)
 from delivery.templating import templates
 from delivery.vehicle_report import EVENT_ERROR_MESSAGES
 
@@ -16,11 +24,14 @@ def vehicle_list(
     vehicle_no: str = "",
     vendor: str = "",
     status: str = "",
+    wheel_type: str = "",
     redirect=Depends(login_required),
 ):
     if redirect:
         return redirect
-    vehicles = repository.list_vehicles(vendor_filter=vendor, status_filter=status, vehicle_no_filter=vehicle_no)
+    vehicles = repository.list_vehicles(
+        vendor_filter=vendor, status_filter=status, vehicle_no_filter=vehicle_no, wheel_type_filter=wheel_type
+    )
     return templates.TemplateResponse(
         request,
         "vehicle_list.html",
@@ -30,10 +41,13 @@ def vehicle_list(
             "vehicle_statuses": VEHICLE_STATUSES,
             "vehicle_status_map": VEHICLE_STATUS_MAP,
             "vendor_map": VENDOR_MAP,
+            "wheel_types": WHEEL_TYPES,
+            "wheel_type_map": WHEEL_TYPE_MAP,
             "vehicles": vehicles,
             "filter_vehicle_no": vehicle_no,
             "filter_vendor": vendor,
             "filter_status": status,
+            "filter_wheel_type": wheel_type,
         },
     )
 
@@ -43,7 +57,15 @@ def new_vehicle_form(request: Request, redirect=Depends(login_required)):
     if redirect:
         return redirect
     return templates.TemplateResponse(
-        request, "vehicle_form.html", {"user": current_user(request), "vendors": VENDORS, "error": ""}
+        request,
+        "vehicle_form.html",
+        {
+            "user": current_user(request),
+            "vendors": VENDORS,
+            "wheel_types": WHEEL_TYPES,
+            "default_wheel_type": DEFAULT_WHEEL_TYPE,
+            "error": "",
+        },
     )
 
 
@@ -52,6 +74,7 @@ def create_vehicle_submit(
     request: Request,
     vehicle_no: str = Form(...),
     vendor: str = Form(...),
+    wheel_type: str = Form(DEFAULT_WHEEL_TYPE),
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -60,16 +83,22 @@ def create_vehicle_submit(
     user = current_user(request)
 
     error = ""
-    if not vehicle_no or vendor not in VENDOR_MAP:
+    if not vehicle_no or vendor not in VENDOR_MAP or wheel_type not in WHEEL_TYPE_MAP:
         error = "車號、廠商都要填。"
-    elif not repository.create_vehicle(vehicle_no, vendor, user["username"]):
+    elif not repository.create_vehicle(vehicle_no, vendor, user["username"], wheel_type=wheel_type):
         error = "這個車號已經存在，請確認後再新增。"
 
     if error:
         return templates.TemplateResponse(
             request,
             "vehicle_form.html",
-            {"user": user, "vendors": VENDORS, "error": error},
+            {
+                "user": user,
+                "vendors": VENDORS,
+                "wheel_types": WHEEL_TYPES,
+                "default_wheel_type": wheel_type or DEFAULT_WHEEL_TYPE,
+                "error": error,
+            },
             status_code=400,
         )
 
@@ -92,6 +121,8 @@ def vehicle_detail(vehicle_no: str, request: Request, error: str = "", redirect=
             "vendor_name": VENDOR_MAP.get(vehicle.get("vendor"), vehicle.get("vendor")),
             "vehicle_status_map": VEHICLE_STATUS_MAP,
             "vendors": VENDORS,
+            "wheel_types": WHEEL_TYPES,
+            "wheel_type_map": WHEEL_TYPE_MAP,
             "events": repository.list_vehicle_events(vehicle_no),
             "error": error,
             "error_message": EVENT_ERROR_MESSAGES.get(error, "這筆事件無法處理。") if error else "",
@@ -106,6 +137,16 @@ def update_vehicle_status(
     if redirect:
         return redirect
     repository.set_vehicle_status(vehicle_no, status)
+    return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
+
+
+@router.post("/vehicles/{vehicle_no}/wheel-type")
+def update_vehicle_wheel_type(
+    vehicle_no: str, request: Request, wheel_type: str = Form(...), redirect=Depends(login_required)
+):
+    if redirect:
+        return redirect
+    repository.set_vehicle_wheel_type(vehicle_no, wheel_type)
     return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
 
 
@@ -140,3 +181,103 @@ def manual_vehicle_event(
     if not ok:
         redirect_url += f"?error={error}"
     return RedirectResponse(url=redirect_url, status_code=303)
+
+
+def _get_vehicle_and_own_event(vehicle_no: str, event_id: str):
+    """共用查找：確認這台車存在、且這筆事件確實屬於這台車，避免用別台車的
+    事件 ID 硬湊網址就能編輯到別台車的歷史紀錄。找不到任何一項回傳
+    (None, None)。"""
+    vehicle = repository.get_vehicle(vehicle_no)
+    if not vehicle:
+        return None, None
+    event = repository.get_vehicle_event(event_id)
+    if not event or event.get("vehicle_no") != vehicle.get("vehicle_no"):
+        return vehicle, None
+    return vehicle, event
+
+
+@router.get("/vehicles/{vehicle_no}/events/{event_id}/edit")
+def edit_vehicle_event_form(vehicle_no: str, event_id: str, request: Request, redirect=Depends(login_required)):
+    if redirect:
+        return redirect
+    vehicle, event = _get_vehicle_and_own_event(vehicle_no, event_id)
+    if not vehicle or not event:
+        return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "vehicle_event_edit.html",
+        {
+            "user": current_user(request),
+            "vehicle": vehicle,
+            "event": event,
+            "vendors": VENDORS,
+            "error": "",
+        },
+    )
+
+
+@router.post("/vehicles/{vehicle_no}/events/{event_id}/edit")
+def edit_vehicle_event_submit(
+    vehicle_no: str,
+    event_id: str,
+    request: Request,
+    vendor: str = Form(...),
+    personnel_name: str = Form(...),
+    event_type: str = Form(...),
+    event_date: str = Form(...),
+    location: str = Form(...),
+    redirect=Depends(login_required),
+):
+    """修正一筆既有的領還紀錄（例如日期、地點打錯）。不套用
+    vehicle_event_error 那套「目前車輛狀態合不合理」的檢查——那是給
+    新增事件用的，用來判斷這台車現在能不能再被領/還；編輯的是已經發生過
+    的歷史紀錄，只要欄位都有填、事件類型合法即可，見
+    repository.update_vehicle_event() 的說明。"""
+    if redirect:
+        return redirect
+    vehicle, event = _get_vehicle_and_own_event(vehicle_no, event_id)
+    if not vehicle or not event:
+        return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
+
+    vendor = vendor.strip()
+    personnel_name = personnel_name.strip()
+    location = location.strip()
+
+    error = ""
+    if not vendor or vendor not in VENDOR_MAP:
+        error = "廠商要填。"
+    elif not personnel_name or not event_date or not location:
+        error = "姓名、日期、地點都要填。"
+    elif event_type not in ("checkout", "return"):
+        error = "事件類型要是領車或還車。"
+
+    if not error:
+        repository.update_vehicle_event(
+            event_id=event_id,
+            vendor=vendor,
+            personnel_name=personnel_name,
+            event_type=event_type,
+            event_date=event_date,
+            location=location,
+        )
+        return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
+
+    return templates.TemplateResponse(
+        request,
+        "vehicle_event_edit.html",
+        {
+            "user": current_user(request),
+            "vehicle": vehicle,
+            "event": {
+                "id": event_id,
+                "vendor": vendor,
+                "personnel_name": personnel_name,
+                "event_type": event_type,
+                "event_date": event_date,
+                "location": location,
+            },
+            "vendors": VENDORS,
+            "error": error,
+        },
+        status_code=400,
+    )

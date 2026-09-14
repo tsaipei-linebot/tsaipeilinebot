@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}編輯歷史紀錄：{{ vehicle.vehicle_no }} - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<h1 class="page-title">編輯歷史紀錄：{{ vehicle.vehicle_no }}</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<form method="post" action="/delivery/vehicles/{{ vehicle.vehicle_no }}/events/{{ event.id }}/edit" class="form-stack form-narrow">
+    <label>事件類型
+        <select name="event_type" required>
+            <option value="checkout" {% if event.event_type == "checkout" %}selected{% endif %}>領車</option>
+            <option value="return" {% if event.event_type == "return" %}selected{% endif %}>還車</option>
+        </select>
+    </label>
+    <label>廠商
+        <select name="vendor" required>
+            {% for v in vendors %}
+            <option value="{{ v.code }}" {% if event.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>姓名
+        <input type="text" name="personnel_name" value="{{ event.personnel_name }}" required>
+    </label>
+    <label>日期
+        <input type="date" name="event_date" value="{{ event.event_date }}" required>
+    </label>
+    <label>地點
+        <input type="text" name="location" value="{{ event.location }}" required>
+    </label>
+    <button type="submit" class="btn btn-primary">儲存修改</button>
+</form>
+
+<p class="hint">如果這筆是目前這台車最新的一筆紀錄，儲存後「目前使用人／地點／狀態」也會一併更新。</p>
+
+<p class="back-link"><a href="/delivery/vehicles/{{ vehicle.vehicle_no }}">&larr; 回車輛詳細</a></p>
+{% endblock %}
