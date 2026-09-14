@@ -100,6 +100,17 @@ class ApplicableDocTypesTests(unittest.TestCase):
             codes = {d["code"] for d in applicable_doc_types(vendor, "")}
             self.assertNotIn("police_clearance", codes, vendor)
 
+    def test_shopee_speed_warehouse_has_identical_rules_to_shopee(self):
+        # 「蝦皮三輪速配倉」（2026-09-14 新增）使用者確認要跟「蝦皮三輪」
+        # (shopee) 完全一樣的應備文件規則，不是像其他三個新代碼那樣另外
+        # 訂一套——這裡逐一比對兩個代碼在每種合作方式下算出來的項目完全
+        # 相同，確保沒有漏掉任何一處只把 "shopee" 加進規則、忘了同步加
+        # "shopee_speed_warehouse" 的地方。
+        for cooperation_type in ("", "two_wheel_contract", "two_wheel_employed", "three_wheel_employed"):
+            shopee_codes = {d["code"] for d in applicable_doc_types("shopee", cooperation_type)}
+            warehouse_codes = {d["code"] for d in applicable_doc_types("shopee_speed_warehouse", cooperation_type)}
+            self.assertEqual(shopee_codes, warehouse_codes, cooperation_type)
+
     def test_shopee_contract_requires_insurance_and_guild_without_cooperation_type(self):
         # 蝦皮承攬（shopee_contract）沒有「合作方式」欄位，cooperation_type
         # 一律是空字串，保險規則要直接綁代碼本身，不能靠 cooperation_type 判斷。
