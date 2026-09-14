@@ -30,10 +30,22 @@ contracts/{id}/delete` 把 Firestore 那筆紀錄跟 GCS 上存的 Word/PDF 檔�
 那份合約的（見 `services/dispatch_contract_service.py` 開頭的說明），
 這種情況下**不會**呼叫 `sync_vendor_from_dispatch_contract()`——廠商資料
 已經確定是哪一筆了，不用再靠名稱猜。沒有選合約時才會走原本手動輸入
-客戶名稱、呼叫 `sync_vendor_from_dispatch_contract()` 的路徑。下拉選單
-只列出這個帳號看得到的合約（跟 `/client-contracts` 首頁同一套可見範圍
-規則），送出時也會重新驗證選的那筆合約這個帳號真的看得到，避免有人
-把網址列裡的 id 換成別人的合約 id 硬送。
+客戶名稱、呼叫 `sync_vendor_from_dispatch_contract()` 的路徑。
+
+**下拉選單能不能選到，看的是部門，不是送出人（2026-09-14 修正）**：
+一開始這裡是照「跟 `/client-contracts` 首頁同一套可見範圍」（送出人本人
+／送出人的主管）過濾下拉選單，但這樣如果合約跟契約是完全不同、也沒有
+主管/部屬關係的兩個人各自負責，契約端的同仁會在下拉選單裡完全看不到
+那份合約，選不到——不符合實際上「業務出合約、另一位同仁出契約」的
+作業情境。改成用 `services/contract_summary_service.py` 的
+`viewer_can_link_contract_vendor()` 判斷：只要這個帳號的部門有被勾在
+那份合約連到的廠商紀錄的「服務部門」裡就能選（**不要求主管職級**，
+一般同仁本來就常常是實際送出契約的人），全平台管理員永遠能選全部。
+選了之後契約只會帶走客戶名稱跟廠商 ID，不會因此看到合約本身的價格、
+統編等完整內容。**這代表合約送出後，要先到廠商管理把服務部門勾好，
+契約端的同仁才有辦法在下拉選單選到**——這是延續「服務部門要同仁自己
+維護」的既有設計，不是新的限制。送出時也會重新驗證一次，避免有人把
+網址列/表單裡的 id 換成部門不相干的合約硬送。
 """
 from urllib.parse import quote
 
@@ -45,13 +57,13 @@ import platform_accounts
 import platform_vendors
 from platform_templating import templates
 from services.client_contract_service import (
-    can_view_submission as can_view_client_contract_submission,
     get_submission as get_client_contract_submission,
-    list_visible_submissions as list_visible_client_contracts,
+    list_submissions as list_all_client_contracts,
 )
 from services.contract_summary_service import (
     build_vendor_lookup,
     can_view_via_vendor_department_single,
+    viewer_can_link_contract_vendor,
     viewer_has_any_department_access,
 )
 from services.dispatch_contract_service import (
@@ -104,11 +116,16 @@ def _client_name_suggestions() -> list:
 
 
 def _client_contract_options(account: dict) -> list:
-    """「選擇對應的合約」下拉選單的選項：這個帳號看得到的合約產生器紀錄
-    （跟 /client-contracts 首頁同一套可見範圍），依客戶名稱＋合約起始
-    日期年份組出畫面上顯示的文字，方便同仁辨識是哪一份。"""
+    """「選擇對應的合約」下拉選單的選項：不是看送出人鏈（送出合約的人
+    可能跟送出契約的人完全不相干），而是看這個帳號的部門有沒有被勾在
+    那份合約連到的廠商紀錄的「服務部門」裡（`viewer_can_link_contract_
+    vendor()`，見該函式說明）。依客戶名稱＋合約起始日期年份組出畫面上
+    顯示的文字，方便同仁辨識是哪一份。"""
+    vendor_lookup = build_vendor_lookup()
     options = []
-    for record in list_visible_client_contracts(account):
+    for record in list_all_client_contracts():
+        if not viewer_can_link_contract_vendor(account, record.get("vendor_id", ""), vendor_lookup):
+            continue
         year = (record.get("contract_start_date") or "")[:4]
         label = record.get("party_a_name", "")
         if year.isdigit():
@@ -195,14 +212,20 @@ async def dispatch_contract_submit(request: Request, redirect=Depends(_require_a
 
     # 選了「選擇對應的合約」的話，客戶名稱、廠商關聯一律直接沿用那份
     # 合約的資料（見 services/dispatch_contract_service.py 開頭的說明），
-    # 不管這個欄位本來打了什麼都會被蓋掉；重新驗證這個帳號真的看得到
-    # 選的那筆合約，避免有人把網址列/表單裡的 id 換成別人的合約硬送。
+    # 不管這個欄位本來打了什麼都會被蓋掉；重新驗證這個帳號的部門真的
+    # 有被勾在那份合約連到的廠商服務部門裡（不是看送出人鏈——合約跟
+    # 契約很可能是完全不相干的兩個人各自負責，見上面「下拉選單能不能
+    # 選到，看的是部門」的說明），避免有人把網址列/表單裡的 id 換成
+    # 部門不相干的合約硬送。
     linked_vendor_id = ""
     error = ""
     if linked_client_contract_id:
         chosen_contract = get_client_contract_submission(linked_client_contract_id)
-        if not chosen_contract or not can_view_client_contract_submission(account, chosen_contract):
-            error = "選擇的合約已經不存在或您無法查看，請重新選擇，或改為手動輸入客戶名稱。"
+        vendor_lookup = build_vendor_lookup()
+        if not chosen_contract or not viewer_can_link_contract_vendor(
+            account, chosen_contract.get("vendor_id", ""), vendor_lookup
+        ):
+            error = "選擇的合約已經不存在或您無法連結，請重新選擇，或改為手動輸入客戶名稱。"
         else:
             client_name = chosen_contract.get("party_a_name", "") or client_name
             linked_vendor_id = chosen_contract.get("vendor_id", "")

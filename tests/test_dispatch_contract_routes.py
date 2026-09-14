@@ -16,19 +16,33 @@ from fastapi.testclient import TestClient
 
 
 class ClientContractOptionsTests(unittest.TestCase):
-    """「選擇對應的合約」下拉選單的選項組法：客戶名稱＋合約起始日期年份。"""
+    """「選擇對應的合約」下拉選單的選項組法：只列出這個帳號的部門有被勾在
+    連到的廠商服務部門裡的合約（不是送出人鏈），依客戶名稱＋合約起始
+    日期年份組出畫面文字。"""
 
     def test_appends_year_when_parsable(self):
-        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts",
-                                return_value=[{"id": "c1", "party_a_name": "測試客戶", "contract_start_date": "2027-01-01"}]):
-            options = dispatch_contract_routes._client_contract_options({"username": "bob"})
+        with mock.patch.object(dispatch_contract_routes, "build_vendor_lookup", return_value={"v1": {}}):
+            with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts",
+                                    return_value=[{"id": "c1", "vendor_id": "v1", "party_a_name": "測試客戶", "contract_start_date": "2027-01-01"}]):
+                with mock.patch.object(dispatch_contract_routes, "viewer_can_link_contract_vendor", return_value=True):
+                    options = dispatch_contract_routes._client_contract_options({"username": "bob"})
         self.assertEqual(options, [{"id": "c1", "label": "測試客戶（2027年）"}])
 
     def test_missing_year_shows_name_only(self):
-        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts",
-                                return_value=[{"id": "c1", "party_a_name": "測試客戶", "contract_start_date": ""}]):
-            options = dispatch_contract_routes._client_contract_options({"username": "bob"})
+        with mock.patch.object(dispatch_contract_routes, "build_vendor_lookup", return_value={"v1": {}}):
+            with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts",
+                                    return_value=[{"id": "c1", "vendor_id": "v1", "party_a_name": "測試客戶", "contract_start_date": ""}]):
+                with mock.patch.object(dispatch_contract_routes, "viewer_can_link_contract_vendor", return_value=True):
+                    options = dispatch_contract_routes._client_contract_options({"username": "bob"})
         self.assertEqual(options, [{"id": "c1", "label": "測試客戶"}])
+
+    def test_excludes_contracts_the_account_cannot_link(self):
+        with mock.patch.object(dispatch_contract_routes, "build_vendor_lookup", return_value={"v1": {}}):
+            with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts",
+                                    return_value=[{"id": "c1", "vendor_id": "v1", "party_a_name": "測試客戶", "contract_start_date": "2026-01-01"}]):
+                with mock.patch.object(dispatch_contract_routes, "viewer_can_link_contract_vendor", return_value=False):
+                    options = dispatch_contract_routes._client_contract_options({"username": "bob"})
+        self.assertEqual(options, [])
 
 
 class DispatchContractRoutingSmokeTests(unittest.TestCase):
@@ -153,7 +167,7 @@ class SubmitValidationTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                        with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts", return_value=[]):
                             asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
                                 self._FakeRequest(self._account(), form), redirect=None,
                             ))
@@ -170,7 +184,7 @@ class SubmitValidationTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                        with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts", return_value=[]):
                             asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
                                 self._FakeRequest(self._account(), form), redirect=None,
                             ))
@@ -188,7 +202,7 @@ class SubmitValidationTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                        with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts", return_value=[]):
                             asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
                                 self._FakeRequest(self._account(), form), redirect=None,
                             ))
@@ -210,7 +224,7 @@ class SubmitValidationTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "is_configured", return_value=False):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                        with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts", return_value=[]):
                             with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract"):
                                 result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
                                     self._FakeRequest(self._account(), form), redirect=None,
@@ -241,7 +255,7 @@ class SubmitValidationTests(unittest.TestCase):
                         with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_docx", return_value="dispatch_contracts/x/a.docx"):
                             with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_pdf", return_value="dispatch_contracts/x/a.pdf") as mock_upload_pdf:
                                 with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                                    with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                                    with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts", return_value=[]):
                                         with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract"):
                                             asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
                                                 self._FakeRequest(self._account(), self._minimal_form()), redirect=None,
@@ -260,7 +274,7 @@ class SubmitValidationTests(unittest.TestCase):
                         with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_docx", return_value="dispatch_contracts/x/a.docx"):
                             with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "upload_contract_pdf") as mock_upload_pdf:
                                 with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                                    with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                                    with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts", return_value=[]):
                                         with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract"):
                                             result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
                                                 self._FakeRequest(self._account(), self._minimal_form()), redirect=None,
@@ -324,11 +338,12 @@ class LinkedClientContractTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes.dispatch_contract_storage, "is_configured", return_value=False):
                     with mock.patch.object(dispatch_contract_routes, "get_client_contract_submission", return_value=contract):
-                        with mock.patch.object(dispatch_contract_routes, "can_view_client_contract_submission", return_value=True):
-                            with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract") as mock_sync:
-                                result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
-                                    self._FakeRequest(self._account(), self._minimal_form(linked_id="c1")), redirect=None,
-                                ))
+                        with mock.patch.object(dispatch_contract_routes, "build_vendor_lookup", return_value={"vendor-abc": {}}):
+                            with mock.patch.object(dispatch_contract_routes, "viewer_can_link_contract_vendor", return_value=True):
+                                with mock.patch.object(dispatch_contract_routes, "sync_vendor_from_dispatch_contract") as mock_sync:
+                                    result = asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
+                                        self._FakeRequest(self._account(), self._minimal_form(linked_id="c1")), redirect=None,
+                                    ))
         mock_sync.assert_not_called()
         self.assertEqual(mock_save.call_args.kwargs["client_name"], "測試客戶股份有限公司")
         self.assertEqual(mock_save.call_args.kwargs["vendor_id"], "vendor-abc")
@@ -340,7 +355,7 @@ class LinkedClientContractTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                        with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts", return_value=[]):
                             with mock.patch.object(dispatch_contract_routes, "get_client_contract_submission", return_value=None):
                                 asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
                                     self._FakeRequest(self._account(), self._minimal_form(linked_id="does-not-exist")), redirect=None,
@@ -355,9 +370,9 @@ class LinkedClientContractTests(unittest.TestCase):
             with mock.patch.object(dispatch_contract_routes, "save_submission") as mock_save:
                 with mock.patch.object(dispatch_contract_routes, "list_recent_client_names", return_value=[]):
                     with mock.patch.object(dispatch_contract_routes.platform_vendors, "list_vendors", return_value=[]):
-                        with mock.patch.object(dispatch_contract_routes, "list_visible_client_contracts", return_value=[]):
+                        with mock.patch.object(dispatch_contract_routes, "list_all_client_contracts", return_value=[]):
                             with mock.patch.object(dispatch_contract_routes, "get_client_contract_submission", return_value=contract):
-                                with mock.patch.object(dispatch_contract_routes, "can_view_client_contract_submission", return_value=False):
+                                with mock.patch.object(dispatch_contract_routes, "viewer_can_link_contract_vendor", return_value=False):
                                     asyncio.run(dispatch_contract_routes.dispatch_contract_submit(
                                         self._FakeRequest(self._account(), self._minimal_form(linked_id="c1")), redirect=None,
                                     ))
