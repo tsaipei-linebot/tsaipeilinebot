@@ -158,6 +158,54 @@ def verify_password(password: str, stored_hash: str) -> bool:
     return hmac.compare_digest(digest.hex(), digest_hex)
 
 
+# 登入防暴力破解（2026-09-14 新增）：這個平台共用同一套帳密，且有四個
+# 進得去的登入頁（/login、/delivery/login、/management/login、
+# /hr/login，四邊呼叫的都是同一個 authenticate()），如果沒有任何節流，
+# 攻擊者可以寫程式對著已知帳號一直亂猜密碼。連續失敗達到門檻就暫時鎖定
+# 這個帳號一段時間——選擇「鎖帳號」而不是「鎖 IP」，因為 Cloud Run 前面
+# 的請求來源 IP 不一定可靠（共用辦公室網路、之後如果加了 CDN/負載平衡器
+# 也可能看到的是中繼 IP），鎖帳號雖然理論上可以被拿來惡意鎖住別人的帳號
+# （knowing username即可），但攻擊者本來就需要先知道帳號名稱才有意義去
+# 猜密碼，兩害相權取其輕；室內同仁打錯密碼被鎖住的話，等鎖定時間過了
+# 自然解除，不需要管理員介入。
+LOGIN_LOCKOUTS_COLLECTION = "login_lockouts"
+LOGIN_MAX_FAILED_ATTEMPTS = 5
+LOGIN_LOCKOUT_SECONDS = 15 * 60
+
+
+def _login_lockout_ref(username: str):
+    return get_db().collection(LOGIN_LOCKOUTS_COLLECTION).document(username)
+
+
+def is_locked_out(username: str) -> bool:
+    """給登入頁顯示「帳號已鎖定」提示訊息用；`authenticate()` 內部也會
+    呼叫這個判斷，鎖定期間一律不進行密碼比對。"""
+    if not username:
+        return False
+    snapshot = _login_lockout_ref(username).get()
+    if not snapshot.exists:
+        return False
+    locked_until = (snapshot.to_dict() or {}).get("locked_until")
+    return bool(locked_until and locked_until > time.time())
+
+
+def _record_failed_login(username: str):
+    ref = _login_lockout_ref(username)
+    snapshot = ref.get()
+    existing = snapshot.to_dict() or {} if snapshot.exists else {}
+    failed_count = existing.get("failed_count", 0) + 1
+    payload = {"failed_count": failed_count, "last_attempt_at": time.time()}
+    if failed_count >= LOGIN_MAX_FAILED_ATTEMPTS:
+        payload["locked_until"] = time.time() + LOGIN_LOCKOUT_SECONDS
+    ref.set(payload, merge=True)
+
+
+def _clear_login_lockout(username: str):
+    """登入成功後清掉失敗次數紀錄，避免同仁下次不小心打錯一兩次密碼就
+    直接被鎖（門檻是「連續」失敗次數，不是累計整個帳號史上的失敗次數）。"""
+    _login_lockout_ref(username).delete()
+
+
 def _open_module_codes(modules_field) -> list:
     """相容新舊兩種 `modules` 資料格式：2026-09-12 之前存的是
     ``{"code": "admin"或"staff"}`` 這種「模組→角色」字典，之後只存
@@ -198,15 +246,24 @@ def _to_account(username: str, data: dict) -> dict:
 def authenticate(username: str, password: str):
     """帳密正確時回傳帳號 dict（不含密碼雜湊），否則回傳 None。這裡不檢查
     對任何特定模組有沒有權限——那是登入之後，各模組自己的
-    require_module_access/require_module_admin 才會檢查的事。"""
+    require_module_access/require_module_admin 才會檢查的事。
+
+    連續失敗達到 `LOGIN_MAX_FAILED_ATTEMPTS` 次會暫時鎖定這個帳號
+    `LOGIN_LOCKOUT_SECONDS` 秒，鎖定期間直接回傳 None、不會再比對密碼
+    （見上面 is_locked_out() 的說明）；呼叫端如果想跟「帳號或密碼錯誤」
+    顯示不同的提示文字，可以另外呼叫 is_locked_out() 判斷。"""
     if not username or not password:
         return None
     snapshot = users_ref().document(username).get()
     if not snapshot.exists:
         return None
+    if is_locked_out(username):
+        return None
     data = snapshot.to_dict() or {}
     if not verify_password(password, data.get("password_hash", "")):
+        _record_failed_login(username)
         return None
+    _clear_login_lockout(username)
     return _to_account(username, data)
 
 

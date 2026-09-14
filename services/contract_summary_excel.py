@@ -12,6 +12,21 @@ import io
 
 from openpyxl import Workbook
 
+# 防 Excel 公式注入（2026-09-14 新增）：同仁填的客戶名稱、統編、匯款截止日、
+# 班別欄位等都是自由文字，如果剛好打了以下開頭的內容，openpyxl 存進 .xlsx
+# 時會被標記成公式（data_type="f"），管理員打開匯出的 Excel 時就會被當成
+# 可執行的公式跑出來（例如連到釣魚網站的 HYPERLINK，或舊版 Excel/DDE的
+# 命令注入）。比照 OWASP 的建議做法：這類字串開頭補一個前導單引號，讓
+# openpyxl 存成純文字（data_type="s"），Excel 打開時只會照字面顯示，不會
+# 被當成公式執行。
+_FORMULA_TRIGGER_CHARS = ("=", "+", "-", "@")
+
+
+def _sanitize_cell(value):
+    if isinstance(value, str) and value.startswith(_FORMULA_TRIGGER_CHARS):
+        return "'" + value
+    return value
+
 
 def _build_workbook(sheet_title: str, header: list, rows: list) -> bytes:
     wb = Workbook()
@@ -19,7 +34,7 @@ def _build_workbook(sheet_title: str, header: list, rows: list) -> bytes:
     ws.title = sheet_title
     ws.append(header)
     for row in rows:
-        ws.append(row)
+        ws.append([_sanitize_cell(value) for value in row])
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()

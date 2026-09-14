@@ -9,6 +9,20 @@ from openpyxl import Workbook
 
 from delivery.config import LEAVE_TYPE_MAP, VENDOR_MAP
 
+# 防 Excel 公式注入（2026-09-14 新增）：人員/原因這些是自由文字欄位，如果
+# 剛好打了以下開頭的內容，openpyxl 存進 .xlsx 時會被標記成公式，同仁打開
+# 匯出的 Excel 時就會被當成可執行的公式跑出來。比照 OWASP 建議做法，
+# 加一個前導單引號讓它變成純文字——跟 services/contract_summary_excel.py
+# 是同一套做法，兩邊各自維護一份是因為 delivery/ 子系統跟主系統的匯出
+# 工具本來就是分開兩支獨立的小工具，不共用同一個模組。
+_FORMULA_TRIGGER_CHARS = ("=", "+", "-", "@")
+
+
+def _sanitize_cell(value):
+    if isinstance(value, str) and value.startswith(_FORMULA_TRIGGER_CHARS):
+        return "'" + value
+    return value
+
 
 def _build_workbook(sheet_title: str, header: list, rows: list) -> bytes:
     wb = Workbook()
@@ -16,7 +30,7 @@ def _build_workbook(sheet_title: str, header: list, rows: list) -> bytes:
     ws.title = sheet_title
     ws.append(header)
     for row in rows:
-        ws.append(row)
+        ws.append([_sanitize_cell(value) for value in row])
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
