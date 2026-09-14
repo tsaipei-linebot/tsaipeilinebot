@@ -87,20 +87,23 @@ def _append_history_entry(messages: list, role: str, text: str, max_len: int = 1
 
 
 def _get_or_create_session(user_id: str) -> dict:
-    """取得（或建立）使用者的對話 Session（支援軟過期：保留地點偏好），
-    純讀取用途（見 update_user_slots/append_user_history/clear_user_slots 的
-    transaction 版本），只在需要時把 last_time 往前推進，避免過期判斷失準。"""
-    now = time.time()
-    ref = _session_ref(user_id)
-    snapshot = ref.get()
-    session, was_fresh = _normalize_session(snapshot.to_dict() if snapshot.exists else None, now)
+    """取得（或建立）使用者的對話 Session（支援軟過期：保留地點偏好）。
 
-    if was_fresh:
-        ref.update({"last_time": now})
-    else:
-        ref.set(session)
+    刻意跟 update_user_slots/append_user_history/clear_user_slots 共用同一個
+    _run_in_transaction()，即使只是「讀取／初始化」也一樣包在 transaction
+    裡——這裡曾經是純粹的「讀一次、視情況 set 或 update 一次」寫法，沒有
+    transaction 保護：使用者 session 剛好過期、或這是第一次互動（Firestore
+    裡還沒有這筆文件）時，會整份覆寫（ref.set），如果這輪訊息跟另一則幾乎
+    同時處理的訊息（見「限時同步等待＋逾時後背景補發」架構）剛好都命中
+    這個「重建 session」的情境，兩次都各自覆寫，後寫入的會把先寫入的整個
+    蓋掉——即使先寫入的那次，後續已經透過 update_user_slots() 等 transaction
+    正確寫入了地區/類別等槽位，一樣會被這個沒有並發保護的整份覆寫蓋掉、
+    憑空消失。改用 transaction 後，Firestore 會偵測到寫入衝突並自動重試，
+    不會再發生這種蓋掉的情況。"""
+    def _mutate(session):
+        return session
 
-    return session
+    return _run_in_transaction(user_id, _mutate)
 
 
 def get_user_history(user_id: str) -> list:
