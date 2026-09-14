@@ -5,6 +5,8 @@
 同一顆門號重複提醒，不需要像配送部文件到期提醒那樣另外記錄「提醒過了
 沒有」。
 """
+import hmac
+
 from fastapi import APIRouter, Header, HTTPException
 
 from management import repository
@@ -23,7 +25,9 @@ def _format_message(items: list) -> str:
 
 @router.post("/api/sim-payment-reminder-check")
 def sim_payment_reminder_check(x_management_asset_reminder_secret: str = Header(None)):
-    if not ASSET_REMINDER_SECRET or x_management_asset_reminder_secret != ASSET_REMINDER_SECRET:
+    if not ASSET_REMINDER_SECRET or not x_management_asset_reminder_secret or not hmac.compare_digest(
+        x_management_asset_reminder_secret, ASSET_REMINDER_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     items = repository.list_sim_payment_reminders(SIM_PAYMENT_REMINDER_DAYS_AHEAD)

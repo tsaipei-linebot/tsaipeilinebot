@@ -43,6 +43,7 @@ from fastapi.responses import RedirectResponse, Response
 import client_contract_storage
 import platform_accounts
 import platform_companies
+from file_type_sniff import content_matches_claimed_extension
 from platform_templating import templates
 from services.client_contract_service import (
     CONTRACT_VERSIONS,
@@ -505,6 +506,10 @@ async def client_contract_upload_vendor_file(
         content = await vendor_file.read()
         if len(content) > CONTRACT_FILE_MAX_BYTES:
             error_code = "too_large"
+        elif not content_matches_claimed_extension(content, vendor_file.filename):
+            # 副檔名合法，但檔案開頭的實際內容跟副檔名宣稱的不符（例如把
+            # 別的檔案改副檔名偽裝成 .pdf），一樣視為格式錯誤擋下來。
+            error_code = "bad_format"
         else:
             blob_path = client_contract_storage.upload_vendor_contract_file(
                 content, vendor_file.filename, vendor_file.content_type or "application/octet-stream"

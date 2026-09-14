@@ -3,6 +3,8 @@ LINE 官方帳號推播提醒。跟 webhook_routes.py 的表單 webhook 一樣�
 驗證（X-Delivery-Reminder-Secret header）、不經過同仁登入 session——呼叫端是
 Cloud Scheduler，不是瀏覽器。
 """
+import hmac
+
 from fastapi import APIRouter, Header, HTTPException
 
 from delivery import repository
@@ -35,7 +37,9 @@ def _format_message(items: list) -> str:
 
 @router.post("/api/expiry-reminder-check")
 def expiry_reminder_check(x_delivery_reminder_secret: str = Header(None)):
-    if not REMINDER_TRIGGER_SECRET or x_delivery_reminder_secret != REMINDER_TRIGGER_SECRET:
+    if not REMINDER_TRIGGER_SECRET or not x_delivery_reminder_secret or not hmac.compare_digest(
+        x_delivery_reminder_secret, REMINDER_TRIGGER_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     items = repository.list_expiring_documents(REMINDER_DAYS_AHEAD, REMINDER_RESEND_INTERVAL_DAYS)
@@ -70,7 +74,9 @@ def leave_quota_reminder_check(x_delivery_reminder_secret: str = Header(None)):
     排除邏輯：只要累積使用還在90%以上，每次排程執行都會再推播一次（使用者
     要求「達到90%後每次都要提醒」，見 repository.list_leave_quota_alerts()
     的說明）。"""
-    if not REMINDER_TRIGGER_SECRET or x_delivery_reminder_secret != REMINDER_TRIGGER_SECRET:
+    if not REMINDER_TRIGGER_SECRET or not x_delivery_reminder_secret or not hmac.compare_digest(
+        x_delivery_reminder_secret, REMINDER_TRIGGER_SECRET
+    ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     alerts = repository.list_leave_quota_alerts()

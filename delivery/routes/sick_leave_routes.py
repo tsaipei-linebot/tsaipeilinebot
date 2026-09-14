@@ -10,6 +10,7 @@ from delivery.config import ALLOWED_UPLOAD_CONTENT_TYPES, LEAVE_TYPE_MAP, LEAVE_
 from delivery.excel_export import build_sick_leave_workbook
 from delivery.storage import StorageNotConfigured, upload_file
 from delivery.templating import templates
+from file_type_sniff import is_allowed_upload
 
 router = APIRouter()
 

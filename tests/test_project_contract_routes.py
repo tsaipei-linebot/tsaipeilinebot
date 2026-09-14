@@ -180,7 +180,7 @@ class SubmitMarksClientContractOnSuccessTests(unittest.TestCase):
             return self._form_data
 
     class _FakeUploadFile:
-        def __init__(self, filename="合約.docx", content=b"fake docx", content_type="application/msword"):
+        def __init__(self, filename="合約.docx", content=b"PK\x03\x04fake docx (zip) content", content_type="application/msword"):
             self.filename = filename
             self.content_type = content_type
             self._content = content

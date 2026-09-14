@@ -8,6 +8,9 @@
     整理「合約產生器」「派遣契約產生器」的紀錄，方便盤點客戶的合約方式、薪資、服務費計算。
     只看得到廠商管理裡「服務部門」有勾選自己部門的廠商連動的紀錄，全平台管理員看得到全部。
 </p>
+{% if near_limit_warning %}
+<p class="warning">{{ near_limit_warning }}</p>
+{% endif %}
 
 <h2>合約產生器總表</h2>
 <form method="get" action="/contract-summary" class="filter-bar">

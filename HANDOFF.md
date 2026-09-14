@@ -4701,3 +4701,118 @@ HTTPS 終止，實際風險低，但如果之後自訂網域設定不小心開�
 
 全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）
 1235 個全數通過。
+
+## 低風險安全性修復批次（2026-09-14）
+
+延續前一批高／中風險修復（見上面「安全性修復批次：Excel 公式注入、
+登入防暴力破解、Cookie Secure 旗標」，那批已開 PR 但當時還沒合併）
+之後，使用者確認完低風險項目清單、逐項問清楚細節後要求動工的一批。
+這批是獨立的分支/PR，跟前一批彼此不互相依賴，哪個先合併都不影響
+另一個。
+
+**這次沒有處理的項目**：低風險清單裡的第 5 項（獎金積分重複送出，
+實際是「小雞點數自費申請」）使用者確認不用改；第 6 項（AI 客服提示詞
+注入，`handlers/message_handler.py`）使用者明確要求**這次完全不要
+動招募機器人的程式碼**，本批完全沒有碰這個檔案；職缺維護系統的 SSO
+（`job_portal_sso.py`）評估移除一事，另外獨立處理，不在這批範圍內。
+
+### 1. 內部密鑰比對改用防時間側錄的寫法
+
+`delivery/routes/webhook_routes.py`（4 處）、`delivery/routes/
+reminder_routes.py`（2 處）、`management/routes/reminder_routes.py`
+（1 處）、`hr/routes/reminder_routes.py`（2 處）、`portal_routes.py`
+（1 處）——這 10 處都是 Cloud Scheduler／GAS 專案呼叫的內部端點，原本
+是 `if 密鑰 != 收到的值` 這種普通字串比對，理論上可以透過量測伺服器
+回應時間差異，一個字元一個字元猜出密鑰（機率極低，但業界標準做法是
+一律改用防時間側錄的比對函式）。`main.py` 的 `/internal/load-test-
+message` 等端點跟密碼比對（`platform_accounts.hash_password`）本來
+就是用 `hmac.compare_digest()`，這次把剩下沒跟上的 10 處也改成一樣
+的寫法，行為完全不變（密鑰值對就通過、不對就拒絕），同仁完全不會
+感覺到任何差異。
+
+### 2. 密碼加密迭代次數調高（相容舊密碼，不強迫重設）
+
+`platform_accounts.py` 的 `PBKDF2_ITERATIONS` 從 20 萬次調高到 60 萬次
+（OWASP 現行建議的下限），採用使用者選定的「方案 a」：
+
+- `hash_password()` 存密碼時，把「這次用了幾次」也存進雜湊字串裡
+  （新格式「次數$鹽值$雜湊值」三段，舊格式是「鹽值$雜湊值」兩段）。
+- `verify_password()` 驗證時，優先讀雜湊字串裡記錄的次數；讀不到
+  （舊格式）就當作是用改版前的 20 萬次雜湊出來的（`_LEGACY_
+  PBKDF2_ITERATIONS`）。
+
+效果：**現有同仁的密碼完全不受影響、不用重設、不會被登出**——下次
+改密碼、或帳號管理員幫忙重設密碼時，新密碼才會自動套用 60 萬次的
+新標準，舊密碼會一直用舊次數驗證，直到被改過為止，不需要另外跑
+遷移程式。
+
+### 3. 配送部 webhook 收到格式錯誤資料時回傳乾淨的 400
+
+`delivery/routes/webhook_routes.py` 的三支 POST 端點（表單回覆／
+領還車回報／意外事件回報，都是 delivery-gas-project 那支 GAS 程式
+轉發過來的）原本如果收到的內容不是合法 JSON（或 JSON 格式對但不是
+物件），會讓程式一路噴出「未預期錯誤」（500），現在改成新增的
+`_parse_json_body()` 統一先驗證格式，格式不對就回傳清楚的 400 跟
+錯誤訊息。純粹是讓之後從錯誤紀錄分辨「GAS 那邊傳來的資料有問題」
+跟「我們自己程式壞了」更容易，不影響任何正常情況下的行為。
+
+### 4. 上傳檔案改成真的檢查內容，不只信任瀏覽器回報的類型
+
+新增共用模組 `file_type_sniff.py`：只看檔案開頭幾個位元組的「檔頭
+簽章」（PDF 開頭是 `%PDF-`、JPEG/PNG 各有自己的簽章、新版 Office
+docx/xlsx/pptx 都是 ZIP 容器格式、舊版 doc/xls/ppt 都是微軟複合文件
+格式），驗證檔案的真實內容跟宣稱的類型（瀏覽器回報的 content_type，
+或使用者自己打的副檔名）是否相符，擋掉「把其他檔案改副檔名/content_
+type 偽裝成允許類型上傳」這種手法。沒有額外安裝套件（python-magic
+需要系統另外裝 libmagic，Cloud Run 環境不確定有沒有，用檔頭判斷
+維護成本低、對這裡要擋的風險已經足夠）。
+
+套用範圍（全部是需要登入才能用的頁面，不是對外開放的端點）：
+
+- `hr/routes/{care_log,health_check,license,training}_routes.py` 的
+  `_read_optional_file()`、`management/routes/{document,kpi,
+  meeting}_routes.py`、`delivery/routes/sick_leave_routes.py`、
+  `delivery/routes/vendor_routes.py`（人員證件上傳）——這些原本已經
+  有 `content_type in 允許清單` 的檢查，現在多加「檔案內容也要符合」
+  這個條件（新增 `is_allowed_upload()`）。
+- `client_contract_routes.py` 的廠商版本合約上傳、`project_contract_
+  routes.py` 的合約檔案上傳——原本只看副檔名（`.pdf`/`.doc`/`.docx`），
+  現在加驗證檔案內容跟副檔名相符（新增 `content_matches_claimed_
+  extension()`）。
+- `job_listing_routes.py`（職缺圖檔）、`me_routes.py`（薪資補款佐證
+  照片）——這兩處原本完全沒有檢查檔案類型，只檢查大小，現在加上
+  「檔案內容要真的是 JPEG 或 PNG 圖片」的檢查（新增 `looks_like_
+  image()`）。
+
+同仁正常操作（上傳真正的 PDF/Word/Excel/圖片）完全不受影響，只有
+偽裝過的檔案會被擋下來、顯示格式錯誤訊息。
+
+### 5. 合約總表接近顯示上限時顯示警示
+
+`contract_summary_routes.py` 的 `_RECORDS_LIMIT`（5000 筆，總表撈
+資料的查詢上限，不是 Firestore 本身的限制）新增 `_NEAR_LIMIT_
+WARNING_THRESHOLD`（上限的 80%，也就是 4000 筆）：客戶合約或派遣
+契約任一種**權限過濾前的原始筆數**（代表系統整體資料量，不是這個
+帳號實際看得到的筆數）達到這個門檻時，總表頁面最上面會出現一行
+提醒文字，請聯繫工程師調高上限設定。在真的接近上限之前，畫面上
+不會有任何變化。
+
+### 測試
+
+新增 `tests/test_file_type_sniff.py`（23 個，涵蓋各種檔案類型的
+正常辨識跟偽裝檔案的擋下情境）；`tests/test_platform_accounts.py`
+新增密碼雜湊相關測試（新格式存迭代次數、舊格式相容、迭代次數/鹽值
+格式錯誤時回傳 False 而不是丟例外）；`tests/test_contract_summary_
+routes.py` 新增 `NearLimitWarningTests` 跟相關測試（14 個）；
+`tests/test_client_contract_routes.py`／`tests/test_project_contract_
+routes.py` 調整既有測試的假資料，讓 fake 上傳內容符合真實檔頭格式。
+全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）
+1242 個全數通過。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**（沒有新的環境變數、沒有需要
+另外執行的遷移指令、沒有需要重新登入）。同仁操作上完全不會感覺到
+差異，除非：(1) 上傳偽裝過的檔案會被新的格式檢查擋下來；(2) 合約
+總表資料量真的接近上限時會多一行提醒文字；(3) 密碼在下次修改時
+會自動套用更高的加密強度，這件事同仁不會、也不需要察覺到。
