@@ -364,12 +364,22 @@ def find_benefit_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
     命中就回傳 (關鍵字, 有這項福利的職缺清單)；沒有 active_jobs 或完全沒
     命中則回傳 ("", [])。刻意依關鍵字長度由長到短檢查，避免短關鍵字先命中
     蓋掉更精確的關鍵字（跟 extract_current_target_location() 處理行政區的
-    方式一致）。"""
+    方式一致）。
+
+    安全性檢查發現兩個防呆漏掉的地方，這裡補上：
+    1. 排除被否定的關鍵字（例如「不要有公司車的工作」，"公司車" 雖然出現在
+       訊息裡，但使用者明確表示不要，不該當成正向意圖直接攔截推薦）。
+    2. 排除長度小於 2 的關鍵字——跟 _strip_admin_suffix() 保留至少 2 個字
+       的防呆原則一致，避免同仁不小心在「福利」欄位填了單一個字（例如
+       「餐」），變成極短、極容易在任何無關句子裡誤判命中的危險子字串
+       （例如求職者問「想找餐飲的工作」，這句話跟福利完全無關）。"""
     if not active_jobs:
         return "", []
     benefit_index = build_benefit_keyword_index(active_jobs)
     for keyword in sorted(benefit_index.keys(), key=len, reverse=True):
-        if keyword in raw_msg:
+        if len(keyword) < 2:
+            continue
+        if keyword in raw_msg and not _keyword_is_negated(raw_msg, keyword):
             return keyword, benefit_index[keyword]
     return "", []
 

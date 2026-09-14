@@ -378,8 +378,16 @@
         - **新增測試**：`tests/test_ai_service.py` 新增 `FormatFullJobDetailPromptInjectionGuardTests`；`tests/test_message_handler.py` 新增 `test_ai_prompt_forbids_treating_job_or_faq_free_text_as_instructions`。
     - **Session 建立的並發競態（極窄視窗，理論風險）**：`services/session_service.py` 的 `_get_or_create_session()`（`get_user_history`/`get_user_slots` 背後都會呼叫到）原本是「純讀取一次 → 視情況整份覆寫或局部更新」，唯獨這個函式沒有跟 `update_user_slots`/`append_user_history`/`clear_user_slots` 一樣包在 Firestore transaction 裡。使用者 session 剛好過期（7 天沒互動）或這是第一次互動時，會整份覆寫（`ref.set`）——如果同一位使用者幾乎同時傳兩則訊息（LINE 有時會重送、或這套「限時同步等待＋逾時後背景補發」架構本來就可能讓兩個請求同時處理同一個人），兩次都命中「要重建 session」的情境，其中一次即使已經透過 transaction 正確存好地區/類別等槽位，還是可能被另一次沒有並發保護的整份覆寫蓋掉、憑空消失。改成跟其他三個函式共用同一個 `_run_in_transaction()`（`mutate` 直接原封不動回傳 session，只是要用同一套有並發保護的讀-改-寫機制），修好後 Firestore 偵測到寫入衝突會自動重試，不會再被蓋掉。
         - **沒有新增 Firestore mock 測試**：這個檔案既有的測試（`tests/test_session_service.py`）刻意只測純邏輯部分（`_normalize_session`／`_merge_slot_updates`／`_append_history_entry`），沒有替任何一個實際會呼叫 Firestore transaction 的函式（含既有的 `update_user_slots` 等）寫過整合測試，這次修正沿用同樣的既有做法，不另外破例。
-    - **其餘檢查出來、這次先不動的項目（已跟使用者說明，等對方確認後續處理方式）**：福利關鍵字沒有檢查否定語氣／`/apply-click`／Notion `page_id` 格式驗證／地點顯示台灣「台/臺」正規化不一致／地點清單未去重複／log 未過濾換行字元／面試預約流程（尚未上線）信任使用者手動輸入的時段代碼與職缺名稱。
+    - **其餘檢查出來、這次先不動的項目（已跟使用者說明，等對方確認後續處理方式）**：`/apply-click`／Notion `page_id` 格式驗證／log 未過濾換行字元／面試預約流程（尚未上線）信任使用者手動輸入的時段代碼與職缺名稱。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 615 個測試，OK。
+53. **接續處理上一項審查抓到的其餘 5 個問題**：
+    - **福利關鍵字直達攔截沒有檢查否定語氣、也沒有排除太短的關鍵字**：`services/matcher_service.py` 的 `find_benefit_matched_jobs()` 補上 `_keyword_is_negated()` 檢查（「不要有公司車的工作」不再被誤判成正向意圖）、排除長度小於 2 的關鍵字（避免同仁不小心在「福利」欄位填單一個字，變成任何無關句子都可能誤判命中的危險短字串，跟 `_strip_admin_suffix()` 保留至少 2 個字的既有防呆原則一致）。
+    - **已經成功回覆使用者之後，記錄事件本身出錯會讓使用者收到多餘的保底訊息**：`services/monitoring_service.py` 的 `log_ai_decision_event()` 補上自己的 try/except，任何內部失敗都只印警告 log、不再往外拋例外——這支函式幾乎都是「先成功回覆使用者，最後才呼叫這裡記錄結果」，原本記錄本身出錯會被呼叫端的外層保底邏輯誤判成整個流程失敗，多送一則「系統稍有延遲」的訊息給已經收到正確回覆的使用者。
+    - **「都給我看看」全部瀏覽攔截沒有檢查否定語氣**：`handlers/message_handler.py` 把 `is_negative = has_negative_intent(raw_msg)` 從步驟 1 提前到步驟 0-3 就先算好，讓步驟 0-4 的 `is_show_all` 判斷也能用同一份否定語氣檢查——修正前「不要都給我看」這種明確否定的話，會被誤判成「要看全部職缺」，跟其他所有攔截分支的既有行為不一致（其他分支都有做這個檢查，只有這個因為 `is_negative` 那時候還沒算出來而漏掉）。
+    - **卡片地點顯示比對「台/臺」沒有統一正規化**：`services/flex_service.py` 新增 `_normalize_tai()`，`format_clean_location()` 的 `target_location`／`same_county_scope` 比對都改用正規化後的文字比對（顯示仍然用原始字串，不影響同仁實際填寫的用字）。修正前如果同仁在 Notion 填「臺南市」（正體全形寫法）而不是「台南市」，退讓建議或行政區比對可能會整個失效、退化成只顯示縣市名稱。
+    - **一般地點聚合分支沒有去除重複值**：`format_clean_location()` 建立 `dist_list` 時改用 `dict.fromkeys` 去重複（`target_location`／`same_county_scope` 兩個分支原本就有做，只有這個一般分支漏掉），避免同仁複製貼上「行政區」欄位不小心貼出重複值時，行政區數量被灌水誤觸發「≥5 個行政區改用概括描述」規則，或顯示文字重複列出同一個行政區。
+    - **新增測試**：`tests/test_matcher_service.py` 的 `FindBenefitMatchedJobsTests` 新增否定語氣、短關鍵字兩個情境；`tests/test_monitoring_service.py` 新增 `test_internal_failure_does_not_propagate_to_caller`；`tests/test_message_handler.py` 新增 `ShowAllNegationTests`；`tests/test_flex_service.py` 新增 `FormatCleanLocationTaiVariantNormalizationTests`、`FormatCleanLocationDedupTests`。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 624 個測試，OK。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 565 個測試，OK。
 
 ## 目前所有檔案的狀態

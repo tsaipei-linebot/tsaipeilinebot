@@ -851,6 +851,45 @@ class DirectInterceptEdgeCaseTests(unittest.TestCase):
         self.assertEqual(args[1], control_message)
 
 
+class ShowAllNegationTests(unittest.TestCase):
+    """安全性檢查發現：「都給我看看」這個全部瀏覽攔截，原本沒有檢查否定語氣
+    （is_negative 那時候還沒算出來），導致「不要都給我看」這種明確否定的話，
+    一樣會被判斷成「要看全部職缺」，答非所問。修正後 is_negative 提前計算，
+    這個分支也要跟其他分支一樣排除否定語氣。"""
+
+    def test_negated_show_all_phrase_falls_through_to_ai_instead_of_dumping_all_jobs(self):
+        job = {
+            "職缺名稱": "蝦皮門市人員", "_internal_title": "蝦皮門市人員",
+            "_parsed_title": "蝦皮門市人員", "職缺名稱(對外)": "蝦皮門市人員",
+            "_job_category": "門市", "職務類別": "門市",
+            "_search_text": "蝦皮門市人員", "_location_search_text": "新北市板橋區",
+        }
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-negated-show-all"
+        event.message.text = "不要都給我看"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        # 不該直接把全部職缺塞給使用者，要落到 AI 決策由 AI 判斷這句話的意思
+        mock_flex_card.assert_not_called()
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+
 class DirectInterceptHistoryTests(unittest.TestCase):
     """「查看職缺詳情」比對成功、跟就業服務法年齡/性別合規攔截這兩個分支，
     原本只把沛沛自己的回覆寫進對話歷史，漏了求職者這輪自己說的話——這樣下一輪

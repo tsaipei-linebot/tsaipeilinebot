@@ -21,6 +21,18 @@ class LogAiDecisionEventTests(unittest.TestCase):
         line = _capture_printed_line(path="ai_decision", action="ASK")
         self.assertTrue(line.startswith(mon.AI_DECISION_LOG_MARKER))
 
+    def test_internal_failure_does_not_propagate_to_caller(self):
+        # 安全性檢查發現：呼叫端幾乎都是「已經成功回覆使用者之後，最後才呼叫
+        # 這裡記錄結果」，如果記錄本身出錯又讓例外往外拋，呼叫端的外層保底
+        # 邏輯會誤判成整個流程失敗、多送一則「系統稍有延遲」的訊息給使用者
+        # ——即使使用者其實已經收到正確的回覆。這裡驗證就算組 log 內容本身
+        # 出錯（例如 json 序列化失敗），也不會讓例外傳出這支函式。
+        with patch("services.monitoring_service.json.dumps", side_effect=TypeError("無法序列化")):
+            try:
+                mon.log_ai_decision_event(path="ai_decision", action="ASK")
+            except Exception:
+                self.fail("log_ai_decision_event 不應該讓例外往外拋出")
+
 
 class ParseLogLineRoundTripTests(unittest.TestCase):
     def test_round_trip_recovers_original_event_fields(self):

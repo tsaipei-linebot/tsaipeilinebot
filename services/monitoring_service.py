@@ -40,20 +40,31 @@ def log_ai_decision_event(
         每個模型都失敗、或配額用盡），沒有丟例外，`action` 解析出來是空字串，程式碼會
         改用「單一焦點引導」或預設問候語接住，使用者感覺像正常對話、不會發現其實
         Gemini 完全沒有真的判斷這句話，若只看 fallback_triggered 會完全漏掉這種
-        「安靜失敗」。"""
-    event = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "path": path,
-        "intercept_type": intercept_type,
-        "matched_category": matched_category,
-        "matched_brand": matched_brand,
-        "action": action,
-        "fallback_triggered": bool(fallback_triggered),
-        "ai_decision_empty": bool(ai_decision_empty),
-        "latency_seconds": round(latency_seconds, 3),
-        "delivery_mode": delivery_mode,
-    }
-    print(f"{AI_DECISION_LOG_MARKER}{json.dumps(event, ensure_ascii=False)}")
+        「安靜失敗」。
+
+    這支函式只負責「記錄」，呼叫端（handlers/message_handler.py）幾乎每個分支都是
+    「先成功回覆使用者，最後才呼叫這裡記錄這一輪的結果」。安全性檢查發現：這裡原本
+    沒有任何防護，一旦記錄本身出錯（例如 json 序列化意外失敗），例外會被拋回呼叫端，
+    而呼叫端目前是靠外層一個大 try/except 接住所有例外、視為「整個流程失敗」，於是
+    又會多送一則「系統稍有延遲」的保底訊息給使用者——即使使用者其實已經收到正確的
+    回覆了，只是事後記錄失敗而已。因此這裡刻意吞掉任何例外，保證這支函式本身永遠
+    不會讓呼叫端誤判成流程失敗。"""
+    try:
+        event = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "path": path,
+            "intercept_type": intercept_type,
+            "matched_category": matched_category,
+            "matched_brand": matched_brand,
+            "action": action,
+            "fallback_triggered": bool(fallback_triggered),
+            "ai_decision_empty": bool(ai_decision_empty),
+            "latency_seconds": round(latency_seconds, 3),
+            "delivery_mode": delivery_mode,
+        }
+        print(f"{AI_DECISION_LOG_MARKER}{json.dumps(event, ensure_ascii=False)}")
+    except Exception as e:
+        print(f"[log_ai_decision_event 記錄失敗，不影響本輪對話]: {e}")
 
 
 def parse_log_line(line: str):

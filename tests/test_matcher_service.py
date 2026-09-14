@@ -607,6 +607,24 @@ class FindBenefitMatchedJobsTests(unittest.TestCase):
         self.assertEqual(keyword, "保障底薪")
         self.assertEqual(jobs, [job_b])
 
+    def test_negated_benefit_keyword_is_not_matched(self):
+        # 安全性檢查發現：這支函式原本沒有檢查否定語氣，「不要有公司車的
+        # 工作」會被誤判成使用者要找公司車職缺，答非所問。
+        job = {"職缺名稱": "蝦皮外送三輪雇傭", "福利": "公司車"}
+        keyword, jobs = m.find_benefit_matched_jobs("不要有公司車的工作", [job])
+        self.assertEqual(keyword, "")
+        self.assertEqual(jobs, [])
+
+    def test_single_character_benefit_keyword_is_ignored(self):
+        # 安全性檢查發現：這支函式原本沒有排除太短的關鍵字，如果同仁不小心
+        # 在「福利」欄位填了單一個字（例如「餐」），會變成極危險的短字串，
+        # 任何剛好包含這個字、卻完全無關的句子都會被誤判命中（例如問「想找
+        # 餐飲的工作」，這句話是在問職務類別，不是在問福利）。
+        job = {"職缺名稱": "工作A", "福利": "餐"}
+        keyword, jobs = m.find_benefit_matched_jobs("想找餐飲的工作", [job])
+        self.assertEqual(keyword, "")
+        self.assertEqual(jobs, [])
+
 
 if __name__ == "__main__":
     unittest.main()

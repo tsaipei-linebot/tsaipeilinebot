@@ -43,6 +43,17 @@ def get_location_suffix_by_industry(job: dict) -> str:
     # 4. 一般預設[cite: 8]
     return "各區據點（自選區域）"
 
+def _normalize_tai(s: str) -> str:
+    """把「臺」正規化成「台」，只用來比對，不影響顯示文字（顯示仍然用原始
+    字串）。同仁在 Notion 填「縣市」「行政區」欄位時，全形「臺」跟半形「台」
+    兩種寫法都可能出現（例如「臺南市」），但 target_location／same_county_scope
+    這兩個呼叫端傳進來的值一律已經正規化成「台」（見 matcher_service.py 的
+    extract_current_target_location() 等函式），兩邊沒有統一比對基準的話，
+    同仁填「臺」的職缺會比對不到，退讓建議會整個失效、退化成只顯示縣市
+    名稱，看不到行政區細節——這正是這個功能原本要解決的問題。"""
+    return (s or "").replace("臺", "台")
+
+
 def _strip_county_prefix(district: str, county: str) -> str:
     """行政區欄位有時候會被同仁習慣性地加上縣市前綴（例如寫成「桃園市八德區」
     而不是單純「八德區」），通常是為了避免同名行政區跨縣市搞混（例如中山區
@@ -83,18 +94,23 @@ def format_clean_location(job: dict, target_location: str = "", same_county_scop
     suffix = get_location_suffix_by_industry(job)
 
     raw_tokens = [d.strip() for d in re.split(r'[,，、\s]+', district) if d.strip()]
-    dist_list = [_strip_county_prefix(d, county) for d in raw_tokens]
+    # 用 dict.fromkeys 去重複、保留原始出現順序：同仁複製貼上「行政區」欄位時
+    # 偶爾會不小心貼出重複的行政區名稱，去重複前會讓行政區數量被灌水，可能誤觸發
+    # 下面「≥5 個行政區時改用概括描述」這條規則，或是顯示文字重複列出同一個
+    # 行政區（例如「板橋、板橋、三重」）。
+    dist_list = list(dict.fromkeys(_strip_county_prefix(d, county) for d in raw_tokens))
 
     # 1. 使用者有明確指定行政區時，優先顯示該行政區——命中不只一個就全部列出，
     #    不要只回傳第一個找到的，避免職缺涵蓋範圍很廣時漏掉其他相符的地方。
     if target_location:
-        matched_districts = [d for d in dist_list if target_location in d or d in target_location]
+        target_norm = _normalize_tai(target_location)
+        matched_districts = [d for d in dist_list if target_norm in _normalize_tai(d) or _normalize_tai(d) in target_norm]
         if matched_districts:
             return "、".join(dict.fromkeys(matched_districts))
 
         county_list = [c.strip() for c in re.split(r'[,，、\s]+', county) if c.strip()]
         for c in county_list:
-            if target_location in c or c in target_location:
+            if target_norm in _normalize_tai(c) or _normalize_tai(c) in target_norm:
                 return f"{c} {suffix}".strip()
 
     # 2. 「同縣市退讓建議」專用：先把行政區範圍縮小到這個縣市底下（用職缺原始、
@@ -102,7 +118,8 @@ def format_clean_location(job: dict, target_location: str = "", same_county_scop
     #    再套用跟一般情況一樣的行政區數量級距判斷，避免職缺橫跨好幾個縣市時，
     #    卡片把「全部」縣市都印出來，跟文字回覆（只講這個縣市）兜不起來。
     if same_county_scope:
-        scoped_raw = [d for d in raw_tokens if same_county_scope in d]
+        scope_norm = _normalize_tai(same_county_scope)
+        scoped_raw = [d for d in raw_tokens if scope_norm in _normalize_tai(d)]
         scoped_dist_list = [_strip_county_prefix(d, same_county_scope) for d in scoped_raw]
         scoped_count = len(scoped_dist_list)
         if scoped_count == 0:
