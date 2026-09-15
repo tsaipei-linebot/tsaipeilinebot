@@ -6,8 +6,8 @@
 <p class="hint">
     Google 表單送出後會自動出現在這裡，新資料預設為「未面試」，廠商（蝦皮三輪的話還有合作方式）
     會依表單來源自動帶入，同仁可以自己改；如果實際上是蝦皮二輪公司車／二輪雇傭自備車／承攬，
-    錄取時記得改選正確的廠商。「放棄」的人預設不會顯示，主動搜尋姓名、或直接篩選
-    狀態為「放棄」才會列出來。UD、UC 的應徵者、以及蝦皮三輪合作方式為「三輪雇傭」的應徵者需要先
+    錄取時記得改選正確的廠商。「已錄取」「放棄」的人預設不會顯示，主動搜尋姓名、或直接篩選
+    狀態為「已錄取」／「放棄」才會列出來。UD、UC 的應徵者、以及蝦皮三輪合作方式為「三輪雇傭」的應徵者需要先
     通過試駕才能錄取；「錄取」需要先確認廠商，送出後會自動建立正式人員資料，之後再到人員詳細頁
     補身分證字號、上傳報到文件即可。
 </p>
@@ -63,6 +63,9 @@
                 <th>備註</th>
                 <th>狀態</th>
                 <th>錄取</th>
+                {% if user.role == "admin" %}
+                <th>刪除</th>
+                {% endif %}
             </tr>
         </thead>
         <tbody>
@@ -131,6 +134,12 @@
                     <button type="submit" formaction="/delivery/applicants/{{ a.id }}/accept" class="btn btn-primary btn-small">錄取並建立人員</button>
                     {% endif %}
                 </td>
+                {% if user.role == "admin" %}
+                <td>
+                    <button type="submit" formaction="/delivery/applicants/{{ a.id }}/delete" class="btn btn-danger btn-small"
+                            onclick="return confirm('確定要刪除「{{ a.name }}」這筆應徵紀錄嗎？刪除後無法復原（已錄取建立的正式人員資料不會受影響）。');">刪除</button>
+                </td>
+                {% endif %}
             </tr>
             {% endfor %}
         </tbody>

@@ -4917,3 +4917,54 @@ update）。全部測試（`python3 -m unittest discover -s tests -p
 名單「其他回覆」欄不會再顯示「防詐騙提醒」「時間戳記」這兩項（原始
 表單資料本身沒有被刪除，只是不顯示）；(2) 應徵名單這一頁的可用寬度
 變寬了，其他頁面（例如人員詳細頁）維持原本寬度不變。
+
+## 配送部系統：應徵名單預設隱藏「已錄取」／「放棄」、新增刪除功能（2026-09-15）
+
+使用者要求應徵名單畫面預設不要再看到已經走完流程的「已錄取」「放棄」
+紀錄，並且加一個刪除功能，方便清掉重複投遞、測試資料等不需要保留的
+應徵紀錄。
+
+### 這次做了什麼
+
+- `delivery/repository.py`：`applicant_matches_filters()` 原本只有
+  「放棄」狀態預設隱藏，現在「已錄取」也比照辦理——沒有搜尋姓名、也
+  沒有明確篩選狀態時，這兩種狀態都不會出現在清單裡；主動搜尋姓名、或
+  直接把篩選狀態選成「已錄取」／「放棄」，就能查回來，行為跟原本
+  「放棄」的邏輯完全一致，維持既有「事後回頭查得到」的設計。
+- 新增 `delete_applicant()`：整筆刪除 `applicants` 集合裡的一筆文件。
+  應徵紀錄本身沒有另外上傳的檔案，不用像刪除人員那樣額外清 Cloud
+  Storage；「已錄取」的應徵紀錄如果被刪除，**已經建立好的正式人員
+  資料不會受影響**（`personnel_ref()` 是完全獨立的另一份 Firestore
+  集合，`converted_personnel_id` 只是單向記錄「當初是哪一筆應徵紀錄
+  轉過來的」，不是雙向連動）。
+- `delivery/routes/applicant_routes.py`：新增 `POST /applicants/
+  {applicant_id}/delete`，比照 `vendor_routes.py` 的
+  `delete_personnel_submit()`——不可逆的刪除動作走 `admin_required`，
+  只有配送部主管職級的帳號能刪，不是任何有配送部權限的帳號都能刪。
+- `delivery/templates/applicants_list.html`：表格最右側新增「刪除」欄
+  （只有主管角色的帳號才看得到這一欄），按鈕跳確認對話框才會真的送出，
+  文案有提醒「已錄取建立的正式人員資料不會受影響」，避免同仁誤會刪除
+  應徵紀錄會連帶刪掉已經建立的人員。提示文字段落也一併更新，說明「已
+  錄取」「放棄」現在都預設不顯示。
+
+### 測試
+
+`tests/test_delivery_applicants.py` 新增 `test_hired_hidden_by_
+default`／`test_hired_shown_when_searching_by_name`／
+`test_hired_shown_when_explicitly_filtering_status`（比照既有的
+withdrawn 測試）、`DeleteApplicantTests`（驗證只刪那一筆 Firestore
+文件）、`DeleteApplicantRouteTests`（2 個：授權時刪除並導回列表頁、
+沒授權時 `redirect` 短路完全不呼叫刪除）。全部測試（`python3 -m
+unittest discover -s tests -p "test_*.py"`）1295 個全數通過。另外用
+Playwright 把畫面渲染出來實際點擊「刪除」按鈕，確認會跳出正確文字的
+確認對話框，按「取消」不會誤送出表單。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**。畫面上會看到：(1) 應徵名單預設
+只會顯示「未面試」「已面試」的人，「已錄取」跟「放棄」都不會自動
+出現，要查的話用上方搜尋姓名、或篩選狀態選「已錄取」／「放棄」；
+(2) 表格最右側多一欄「刪除」，**只有主管職級的帳號才看得到**，一般
+專員帳號看不到這個按鈕。刪除前會跳確認對話框，按下去無法復原，但
+不會影響已經錄取、建立好的正式人員資料（人員資料要刪除的話，還是
+到「人員詳細頁」用既有的刪除功能）。

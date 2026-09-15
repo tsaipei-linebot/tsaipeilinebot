@@ -829,9 +829,11 @@ def applicant_matches_filters(
 ) -> bool:
     """判斷這筆應徵資料要不要出現在清單裡（純函式，data 需已經算好 status）。
 
-    預設（沒指定狀態篩選、也沒搜尋姓名）不顯示「放棄」的紀錄，避免洗版；
-    只要主動搜尋姓名、或直接篩選狀態為「放棄」，就會顯示，方便事後回頭查。
-    廠商正常顯示，不特別隱藏「未指定廠商」的紀錄。
+    預設（沒指定狀態篩選、也沒搜尋姓名）不顯示「已錄取」「放棄」的紀錄，
+    避免洗版——這兩種狀態都已經走完流程，平常盤點應徵名單時不需要一直
+    看到；只要主動搜尋姓名、或直接篩選狀態為「已錄取」／「放棄」，就會
+    顯示，方便事後回頭查（2026-09-15 使用者要求把「已錄取」也比照「放棄」
+    預設隱藏）。廠商正常顯示，不特別隱藏「未指定廠商」的紀錄。
     """
     if name_keyword and name_keyword not in (data.get("name") or ""):
         return False
@@ -843,7 +845,7 @@ def applicant_matches_filters(
     status = data.get("status") or normalize_applicant_status(data)
     if status_filter:
         return status == status_filter
-    if status == "withdrawn" and not name_keyword:
+    if status in ("withdrawn", "hired") and not name_keyword:
         return False
     return True
 
@@ -973,6 +975,16 @@ def bulk_update_applicants(updates: dict) -> None:
 
 def mark_applicant_hired(applicant_id: str, personnel_id: str):
     applicants_ref().document(applicant_id).update({"status": "hired", "converted_personnel_id": personnel_id})
+
+
+def delete_applicant(applicant_id: str):
+    """整筆刪除一筆應徵紀錄（2026-09-15 新增），純粹是清掉「應徵名單」
+    這份列表上的紀錄，不影響已經錄取建立的正式人員資料（`personnel_ref()`
+    是完全獨立的另一份 Firestore 集合，`converted_personnel_id` 只是
+    單向記錄「當初是哪一筆應徵紀錄轉過來的」，刪掉應徵紀錄不會連動刪除
+    人員）。應徵紀錄本身沒有另外上傳的檔案，不用像刪除人員那樣額外清
+    Cloud Storage 裡的檔案。"""
+    applicants_ref().document(applicant_id).delete()
 
 
 # ==========================================
