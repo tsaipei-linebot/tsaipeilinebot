@@ -875,8 +875,8 @@ def upsert_applicant(name: str, phone: str, answers: dict, vendor: str = "", coo
     廠商、合作方式），並把處理狀態清空回到「未面試」，不會疊加成新的一筆。
     姓名+電話對不到既有紀錄（含兩者缺一的情況）時直接新增一筆。
 
-    試駕狀態刻意不隨表單重投而重置——那是同仁自己操作/記錄的結果，不是表單
-    填寫的內容，重複投遞表單不該把已經記錄的試駕結果洗掉。"""
+    試駕狀態、備註刻意不隨表單重投而重置——那些是同仁自己操作/記錄的結果，
+    不是表單填寫的內容，重複投遞表單不該把已經記錄的內容洗掉。"""
     existing = find_applicant_by_name_and_phone(name, phone)
     payload = {
         "name": name,
@@ -885,6 +885,7 @@ def upsert_applicant(name: str, phone: str, answers: dict, vendor: str = "", coo
         "vendor": vendor or "",
         "cooperation_type": cooperation_type or "",
         "test_drive": (existing or {}).get("test_drive") or DEFAULT_TEST_DRIVE_STATUS,
+        "note": (existing or {}).get("note") or "",
         "status": "not_interviewed",
         "converted_personnel_id": None,
         "created_at": time.time(),
@@ -903,6 +904,7 @@ def _normalize_applicant(data: dict) -> dict:
     data["vendor"] = data.get("vendor") or ""
     data["cooperation_type"] = data.get("cooperation_type") or ""
     data["test_drive"] = data.get("test_drive") or DEFAULT_TEST_DRIVE_STATUS
+    data["note"] = data.get("note") or ""
     return data
 
 
@@ -935,12 +937,14 @@ def get_applicant(applicant_id: str):
 
 
 def bulk_update_applicants(updates: dict) -> None:
-    """一次更新多筆應徵紀錄的狀態/廠商/合作方式/試駕，配合前端「一鍵全部
-    更新」。每個欄位獨立驗證，只有合法值才會真的寫入；「已錄取」狀態一樣
-    不能透過這裡設定，只能透過「錄取並建立人員」那個流程。
+    """一次更新多筆應徵紀錄的狀態/廠商/合作方式/試駕/備註，配合前端「一鍵
+    全部更新」。每個欄位獨立驗證，只有合法值才會真的寫入；「已錄取」狀態
+    一樣不能透過這裡設定，只能透過「錄取並建立人員」那個流程。
 
-    updates 格式：{applicant_id: {"status": ..., "vendor": ..., "cooperation_type": ..., "test_drive": ...}}，
-    每個 applicant 底下的欄位都可以缺，缺的就不動。"""
+    updates 格式：{applicant_id: {"status": ..., "vendor": ..., "cooperation_type": ..., "test_drive": ..., "note": ...}}，
+    每個 applicant 底下的欄位都可以缺，缺的就不動。「備註」是同仁自由輸入
+    的文字，不像其他欄位有固定選項可以比對，只要有帶這個鍵就整段存入
+    （含清空成空字串），不做內容限制。"""
     batch = get_db().batch()
     has_writes = False
     for applicant_id, fields in updates.items():
@@ -957,6 +961,9 @@ def bulk_update_applicants(updates: dict) -> None:
         test_drive = fields.get("test_drive")
         if test_drive is not None and test_drive in TEST_DRIVE_STATUS_MAP:
             patch["test_drive"] = test_drive
+        note = fields.get("note")
+        if note is not None:
+            patch["note"] = note.strip()
         if patch:
             batch.update(applicants_ref().document(applicant_id), patch)
             has_writes = True

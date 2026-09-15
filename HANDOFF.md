@@ -4831,3 +4831,44 @@ routes.py` 調整既有測試的假資料，讓 fake 上傳內容符合真實檔
 差異，除非：(1) 上傳偽裝過的檔案會被新的格式檢查擋下來；(2) 合約
 總表資料量真的接近上限時會多一行提醒文字；(3) 密碼在下次修改時
 會自動套用更高的加密強度，這件事同仁不會、也不需要察覺到。
+
+## 配送部系統：應徵名單新增「備註」欄位（2026-09-15）
+
+`/delivery/applicants`（應徵名單）新增一欄「備註」，同仁可以自由輸入
+文字，跟其他欄位（廠商/合作方式/試駕/狀態）一樣透過頁面上的「一鍵全部
+更新」按鈕批次存檔，也可以個別在「錄取並建立人員」時一起帶入。
+
+### 這次做了什麼
+
+- `delivery/repository.py`：`_normalize_applicant()` 補上 `note` 欄位
+  預設值（沒有資料時是空字串）；`bulk_update_applicants()` 新增
+  `note` 欄位的處理——這欄是同仁自由輸入的文字，不像狀態/廠商/合作
+  方式/試駕有固定選項可以比對合法性，只要表單有帶這個鍵就整段存入
+  （去頭尾空白，含清空成空字串），不做內容限制。`upsert_applicant()`
+  （Google 表單重複投遞同一人時的覆蓋邏輯）也把 `note` 加進「不隨表單
+  重投而重置」的欄位清單，比照既有的試駕狀態——備註是同仁自己記錄的
+  結果，不是表單填寫的內容，同一人重複投表單不該把已經寫好的備註洗掉。
+- `delivery/routes/applicant_routes.py`：`bulk_update_applicants()`
+  路由新增解析表單裡 `note_{applicant_id}` 欄位；`accept_applicant()`
+  （錄取並建立人員）也一併讀取、存回這個人當下的備註內容，避免同仁
+  剛打好備註就直接按「錄取」時備註被略過沒存到。
+- `delivery/templates/applicants_list.html`：表格新增「備註」欄，
+  一個自由輸入的文字框，放在「試駕」跟「狀態」之間。
+
+### 測試
+
+`tests/test_delivery_applicants.py` 新增
+`NormalizeApplicantNoteTests`（預設值/既有值保留）、
+`BulkUpdateApplicantsNoteTests`（存入/去空白/清空/沒帶欄位不動/
+完全沒異動時不 commit，5 個，用假的 Firestore batch 驗證實際寫入的
+內容）、`BulkUpdateApplicantsRouteTests`（2 個，驗證路由層 `note_`
+欄位解析邏輯，跟其他欄位混在同一次表單送出時正確合併成同一筆
+update）。全部測試（`python3 -m unittest discover -s tests -p
+"test_*.py"`）1288 個全數通過。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**。畫面上「應徵名單」的表格會
+多一欄「備註」，同仁可以直接打字，跟其他欄位一樣要按「一鍵全部
+更新」（或該筆的「錄取並建立人員」）才會真的存檔；沒有字數限制，
+但建議簡短記錄重點就好（例如「電話一直沒接」「約好下週三面試」）。
