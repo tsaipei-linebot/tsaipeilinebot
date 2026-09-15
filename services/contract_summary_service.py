@@ -183,8 +183,8 @@ def parse_selected_years(raw_years: list, available_years: list) -> list:
 
 
 def _pricing_summary(record: dict) -> str:
-    """四種合約版本的報價欄位形狀都不一樣，這裡整理成一句話，總表用一欄
-    顯示就好，不用四組互相稀疏的獨立欄位——跟
+    """五種合約版本的報價欄位形狀都不一樣，這裡整理成一句話，總表用一欄
+    顯示就好，不用五組互相稀疏的獨立欄位——跟
     `services/client_contract_service.py` 的 `CONTRACT_VERSIONS` 版本
     說明對照著看。"""
     version = record.get("contract_version")
@@ -192,6 +192,11 @@ def _pricing_summary(record: dict) -> str:
         return f"時薪 {record.get('hourly_wage', '')}／管理費 {record.get('management_fee', '')}"
     if version == "actual_paid":
         return f"服務費：{record.get('service_fee', '')}"
+    if version == "traditional_flat_rate":
+        # 9 個時段費率太多，總表一欄放不下，只列平日第8小時內的基本費率
+        # 當代表值，完整9個時段要點進合約詳細內容看，跟其他版本的一行
+        # 摘要用途一致——只是給總表快速掃視，不是完整報價明細。
+        return f"平日基本費率 {record.get('rate_weekday_8h', '')} 元/hr（傳統一口價，共9級距）"
     if version == "white_collar_referral":
         return f"服務費 {record.get('fee_amount', '')}／收費上限 {record.get('service_months', '')} 個月"
     if version == "taiwanese_referral":

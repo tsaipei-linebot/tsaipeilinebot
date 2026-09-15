@@ -33,6 +33,12 @@ services/client_contract_service.py 開頭的版本說明。這兩個版本彼�
 區塊在表單上是同時存在、只是用 CSS 切換顯示/隱藏，欄位名稱共用的話
 瀏覽器送出表單時會把兩個同名欄位的值都送出，後端可能抓到看不到的那個
 欄位的值。
+
+**第五個合約版本「傳統一口價」（2026-09-15 新增）**：`traditional_flat_rate`
+跟時薪一口價／實支實付同一家族（主文完全共用），只是附件一報價表格
+換成 9 個時段各自獨立的費率欄位（見 `TRADITIONAL_RATE_FIELDS`），這裡
+的 `_PRICING_FIELDS_BY_VERSION["traditional_flat_rate"]` 直接引用那份
+清單，9 個欄位都要填才算完整，不是只挑其中幾個。
 """
 from datetime import date, datetime
 from urllib.parse import quote
@@ -53,6 +59,7 @@ from services.client_contract_service import (
     DEFAULT_REPLACE_NOTICE_DAYS,
     DEFAULT_SERVICE_MONTHS,
     SEVERANCE_PAYER_OPTIONS,
+    TRADITIONAL_RATE_FIELDS,
     can_view_submission,
     convert_docx_to_pdf,
     default_contract_end_date,
@@ -73,13 +80,15 @@ router = APIRouter()
 MODULE_CODE = "client_contracts"
 
 # 各合約版本各自需要哪些報價欄位才算填完整——時薪一口價要員工薪資+管理費
-# 兩個數字，實支實付只要服務費那一格文字，白領代招要服務費金額+收費月數
-# 上限，台籍代招要服務費百分比+收費月數上限（跟白領代招欄位名稱刻意不
-# 一樣，見 services/client_contract_service.py 開頭說明），四者互不相干，
-# 送出時只檢查這次選的版本實際用得到的欄位。
+# 兩個數字，實支實付只要服務費那一格文字，傳統一口價要 9 個時段費率全部
+# 填（見 TRADITIONAL_RATE_FIELDS），白領代招要服務費金額+收費月數上限，
+# 台籍代招要服務費百分比+收費月數上限（跟白領代招欄位名稱刻意不一樣，見
+# services/client_contract_service.py 開頭說明），彼此互不相干，送出時
+# 只檢查這次選的版本實際用得到的欄位。
 _PRICING_FIELDS_BY_VERSION = {
     "hourly_flat_rate": ["hourly_wage", "management_fee"],
     "actual_paid": ["service_fee"],
+    "traditional_flat_rate": list(TRADITIONAL_RATE_FIELDS),
     "white_collar_referral": ["fee_amount", "service_months"],
     "taiwanese_referral": ["referral_fee_percentage", "referral_service_months"],
 }
@@ -126,7 +135,7 @@ def _build_filename(party_a_name: str, contract_year: int, ext: str) -> str:
 def _duplicate_form_values(record: dict) -> dict:
     """「複製」功能用：把一筆既有紀錄轉成表單預填用的 dict，key 要跟表單
     欄位的 name 屬性一致。"""
-    return {
+    values = {
         "party_a_name": record.get("party_a_name", ""),
         "party_a_representative": record.get("party_a_representative", ""),
         "party_a_address": record.get("party_a_address", ""),
@@ -148,6 +157,9 @@ def _duplicate_form_values(record: dict) -> dict:
         "referral_service_months": record.get("referral_service_months", ""),
         "contract_version": record.get("contract_version", DEFAULT_CONTRACT_VERSION),
     }
+    for field in TRADITIONAL_RATE_FIELDS:
+        values[field] = record.get(field, "")
+    return values
 
 
 def _form_context(*, user: dict, error: str = "", form: dict = None) -> dict:
@@ -248,6 +260,7 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
     service_months = (form.get("service_months") or "").strip()
     referral_fee_percentage = (form.get("referral_fee_percentage") or "").strip()
     referral_service_months = (form.get("referral_service_months") or "").strip()
+    traditional_rates = {field: (form.get(field) or "").strip() for field in TRADITIONAL_RATE_FIELDS}
     contract_version = (form.get("contract_version") or DEFAULT_CONTRACT_VERSION).strip()
     version_config = CONTRACT_VERSIONS.get(contract_version, {})
     requires_sign_date = version_config.get("requires_sign_date", True)
@@ -261,6 +274,7 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         "service_months": service_months,
         "referral_fee_percentage": referral_fee_percentage,
         "referral_service_months": referral_service_months,
+        **traditional_rates,
     }
 
     form_values = {
@@ -330,6 +344,7 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         service_months=service_months,
         referral_fee_percentage=referral_fee_percentage,
         referral_service_months=referral_service_months,
+        traditional_rates=traditional_rates,
     )
 
     filename = _build_filename(party_a["name"], contract_start_date.year, "docx")
@@ -372,6 +387,7 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         service_months=service_months,
         referral_fee_percentage=referral_fee_percentage,
         referral_service_months=referral_service_months,
+        traditional_rates=traditional_rates,
         blob_path=blob_path,
         pdf_blob_path=pdf_blob_path,
         vendor_id=vendor_id,

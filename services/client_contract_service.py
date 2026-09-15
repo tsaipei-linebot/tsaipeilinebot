@@ -19,7 +19,7 @@ Firestore／GCS。
 lookup.py`），查得到就自動帶入，查不到就手動輸入全部欄位——這兩個查詢
 服務都是失敗容錯設計，不會擋住合約產生流程。
 
-**合約版本**：目前有四個版本：
+**合約版本**：目前有五個版本：
 - ``hourly_flat_rate``（時薪一口價）跟 ``actual_paid``（實支實付）是同一種
   「人力派遣服務合約書」，甲乙雙方欄位/合約期間/撤換條款/匯款日這些主文
   完全共用同一套排版跟 Jinja 標籤，只有附件一報價表格的結構不一樣：
@@ -27,6 +27,17 @@ lookup.py`），查得到就自動帶入，查不到就手動輸入全部欄位�
   實支實付是使用者提供的真實報價表格（薪資/加班費/法定項目/員工福利都
   固定寫「實支實付」，只有「服務費－全程派遣」那一格是空白的
   `service_fee` 欄位讓專員自行填寫，例如「人員薪資的15%」）。
+- ``traditional_flat_rate``（傳統一口價，2026-09-15 新增）也是這個「同一種
+  合約主文、只換附件一」的家族成員之一，跟 ``hourly_flat_rate`` 差異
+  「只在附件」——使用者原話。附件一是比 ``hourly_flat_rate`` 更細分時段
+  的傳統報價表：平日／休息日／國定假日三大類，各自再拆「第8小時內」
+  「第9-10小時」「第11-12小時」（休息日是「第1-2/3-8/9-12小時」）三個
+  時段，總共 9 個各自獨立的費率欄位（`rate_weekday_8h`／
+  `rate_weekday_9to10h`／`rate_weekday_11to12h`／`rate_restday_1to2h`／
+  `rate_restday_3to8h`／`rate_restday_9to12h`／`rate_holiday_1to8h`／
+  `rate_holiday_9to10h`／`rate_holiday_11to12h`，欄位命名刻意跟其他版本
+  不衝突）。右側「說明」欄的 3 條備註（由乙方招募派遣員工／每員每月
+  收取／以上報價不含稅）使用者確認寫死在範本裡，不開放每次修改。
 - ``white_collar_referral``（白領代招，2026-09-12 新增）跟
   ``taiwanese_referral``（台籍代招，2026-09-12 新增）是完全不同的
   「人力代招服務合約書」，條文結構（第一條～第九條）都跟前兩個「人力
@@ -116,13 +127,14 @@ _ASSETS_DIR = os.path.join(_REPO_ROOT, "assets", "client_contracts")
 
 # 合約版本代碼 -> 顯示名稱／對應「專案合約維護」的簽約模式跟合作類別
 # 選項／各自的 master template 檔案／這個版本需不需要「簽約日期」跟
-# 「撤換條款」這兩組共用欄位。時薪一口價跟實支實付兩個版本的合約主文
-# （甲乙雙方欄位、合約期間、撤換條款、匯款日那幾條）完全共用同一套排版跟
-# Jinja 標籤，只有附件一報價表格的結構不一樣（時薪一口價是簡單 3 欄，
-# 實支實付是使用者提供的複雜報價表格，見 HANDOFF.md 的說明），白領代招則
-# 是條文結構完全不同的另一份合約書，三個版本各自獨立一個 docx 檔案，不是
-# 同一份範本裡切換段落。之後如果要再加新版本，一樣是在這裡加一筆＋準備
-# 對應的 master template。
+# 「撤換條款」這兩組共用欄位。時薪一口價／實支實付／傳統一口價這三個
+# 版本的合約主文（甲乙雙方欄位、合約期間、撤換條款、匯款日那幾條）完全
+# 共用同一套排版跟 Jinja 標籤，只有附件一報價表格的結構不一樣（時薪一口
+# 價是簡單 3 欄，實支實付是使用者提供的複雜報價表格，傳統一口價是平日/
+# 休息日/國定假日各拆 3 時段的 9 級距費率表，見 HANDOFF.md 的說明），
+# 白領代招則是條文結構完全不同的另一份合約書。每個版本各自獨立一個 docx
+# 檔案，不是同一份範本裡切換段落。之後如果要再加新版本，一樣是在這裡加
+# 一筆＋準備對應的 master template。
 CONTRACT_VERSIONS = {
     "hourly_flat_rate": {
         "label": "時薪一口價",
@@ -137,6 +149,14 @@ CONTRACT_VERSIONS = {
         "project_contract_mode": "實支實付",
         "project_contract_coop_category": "派遣",
         "template_path": os.path.join(_ASSETS_DIR, "master_template_actual_paid.docx"),
+        "requires_sign_date": True,
+        "requires_severance_clause": True,
+    },
+    "traditional_flat_rate": {
+        "label": "傳統一口價",
+        "project_contract_mode": "一口價",
+        "project_contract_coop_category": "派遣",
+        "template_path": os.path.join(_ASSETS_DIR, "master_template_traditional_flat_rate.docx"),
         "requires_sign_date": True,
         "requires_severance_clause": True,
     },
@@ -157,6 +177,21 @@ CONTRACT_VERSIONS = {
         "requires_severance_clause": False,
     },
 }
+# 傳統一口價（traditional_flat_rate）附件一的 9 個費率欄位，照表格順序排
+# （平日／休息日／國定假日 各 3 個時段），routes/表單/測試都照這份清單走，
+# 不用各自維護一份重複的清單。
+TRADITIONAL_RATE_FIELDS = [
+    "rate_weekday_8h",
+    "rate_weekday_9to10h",
+    "rate_weekday_11to12h",
+    "rate_restday_1to2h",
+    "rate_restday_3to8h",
+    "rate_restday_9to12h",
+    "rate_holiday_1to8h",
+    "rate_holiday_9to10h",
+    "rate_holiday_11to12h",
+]
+
 DEFAULT_CONTRACT_VERSION = "hourly_flat_rate"
 DEFAULT_SERVICE_MONTHS = "12"
 DEFAULT_REFERRAL_SERVICE_MONTHS = "6"
@@ -200,19 +235,23 @@ def render_contract_docx(
     service_months: str = "",
     referral_fee_percentage: str = "",
     referral_service_months: str = "",
+    traditional_rates: dict = None,
 ) -> bytes:
     """套版產生 Word 檔內容（bytes）。party_a／party_b 都是
     ``{"name", "representative", "address", "tax_id", "phone"}`` 這個形狀
     的 dict——party_a 是專員填的/查到的甲方資料，party_b 是從 `/companies`
     選出來的公司資料。``contract_version`` 決定套哪一份 master template
     （見 `CONTRACT_VERSIONS`）：``hourly_flat_rate`` 用 `hourly_wage`／
-    `management_fee`，``actual_paid`` 用 `service_fee`，``white_collar_
-    referral`` 用 `fee_amount`／`service_months`，``taiwanese_referral``
-    用 `referral_fee_percentage`／`referral_service_months`，不屬於當次
-    版本的參數會被忽略（呼叫端只要照表單實際欄位傳就好，不用自己篩選）。
-    ``sign_date`` 只有 `CONTRACT_VERSIONS[contract_version]["requires_
-    sign_date"]` 是 True 的版本才會用到，不需要的版本傳 None 即可（模板
-    裡不會引用 `sign_date_roc` 這個變數，傳了也不影響套版結果）。"""
+    `management_fee`，``actual_paid`` 用 `service_fee`，
+    ``traditional_flat_rate`` 用 `traditional_rates`（見
+    `TRADITIONAL_RATE_FIELDS`，dict 的 key 要跟那份清單一致），
+    ``white_collar_referral`` 用 `fee_amount`／`service_months`，
+    ``taiwanese_referral`` 用 `referral_fee_percentage`／
+    `referral_service_months`，不屬於當次版本的參數會被忽略（呼叫端只要
+    照表單實際欄位傳就好，不用自己篩選）。``sign_date`` 只有
+    `CONTRACT_VERSIONS[contract_version]["requires_sign_date"]` 是 True
+    的版本才會用到，不需要的版本傳 None 即可（模板裡不會引用
+    `sign_date_roc` 這個變數，傳了也不影響套版結果）。"""
     context = {
         "party_a_name": party_a["name"],
         "party_a_representative": party_a["representative"],
@@ -238,6 +277,9 @@ def render_contract_docx(
         "referral_fee_percentage": referral_fee_percentage,
         "referral_service_months": referral_service_months,
     }
+    traditional_rates = traditional_rates or {}
+    for field in TRADITIONAL_RATE_FIELDS:
+        context[field] = traditional_rates.get(field, "")
     template_path = CONTRACT_VERSIONS[contract_version]["template_path"]
     tpl = DocxTemplate(template_path)
     tpl.render(context)
@@ -271,6 +313,7 @@ def save_submission(
     service_months: str = "",
     referral_fee_percentage: str = "",
     referral_service_months: str = "",
+    traditional_rates: dict = None,
     pdf_blob_path: str = "",
     vendor_id: str = "",
 ) -> dict:
@@ -307,6 +350,9 @@ def save_submission(
         "sent_to_project_contracts_at": None,
         "created_at": datetime.now(timezone.utc),
     }
+    traditional_rates = traditional_rates or {}
+    for field in TRADITIONAL_RATE_FIELDS:
+        data[field] = traditional_rates.get(field, "")
     doc_ref = contracts_ref().document()
     doc_ref.set(data)
     data["id"] = doc_ref.id
