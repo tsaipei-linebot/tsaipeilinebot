@@ -16,6 +16,7 @@ from delivery.repository import (
     applicant_matches_filters,
     applicant_needs_test_drive,
     bulk_update_applicants,
+    delete_applicant,
     normalize_applicant_status,
 )
 from delivery.routes import applicant_routes
@@ -61,6 +62,20 @@ class ApplicantMatchesFiltersTests(unittest.TestCase):
     def test_withdrawn_shown_when_explicitly_filtering_status(self):
         applicant = self._applicant(status="withdrawn")
         self.assertTrue(applicant_matches_filters(applicant, status_filter="withdrawn"))
+
+    def test_hired_hidden_by_default(self):
+        """2026-09-15 使用者要求：「已錄取」比照「放棄」，平常盤點應徵
+        名單時不用一直看到已經走完流程的紀錄。"""
+        applicant = self._applicant(status="hired")
+        self.assertFalse(applicant_matches_filters(applicant))
+
+    def test_hired_shown_when_searching_by_name(self):
+        applicant = self._applicant(status="hired")
+        self.assertTrue(applicant_matches_filters(applicant, name_keyword="王小明"))
+
+    def test_hired_shown_when_explicitly_filtering_status(self):
+        applicant = self._applicant(status="hired")
+        self.assertTrue(applicant_matches_filters(applicant, status_filter="hired"))
 
     def test_name_keyword_excludes_non_matching(self):
         applicant = self._applicant()
@@ -198,6 +213,45 @@ class BulkUpdateApplicantsRouteTests(unittest.TestCase):
                 _FakeRequest([("status_a1", "interviewed"), ("note_a1", "備註內容")]), redirect=None,
             ))
         mock_bulk_update.assert_called_once_with({"a1": {"status": "interviewed", "note": "備註內容"}})
+
+
+class DeleteApplicantTests(unittest.TestCase):
+    """`repository.delete_applicant()`：2026-09-15 新增，純粹刪掉
+    `applicants` 集合裡的那一筆文件，不動任何其他集合。"""
+
+    def test_deletes_the_document(self):
+        fake_ref = mock.Mock()
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_ref
+        with mock.patch.object(repository, "applicants_ref", return_value=fake_collection):
+            delete_applicant("a1")
+        fake_collection.document.assert_called_once_with("a1")
+        fake_ref.delete.assert_called_once()
+
+
+class DeleteApplicantRouteTests(unittest.TestCase):
+    """POST /applicants/{applicant_id}/delete：只有主管（admin_required）
+    能刪，路由本身不讀表單內容，直接呼叫 repository 刪除後導回列表頁。"""
+
+    class _FakeRequest:
+        pass
+
+    def test_deletes_and_redirects_when_authorized(self):
+        with mock.patch.object(applicant_routes.repository, "delete_applicant") as mock_delete:
+            result = applicant_routes.delete_applicant_submit("a1", self._FakeRequest(), redirect=None)
+        mock_delete.assert_called_once_with("a1")
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(result.headers["location"], "/delivery/applicants")
+
+    def test_returns_redirect_without_deleting_when_not_authorized(self):
+        """`redirect` 有值代表 admin_required 這個依賴已經判定這個帳號沒有
+        主管權限，直接短路回傳那個 redirect，完全不呼叫刪除。"""
+        from fastapi.responses import RedirectResponse
+        blocking_redirect = RedirectResponse(url="/delivery/", status_code=303)
+        with mock.patch.object(applicant_routes.repository, "delete_applicant") as mock_delete:
+            result = applicant_routes.delete_applicant_submit("a1", self._FakeRequest(), redirect=blocking_redirect)
+        mock_delete.assert_not_called()
+        self.assertIs(result, blocking_redirect)
 
 
 if __name__ == "__main__":

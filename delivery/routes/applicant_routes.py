@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
 from delivery import repository
-from delivery.auth import current_user, login_required
+from delivery.auth import admin_required, current_user, login_required
 from delivery.config import (
     APPLICANT_STATUSES,
     COOPERATION_TYPE_MAP,
@@ -141,4 +141,17 @@ async def accept_applicant(applicant_id: str, request: Request, redirect=Depends
         applicant["name"], "", applicant.get("phone", ""), vendor, user["username"], **create_kwargs
     )
     repository.mark_applicant_hired(applicant_id, personnel_id)
+    return RedirectResponse(url="/delivery/applicants", status_code=303)
+
+
+@router.post("/applicants/{applicant_id}/delete")
+def delete_applicant_submit(applicant_id: str, request: Request, redirect=Depends(admin_required)):
+    """整筆刪除一筆應徵紀錄（2026-09-15 新增），只有主管能刪——比照
+    vendor_routes.py 的 delete_personnel_submit()，不可逆的刪除動作一律
+    走 admin_required，不是任何有配送部權限的帳號都能刪；前端要先跳確認
+    對話框。刪除應徵紀錄不影響已經錄取建立的正式人員資料（見
+    repository.delete_applicant() 的說明）。"""
+    if redirect:
+        return redirect
+    repository.delete_applicant(applicant_id)
     return RedirectResponse(url="/delivery/applicants", status_code=303)
