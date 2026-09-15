@@ -1849,6 +1849,47 @@ Apps Script 專案又被重新建立、搬移、或改名，一定要記得同�
 又開始出現類似「明明 push 成功但沒生效」的狀況，先檢查 `CLASPRC_JSON`
 這個 secret 存的帳號是不是還符合這個條件。**
 
+### 新增：PR 自動跑測試把關（`.github/workflows/test.yml`，2026-09-15）
+
+使用者表示之後要找同仁一起用 Claude Code 共同開發維護這個 repo（同仁
+一樣不懂寫程式，靠中文跟 Claude Code 溝通改東西）。原本 `main` 分支的
+規則只有「合併後自動部署上線」（`deploy.yml`），完全沒有「先跑測試、
+測試沒過就擋下來」這一關——只有一個人在用還好，多人／多個 Claude Code
+session 同時開發後，任何一個人的改動不小心弄壞別的功能，很可能直接被
+部署到正式環境，沒有人在第一時間發現。
+
+新增 `.github/workflows/test.yml`：每個 PR 送出/更新到 `main` 時，自動
+`pip install -r requirements.txt` 後跑 `python3 -m unittest discover -s
+tests -p "test_*.py"`（目前 652 個測試），測試沒過 PR 上會顯示紅色
+警告。跟 `deploy.yml` 完全分開、不會碰正式環境，也不需要任何 GCP 憑證
+或密鑰——`tests/_env.py` 已經幫全部測試設好安全的假環境變數
+（`GEMINI_API_KEY`／`LINE_CHANNEL_SECRET` 等都是 dummy 值）。
+
+**使用者接下來要手動處理的事（多人協作的其餘設定，Claude Code 這邊
+沒有對應的 API 可以代勞）**：
+
+1. **把同仁加進 GitHub repo**：GitHub 網頁 → 這個 repo → Settings →
+   Collaborators and teams → Add people，權限選 **Write**（可以建分支、
+   推程式碼、開 PR，但不能改 repo 設定或刪除 repo）。
+2. **設定 branch protection，強制走 PR**：Settings → Branches → Add
+   branch protection rule，分支名稱填 `main`，勾選「Require a pull
+   request before merging」；如果想連「測試沒過不能合併」都一起強制
+   （不是只有顯示警告），可以再勾「Require status checks to pass
+   before merging」，並選取上面新增的 `test` 這個檢查項目。
+3. **每位同仁要有自己的 Claude 帳號**，並連接自己的 GitHub 帳號，才能
+   開 Claude Code session 對這個 repo 提出改動；人數多、想要公司統一
+   管理帳號/計費的話，另外研究 Anthropic 有沒有適合團隊的方案。
+4. **GCP（Cloud Run／帳單／Cloud Scheduler）權限建議先不要開放給同仁**：
+   一般的功能開發完全不需要 GCP 權限（部署是合併後自動觸發的），只有
+   維運層級的操作（看帳單、設排程、改環境變數）才需要主控台權限，先
+   維持只有使用者自己能動，比較好追蹤問題出在哪。
+5. **多人協作後 `HANDOFF.md` 的重要性大幅提高**：每個人的 Claude Code
+   session 都是獨立的、看不到別人在聊什麼，這份文件幾乎是唯一能讓不同
+   人接手同一個系統還知道彼此做過什麼的地方。建議同仁動工前先看一下
+   「待辦事項」有沒有別人在做的項目，改完務必請 Claude Code 更新對應
+   章節；如果兩人剛好想同時改同一個功能，先用 LINE 或口頭喊一聲，避免
+   兩個 session 改到同一批檔案、合併時互相衝突。
+
 ## 新增：少凱業務開發專區改成權限控管 ＋ 唯讀網頁（不再直接連 Google Sheet）
 
 背景：`/portal` 首頁原本有一張「少凱業務開發專區」卡片，是寫死在

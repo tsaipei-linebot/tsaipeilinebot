@@ -1,0 +1,31 @@
+name: Run Tests
+
+# 每個 Pull Request 送出/更新時自動跑一次測試，測試沒過就不建議合併
+# （搭配 repo 的 branch protection 規則：Settings → Branches → main 的
+# 「Require a pull request before merging」勾選後，可以再加勾這個工作
+# 流程當「必須通過」的檢查項目）。跟 deploy.yml（合併到 main 後才會
+# 觸發部署）分開，這裡不會碰正式環境、不需要任何 GCP 憑證或密鑰——
+# tests/_env.py 已經幫所有測試設好安全的假環境變數。
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python3 -m unittest discover -s tests -p "test_*.py"
