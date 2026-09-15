@@ -4872,3 +4872,48 @@ update）。全部測試（`python3 -m unittest discover -s tests -p
 多一欄「備註」，同仁可以直接打字，跟其他欄位一樣要按「一鍵全部
 更新」（或該筆的「錄取並建立人員」）才會真的存檔；沒有字數限制，
 但建議簡短記錄重點就好（例如「電話一直沒接」「約好下週三面試」）。
+
+## 配送部系統：應徵名單「其他回覆」拿掉表單固定欄位、頁面加寬（2026-09-15）
+
+使用者操作應徵名單時回報「其他回覆」欄裡的「防詐騙提醒」「時間戳記」
+沒有參考價值，畫面比較擁擠；另外要求整個頁面加寬方便操作。
+
+### 這次做了什麼
+
+- `delivery/form_webhook.py`：`other_answers()` 新增排除
+  `FRAUD_WARNING_KEYWORD`（"防詐騙"）／`TIMESTAMP_KEYWORD`（"時間戳記"）
+  這兩個關鍵字比對到的欄位，跟既有排除姓名/電話的寫法一致（欄位標題
+  「包含」關鍵字就排除，不用完全比對，表單題目文字之後微調也不用
+  跟著改程式碼）。這是共用的純函式，`/api/form-submission` webhook
+  收到新表單回覆時儲存的原始資料完全不變，只有應徵名單頁面「其他
+  回覆」欄顯示時會過濾掉這兩項——換句話說，這兩個欄位還是有存進
+  資料庫，只是不顯示在畫面上。
+- `delivery/templates/base.html`：`<main class="container">` 改成
+  `<main class="container {% block container_class %}{% endblock %}">`，
+  讓個別頁面可以疊加自己的版面寬度 class，不影響其他頁面（沒有蓋這個
+  block 的頁面渲染出來就是原本的 `class="container "`，多一個空白不影響
+  瀏覽器解讀）。
+- `delivery/static/style.css`：新增 `.container-wide { max-width:
+  1440px; }`（原本 `.container` 是 1080px）。
+- `delivery/templates/applicants_list.html`：套用
+  `{% block container_class %}container-wide{% endblock %}`，只有這
+  一頁變寬，配送部系統其他頁面（人員詳細、廠商列表等）版面完全不受
+  影響。
+
+### 測試
+
+`tests/test_delivery_form_webhook.py` 新增
+`test_excludes_fraud_warning_and_timestamp_keys`。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1289 個
+全數通過。另外用這台機器上已經裝好的 Playwright + Chromium（見系統
+環境說明），把 `applicants_list.html` 用假資料直接渲染成靜態 HTML、
+起本機網頁伺服器載入畫面，在 1600px／1440px／1024px 三種寬度下截圖
+確認：「其他回覆」欄不再出現防詐騙提醒/時間戳記、頁面明顯變寬、
+變窄時能正常降級（沒有破版）。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**。畫面上會看到兩個變化：(1) 應徵
+名單「其他回覆」欄不會再顯示「防詐騙提醒」「時間戳記」這兩項（原始
+表單資料本身沒有被刪除，只是不顯示）；(2) 應徵名單這一頁的可用寬度
+變寬了，其他頁面（例如人員詳細頁）維持原本寬度不變。

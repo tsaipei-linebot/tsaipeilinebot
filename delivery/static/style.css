@@ -113,6 +113,10 @@ body {
     padding: 28px 20px 72px;
 }
 
+/* 給欄位比較多、需要左右對照操作的頁面（例如應徵名單）用，避免表格
+   一直要左右捲動——只給有加這個 class 的頁面用，不影響其他頁面版面。 */
+.container-wide { max-width: 1440px; }
+
 .page-title {
     font-size: 23px;
     margin: 0 0 16px;

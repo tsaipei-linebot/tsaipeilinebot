@@ -58,6 +58,18 @@ class OtherAnswersTests(unittest.TestCase):
         result = other_answers(answers)
         self.assertEqual(result, {"行政區熟悉度 [板橋]": "普通"})
 
+    def test_excludes_fraud_warning_and_timestamp_keys(self):
+        """2026-09-15 使用者要求：這兩個表單固定欄位對同仁篩選人員沒有
+        參考價值，畫面上不用顯示。"""
+        answers = {
+            "姓名": "王小明",
+            "防詐騙提醒": "我了解",
+            "時間戳記": "2026/9/15 上午 8:39:45",
+            "可配合天數": "一周可配合5天(含)以上",
+        }
+        result = other_answers(answers)
+        self.assertEqual(result, {"可配合天數": "一周可配合5天(含)以上"})
+
 
 if __name__ == "__main__":
     unittest.main()
