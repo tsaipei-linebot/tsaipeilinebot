@@ -42,7 +42,7 @@
     <label>是否報警
         <select name="police_called" required>
             <option value="">請選擇</option>
-            {% for y in yes_no_values %}
+            {% for y in police_called_values %}
             <option value="{{ y }}" {% if form_data.police_called == y %}selected{% endif %}>{{ y }}</option>
             {% endfor %}
         </select>
@@ -68,6 +68,9 @@
     </label>
     <label>意外事件經過
         <textarea name="description" rows="3" required>{{ form_data.description or '' }}</textarea>
+    </label>
+    <label>車牌號碼（選填）
+        <input type="text" name="license_plate" value="{{ form_data.license_plate or '' }}">
     </label>
     <button type="submit" class="btn btn-primary">送出</button>
 </form>

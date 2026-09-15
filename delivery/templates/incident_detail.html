@@ -18,6 +18,7 @@
         <tr><th>是否聯繫家屬</th><td>{{ incident.family_contacted }}</td></tr>
         <tr><th>是否牽扯他人</th><td>{{ incident.third_party_involved }}</td></tr>
         <tr><th>意外事件經過</th><td>{{ incident.description }}</td></tr>
+        <tr><th>車牌號碼</th><td>{{ incident.license_plate or "未填" }}</td></tr>
     </tbody>
 </table>
 

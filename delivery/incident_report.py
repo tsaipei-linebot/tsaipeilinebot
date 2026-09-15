@@ -19,7 +19,8 @@ handle_incident_report() 才會真的寫資料庫。
     4.發生時間：9/4 11:00        <- 月/日 時:分，沒有年份，用系統目前年份補上
     5.發生地點：金山南路一段126號
     6.執行勤務中/上下班途中：執行勤務中
-    7.是否報警：有
+    7.是否報警：是                <- 2026-09-15 改成「是」「否」，跟其他
+                                     「有」「無」的欄位不同，不要填錯
     8.受傷情形：無
     9.是否聯繫家屬：無
     10.是否牽扯他人：有
@@ -30,7 +31,14 @@ handle_incident_report() 才會真的寫資料庫。
 import re
 from datetime import date
 
-from delivery.config import DUTY_STATUSES, IDENTITY_TYPES, VENDOR_LOOKUP, VENDOR_MAP, YES_NO_VALUES
+from delivery.config import (
+    DUTY_STATUSES,
+    IDENTITY_TYPES,
+    POLICE_CALLED_VALUES,
+    VENDOR_LOOKUP,
+    VENDOR_MAP,
+    YES_NO_VALUES,
+)
 
 _MAX_ITEMS_IN_WEEKLY_REMINDER = 20
 
@@ -58,11 +66,14 @@ _FIELD_PATTERNS = {
 
 _DATETIME_PATTERN = re.compile(r"^(\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{2})$")
 
+# 「是否報警」2026-09-15 改用獨立的「是」「否」（見 config.POLICE_CALLED_
+# VALUES），跟其餘兩個維持「有」「無」的欄位分開處理，所以拆成兩份對照表，
+# 不能再共用同一份 YES_NO_VALUES 判斷。
 _YES_NO_FIELD_NAMES = {
-    "police_called": "是否報警",
     "family_contacted": "是否聯繫家屬",
     "third_party_involved": "是否牽扯他人",
 }
+_POLICE_CALLED_FIELD_NAME = "是否報警"
 
 PARSE_ERROR_MESSAGES = {
     "missing_fields": "❌ 回報格式有誤：11 個欄位都要填，請照範本重新回覆。",
@@ -70,6 +81,7 @@ PARSE_ERROR_MESSAGES = {
     "invalid_identity_type": "❌ 身分類別請填「雇傭」或「承攬」。",
     "invalid_duty_status": "❌ 第 6 項請填「執行勤務中」或「上下班途中」。",
     "invalid_datetime": "❌ 發生時間格式看不懂，請用「9/4 11:00」這種「月/日 時:分」的格式重新回覆。",
+    "invalid_police_called": f"❌ 「{_POLICE_CALLED_FIELD_NAME}」請填「是」或「否」。",
 }
 for _field, _label in _YES_NO_FIELD_NAMES.items():
     PARSE_ERROR_MESSAGES[f"invalid_{_field}"] = f"❌ 「{_label}」請填「有」或「無」。"
@@ -127,6 +139,9 @@ def parse_incident_report(text: str) -> dict:
 
     if fields["duty_status"] not in DUTY_STATUSES:
         return {"ok": False, "error": "invalid_duty_status"}
+
+    if fields["police_called"] not in POLICE_CALLED_VALUES:
+        return {"ok": False, "error": "invalid_police_called"}
 
     for key in _YES_NO_FIELD_NAMES:
         if fields[key] not in YES_NO_VALUES:

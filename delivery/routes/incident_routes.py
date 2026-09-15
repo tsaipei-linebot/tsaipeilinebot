@@ -8,6 +8,7 @@ from delivery.config import (
     IDENTITY_TYPES,
     INCIDENT_STATUS_MAP,
     INCIDENT_STATUSES,
+    POLICE_CALLED_VALUES,
     RISK_LEVELS,
     VENDOR_MAP,
     VENDORS,
@@ -31,6 +32,13 @@ _INCIDENT_REQUIRED_FIELDS = (
     "description",
 )
 
+# 2026-09-15：舊紀錄的「是否報警」還是存「有」／「無」（改用 POLICE_
+# CALLED_VALUES 之前建立的），編輯表單開啟舊紀錄時把它們視同新值「是」／
+# 「否」預先選起來，避免下拉選單開起來沒有任何選項被選中、看起來像沒填。
+# 純粹是編輯表單畫面上的顯示折衷，不會回寫資料庫——除非使用者真的按下
+# 「儲存修改」，屆時存的就會是「是」／「否」其中一個新值。
+_LEGACY_POLICE_CALLED_DISPLAY = {"有": "是", "無": "否"}
+
 
 def _validate_incident_form(data: dict) -> str:
     """驗證意外事件表單資料（新增／編輯共用同一套規則），回傳空字串代表
@@ -41,12 +49,10 @@ def _validate_incident_form(data: dict) -> str:
         return "身分類別請選「雇傭」或「承攬」。"
     if data["duty_status"] not in DUTY_STATUSES:
         return "執行勤務中/上下班途中請重新選擇。"
-    if (
-        data["police_called"] not in YES_NO_VALUES
-        or data["family_contacted"] not in YES_NO_VALUES
-        or data["third_party_involved"] not in YES_NO_VALUES
-    ):
-        return "是否報警／是否聯繫家屬／是否牽扯他人請選「有」或「無」。"
+    if data["police_called"] not in POLICE_CALLED_VALUES:
+        return "是否報警請選「是」或「否」。"
+    if data["family_contacted"] not in YES_NO_VALUES or data["third_party_involved"] not in YES_NO_VALUES:
+        return "是否聯繫家屬／是否牽扯他人請選「有」或「無」。"
     if any(not data[key] for key in _INCIDENT_REQUIRED_FIELDS):
         return "欄位都要填。"
     return ""
@@ -64,13 +70,17 @@ def _incident_form_data(
     family_contacted: str,
     third_party_involved: str,
     description: str,
+    license_plate: str = "",
 ) -> dict:
     """把表單欄位整理成 repository.create_incident_event()／
     update_incident_event() 都吃得下的 dict。occurred_at 統一把瀏覽器
     `<input type="datetime-local">` 產生的 "T" 分隔符換成空白，跟 LINE
     群組回報正規化出來的 "YYYY-MM-DD HH:MM" 格式（見
     delivery/incident_report.py 的 _normalize_datetime）對齊，兩條路徑
-    寫進 Firestore 的格式才會一致。"""
+    寫進 Firestore 的格式才會一致。license_plate（車牌號碼）選填，只有
+    網站表單這裡才有——因為是網站表單的路徑，這裡回傳的 dict 一律帶著
+    這個 key（即使是空字串），讓 create_incident_event() 能分辨「這是
+    網站表單明確送出的值」跟「LINE 回報根本沒有這個欄位」。"""
     return {
         "vendor": vendor,
         "identity_type": identity_type,
@@ -83,6 +93,7 @@ def _incident_form_data(
         "family_contacted": family_contacted,
         "third_party_involved": third_party_involved,
         "description": description.strip(),
+        "license_plate": license_plate.strip(),
     }
 
 
@@ -137,6 +148,7 @@ def new_incident_form(request: Request, redirect=Depends(login_required)):
             "identity_types": IDENTITY_TYPES,
             "duty_statuses": DUTY_STATUSES,
             "yes_no_values": YES_NO_VALUES,
+            "police_called_values": POLICE_CALLED_VALUES,
             "form_data": {},
             "error": "",
         },
@@ -157,6 +169,7 @@ def new_incident_submit(
     family_contacted: str = Form(...),
     third_party_involved: str = Form(...),
     description: str = Form(...),
+    license_plate: str = Form(""),
     redirect=Depends(login_required),
 ):
     """網站直接新增一筆意外事件回報，走跟 LINE 群組回報完全一樣的
@@ -181,6 +194,7 @@ def new_incident_submit(
         family_contacted,
         third_party_involved,
         description,
+        license_plate,
     )
 
     error = _validate_incident_form(data)
@@ -197,6 +211,7 @@ def new_incident_submit(
             "identity_types": IDENTITY_TYPES,
             "duty_statuses": DUTY_STATUSES,
             "yes_no_values": YES_NO_VALUES,
+            "police_called_values": POLICE_CALLED_VALUES,
             "form_data": data,
             "error": error,
         },
@@ -255,6 +270,10 @@ def edit_incident_form(incident_id: str, request: Request, redirect=Depends(admi
     incident = repository.get_incident_event(incident_id)
     if not incident:
         return RedirectResponse(url="/delivery/incidents", status_code=303)
+    incident = dict(incident)
+    incident["police_called"] = _LEGACY_POLICE_CALLED_DISPLAY.get(
+        incident.get("police_called"), incident.get("police_called")
+    )
     return templates.TemplateResponse(
         request,
         "incident_edit.html",
@@ -265,6 +284,7 @@ def edit_incident_form(incident_id: str, request: Request, redirect=Depends(admi
             "identity_types": IDENTITY_TYPES,
             "duty_statuses": DUTY_STATUSES,
             "yes_no_values": YES_NO_VALUES,
+            "police_called_values": POLICE_CALLED_VALUES,
             "error": "",
         },
     )
@@ -285,6 +305,7 @@ def edit_incident_submit(
     family_contacted: str = Form(...),
     third_party_involved: str = Form(...),
     description: str = Form(...),
+    license_plate: str = Form(""),
     redirect=Depends(admin_required),
 ):
     if redirect:
@@ -305,6 +326,7 @@ def edit_incident_submit(
         family_contacted,
         third_party_involved,
         description,
+        license_plate,
     )
 
     error = _validate_incident_form(data)
@@ -322,6 +344,7 @@ def edit_incident_submit(
             "identity_types": IDENTITY_TYPES,
             "duty_statuses": DUTY_STATUSES,
             "yes_no_values": YES_NO_VALUES,
+            "police_called_values": POLICE_CALLED_VALUES,
             "error": error,
         },
         status_code=400,

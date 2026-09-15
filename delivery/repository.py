@@ -517,6 +517,40 @@ def bulk_approve_repayments(repayment_ids: list) -> None:
     batch.commit()
 
 
+def get_repayment(repayment_id: str):
+    snapshot = repayments_ref().document(repayment_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    data["approved"] = bool(data.get("approved"))
+    return data
+
+
+def update_repayment(
+    repayment_id: str, vendor: str, personnel_name: str, amount: float, reason: str, occurred_date: str
+) -> bool:
+    """修正一筆既有的補款登記（例如金額、日期打錯字）。2026-09-15 新增，
+    比照意外事件編輯的做法：只改登記內容本身，不動 approved／created_by／
+    created_at 這幾個欄位——核准狀態有自己的操作入口（見
+    bulk_approve_repayments），不該被這裡的編輯表單意外洗掉；已經核准的
+    登記一樣可以修正內容，核准狀態不受影響（核准本身仍然是單向操作，
+    沒有取消核准的路徑）。登記不存在回傳 False、不會寫入。"""
+    ref = repayments_ref().document(repayment_id)
+    if not ref.get().exists:
+        return False
+    ref.update(
+        {
+            "vendor": vendor,
+            "personnel_name": personnel_name,
+            "amount": amount,
+            "reason": reason,
+            "occurred_date": occurred_date,
+        }
+    )
+    return True
+
+
 # ==========================================
 # 假別登記
 # 2026-09-11 起改成「一天一筆、記時數」（leave_date + hours），取代原本
@@ -1292,6 +1326,10 @@ _INCIDENT_FIELDS = (
     "family_contacted",
     "third_party_involved",
     "description",
+    # 2026-09-15 新增，選填、只有網站表單有這個欄位（LINE 群組回報範本
+    # 沒有這一項，見 delivery/incident_report.py），LINE 回報進來的資料
+    # 這裡一律用預設值空字串補上。
+    "license_plate",
 )
 
 
@@ -1316,22 +1354,31 @@ def create_incident_event(data: dict) -> tuple:
     """新增一筆意外事件回報，回傳 (incident_id, created)：
     - 如果「人員名稱＋發生時間」跟既有紀錄完全相同，視為同仁在回報同一起
       事件（例如手滑重傳、或發現打錯字重新回報修正），直接覆寫既有那筆
-      的回報內容（_INCIDENT_FIELDS 這 11 個欄位），不會多開一筆重複紀錄，
-      created 回傳 False。
+      的回報內容（_INCIDENT_FIELDS 這 11 個 LINE 必填欄位），不會多開一筆
+      重複紀錄，created 回傳 False。
     - 找不到既有紀錄才真的新建一筆，風險等級／結案狀態用預設值（不接受
       呼叫端指定），created 回傳 True。
 
     刻意不覆寫既有紀錄的 risk_level／status／created_at——那是管理員事後
     才會填的欄位，同仁重傳同一起事件的內容更新，不該把管理員已經做的
-    風險評估／結案狀態洗掉。data 需含 _INCIDENT_FIELDS 這 11 個欄位（見
-    delivery.incident_report.parse_incident_report 的回傳值）。"""
-    payload = {key: data.get(key, "") for key in _INCIDENT_FIELDS}
+    風險評估／結案狀態洗掉。data 需含 _INCIDENT_FIELDS 這 11 個 LINE 必填
+    欄位（見 delivery.incident_report.parse_incident_report 的回傳值）。
+
+    license_plate（選填、只有網站表單會填）特別處理：LINE 群組回報的
+    data 完全不會帶這個 key（LINE 範本沒有這一項），如果同仁事後在 LINE
+    重傳同一起事件（覆寫既有紀錄的情境），不能因為這次的 data 沒有這個
+    key 就把先前網站上補登的車牌號碼洗成空白——只有 data 真的有帶這個
+    key（來自網站表單，包含表單裡刻意清空送出的情況）才會覆寫既有值。"""
+    payload = {key: data.get(key, "") for key in _INCIDENT_FIELDS if key != "license_plate"}
 
     existing_id = _find_incident_event_by_key(data.get("personnel_name", ""), data.get("occurred_at", ""))
     if existing_id:
+        if "license_plate" in data:
+            payload["license_plate"] = data["license_plate"]
         incident_events_ref().document(existing_id).update(payload)
         return existing_id, False
 
+    payload["license_plate"] = data.get("license_plate", "")
     ref = incident_events_ref().document()
     payload["risk_level"] = ""
     payload["status"] = DEFAULT_INCIDENT_STATUS
