@@ -88,6 +88,8 @@ async def bulk_update_applicants(request: Request, redirect=Depends(login_requir
             updates.setdefault(key[len("cooperation_type_"):], {})["cooperation_type"] = value
         elif key.startswith("test_drive_"):
             updates.setdefault(key[len("test_drive_"):], {})["test_drive"] = value
+        elif key.startswith("note_"):
+            updates.setdefault(key[len("note_"):], {})["note"] = value
         elif key == "filter_name" and value:
             filters["name"] = value
         elif key == "filter_phone" and value:
@@ -111,6 +113,7 @@ async def accept_applicant(applicant_id: str, request: Request, redirect=Depends
     vendor = form.get(f"vendor_{applicant_id}", "")
     cooperation_type = form.get(f"cooperation_type_{applicant_id}", "")
     test_drive = form.get(f"test_drive_{applicant_id}", "")
+    note = form.get(f"note_{applicant_id}", "")
 
     if vendor not in VENDOR_MAP:
         return RedirectResponse(url="/delivery/applicants?error=vendor_required", status_code=303)
@@ -123,10 +126,10 @@ async def accept_applicant(applicant_id: str, request: Request, redirect=Depends
     if not applicant or applicant.get("converted_personnel_id"):
         return RedirectResponse(url="/delivery/applicants", status_code=303)
 
-    # 先把這次提交當下選的廠商/合作方式/試駕存回應徵紀錄，即使下面的試駕
-    # 檢查擋下錄取，同仁剛才選的東西也不會不見、要重選一次。
+    # 先把這次提交當下選的廠商/合作方式/試駕/備註存回應徵紀錄，即使下面的
+    # 試駕檢查擋下錄取，同仁剛才選的/打的東西也不會不見、要重填一次。
     repository.bulk_update_applicants(
-        {applicant_id: {"vendor": vendor, "cooperation_type": cooperation_type, "test_drive": test_drive}}
+        {applicant_id: {"vendor": vendor, "cooperation_type": cooperation_type, "test_drive": test_drive, "note": note}}
     )
 
     if repository.applicant_needs_test_drive(vendor, cooperation_type) and test_drive != "passed":

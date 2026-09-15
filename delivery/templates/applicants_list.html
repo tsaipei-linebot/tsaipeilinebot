@@ -59,6 +59,7 @@
                 <th>廠商</th>
                 <th>合作方式</th>
                 <th>試駕</th>
+                <th>備註</th>
                 <th>狀態</th>
                 <th>錄取</th>
             </tr>
@@ -104,6 +105,9 @@
                     {% else %}
                     -
                     {% endif %}
+                </td>
+                <td>
+                    <input type="text" name="note_{{ a.id }}" value="{{ a.note }}" placeholder="自由輸入備註">
                 </td>
                 <td>
                     {% if a.converted_personnel_id %}
