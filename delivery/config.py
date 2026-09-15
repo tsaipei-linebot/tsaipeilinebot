@@ -318,8 +318,8 @@ LEAVE_QUOTA_ALERT_RATIO = 0.9
 # 沿用 VENDOR_MAP / COOPERATION_TYPE_MAP。應徵階段沒表單欄位可以填廠商，
 # 是由送出 webhook 的 Apps Script 各自帶固定的廠商代碼過來（見
 # routes/webhook_routes.py），畫面上保留讓同仁手動修改的權限。
-# 合作方式選單只在蝦皮的應徵者顯示，沿用 COOPERATION_TYPE_VENDORS
-# （目前就是 ["shopee"]，跟人員詳細頁那個是同一份設定）。
+# 合作方式選單只在 COOPERATION_TYPE_VENDORS 這幾個廠商代碼的應徵者顯示
+# （蝦皮三輪、蝦皮三輪速配倉），跟人員詳細頁那個是同一份設定。
 
 # 試駕狀態：未試駕（預設）／通過／未通過。
 TEST_DRIVE_STATUSES = [
@@ -330,9 +330,14 @@ TEST_DRIVE_STATUSES = [
 TEST_DRIVE_STATUS_MAP = {s["code"]: s["name"] for s in TEST_DRIVE_STATUSES}
 DEFAULT_TEST_DRIVE_STATUS = "not_tested"
 
-# 哪些應徵者需要試駕：UD、UC 一律需要；蝦皮只有合作方式是「三輪雇傭」才需要
-# （二輪承攬/二輪雇傭不用）；順豐不需要。判斷邏輯見
-# repository.applicant_needs_test_drive()，這裡只放組成判斷用的資料。
+# 哪些應徵者需要試駕：UD、UC 一律需要；COOPERATION_TYPE_VENDORS 這幾個廠商
+# （蝦皮三輪、蝦皮三輪速配倉）只有合作方式是「三輪雇傭」才需要（二輪承攬/
+# 二輪雇傭不用）；順豐不需要。
+# 2026-09-15：蝦皮三輪速配倉原本沒被算進試駕規則（只判斷 vendor=="shopee"），
+# 使用者確認要跟蝦皮三輪用同一套規則，改成判斷 vendor in COOPERATION_TYPE_VENDORS
+# （這兩個廠商本來就共用同一套合作方式/保險規則，見上面 COOPERATION_TYPE_VENDORS
+# 的說明）。判斷邏輯見 repository.applicant_needs_test_drive()，這裡只放組成
+# 判斷用的資料。
 TEST_DRIVE_REQUIRED_VENDORS = ["ud", "uc"]
 TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES = ["three_wheel_employed"]
 

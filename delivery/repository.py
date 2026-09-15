@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from delivery.config import (
     ANNUAL_LEAVE_MAX_DAYS,
     COOPERATION_TYPE_MAP,
+    COOPERATION_TYPE_VENDORS,
     DEFAULT_INCIDENT_STATUS,
     DEFAULT_PERSONNEL_STATUS,
     DEFAULT_TEST_DRIVE_STATUS,
@@ -851,11 +852,12 @@ def applicant_matches_filters(
 
 
 def applicant_needs_test_drive(vendor: str, cooperation_type: str) -> bool:
-    """判斷這個應徵者需不需要試駕：UD、UC 一律需要；蝦皮只有合作方式是
-    「三輪雇傭」才需要（二輪承攬/二輪雇傭不用）；順豐不需要。"""
+    """判斷這個應徵者需不需要試駕：UD、UC 一律需要；蝦皮三輪／蝦皮三輪速配倉
+    （COOPERATION_TYPE_VENDORS 這幾個廠商代碼）只有合作方式是「三輪雇傭」才
+    需要（二輪承攬/二輪雇傭不用）；順豐不需要。"""
     if vendor in TEST_DRIVE_REQUIRED_VENDORS:
         return True
-    if vendor == "shopee" and cooperation_type in TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES:
+    if vendor in COOPERATION_TYPE_VENDORS and cooperation_type in TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES:
         return True
     return False
 

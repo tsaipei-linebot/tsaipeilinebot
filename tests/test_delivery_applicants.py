@@ -125,6 +125,13 @@ class ApplicantNeedsTestDriveTests(unittest.TestCase):
         self.assertFalse(applicant_needs_test_drive("shopee", "two_wheel_employed"))
         self.assertFalse(applicant_needs_test_drive("shopee", ""))
 
+    def test_shopee_speed_warehouse_needs_test_drive_only_for_three_wheel_employed(self):
+        """2026-09-15：蝦皮三輪速配倉比照蝦皮三輪的規則，也要算進試駕判斷。"""
+        self.assertTrue(applicant_needs_test_drive("shopee_speed_warehouse", "three_wheel_employed"))
+        self.assertFalse(applicant_needs_test_drive("shopee_speed_warehouse", "two_wheel_contract"))
+        self.assertFalse(applicant_needs_test_drive("shopee_speed_warehouse", "two_wheel_employed"))
+        self.assertFalse(applicant_needs_test_drive("shopee_speed_warehouse", ""))
+
     def test_unspecified_vendor_does_not_need_test_drive(self):
         self.assertFalse(applicant_needs_test_drive("", ""))
 
