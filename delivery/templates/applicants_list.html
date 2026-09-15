@@ -80,7 +80,7 @@
                     {% endfor %}
                 </td>
                 <td>
-                    <select name="vendor_{{ a.id }}">
+                    <select name="vendor_{{ a.id }}" onchange="syncApplicantRow('{{ a.id }}')">
                         <option value="" {% if not a.vendor %}selected{% endif %}>未指定</option>
                         {% for v in vendors %}
                         <option value="{{ v.code }}" {% if a.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
@@ -88,27 +88,24 @@
                     </select>
                 </td>
                 <td>
-                    {% if a.vendor in cooperation_type_vendors %}
-                    <select name="cooperation_type_{{ a.id }}">
+                    {% set show_coop = a.vendor in cooperation_type_vendors %}
+                    <span data-dash-for="cooperation_type_{{ a.id }}" style="display:{% if show_coop %}none{% else %}inline{% endif %}">-</span>
+                    <select name="cooperation_type_{{ a.id }}" onchange="syncApplicantRow('{{ a.id }}')"
+                            style="display:{% if show_coop %}inline{% else %}none{% endif %}" {% if not show_coop %}disabled{% endif %}>
                         <option value="" {% if not a.cooperation_type %}selected{% endif %}>尚未決定</option>
                         {% for c in cooperation_types %}
                         <option value="{{ c.code }}" {% if a.cooperation_type == c.code %}selected{% endif %}>{{ c.name }}</option>
                         {% endfor %}
                     </select>
-                    {% else %}
-                    -
-                    {% endif %}
                 </td>
                 <td>
-                    {% if a.needs_test_drive %}
-                    <select name="test_drive_{{ a.id }}">
+                    <span data-dash-for="test_drive_{{ a.id }}" style="display:{% if a.needs_test_drive %}none{% else %}inline{% endif %}">-</span>
+                    <select name="test_drive_{{ a.id }}"
+                            style="display:{% if a.needs_test_drive %}inline{% else %}none{% endif %}" {% if not a.needs_test_drive %}disabled{% endif %}>
                         {% for t in test_drive_statuses %}
                         <option value="{{ t.code }}" {% if a.test_drive == t.code %}selected{% endif %}>{{ t.name }}</option>
                         {% endfor %}
                     </select>
-                    {% else %}
-                    -
-                    {% endif %}
                 </td>
                 <td>
                     <input type="text" name="note_{{ a.id }}" value="{{ a.note }}" placeholder="自由輸入備註">
@@ -153,4 +150,58 @@
 {% endif %}
 
 <p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+
+{% if applicants %}
+<script>
+// 「合作方式」「試駕」這兩欄要不要顯示成可以選的下拉選單，跟後端
+// applicant_needs_test_drive() 是同一套規則，這裡照抄一份給瀏覽器端用，
+// 讓選廠商/合作方式後不用先按「一鍵全部更新」重新整理頁面，欄位就能
+// 馬上跟著顯示/隱藏（2026-09-15 新增）。注意：蝦皮三輪速配倉目前刻意
+// 沒有算進「需要試駕」的規則裡，是照抄後端現有規則，不是這裡漏寫。
+var COOPERATION_TYPE_VENDORS = [{% for v in cooperation_type_vendors %}"{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+var TEST_DRIVE_REQUIRED_VENDORS = [{% for v in test_drive_required_vendors %}"{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+var TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES = [{% for c in test_drive_required_shopee_cooperation_types %}"{{ c }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+var APPLICANT_IDS = [{% for a in applicants %}"{{ a.id }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+
+function syncApplicantRow(id) {
+    var vendorSelect = document.querySelector('select[name="vendor_' + id + '"]');
+    if (!vendorSelect) return;
+    var vendor = vendorSelect.value;
+
+    var coopSelect = document.querySelector('select[name="cooperation_type_' + id + '"]');
+    var coopDash = document.querySelector('[data-dash-for="cooperation_type_' + id + '"]');
+    var showCoop = COOPERATION_TYPE_VENDORS.indexOf(vendor) !== -1;
+    if (coopSelect) {
+        coopSelect.style.display = showCoop ? "inline" : "none";
+        coopSelect.disabled = !showCoop;
+    }
+    if (coopDash) {
+        coopDash.style.display = showCoop ? "none" : "inline";
+    }
+
+    var cooperationType = coopSelect ? coopSelect.value : "";
+    var testSelect = document.querySelector('select[name="test_drive_' + id + '"]');
+    var testDash = document.querySelector('[data-dash-for="test_drive_' + id + '"]');
+    var showTest = TEST_DRIVE_REQUIRED_VENDORS.indexOf(vendor) !== -1
+        || (vendor === "shopee" && TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES.indexOf(cooperationType) !== -1);
+    if (testSelect) {
+        testSelect.style.display = showTest ? "inline" : "none";
+        testSelect.disabled = !showTest;
+    }
+    if (testDash) {
+        testDash.style.display = showTest ? "none" : "inline";
+    }
+}
+
+function syncAllApplicantRows() {
+    APPLICANT_IDS.forEach(syncApplicantRow);
+}
+
+document.addEventListener("DOMContentLoaded", syncAllApplicantRows);
+// 瀏覽器上一頁/下一頁從快取還原頁面時（bfcache），選單的值可能被瀏覽器
+// 還原成使用者當初選的東西，但欄位顯示/隱藏狀態是還原成「離開頁面那個
+// 當下」的樣子，兩者不一定同步，重新跑一次校正確保畫面一致。
+window.addEventListener("pageshow", syncAllApplicantRows);
+</script>
+{% endif %}
 {% endblock %}
