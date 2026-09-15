@@ -254,5 +254,36 @@ class DeleteApplicantRouteTests(unittest.TestCase):
         self.assertIs(result, blocking_redirect)
 
 
+class ApplicantsListRouteContextTests(unittest.TestCase):
+    """GET /applicants：2026-09-15 新增，把「合作方式」「試駕」該不該
+    顯示的規則（跟 repository.applicant_needs_test_drive() 同一套）也
+    傳給模板，讓瀏覽器端的 JS 能照抄一份規則，不用等「一鍵全部更新」
+    整頁重新整理就能即時顯示/隱藏這兩欄。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = ApplicantsListRouteContextTests._FakeSession({"user": user})
+
+    def test_passes_test_drive_config_to_template(self):
+        account = {
+            "username": "bob", "name": "Bob", "modules": ["delivery"],
+            "rank": "manager", "is_platform_admin": False,
+        }
+        with mock.patch.object(applicant_routes, "templates") as mock_templates:
+            with mock.patch.object(applicant_routes.repository, "list_applicants", return_value=[]):
+                applicant_routes.applicants_list(self._FakeRequest(account), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["test_drive_required_vendors"], applicant_routes.TEST_DRIVE_REQUIRED_VENDORS)
+        self.assertEqual(
+            context["test_drive_required_shopee_cooperation_types"],
+            applicant_routes.TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
+        )
+        self.assertEqual(context["cooperation_type_vendors"], applicant_routes.COOPERATION_TYPE_VENDORS)
+
+
 if __name__ == "__main__":
     unittest.main()
