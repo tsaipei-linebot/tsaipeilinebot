@@ -38,7 +38,7 @@
     </label>
     <label>是否報警
         <select name="police_called" required>
-            {% for y in yes_no_values %}
+            {% for y in police_called_values %}
             <option value="{{ y }}" {% if incident.police_called == y %}selected{% endif %}>{{ y }}</option>
             {% endfor %}
         </select>
@@ -62,6 +62,9 @@
     </label>
     <label>意外事件經過
         <textarea name="description" rows="3" required>{{ incident.description }}</textarea>
+    </label>
+    <label>車牌號碼（選填）
+        <input type="text" name="license_plate" value="{{ incident.license_plate or '' }}">
     </label>
     <button type="submit" class="btn btn-primary">儲存修改</button>
 </form>

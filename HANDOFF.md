@@ -5122,3 +5122,118 @@ employed`，驗證蝦皮三輪速配倉在「三輪雇傭」時需要試駕、�
 選「蝦皮三輪速配倉」、合作方式選「三輪雇傭」的應徵者，現在會跟
 「蝦皮三輪」一樣跳出「試駕」欄位可以填寫，畫面即時連動跟存檔規則
 都適用。
+
+## 配送部系統：意外事件加車牌欄位、補款登記可編輯、報警改「是」「否」（2026-09-15）
+
+### 背景
+
+使用者一次提出三個需求：(1) 意外事件通報要多一個「車牌號碼」欄位；
+(2) 補款登記要能編輯，目前只能新增跟核准，打錯字沒辦法修正；(3) 意外
+事件的「是否報警」選項要從「有」「無」改成「是」「否」。這三個需求
+影響到同仁已經在用的 LINE 群組回報範本跟資料庫既有紀錄，動工前先跟
+使用者確認了三個範圍問題，結果：車牌號碼**只加在網站表單**，LINE
+群組回報範本不變；「是否報警」改「是」「否」**網站表單跟 LINE 範本
+都要改**（這是刻意的破壞性改動）；車牌號碼欄位設**選填**。
+
+### 這次做了什麼
+
+**1. 意外事件新增「車牌號碼」欄位（選填、只有網站表單有）**
+
+- `delivery/repository.py`：`_INCIDENT_FIELDS` 加入 `license_plate`。
+  `create_incident_event()` 特別處理：LINE 群組回報的 `data` 完全不會
+  帶 `license_plate` 這個 key（LINE 範本沒有這一項），如果同仁事後在
+  LINE 重傳同一起事件（人員名稱＋發生時間相同，會覆寫既有紀錄），
+  不能因為這次沒帶這個 key 就把先前在網站上補登的車牌號碼洗成空白——
+  只有 `data` 真的帶了這個 key（來自網站表單，包含表單裡刻意清空
+  送出的情況）才會覆寫既有值；找不到既有紀錄、真的新建一筆時才用
+  空字串當預設值。`update_incident_event()`（網站管理員編輯表單專用）
+  不用特殊處理，因為呼叫端一律會明確帶這個欄位。
+- `delivery/routes/incident_routes.py`：`_incident_form_data()` 新增
+  `license_plate` 參數（預設空字串）；`new_incident_submit()`／
+  `edit_incident_submit()` 都新增 `license_plate: str = Form("")`。
+- `delivery/templates/incident_new.html`／`incident_edit.html`：新增
+  「車牌號碼（選填）」文字輸入欄。
+- `delivery/templates/incident_detail.html`：新增「車牌號碼」顯示列，
+  沒填顯示「未填」。
+- 意外事件清單頁（`incident_list.html`）跟每週未結案提醒訊息沒有把
+  車牌號碼加進去，避免清單頁欄位過多、提醒訊息過長，需要看車牌號碼
+  時進到詳細頁查看。
+
+**2. 補款登記新增編輯功能（僅限主管）**
+
+- `delivery/repository.py`：新增 `get_repayment(repayment_id)`／
+  `update_repayment(repayment_id, vendor, personnel_name, amount,
+  reason, occurred_date)`。編輯不會動 `approved`／`created_by`／
+  `created_at`——核准狀態有自己的操作入口（`bulk_approve_repayments`），
+  不該被編輯表單意外洗掉；已核准的登記一樣可以修正內容，核准狀態不
+  受影響（核准本身仍是單向操作，沒有取消核准的路徑）。
+- `delivery/routes/repayment_routes.py`：新增 `GET`／`POST
+  /function/repayment/records/{repayment_id}/edit`，權限比照意外事件
+  編輯用 `admin_required`——補款登記牽涉薪資金額，跟車輛歷史紀錄
+  （任何登入同仁都能編輯自己補登的領還紀錄）性質不同。
+- `delivery/templates/repayment_edit.html`：新增編輯表單頁（沿用
+  `repayment_form.html` 的欄位配置，多帶入既有值）。
+- `delivery/templates/repayment_records.html`：清單最後加一欄
+  「編輯」連結，只有主管看得到。
+
+**3. 意外事件「是否報警」改成「是」「否」（網站＋LINE 都改，破壞性改動）**
+
+- `delivery/config.py`：新增 `POLICE_CALLED_VALUES = ["是", "否"]`，
+  跟「是否聯繫家屬」「是否牽扯他人」繼續用的 `YES_NO_VALUES =
+  ["有", "無"]` 分開；`POLICE_CALLED_VALUES` 同時套用到網站表單跟
+  LINE 群組回報範本第 7 項。
+- `delivery/incident_report.py`：解析邏輯把「是否報警」的驗證從
+  `_YES_NO_FIELD_NAMES` 拆出來，改判斷 `POLICE_CALLED_VALUES`；格式
+  錯誤訊息也拆成兩種：「是否報警」提示「請填「是」或「否」」，其餘
+  兩項維持「請填「有」或「無」」。
+- `delivery/routes/incident_routes.py`：`_validate_incident_form()`
+  比照拆開判斷；新增／編輯表單都多傳一份 `police_called_values`
+  給模板（跟 `yes_no_values` 分開，`police_called` 的下拉選單用
+  `police_called_values`，另外兩個維持用 `yes_no_values`）。
+- **既有舊資料的相容處理**：2026-09-15 之前建立的意外事件，資料庫裡
+  `police_called` 欄位存的還是舊值「有」／「無」——這裡**不會**
+  回溯修改資料庫裡的舊紀錄（詳細頁維持原樣顯示「有」／「無」，語意
+  上還是看得懂），但編輯表單（`edit_incident_form`）開啟舊紀錄時，
+  會把「有」視同新值「是」、「無」視同「否」預先選起來（純粹畫面
+  顯示折衷，不會回寫資料庫，只有使用者真的按下「儲存修改」才會存成
+  新值）——避免下拉選單開起來沒有任何選項被選中、看起來像沒填過。
+
+### 測試
+
+新增／更新測試檔：
+- `tests/test_delivery_incident.py`：更新 LINE 範本測試 fixture 改用
+  「是」，新增 `test_legacy_you_wu_police_called_value_now_rejected`
+  驗證舊值「有」現在會被擋下。
+- `tests/test_delivery_incident_routes.py`：新增車牌號碼傳遞測試、
+  `police_called_values` context 測試、編輯表單舊紀錄「有」→「是」
+  顯示折衷測試（並驗證不會就地污染原始 incident dict）。
+- `tests/test_delivery_incident_repository.py`（新檔）：針對
+  `create_incident_event()` 的 license_plate 資料流四種情境（新建
+  預設空白／網站表單明確帶值／LINE 重傳不洗掉既有值／網站表單明確
+  清空）、`update_incident_event()` 寫入車牌號碼、`get_repayment()`／
+  `update_repayment()` 的基本行為，都用 mock 模擬 Firestore 集合驗證。
+- `tests/test_delivery_repayment_edit.py`（新檔）：補款編輯表單／
+  送出路由的權限、成功更新、金額格式錯誤、記錄不存在等情境。
+
+全部測試（`python3 -m unittest discover -s tests`）1316 個全數通過。
+另外用 Jinja2 直接渲染所有改到的模板（`incident_new.html`／
+`incident_edit.html`／`incident_detail.html`／`repayment_edit.html`／
+`repayment_records.html`），確認沒有變數缺漏或語法錯誤。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**，但有一件事**務必要做**：
+
+**請務必重新公告新的 LINE 群組回報範本給配送組同仁**——「是否報警」
+那一項（第 7 項）現在要打「是」或「否」，不能再打「有」或「無」。
+還在用舊範本、打「有」／「無」的同仁，送出後系統會回覆「❌『是否
+報警』請填『是』或『否』。」，回報會被擋下、寫不進系統。建議把群組
+裡原本釘選的範本訊息整個換成新版（第 7 項改成「是否報警：是」），
+並在群組裡提醒一次。
+
+其餘功能不用額外設定：
+- 意外事件的網站表單（新增／編輯）多了一個「車牌號碼」欄位，選填，
+  不填也可以送出。
+- 補款記錄清單最後一欄多了「編輯」連結，只有主管帳號看得到，點進去
+  可以修正金額、日期、廠商、人員姓名、原因說明；已經核准過的登記
+  一樣可以編輯內容，核准狀態不會被改掉。

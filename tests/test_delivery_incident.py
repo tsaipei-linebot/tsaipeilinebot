@@ -20,7 +20,7 @@ _VALID_TEXT = (
     "4.發生時間：9/4 11:00\n"
     "5.發生地點：金山南路一段126號\n"
     "6.執行勤務中/上下班途中：執行勤務中\n"
-    "7.是否報警：有\n"
+    "7.是否報警：是\n"
     "8.受傷情形：無\n"
     "9.是否聯繫家屬：無\n"
     "10.是否牽扯他人：有\n"
@@ -49,7 +49,7 @@ class ParseIncidentReportTests(unittest.TestCase):
         self.assertEqual(result["occurred_at"], f"{__import__('datetime').date.today().year}-09-04 11:00")
         self.assertEqual(result["location"], "金山南路一段126號")
         self.assertEqual(result["duty_status"], "執行勤務中")
-        self.assertEqual(result["police_called"], "有")
+        self.assertEqual(result["police_called"], "是")
         self.assertEqual(result["injury"], "無")
         self.assertEqual(result["family_contacted"], "無")
         self.assertEqual(result["third_party_involved"], "有")
@@ -99,6 +99,14 @@ class ParseIncidentReportTests(unittest.TestCase):
 
     def test_invalid_police_called(self):
         text = _replace_field(_VALID_TEXT, "7.是否報警", "7.是否報警：已報案")
+        result = parse_incident_report(text)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "invalid_police_called")
+
+    def test_legacy_you_wu_police_called_value_now_rejected(self):
+        """2026-09-15 起「是否報警」改用「是」「否」，跟其他仍用「有」
+        「無」的欄位不同——舊範本習慣打「有」「無」的訊息現在要被擋下。"""
+        text = _replace_field(_VALID_TEXT, "7.是否報警", "7.是否報警：有")
         result = parse_incident_report(text)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "invalid_police_called")

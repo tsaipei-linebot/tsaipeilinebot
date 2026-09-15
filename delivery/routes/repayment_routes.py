@@ -105,6 +105,66 @@ def repayment_records_export(
     )
 
 
+@router.get("/function/repayment/records/{repayment_id}/edit")
+def repayment_edit_form(repayment_id: str, request: Request, redirect=Depends(admin_required)):
+    """修正一筆既有的補款登記（例如金額、日期打錯字），比照意外事件編輯
+    的權限層級只開放管理員——補款登記牽涉薪資金額，跟車輛歷史紀錄（任何
+    登入的同仁都能編輯自己補登的領還紀錄）性質不同。"""
+    if redirect:
+        return redirect
+    record = repository.get_repayment(repayment_id)
+    if not record:
+        return RedirectResponse(url="/delivery/function/repayment/records", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "repayment_edit.html",
+        {"user": current_user(request), "vendors": VENDORS, "record": record, "error": None},
+    )
+
+
+@router.post("/function/repayment/records/{repayment_id}/edit")
+def repayment_edit_submit(
+    repayment_id: str,
+    request: Request,
+    vendor: str = Form(...),
+    personnel_name: str = Form(...),
+    amount: str = Form(...),
+    reason: str = Form(""),
+    occurred_date: str = Form(...),
+    redirect=Depends(admin_required),
+):
+    if redirect:
+        return redirect
+    record = repository.get_repayment(repayment_id)
+    if not record:
+        return RedirectResponse(url="/delivery/function/repayment/records", status_code=303)
+
+    try:
+        amount_value = float(amount)
+    except ValueError:
+        return templates.TemplateResponse(
+            request,
+            "repayment_edit.html",
+            {
+                "user": current_user(request),
+                "vendors": VENDORS,
+                "record": {**record, "vendor": vendor, "personnel_name": personnel_name, "amount": amount, "reason": reason, "occurred_date": occurred_date},
+                "error": "金額格式錯誤，請輸入數字",
+            },
+            status_code=400,
+        )
+
+    repository.update_repayment(
+        repayment_id,
+        vendor=vendor,
+        personnel_name=personnel_name,
+        amount=amount_value,
+        reason=reason,
+        occurred_date=occurred_date,
+    )
+    return RedirectResponse(url="/delivery/function/repayment/records", status_code=303)
+
+
 @router.post("/function/repayment/records/approve")
 async def repayment_records_approve(request: Request, redirect=Depends(admin_required)):
     """核准是單向的，只開放管理員操作：勾選的補款登記會被標記為已核准，沒有
