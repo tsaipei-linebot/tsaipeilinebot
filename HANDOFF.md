@@ -5237,3 +5237,92 @@ employed`，驗證蝦皮三輪速配倉在「三輪雇傭」時需要試駕、�
 - 補款記錄清單最後一欄多了「編輯」連結，只有主管帳號看得到，點進去
   可以修正金額、日期、廠商、人員姓名、原因說明；已經核准過的登記
   一樣可以編輯內容，核准狀態不會被改掉。
+
+## 配送部系統：網站填寫車輛/意外事件時同步推播群組通知（2026-09-15）
+
+### 背景
+
+使用者要求：同仁如果不是在 LINE 群組回報，而是直接在配送部系統網站
+填寫「車輛管理」（領還車）或「意外事件」，也要跟 LINE 群組回報一樣，
+讓「配送組作業群組」即時收到通知，不用另外登入系統才看得到最新動態。
+
+### 架構決定
+
+真正推播用的 LINE Channel Token 一直留在另一個獨立 repo
+`tsaipei-linebot/delivery-gas-project`（Google Apps Script 專案）那邊，
+這個 repo（Cloud Run）從來沒有、也不需要那個 Token——沿用既有的安全
+邊界，不把 Token 複製一份到這裡。做法是反過來：Cloud Run 主動呼叫
+delivery-gas-project 新增的 `doGet(?type=DELIVERY_NOTIFY)` 橋接（見該
+專案的 `Project7_DeliveryNotify.js`），請它用自己手上的 Token 推播到
+跟 Project5（車輛回報）／Project6（意外事件回報）同一個「配送組作業
+群組」（`VEHICLE_REPORT_GROUP_ID`）。這支橋接沿用該專案既有的 Web App
+部署（`Project4_Schedule.js` 的 `doGet` 分派多一個 `type`），**不用
+重新部署**。
+
+**這次的範圍**：只有「網站手動補登領車/還車」（`manual_vehicle_event`）
+跟「網站新增意外事件」（`new_incident_submit`）這兩個直接對應 LINE 群組
+回報的動作會推播通知，比照 LINE 一直以來只回報這兩件事的範圍；車輛/
+人員的其他管理操作（新增車輛、改狀態、改輪別/服務區域、編輯意外事件
+內容等）不在這次範圍內。意外事件目前也只推播到「配送組作業群組」
+（跟 LINE 回報同仁看到的那個群組一樣），**沒有**額外轉發到 LINE 那邊
+才有的「管理／督導」第二個群組（`INCIDENT_NOTIFY_GROUP_ID`）——如果
+之後也想要網站新增的意外事件轉發過去，需要另外處理。
+
+### 這次做了什麼
+
+**`delivery-gas-project`（PR #10）**：
+- 新增 `Project7_DeliveryNotify.js`：`handleDeliveryNotify7_(e)`，驗證
+  網址參數 `?secret=` 符合新增的指令碼屬性 `DELIVERY_NOTIFY_SECRET`
+  後，把 `?text=` 推播到 `VEHICLE_REPORT_GROUP_ID`（用
+  `CHANNEL1_LINE_TOKEN`）。
+- `Project4_Schedule.js` 的 `doGet` 多一個 `type === 'DELIVERY_NOTIFY'`
+  分派過去，沿用同一個部署。
+
+**`tsaipeilinebot`（這個 repo）**：
+- `delivery/config.py`：新增 `DELIVERY_NOTIFY_WEBHOOK_URL` /
+  `DELIVERY_NOTIFY_WEBHOOK_SECRET` 環境變數。
+- 新增 `delivery/group_notify.py`：`notify_group(text)`，呼叫上面那支
+  GAS 橋接（GET 請求，`type`/`secret`/`text` 都放網址參數，因為 Apps
+  Script Web App 讀不到自訂 HTTP Header）。沒設定好、逾時、網路錯誤都
+  只回傳 `False`，不會拋例外——這是附加的通知功能，不該讓表單本身的
+  送出跟著失敗。
+- `delivery/routes/vehicle_routes.py`：`manual_vehicle_event()` 補登
+  成功後呼叫 `group_notify.notify_group()`，訊息格式比照
+  `vehicle_report.py` 的 LINE 回覆文字，加上「📝［網站新增］」前綴。
+- `delivery/routes/incident_routes.py`：`new_incident_submit()` 送出
+  成功後一樣呼叫，訊息格式比照 `incident_report.py` 的 LINE 回覆文字。
+
+### 測試
+
+`tests/test_delivery_group_notify.py`（新檔）：`is_configured()`／
+`notify_group()` 的設定檢查、成功推播、非 200 回應、網路例外情境。
+`tests/test_delivery_vehicle_routes.py`／`test_delivery_incident_routes.py`
+新增測試，驗證成功時會呼叫 `group_notify.notify_group()`（含正確的
+領車/還車/已登記/已更新用字），失敗／驗證不通過時不會呼叫。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1329 個全數
+通過。
+
+### 使用者需要知道的事
+
+這是跨兩個 repo 的功能，**兩邊都要處理**才會真的生效：
+
+**`tsaipeilinebot`（這個 repo）合併後**：不需要手動部署步驟（Cloud
+Run 自動部署），但要**額外設定兩個環境變數**才會真的推播（沒設定
+的話，網站表單照樣正常運作，只是不會推播通知，不會跳錯誤）：
+```
+gcloud run services update recruitment-bot \
+  --region asia-east1 \
+  --update-env-vars DELIVERY_NOTIFY_WEBHOOK_URL="（見下方，跟 GAS 那邊的 Web App 網址一樣）",DELIVERY_NOTIFY_WEBHOOK_SECRET="（自己想一個夠長的隨機字串）"
+```
+
+**`delivery-gas-project`（另一個 repo，PR #10）合併後**：會透過現有
+CI/CD 自動 `clasp push` + `clasp deploy`，**不用手動跑 clasp**。但要
+在 Apps Script 編輯器「專案設定 → 指令碼屬性」手動新增
+`DELIVERY_NOTIFY_SECRET`，值要跟上面 Cloud Run 設的
+`DELIVERY_NOTIFY_WEBHOOK_SECRET` 完全一樣；另外把這個 Web App 現有
+固定部署的 exec 網址（跟 LINE Webhook 設定的是同一個，可在「部署 →
+管理部署作業」查到）設進 Cloud Run 的 `DELIVERY_NOTIFY_WEBHOOK_URL`。
+
+設定好之後：同仁在網站補登領車/還車、或新增意外事件，「配送組作業
+群組」就會即時收到一則「📝［網站新增］」開頭的通知，內容跟 LINE 群組
+回報看到的格式一樣。

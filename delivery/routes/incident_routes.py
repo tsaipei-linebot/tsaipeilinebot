@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 
-from delivery import repository
+from delivery import group_notify, repository
 from delivery.auth import admin_required, current_user, login_required
 from delivery.config import (
     DUTY_STATUSES,
@@ -199,7 +199,12 @@ def new_incident_submit(
 
     error = _validate_incident_form(data)
     if not error:
-        incident_id, _created = repository.create_incident_event(data)
+        incident_id, created = repository.create_incident_event(data)
+        action = "已登記" if created else "已更新"
+        group_notify.notify_group(
+            f"📝［網站新增］✅ {action}意外事件回報：{data['personnel_name']}（{data['identity_type']}），"
+            f"{data['occurred_at']}，{data['location']}。已寫入系統，後續由管理員評估風險等級並追蹤結案。"
+        )
         return RedirectResponse(url=f"/delivery/incidents/{incident_id}", status_code=303)
 
     return templates.TemplateResponse(
