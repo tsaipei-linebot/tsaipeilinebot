@@ -114,6 +114,40 @@
         </div>
     </div>
 
+    <div class="repayment-section" id="pricing-traditional_flat_rate" data-pricing-for="traditional_flat_rate" hidden>
+        <div class="repayment-section-title">五、附件一費率（傳統一口價）</div>
+        <p class="hint">依平日／休息日／國定假日各時段填寫全程派遣服務費（元/hr），右側說明文字固定不開放修改。</p>
+        <div class="repayment-basic-grid">
+            <label><span class="field-caption">平日　第8小時內 *</span>
+                <input type="text" name="rate_weekday_8h" value="{{ form.rate_weekday_8h or '' }}" placeholder="如：268">
+            </label>
+            <label><span class="field-caption">平日　第9-10小時 *</span>
+                <input type="text" name="rate_weekday_9to10h" value="{{ form.rate_weekday_9to10h or '' }}" placeholder="如：300">
+            </label>
+            <label><span class="field-caption">平日　第11-12小時 *</span>
+                <input type="text" name="rate_weekday_11to12h" value="{{ form.rate_weekday_11to12h or '' }}" placeholder="如：361">
+            </label>
+            <label><span class="field-caption">休息日　第1-2小時 *</span>
+                <input type="text" name="rate_restday_1to2h" value="{{ form.rate_restday_1to2h or '' }}" placeholder="如：300">
+            </label>
+            <label><span class="field-caption">休息日　第3-8小時 *</span>
+                <input type="text" name="rate_restday_3to8h" value="{{ form.rate_restday_3to8h or '' }}" placeholder="如：361">
+            </label>
+            <label><span class="field-caption">休息日　第9-12小時 *</span>
+                <input type="text" name="rate_restday_9to12h" value="{{ form.rate_restday_9to12h or '' }}" placeholder="如：577">
+            </label>
+            <label><span class="field-caption">國定假日　第1-8小時 *</span>
+                <input type="text" name="rate_holiday_1to8h" value="{{ form.rate_holiday_1to8h or '' }}" placeholder="如：432">
+            </label>
+            <label><span class="field-caption">國定假日　第9-10小時 *</span>
+                <input type="text" name="rate_holiday_9to10h" value="{{ form.rate_holiday_9to10h or '' }}" placeholder="如：300">
+            </label>
+            <label><span class="field-caption">國定假日　第11-12小時 *</span>
+                <input type="text" name="rate_holiday_11to12h" value="{{ form.rate_holiday_11to12h or '' }}" placeholder="如：361">
+            </label>
+        </div>
+    </div>
+
     <div class="repayment-section" id="pricing-actual_paid" data-pricing-for="actual_paid" hidden>
         <div class="repayment-section-title">五、附件一費率（實支實付）</div>
         <p class="hint">薪資、加班費、法定項目、員工福利都是固定「實支實付」，只有「服務費－全程派遣」這一項需要填寫。</p>

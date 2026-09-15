@@ -237,6 +237,10 @@ class BuildClientContractSummaryRowsTests(unittest.TestCase):
                 "party_a_name": "D", "contract_start_date": "2026-06-01", "contract_version": "taiwanese_referral",
                 "referral_fee_percentage": "15%", "referral_service_months": "6",
             },
+            {
+                "party_a_name": "E", "contract_start_date": "2026-06-01", "contract_version": "traditional_flat_rate",
+                "rate_weekday_8h": "268",
+            },
         ]
         rows = contract_summary_service.build_client_contract_summary_rows(records, [2026])
         summaries = {r["client_name"]: r["pricing_summary"] for r in rows}
@@ -244,6 +248,7 @@ class BuildClientContractSummaryRowsTests(unittest.TestCase):
         self.assertEqual(summaries["B"], "服務費：人員薪資的15%")
         self.assertEqual(summaries["C"], "服務費 2500元／收費上限 3 個月")
         self.assertEqual(summaries["D"], "服務費 15%／收費上限 6 個月")
+        self.assertIn("268", summaries["E"])
 
     def test_sorted_by_year_descending_then_client_name(self):
         records = [

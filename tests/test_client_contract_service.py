@@ -16,6 +16,7 @@ from services.client_contract_service import (
     CONTRACT_VERSIONS,
     DEFAULT_CONTRACT_VERSION,
     SEVERANCE_PAYER_OPTIONS,
+    TRADITIONAL_RATE_FIELDS,
     can_view_submission,
     default_contract_end_date,
     list_visible_submissions,
@@ -345,9 +346,97 @@ class RenderTaiwaneseReferralContractDocxTests(unittest.TestCase):
         self.assertNotIn("二千五百元整", full_text)
 
 
+class RenderTraditionalFlatRateContractDocxTests(unittest.TestCase):
+    """traditional_flat_rate（傳統一口價，2026-09-15 新增）：跟 hourly_
+    flat_rate／actual_paid 同一家族，主文完全共用，只有附件一報價表格
+    換成 9 個時段各自獨立的費率欄位（見 TRADITIONAL_RATE_FIELDS）。"""
+
+    _RATES = {
+        "rate_weekday_8h": "268",
+        "rate_weekday_9to10h": "300",
+        "rate_weekday_11to12h": "361",
+        "rate_restday_1to2h": "300",
+        "rate_restday_3to8h": "361",
+        "rate_restday_9to12h": "577",
+        "rate_holiday_1to8h": "432",
+        "rate_holiday_9to10h": "300",
+        "rate_holiday_11to12h": "361",
+    }
+
+    def _render(self, traditional_rates=None, **overrides):
+        defaults = dict(
+            party_a=_PARTY_A,
+            party_b=_PARTY_B,
+            sign_date=date(2026, 1, 1),
+            contract_start_date=date(2026, 1, 1),
+            contract_end_date=date(2026, 12, 31),
+            replace_notice_days="3",
+            severance_payer="乙方",
+            remit_day="10",
+            contract_version="traditional_flat_rate",
+            traditional_rates=traditional_rates or self._RATES,
+        )
+        defaults.update(overrides)
+        content = render_contract_docx(**defaults)
+        path = "/tmp/_test_client_contract_traditional_flat_rate_render.docx"
+        with open(path, "wb") as f:
+            f.write(content)
+        return docx.Document(path)
+
+    def test_no_leftover_jinja_tags(self):
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    full_text += "\n" + cell.text
+        self.assertNotIn("{{", full_text)
+        self.assertNotIn("{%", full_text)
+
+    def test_shares_the_same_main_clauses_as_hourly_flat_rate(self):
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("測試客戶股份有限公司", full_text)
+        self.assertIn("瑋政有限公司", full_text)
+        self.assertIn("115年01月01日", full_text)
+
+    def test_all_nine_rate_fields_substituted(self):
+        doc = self._render()
+        table = doc.tables[1]
+        rate_texts = [row.cells[3].text for row in table.rows[1:10]]
+        for expected in self._RATES.values():
+            self.assertTrue(any(expected in text for text in rate_texts), expected)
+
+    def test_missing_rate_defaults_to_blank_not_leftover_tag(self):
+        rates = dict(self._RATES)
+        del rates["rate_weekday_8h"]
+        doc = self._render(traditional_rates=rates)
+        table = doc.tables[1]
+        self.assertEqual(table.rows[1].cells[3].text, " 元/hr")
+
+    def test_fixed_notes_column_present(self):
+        doc = self._render()
+        table = doc.tables[1]
+        note_text = table.rows[1].cells[4].text
+        self.assertIn("由乙方招募派遣員工", note_text)
+        self.assertIn("每員每月收取", note_text)
+        self.assertIn("以上報價不含稅", note_text)
+
+
 class ContractVersionConfigTests(unittest.TestCase):
     def test_default_version_exists_in_registry(self):
         self.assertIn(DEFAULT_CONTRACT_VERSION, CONTRACT_VERSIONS)
+
+    def test_traditional_flat_rate_registered_with_nine_rate_fields(self):
+        self.assertIn("traditional_flat_rate", CONTRACT_VERSIONS)
+        self.assertEqual(len(TRADITIONAL_RATE_FIELDS), 9)
+        self.assertEqual(len(set(TRADITIONAL_RATE_FIELDS)), 9)
+
+    def test_traditional_flat_rate_requires_sign_date_and_severance_clause(self):
+        version = CONTRACT_VERSIONS["traditional_flat_rate"]
+        self.assertTrue(version["requires_sign_date"])
+        self.assertTrue(version["requires_severance_clause"])
+        self.assertEqual(version["project_contract_coop_category"], "派遣")
 
     def test_severance_payer_options_are_the_two_parties(self):
         self.assertEqual(set(SEVERANCE_PAYER_OPTIONS), {"甲方", "乙方"})

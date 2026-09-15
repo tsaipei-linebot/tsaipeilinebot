@@ -5326,3 +5326,74 @@ CI/CD 自動 `clasp push` + `clasp deploy`，**不用手動跑 clasp**。但要
 設定好之後：同仁在網站補登領車/還車、或新增意外事件，「配送組作業
 群組」就會即時收到一則「📝［網站新增］」開頭的通知，內容跟 LINE 群組
 回報看到的格式一樣。
+
+## 合約產生器新增第五個版本「傳統一口價」（2026-09-15）
+
+### 背景
+
+使用者提供一張報價截圖，要求合約產生器（`/client-contracts`）新增一個
+「傳統一口價」版本——跟現有「時薪一口價」（`hourly_flat_rate`）差異
+「只在附件」（使用者原話），主文（甲乙雙方欄位/合約期間/撤換條款/
+匯款日）完全共用。截圖是比「時薪一口價」現有附件一（單一列 4 欄簡單
+費率表）更細分時段的傳統報價表：平日／休息日／國定假日三大類，各自
+再拆「第8小時內」「第9-10小時」「第11-12小時」（休息日是「第1-2/
+3-8/9-12小時」）三個時段，共 9 個獨立費率。動工前跟使用者確認：(1)
+「主文共用、只換附件」的做法方向正確；(2) 附件右側「由乙方招募派遣
+員工／每員每月收取／以上報價不含稅」這 3 條說明文字寫死在範本裡，
+不開放每次修改。
+
+### 這次做了什麼
+
+- `assets/client_contracts/master_template_traditional_flat_rate.docx`
+  （新檔）：複製自 `master_template_hourly_flat_rate.docx`，只把附件一
+  表格換掉（用 python-docx 腳本重建：表頭「項目/平日／休息日／國定
+  假日/時段/費用/hr/說明」，9 個資料列，`項目` 欄跟 `說明` 欄都合併
+  成單一儲存格橫跨全部 9 列，`平日／休息日／國定假日` 欄每 3 列合併
+  一次），主文（合約條文）完全沒動，字體/框線比照原本範本（微軟正
+  黑體、10pt、置中、單線框）。
+- `services/client_contract_service.py`：
+  - `CONTRACT_VERSIONS` 新增 `traditional_flat_rate`（`requires_sign_
+    date`／`requires_severance_clause` 都是 True，跟時薪一口價/實支
+    實付同一組）。
+  - 新增 `TRADITIONAL_RATE_FIELDS`（9 個欄位名稱清單，`rate_weekday_
+    8h`／`rate_weekday_9to10h`／`rate_weekday_11to12h`／`rate_
+    restday_1to2h`／`rate_restday_3to8h`／`rate_restday_9to12h`／
+    `rate_holiday_1to8h`／`rate_holiday_9to10h`／`rate_holiday_
+    11to12h`，刻意不跟其他版本欄位名稱衝突）。
+  - `render_contract_docx()`／`save_submission()` 都新增
+    `traditional_rates: dict` 參數，直接照 `TRADITIONAL_RATE_FIELDS`
+    這份清單展開成個別欄位，沒給的欄位預設空字串。
+- `client_contract_routes.py`：`_PRICING_FIELDS_BY_VERSION` 新增這個
+  版本（引用 `TRADITIONAL_RATE_FIELDS`，9 個都要填才算完整）；
+  `client_contract_submit()` 從表單抓出這 9 個欄位組成
+  `traditional_rates` dict，一併傳給 `render_contract_docx()`／
+  `save_submission()`；`_duplicate_form_values()`（「複製」功能）也
+  補上這 9 個欄位。
+- `templates/client_contract_form.html`：新增
+  `data-pricing-for="traditional_flat_rate"` 區塊（9 個費率輸入欄），
+  沿用既有的 JS 顯示/隱藏機制（`applyPricingVisibility()`），不用
+  改 JS。
+- `services/contract_summary_service.py`：`_pricing_summary()` 新增
+  這個版本的一句話摘要（因為 9 個費率放總表一欄放不下，只列平日第8
+  小時內費率當代表值，完整報價要點進合約詳細內容看）。
+
+### 測試
+
+`tests/test_client_contract_service.py` 新增
+`RenderTraditionalFlatRateContractDocxTests`（真的用 docxtpl 套版新
+範本，驗證 9 個費率欄位都正確代換、沒有殘留 Jinja 標籤、說明欄固定
+文字存在、缺欄位時代換成空白不是殘留標籤）；`tests/test_client_
+contract_routes.py` 新增送出驗證測試（少填一個費率擋下、9 個都填
+成功送出且 `traditional_rates` 正確傳給 service 層）；`tests/test_
+contract_summary_service.py` 補上這個版本的摘要格式測試。全部測試
+（`python3 -m unittest discover -s tests`）1338 個全數通過。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**。操作上：合約產生器的「合約
+版本」下拉選單多一個「傳統一口價」選項，選了之後會出現 9 個費率
+輸入欄（平日/休息日/國定假日各 3 個時段），全部都要填才能送出；
+產生出來的 Word 合約，主文（甲乙雙方、合約期間、撤換條款等條文）
+跟「時薪一口價」一模一樣，只有附件一報價表格換成這 9 個時段的
+費率，右側的「由乙方招募派遣員工／每員每月收取／以上報價不含稅」
+說明文字是固定的，不能在表單上修改。

@@ -313,6 +313,44 @@ class SubmitValidationTests(unittest.TestCase):
         mock_save.assert_called_once()
         self.assertEqual(result.body, fake_bytes)
 
+    def test_missing_rate_field_blocks_submit_for_traditional_flat_rate(self):
+        rates = {field: "100" for field in client_contract_routes.TRADITIONAL_RATE_FIELDS}
+        rates["rate_weekday_8h"] = ""  # 少填一個就要擋下，9 個都要填
+        form = self._multidict(self._full_valid_pairs(
+            contract_version="traditional_flat_rate", hourly_wage="", management_fee="", **rates,
+        ))
+        with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                        return_value=self._fake_company()):
+                    with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+                        asyncio.run(client_contract_routes.client_contract_submit(
+                            self._FakeRequest(self._account(), form), redirect=None,
+                        ))
+        mock_save.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("報價", context["error"])
+
+    def test_traditional_flat_rate_with_all_nine_rates_submits_successfully(self):
+        rates = {field: "100" for field in client_contract_routes.TRADITIONAL_RATE_FIELDS}
+        form = self._multidict(self._full_valid_pairs(
+            contract_version="traditional_flat_rate", hourly_wage="", management_fee="", **rates,
+        ))
+        fake_bytes = b"FAKE-DOCX-BYTES"
+        with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract"):
+                    with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                            return_value=self._fake_company()):
+                        with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                            result = asyncio.run(client_contract_routes.client_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
+        mock_save.assert_called_once()
+        self.assertEqual(mock_render.call_args.kwargs["traditional_rates"], rates)
+        self.assertEqual(mock_save.call_args.kwargs["traditional_rates"], rates)
+        self.assertEqual(result.body, fake_bytes)
+
     def test_successful_submit_renders_saves_and_returns_docx(self):
         form = self._multidict(self._full_valid_pairs())
         fake_bytes = b"FAKE-DOCX-BYTES"
