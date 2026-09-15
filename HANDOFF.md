@@ -5071,3 +5071,54 @@ context。全部測試（`python3 -m unittest discover -s tests -p
 廠商、選合作方式的當下，畫面就會馬上決定要不要多顯示「合作方式」
 「試駕」的選單，不用再先按「一鍵全部更新」重新整理頁面才看得到，
 實際存檔還是要靠「一鍵全部更新」或「錄取並建立人員」按鈕。
+
+## 配送部系統：蝦皮三輪速配倉補進試駕規則（2026-09-15）
+
+### 背景
+
+上一段「合作方式／試駕即時連動」上線後，使用者問起「合作方式跟試駕
+是在哪個環節可以用」，過程中主動跟使用者反映了一個已知落差：試駕
+規則只判斷 `vendor == "shopee"`（蝦皮三輪），沒有把 2026-09-14 新增
+的「蝦皮三輪速配倉」（`shopee_speed_warehouse`）算進去，即使選了
+「三輪雇傭」也不會跳出試駕欄——這個落差當時沒有立即修，留給使用者
+自己決定要不要修。這次使用者確認要修，把「蝦皮三輪速配倉」也補進
+試駕規則。
+
+### 這次做了什麼
+
+蝦皮三輪速配倉在應備文件／合作方式規則上，原本就是刻意比照「蝦皮
+三輪」（`COOPERATION_TYPE_VENDORS = ["shopee", "shopee_speed_
+warehouse"]`），只有試駕規則忘了一起改，所以修法是讓試駕規則改成
+判斷「是不是 `COOPERATION_TYPE_VENDORS` 裡的廠商」，而不是寫死判斷
+`vendor == "shopee"`，這樣以後這個清單再變動，試駕規則會自動跟著
+同步，不用每次新增蝦皮系廠商都要記得去改兩個地方。
+
+- `delivery/repository.py`：`applicant_needs_test_drive()` 把
+  `vendor == "shopee"` 改成 `vendor in COOPERATION_TYPE_VENDORS`
+  （新 import 這個常數）。
+- `delivery/config.py`：更新 `TEST_DRIVE_REQUIRED_VENDORS` /
+  `TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES` 上方的說明註解，
+  以及應徵名單那段已經過時的「`COOPERATION_TYPE_VENDORS` 目前就是
+  `["shopee"]`」註解（這句話在 2026-09-14 新增蝦皮三輪速配倉之後就
+  不對了，一併修正）。
+- `delivery/templates/applicants_list.html`：瀏覽器端 `syncApplicant
+  Row()` 的 JS 判斷規則同步更新（`vendor === "shopee"` 改成
+  `COOPERATION_TYPE_VENDORS.indexOf(vendor) !== -1`），並拿掉上一段
+  刻意寫的「蝦皮三輪速配倉不算進試駕規則、不是漏寫」的說明註解，
+  因為現在已經算進去了。
+
+### 測試
+
+`tests/test_delivery_applicants.py` 新增
+`test_shopee_speed_warehouse_needs_test_drive_only_for_three_wheel_
+employed`，驗證蝦皮三輪速配倉在「三輪雇傭」時需要試駕、其他合作
+方式（含未選）不需要，跟蝦皮三輪的既有測試對稱。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1297 個
+全數通過。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**。操作上的差異：應徵名單裡廠商
+選「蝦皮三輪速配倉」、合作方式選「三輪雇傭」的應徵者，現在會跟
+「蝦皮三輪」一樣跳出「試駕」欄位可以填寫，畫面即時連動跟存檔規則
+都適用。
