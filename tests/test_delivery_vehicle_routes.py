@@ -307,5 +307,63 @@ class EditVehicleEventSubmitTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
 
 
+class ManualVehicleEventGroupNotifyTests(unittest.TestCase):
+    """2026-09-15 新增：網站手動補登領車/還車成功後，要額外推播一則通知到
+    配送組作業群組（見 delivery/group_notify.py），跟 LINE 群組回報的體驗
+    一致；失敗（被擋下）的補登不推播。"""
+
+    def test_successful_checkout_notifies_group(self):
+        with mock.patch.object(vehicle_routes.repository, "record_vehicle_event", return_value=(True, "")):
+            with mock.patch.object(vehicle_routes.group_notify, "notify_group") as mock_notify:
+                vehicle_routes.manual_vehicle_event(
+                    "ERV-1",
+                    _FakeRequest(_staff_account()),
+                    vendor="ud",
+                    personnel_name="王小明",
+                    event_type="checkout",
+                    event_date="2026-09-15",
+                    location="台北市",
+                    redirect=None,
+                )
+        mock_notify.assert_called_once()
+        text = mock_notify.call_args.args[0]
+        self.assertIn("領車", text)
+        self.assertIn("ERV-1", text)
+        self.assertIn("王小明", text)
+
+    def test_successful_return_notifies_group_with_return_label(self):
+        with mock.patch.object(vehicle_routes.repository, "record_vehicle_event", return_value=(True, "")):
+            with mock.patch.object(vehicle_routes.group_notify, "notify_group") as mock_notify:
+                vehicle_routes.manual_vehicle_event(
+                    "ERV-1",
+                    _FakeRequest(_staff_account()),
+                    vendor="ud",
+                    personnel_name="王小明",
+                    event_type="return",
+                    event_date="2026-09-15",
+                    location="台北市",
+                    redirect=None,
+                )
+        text = mock_notify.call_args.args[0]
+        self.assertIn("還車", text)
+
+    def test_blocked_event_does_not_notify_group(self):
+        with mock.patch.object(
+            vehicle_routes.repository, "record_vehicle_event", return_value=(False, "already_in_use")
+        ):
+            with mock.patch.object(vehicle_routes.group_notify, "notify_group") as mock_notify:
+                vehicle_routes.manual_vehicle_event(
+                    "ERV-1",
+                    _FakeRequest(_staff_account()),
+                    vendor="ud",
+                    personnel_name="王小明",
+                    event_type="checkout",
+                    event_date="2026-09-15",
+                    location="台北市",
+                    redirect=None,
+                )
+        mock_notify.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

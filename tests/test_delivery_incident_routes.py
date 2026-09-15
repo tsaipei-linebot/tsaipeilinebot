@@ -129,6 +129,38 @@ class NewIncidentSubmitTests(unittest.TestCase):
         mock_create.assert_called_once()
         self.assertTrue(resp.headers["location"].endswith("/delivery/incidents/existing-inc"))
 
+    def test_successful_submit_notifies_group(self):
+        """2026-09-15 新增：網站新增意外事件成功後，要額外推播一則通知到
+        配送組作業群組，跟 LINE 群組回報的體驗一致。"""
+        with mock.patch.object(
+            incident_routes.repository, "create_incident_event", return_value=("inc1", True)
+        ):
+            with mock.patch.object(incident_routes.group_notify, "notify_group") as mock_notify:
+                incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **_VALID_FORM, redirect=None)
+        mock_notify.assert_called_once()
+        text = mock_notify.call_args.args[0]
+        self.assertIn("已登記", text)
+        self.assertIn("林子椉", text)
+
+    def test_dedup_overwrite_notifies_group_with_updated_wording(self):
+        with mock.patch.object(
+            incident_routes.repository, "create_incident_event", return_value=("existing-inc", False)
+        ):
+            with mock.patch.object(incident_routes.group_notify, "notify_group") as mock_notify:
+                incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **_VALID_FORM, redirect=None)
+        text = mock_notify.call_args.args[0]
+        self.assertIn("已更新", text)
+        self.assertNotIn("已登記", text)
+
+    def test_invalid_form_does_not_notify_group(self):
+        bad_form = dict(_VALID_FORM, vendor="黑貓")
+        with mock.patch.object(incident_routes.repository, "create_incident_event") as mock_create:
+            with mock.patch.object(incident_routes.group_notify, "notify_group") as mock_notify:
+                with mock.patch.object(incident_routes, "templates"):
+                    incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **bad_form, redirect=None)
+        mock_create.assert_not_called()
+        mock_notify.assert_not_called()
+
 
 class EditIncidentFormTests(unittest.TestCase):
     def test_renders_when_incident_exists(self):

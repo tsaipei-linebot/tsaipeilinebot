@@ -31,6 +31,15 @@ VEHICLE_REPORT_WEBHOOK_SECRET = os.getenv("DELIVERY_VEHICLE_REPORT_SECRET", "")
 # 避免車輛回報跟意外事件回報這兩個不相干的功能共用同一支端點。
 INCIDENT_REPORT_WEBHOOK_SECRET = os.getenv("DELIVERY_INCIDENT_REPORT_SECRET", "")
 
+# 2026-09-15 新增：同仁如果不是在 LINE 群組回報，而是直接在配送部系統網站
+# 填寫車輛領還車／新增意外事件，也要讓「配送組作業群組」即時收到通知，
+# 跟 LINE 群組回報的體驗一致。這裡是反過來的方向——換成配送部系統
+# （Cloud Run）主動呼叫 delivery-gas-project 的 doGet(?type=DELIVERY_NOTIFY)
+# 橋接，請它用自己手上的 CHANNEL1 Token 推播到群組；Python 這邊完全不需要、
+# 也不會拿到那個 Token，只負責把訊息內容送過去（見 delivery/group_notify.py）。
+DELIVERY_NOTIFY_WEBHOOK_URL = os.getenv("DELIVERY_NOTIFY_WEBHOOK_URL", "")
+DELIVERY_NOTIFY_WEBHOOK_SECRET = os.getenv("DELIVERY_NOTIFY_WEBHOOK_SECRET", "")
+
 # 廠商清單（選擇廠商 / 人員所屬廠商）。
 # 2026-09-13：原本單一的「蝦皮」拆成 4 個更細的廠商，代碼 "shopee" 保留
 # 給改名後的「蝦皮三輪」（沿用同一個代碼，既有人員/車輛/應徵者資料不用

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 
-from delivery import repository
+from delivery import group_notify, repository
 from delivery.auth import current_user, login_required
 from delivery.config import (
     DEFAULT_WHEEL_TYPE,
@@ -209,7 +209,9 @@ def manual_vehicle_event(
 ):
     """網頁手動補登一筆領車/還車事件，跟 LINE 群組回報共用同一套驗證邏輯
     （repository.record_vehicle_event），套用同一組「擋下」規則，避免網頁跟
-    LINE 兩條路徑各自有各自的例外狀況。"""
+    LINE 兩條路徑各自有各自的例外狀況。成功補登後額外推播一則通知到配送組
+    作業群組（見 delivery/group_notify.py），讓同仁不用另外登入系統查，
+    跟 LINE 群組回報的體驗一致；推播失敗不影響這筆補登本身是否成功。"""
     if redirect:
         return redirect
     user = current_user(request)
@@ -223,6 +225,12 @@ def manual_vehicle_event(
         source="manual",
         reported_by=user["username"],
     )
+    if ok:
+        action_name = "領車" if event_type == "checkout" else "還車"
+        group_notify.notify_group(
+            f"📝［網站新增］✅ 已登記{action_name}：車號 {vehicle_no}，{personnel_name}，"
+            f"{event_date}，{location}"
+        )
     redirect_url = f"/delivery/vehicles/{vehicle_no}"
     if not ok:
         redirect_url += f"?error={error}"
