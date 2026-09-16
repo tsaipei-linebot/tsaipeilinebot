@@ -122,21 +122,28 @@ const SalaryWorkflowService = {
     }
 
     const sheet = SpreadsheetService.getOrCreateSheet(CONFIG.SHEET_NAME_SALARY);
-    
-    // 若分頁全空，自動寫入標準 21 欄標題列 (A~U)
+
+    // 若分頁全空，自動寫入標準 22 欄標題列 (A~V)
     if (sheet.getLastRow() === 0) {
       sheet.appendRow([
         '補款單號', '申請時間', '申請人姓名', '申請人 LINE ID', '員工姓名', '身分證', '廠商/店家',
         '申請日', '付款日', '扣分鐘月份', '補請款月份', '是否可請款', '補款方式',
         '加項小計', '扣項小計', '實補總額', '備註', '審核狀態', '核准主管', '核准時間',
-        '補款佐證(照片)'
+        '補款佐證(照片)', '匯費'
       ]);
       SpreadsheetApp.flush();
     }
-    
+
+    // 既有試算表（在新增「匯費」欄位之前就已經在用）不會被上面那個「全空才建表頭」
+    // 的邏輯補到新欄位，這裡額外檢查一次、自動補上 V 欄標題，不影響既有資料
+    const salaryHeaders = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 22)).getValues()[0];
+    if (!salaryHeaders[21] || String(salaryHeaders[21]).trim() === '') {
+      sheet.getRange(1, 22).setValue('匯費');
+    }
+
     const applyTimestamp = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss');
-    
-    // 精準對標寫入 21 個欄位資料 (A ~ U 欄)
+
+    // 精準對標寫入 22 個欄位資料 (A ~ V 欄)
     sheet.appendRow([
       salaryId,                     // A (1): 補款單號
       applyTimestamp,               // B (2): 申請時間
@@ -158,7 +165,8 @@ const SalaryWorkflowService = {
       '待審核',                     // R (18): 審核狀態
       '',                           // S (19): 核准主管
       '',                           // T (20): 核准時間
-      imageUrl || ''                // U (21): 補款佐證(照片)
+      imageUrl || '',                // U (21): 補款佐證(照片)
+      Number(deductions.remit_fee) || 0  // V (22): 匯費（扣項明細裡的其中一項，核准報表要單獨顯示）
     ]);
     SpreadsheetApp.flush();
     
@@ -389,6 +397,7 @@ const SalarySheetService = {
           approvedSupervisor: supervisorId,// S (19)
           approvedTime: approvedTime,     // T (20)
           imageUrl: data[i][20] || '',    // U (21): 補款佐證(照片)
+          remitFee: Number(data[i][21]) || 0, // V (22): 匯費（舊資料若沒有這欄會是空值，預設為 0）
           supervisorEmail: supervisorEmail,
           applicantEmail: applicantEmail
         };
@@ -617,8 +626,8 @@ const EmailService = {
               <td>${record.payDate ? formatMinguoDate(record.payDate, true) : '尚未指定'}</td>
             </tr>
             <tr>
-              <th>扣分鐘月份</th>
-              <td>${record.deductMonth ? formatMinguoDate(record.deductMonth, false) : '無'}</td>
+              <th>匯費</th>
+              <td>NT$ ${Number(record.remitFee || 0).toLocaleString()}</td>
               <th>補請款月份</th>
               <td>${formatMinguoDate(record.compensateMonth, false)}</td>
             </tr>
