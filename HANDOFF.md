@@ -5478,3 +5478,28 @@ contract_summary_service.py` 補上這個版本的摘要格式測試。全部測
 在詳細頁都看得到「編輯回報內容」按鈕，且早在 2026-09-15 就已經處理過
 舊紀錄「是否報警」欄位的舊值相容顯示，這裡沒有實際程式碼變更，如果
 使用者之後具體回報卡在哪一步，再回來這裡補記錄。）
+
+## 配送部系統：車輛回報格式錯誤時附上正確範例（2026-09-16）
+
+使用者要求：同仁在 LINE 群組回報「車輛管理」格式錯誤時，除了告知
+哪裡錯，也直接附上一份正確範例，同仁照著範例重填貼上就好，不用
+另外去找範本。
+
+`delivery/vehicle_report.py` 新增 `_CORRECT_EXAMPLE`（一份完整的
+領車格式範例：廠商/姓名/開始日期/結束日期/車號/服務門市），並在
+`PARSE_ERROR_MESSAGES` 的四種格式錯誤訊息（`missing_fields`／
+`invalid_vendor`／`ambiguous_dates`／`invalid_date`）後面都接上這份
+範例。範例統一用領車格式示範（比還車常見），還車的差異（開始日期
+留空、改填結束日期，服務門市那行改填還車地點）用一行文字補充說明，
+不另外準備一份還車範例，避免訊息太長。
+
+這是純文字調整，不影響 `parse_vehicle_report()` 的解析邏輯或
+`error` 代碼，既有測試（只斷言 `error` 代碼，不斷言訊息文字）不受
+影響。`delivery-gas-project` 那邊的 GAS 橋接（`Project5_Vehicle.js`）
+只是把 Python 回傳的文字原封不動轉發到 LINE 群組，不需要跟著更新。
+
+測試：`tests/test_delivery_vehicle.py` 新增
+`ParseErrorMessagesIncludeExampleTests`（四種格式錯誤情境各驗證
+回覆內容包含「正確範例」字樣）。全部測試（`python3 -m unittest
+discover -s tests -p "test_*.py"`）1360 個全數通過。**不需要任何
+手動部署步驟。**
