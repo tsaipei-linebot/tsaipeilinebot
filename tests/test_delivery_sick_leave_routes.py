@@ -51,6 +51,27 @@ class SickLeaveEditFormTests(unittest.TestCase):
             resp = sick_leave_routes.sick_leave_edit_form("missing", _FakeRequest(_admin_account()), redirect=None)
         self.assertEqual(resp.status_code, 303)
 
+    def test_old_format_record_prefills_leave_date_from_start_date(self):
+        """2026-09-16 使用者要求：舊格式（只有 start_date/end_date）的
+        紀錄也要能編輯，申請日期欄位要用 start_date 當預設值，而不是
+        完全不給編輯或顯示空白日期。"""
+        old_record = {
+            "id": "s1",
+            "vendor": "ud",
+            "personnel_name": "林子椉",
+            "leave_type": "sick",
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-06",
+            "reason": "感冒",
+        }
+        with mock.patch.object(sick_leave_routes.repository, "get_sick_leave", return_value=old_record):
+            with mock.patch.object(sick_leave_routes, "templates") as mock_templates:
+                sick_leave_routes.sick_leave_edit_form("s1", _FakeRequest(_admin_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["record"]["leave_date"], "2026-01-05")
+        # 原始傳入的 dict 不能被就地改掉。
+        self.assertNotIn("leave_date", old_record)
+
 
 class SickLeaveEditSubmitTests(unittest.TestCase):
     def test_valid_submit_updates_and_redirects(self):
