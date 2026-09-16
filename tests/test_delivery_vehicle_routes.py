@@ -148,6 +148,19 @@ class UpdateVehicleWheelTypeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
 
 
+class UpdateVehicleVendorTests(unittest.TestCase):
+    """2026-09-16 新增：車輛所屬廠商原本只有新增車輛當下能設定，之後
+    沒有地方可以改，補上跟輪別/服務區域一樣的網頁編輯入口。"""
+
+    def test_calls_repository_and_redirects(self):
+        with mock.patch.object(vehicle_routes.repository, "set_vehicle_vendor", return_value=True) as mock_set:
+            resp = vehicle_routes.update_vehicle_vendor(
+                "ERV-1", _FakeRequest(_staff_account()), vendor="ud", redirect=None
+            )
+        mock_set.assert_called_once_with("ERV-1", "ud")
+        self.assertEqual(resp.status_code, 303)
+
+
 class EditVehicleEventFormTests(unittest.TestCase):
     """2026-09-14 新增：歷史紀錄（領還車事件）可編輯。"""
 

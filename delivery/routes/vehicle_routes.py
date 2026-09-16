@@ -176,6 +176,16 @@ def update_vehicle_status(
     return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
 
 
+@router.post("/vehicles/{vehicle_no}/vendor")
+def update_vehicle_vendor(
+    vehicle_no: str, request: Request, vendor: str = Form(...), redirect=Depends(login_required)
+):
+    if redirect:
+        return redirect
+    repository.set_vehicle_vendor(vehicle_no, vendor)
+    return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
+
+
 @router.post("/vehicles/{vehicle_no}/wheel-type")
 def update_vehicle_wheel_type(
     vehicle_no: str, request: Request, wheel_type: str = Form(...), redirect=Depends(login_required)
