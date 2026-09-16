@@ -1182,6 +1182,20 @@ def set_vehicle_status(vehicle_no: str, status: str) -> bool:
     return True
 
 
+def set_vehicle_vendor(vehicle_no: str, vendor: str) -> bool:
+    """網頁上手動修正車輛所屬的廠商（原本只有新增車輛當下能設定，之後
+    沒有地方可以改）。只接受合法的廠商代碼，車輛不存在或代碼不合法都
+    回傳 False、不會寫入。"""
+    if vendor not in VENDOR_MAP:
+        return False
+    vehicle_no = _normalize_vehicle_no(vehicle_no)
+    ref = vehicles_ref().document(vehicle_no)
+    if not ref.get().exists:
+        return False
+    ref.update({"vendor": vendor})
+    return True
+
+
 def set_vehicle_wheel_type(vehicle_no: str, wheel_type: str) -> bool:
     """網頁上手動修正車輛的輪別（三輪／二輪）。只接受合法的代碼，車輛不
     存在或代碼不合法都回傳 False、不會寫入。"""
