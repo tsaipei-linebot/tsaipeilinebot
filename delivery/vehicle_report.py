@@ -51,11 +51,28 @@ _BLANK_PLACEHOLDER_PATTERN = re.compile(r"^[（(]?\s*空白\s*[）)]?$")
 def _is_blank_placeholder(value: str) -> bool:
     return bool(_BLANK_PLACEHOLDER_PATTERN.match((value or "").strip()))
 
+# 2026-09-16 使用者要求：格式錯誤時除了說明哪裡錯，直接附上一份正確範例，
+# 同仁不用另外去找範本、照著這份重新填一次貼上就好。統一放在每一種格式
+# 錯誤訊息的最後——用領車當範例（比還車常見），還車的差異用一行文字補充
+# 說明，不用另外準備一份還車範例，訊息才不會太長。
+_CORRECT_EXAMPLE = (
+    "📋 正確範例（領車）：\n"
+    "車輛管理\n"
+    "廠商：UD\n"
+    "姓名：李睿哲\n"
+    "開始日期：2026-8-26\n"
+    "結束日期：\n"
+    "車號：ERV-2360\n"
+    "服務門市：台北市中正區忠孝東路一段1號\n\n"
+    "（還車的話「開始日期」留空、改填「結束日期」，「服務門市」那行改填"
+    "「還車地點：」）"
+)
+
 PARSE_ERROR_MESSAGES = {
-    "missing_fields": "❌ 回報格式有誤：廠商、姓名、車號、開始或結束日期（擇一）、地點都要填，請照範本重新回覆。",
-    "invalid_vendor": "❌ 廠商看不懂，請填蝦皮三輪／蝦皮二輪公司車／蝦皮二輪雇傭自備車／蝦皮承攬／UD／UC／順豐其中一個。",
-    "ambiguous_dates": "❌ 開始日期跟結束日期不能同時填：領車只填開始日期，還車只填結束日期。",
-    "invalid_date": "❌ 日期格式看不懂，請用「2026-8-25」這種年-月-日的格式重新回覆。",
+    "missing_fields": f"❌ 回報格式有誤：廠商、姓名、車號、開始或結束日期（擇一）、地點都要填。\n\n{_CORRECT_EXAMPLE}",
+    "invalid_vendor": f"❌ 廠商看不懂，請填蝦皮三輪／蝦皮二輪公司車／蝦皮二輪雇傭自備車／蝦皮承攬／UD／UC／順豐其中一個。\n\n{_CORRECT_EXAMPLE}",
+    "ambiguous_dates": f"❌ 開始日期跟結束日期不能同時填：領車只填開始日期，還車只填結束日期。\n\n{_CORRECT_EXAMPLE}",
+    "invalid_date": f"❌ 日期格式看不懂，請用「2026-8-25」這種年-月-日的格式重新回覆。\n\n{_CORRECT_EXAMPLE}",
 }
 
 # 沒有 _TRIGGER_LINE 那行的訊息（例如同仁在群組裡的日常聊天）一律視為不是

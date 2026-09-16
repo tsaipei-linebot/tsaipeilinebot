@@ -252,5 +252,54 @@ class NormalizeVehicleNoTests(unittest.TestCase):
         self.assertEqual(_normalize_vehicle_no(None), "")
 
 
+class ParseErrorMessagesIncludeExampleTests(unittest.TestCase):
+    """格式錯誤的回覆訊息，都要附上正確範例，同仁不用另外去找範本。"""
+
+    def test_missing_fields_message_includes_example(self):
+        text = "車輛管理\n廠商：UD"
+        reply = handle_vehicle_report(text)
+        self.assertIn("正確範例", reply)
+        self.assertIn("開始日期：2026-8-26", reply)
+
+    def test_invalid_vendor_message_includes_example(self):
+        text = (
+            "車輛管理\n"
+            "廠商：不存在的廠商\n"
+            "姓名：李睿哲\n"
+            "開始日期：2026-8-26\n"
+            "結束日期：\n"
+            "車號：ERV-2360\n"
+            "服務門市：臺北市北投區八仙里公舘路423巷6弄"
+        )
+        reply = handle_vehicle_report(text)
+        self.assertIn("正確範例", reply)
+
+    def test_ambiguous_dates_message_includes_example(self):
+        text = (
+            "車輛管理\n"
+            "廠商：UD\n"
+            "姓名：李睿哲\n"
+            "開始日期：2026-8-26\n"
+            "結束日期：2026-8-27\n"
+            "車號：ERV-2360\n"
+            "服務門市：臺北市北投區八仙里公舘路423巷6弄"
+        )
+        reply = handle_vehicle_report(text)
+        self.assertIn("正確範例", reply)
+
+    def test_invalid_date_message_includes_example(self):
+        text = (
+            "車輛管理\n"
+            "廠商：UD\n"
+            "姓名：李睿哲\n"
+            "開始日期：不是日期\n"
+            "結束日期：\n"
+            "車號：ERV-2360\n"
+            "服務門市：臺北市北投區八仙里公舘路423巷6弄"
+        )
+        reply = handle_vehicle_report(text)
+        self.assertIn("正確範例", reply)
+
+
 if __name__ == "__main__":
     unittest.main()
