@@ -563,6 +563,16 @@ const EmailService = {
       }
     }
 
+    // 產生會計留底用的 PDF 存查單，失敗不影響信件本身照常寄出（只是少一個附件）
+    try {
+      const pdfBlob = this.buildSalaryPdfBlob(record);
+      if (pdfBlob) {
+        emailAttachments.push(pdfBlob);
+      }
+    } catch (pdfErr) {
+      console.warn('產生薪資補款 PDF 存查單失敗 (不影響信件寄送):', pdfErr);
+    }
+
     const subject = `【薪資補款單 - 審核通過】${record.name} - ${record.vendor} (單號: ${record.salaryId})`;
     
     const htmlBody = `
@@ -681,6 +691,135 @@ const EmailService = {
 
     GmailApp.sendEmail(finalRecipientString, subject, '', mailOptions);
     console.log(`✉️ 成功發送薪資補款郵件至：[${finalRecipientString}] (含附件與內嵌圖檔)`);
+  },
+
+  /**
+   * 產生會計留底用的 PDF 存查單（Google Docs 服務組版 → 匯出 PDF → 刪除暫存文件）。
+   * 排版對應信件內容，另外加上「簽核紀錄」區塊方便日後對帳查核是誰、何時核准。
+   * 補款佐證圖檔本身已經是信件的另一個附件，這裡不重複放入，只留文字提示。
+   */
+  buildSalaryPdfBlob: function(record) {
+    const COLOR_LABEL_BG = '#f1f5f9';
+    const COLOR_LABEL_TEXT = '#475569';
+    const COLOR_VALUE_TEXT = '#0f172a';
+    const COLOR_NOTES = '#b91c1c';
+
+    const doc = DocumentApp.create(`薪資補款存查單_${record.salaryId}`);
+    const docId = doc.getId();
+
+    try {
+      const body = doc.getBody();
+      body.setMarginTop(36).setMarginBottom(36).setMarginLeft(40).setMarginRight(40);
+
+      body.appendParagraph('材霈有限公司')
+        .setFontSize(10).setForegroundColor('#64748b');
+      body.appendParagraph('薪資補款申請存查單')
+        .setFontSize(20).setBold(true).setForegroundColor('#0f172a');
+      body.appendParagraph(`補款單號：${record.salaryId}　｜　簽核狀態：${record.reviewStatus || '已核准'}`)
+        .setFontSize(11).setForegroundColor(COLOR_LABEL_TEXT);
+      body.appendHorizontalRule();
+
+      // 一、基本資料與請款明細
+      body.appendParagraph('一、基本資料與請款明細')
+        .setFontSize(13).setBold(true).setForegroundColor('#0f172a').setSpacingBefore(14).setSpacingAfter(6);
+
+      const infoRows = [
+        ['廠商 / 店家', record.vendor || '-', '補款員工姓名', record.name || '-'],
+        ['身分證字號', record.idCard || '-', '駐廠姓名', record.applicantName || '同仁'],
+        ['補款方式', record.payType || '-', '是否可請款', record.isClaimable || '-'],
+        ['申請日期', formatMinguoDate(record.applyDate, true), '付款日期', record.payDate ? formatMinguoDate(record.payDate, true) : '尚未指定'],
+        ['匯費', `NT$ ${Number(record.remitFee || 0).toLocaleString()}`, '補請款月份', formatMinguoDate(record.compensateMonth, false)]
+      ];
+
+      const infoTable = body.appendTable();
+      infoRows.forEach(cols => {
+        const row = infoTable.appendTableRow();
+        for (let i = 0; i < 4; i++) {
+          const isLabel = (i === 0 || i === 2);
+          const cell = row.appendTableCell(String(cols[i] || ''));
+          cell.setPaddingTop(4).setPaddingBottom(4).setPaddingLeft(6).setPaddingRight(6);
+          const para = cell.getChild(0).asParagraph();
+          para.setFontSize(10.5);
+          if (isLabel) {
+            cell.setBackgroundColor(COLOR_LABEL_BG);
+            para.setForegroundColor(COLOR_LABEL_TEXT);
+          } else {
+            para.setForegroundColor(COLOR_VALUE_TEXT);
+          }
+        }
+      });
+
+      // 備註說明（獨立一個雙欄表格，避免主表格欄寬被過長文字撐開）
+      const notesTable = body.appendTable();
+      const notesRow = notesTable.appendTableRow();
+      const notesLabelCell = notesRow.appendTableCell('備註說明');
+      notesLabelCell.setBackgroundColor(COLOR_LABEL_BG);
+      notesLabelCell.getChild(0).asParagraph().setFontSize(10.5).setForegroundColor(COLOR_LABEL_TEXT);
+      const notesValueCell = notesRow.appendTableCell(record.notes || '無');
+      notesValueCell.getChild(0).asParagraph().setFontSize(10.5).setBold(true).setForegroundColor(COLOR_NOTES);
+
+      // 二、金額明細（三格淺色底色，跟信件/PDF 示範版一致）
+      body.appendParagraph('二、金額明細')
+        .setFontSize(13).setBold(true).setForegroundColor('#0f172a').setSpacingBefore(16).setSpacingAfter(6);
+
+      const summaryTable = body.appendTable();
+      const summaryRow = summaryTable.appendTableRow();
+      const summaryCells = [
+        { label: '應領小計（加項總額）', value: `NT$ ${Number(record.totalEarnings || 0).toLocaleString()}`, bg: '#f0fdf7', color: '#059669' },
+        { label: '應扣小計（扣項總額）', value: `NT$ ${Number(record.totalDeductions || 0).toLocaleString()}`, bg: '#fff5f6', color: '#e11d48' },
+        { label: '實補金額（撥款總計）', value: `NT$ ${Number(record.netTotal || 0).toLocaleString()}`, bg: '#fffbeb', color: '#b45309' }
+      ];
+      summaryCells.forEach(item => {
+        const cell = summaryRow.appendTableCell('');
+        cell.setBackgroundColor(item.bg);
+        cell.setPaddingTop(8).setPaddingBottom(8);
+        const labelPara = cell.getChild(0).asParagraph();
+        labelPara.setText(item.label).setFontSize(9).setForegroundColor('#64748b')
+          .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+        const valuePara = cell.appendParagraph(item.value);
+        valuePara.setFontSize(14).setBold(true).setForegroundColor(item.color)
+          .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+      });
+
+      // 三、簽核紀錄
+      body.appendParagraph('三、簽核紀錄')
+        .setFontSize(13).setBold(true).setForegroundColor('#0f172a').setSpacingBefore(16).setSpacingAfter(6);
+
+      const approvalTable = body.appendTable();
+      const approvalRow = approvalTable.appendTableRow();
+      const approvalCols = ['核准主管', record.approvedSupervisor || '系統管理者', '核准時間', record.approvedTime || '-'];
+      for (let i = 0; i < 4; i++) {
+        const isLabel = (i === 0 || i === 2);
+        const cell = approvalRow.appendTableCell(String(approvalCols[i] || ''));
+        cell.setPaddingTop(4).setPaddingBottom(4).setPaddingLeft(6).setPaddingRight(6);
+        const para = cell.getChild(0).asParagraph();
+        para.setFontSize(10.5);
+        if (isLabel) {
+          cell.setBackgroundColor(COLOR_LABEL_BG);
+          para.setForegroundColor(COLOR_LABEL_TEXT);
+        } else {
+          para.setForegroundColor(COLOR_VALUE_TEXT);
+        }
+      }
+
+      body.appendParagraph('此文件由系統於核准當下自動產生，作為薪資補款留底憑證，補款佐證圖檔請詳見核准信件附件。')
+        .setFontSize(9).setForegroundColor('#94a3b8').setSpacingBefore(20);
+
+      doc.saveAndClose();
+
+      const pdfBlob = DriveApp.getFileById(docId).getAs('application/pdf')
+        .setName(`薪資補款存查單_${record.salaryId}.pdf`);
+
+      return pdfBlob;
+    } finally {
+      // 暫存的 Google Doc 只是產生 PDF 用的中介檔案，用完丟進垃圾桶（不是永久刪除，
+      // 誤刪還能從雲端硬碟垃圾桶救回），避免每核准一筆就在雲端硬碟堆一個文件檔。
+      try {
+        DriveApp.getFileById(docId).setTrashed(true);
+      } catch (cleanupErr) {
+        console.warn('清理暫存 PDF 產生用文件失敗 (不影響已產生的 PDF):', cleanupErr);
+      }
+    }
   }
 };
 
