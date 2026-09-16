@@ -120,9 +120,7 @@
                 </td>
                 {% if user.role == "admin" %}
                 <td>
-                    {% if r.leave_date %}
                     <a href="/delivery/function/sick-leave/records/{{ r.id }}/edit">編輯</a>
-                    {% else %}-{% endif %}
                 </td>
                 {% endif %}
             </tr>

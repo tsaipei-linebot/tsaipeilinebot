@@ -5361,10 +5361,20 @@ GAS 那邊」的既有安全邊界。GAS 那邊的改動見
 `incident_routes.edit_incident_form` 的權限層級）：`repository.
 get_sick_leave()` / `update_sick_leave()`、新路由
 `GET/POST /delivery/function/sick-leave/records/{id}/edit`、新模板
-`sick_leave_edit.html`，查詢頁列表在管理員登入時多一欄「編輯」連結
-（舊格式、沒有 `leave_date` 的紀錄不開放編輯，避免編輯表單顯示空白
-日期造成混淆）。只更新登記內容本身，`approved`／`created_by`／
-`created_at` 不受影響（核准狀態有自己的操作入口）。
+`sick_leave_edit.html`，查詢頁列表在管理員登入時多一欄「編輯」連結。
+只更新登記內容本身，`approved`／`created_by`／`created_at` 不受影響
+（核准狀態有自己的操作入口）。
+
+**2026-09-16 追加：舊格式（只有 start_date/end_date，沒有
+leave_date/hours）的紀錄原本不開放編輯（怕編輯表單顯示空白日期造成
+混淆），使用者測試後要求這些舊紀錄也要能編輯。**改成：`sick_leave_
+edit_form()` 用 `sick_leave_record_date()` 的退回邏輯，把 `start_date`
+帶進「申請日期」欄位當預設值，「申請時數」欄位因為舊紀錄本來就沒有
+存這個值，維持空白讓管理員自己填——**只要管理員真的按下「儲存修改」，
+這筆舊紀錄就會補齊 `leave_date`/`hours`，自動變成新格式**，之後會被
+正確算進年度額度累積（這也是目前唯一能讓舊紀錄「補救」進額度計算的
+方法，因為系統沒辦法自動幫舊紀錄猜時數）。查詢頁列表的「編輯」連結
+現在對所有紀錄（不分新舊格式）都會顯示。
 
 測試：`tests/test_delivery_group_notify.py`／`test_delivery_incident_routes.py`
 新增訊息內容/`alsoNotify` 參數相關測試；新增

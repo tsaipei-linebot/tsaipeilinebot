@@ -169,12 +169,20 @@ def sick_leave_records_export(
 def sick_leave_edit_form(sick_leave_id: str, request: Request, redirect=Depends(admin_required)):
     """修正既有假別登記內容（例如假別選錯、時數打錯）只開放管理員，比照
     意外事件編輯（`incident_routes.edit_incident_form`）的權限層級——這是
-    正式的出勤記錄，也會被拿去算年度額度累積，不開放一般同仁自行修改。"""
+    正式的出勤記錄，也會被拿去算年度額度累積，不開放一般同仁自行修改。
+
+    2026-09-16 起舊格式（只有 start_date/end_date，沒有 leave_date/hours
+    的紀錄）也開放編輯：申請日期欄位用 sick_leave_record_date() 的退回
+    邏輯帶出 start_date 當預設值，時數因為舊紀錄本來就沒有存，欄位留空
+    讓管理員自己填——只要真的按下「儲存修改」，這筆紀錄就會補齊
+    leave_date/hours，變成新格式，之後就能正確被算進年度額度累積。"""
     if redirect:
         return redirect
     record = repository.get_sick_leave(sick_leave_id)
     if not record:
         return RedirectResponse(url="/delivery/function/sick-leave/records", status_code=303)
+    record = dict(record)
+    record["leave_date"] = repository.sick_leave_record_date(record)
     return templates.TemplateResponse(
         request,
         "sick_leave_edit.html",
