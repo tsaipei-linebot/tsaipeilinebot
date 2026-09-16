@@ -165,6 +165,93 @@ def sick_leave_records_export(
     )
 
 
+@router.get("/function/sick-leave/records/{sick_leave_id}/edit")
+def sick_leave_edit_form(sick_leave_id: str, request: Request, redirect=Depends(admin_required)):
+    """修正既有假別登記內容（例如假別選錯、時數打錯）只開放管理員，比照
+    意外事件編輯（`incident_routes.edit_incident_form`）的權限層級——這是
+    正式的出勤記錄，也會被拿去算年度額度累積，不開放一般同仁自行修改。"""
+    if redirect:
+        return redirect
+    record = repository.get_sick_leave(sick_leave_id)
+    if not record:
+        return RedirectResponse(url="/delivery/function/sick-leave/records", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "sick_leave_edit.html",
+        {
+            "user": current_user(request),
+            "record": record,
+            "vendors": VENDORS,
+            "leave_types": LEAVE_TYPES,
+            "error": "",
+        },
+    )
+
+
+@router.post("/function/sick-leave/records/{sick_leave_id}/edit")
+def sick_leave_edit_submit(
+    sick_leave_id: str,
+    request: Request,
+    vendor: str = Form(...),
+    personnel_name: str = Form(...),
+    leave_type: str = Form(""),
+    leave_date: str = Form(...),
+    hours: str = Form(...),
+    reason: str = Form(""),
+    redirect=Depends(admin_required),
+):
+    if redirect:
+        return redirect
+    record = repository.get_sick_leave(sick_leave_id)
+    if not record:
+        return RedirectResponse(url="/delivery/function/sick-leave/records", status_code=303)
+
+    def _error_response(error: str):
+        return templates.TemplateResponse(
+            request,
+            "sick_leave_edit.html",
+            {
+                "user": current_user(request),
+                "record": {
+                    "id": sick_leave_id,
+                    "vendor": vendor,
+                    "personnel_name": personnel_name,
+                    "leave_type": leave_type,
+                    "leave_date": leave_date,
+                    "hours": hours,
+                    "reason": reason,
+                },
+                "vendors": VENDORS,
+                "leave_types": LEAVE_TYPES,
+                "error": error,
+            },
+            status_code=400,
+        )
+
+    if leave_type not in LEAVE_TYPE_MAP:
+        return _error_response("假別看不懂，請重新選擇。")
+
+    try:
+        hours_value = float(hours)
+        if hours_value <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return _error_response("請輸入正確的時數（大於 0 的數字，可以有小數）")
+
+    repository.update_sick_leave(
+        sick_leave_id,
+        {
+            "personnel_name": personnel_name.strip(),
+            "vendor": vendor,
+            "leave_type": leave_type,
+            "leave_date": leave_date.strip(),
+            "hours": hours_value,
+            "reason": reason.strip(),
+        },
+    )
+    return RedirectResponse(url="/delivery/function/sick-leave/records", status_code=303)
+
+
 @router.post("/function/sick-leave/records/approve")
 async def sick_leave_records_approve(request: Request, redirect=Depends(admin_required)):
     """核准是單向的，只開放管理員操作，沒有取消核准的路徑（見

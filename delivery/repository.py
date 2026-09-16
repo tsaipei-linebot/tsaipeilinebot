@@ -590,6 +590,35 @@ def create_sick_leave(
     return doc_ref.id
 
 
+def get_sick_leave(sick_leave_id: str):
+    snapshot = sick_leaves_ref().document(sick_leave_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def update_sick_leave(sick_leave_id: str, data: dict) -> bool:
+    """管理員在假別查詢頁修正既有登記內容（例如假別選錯、時數打錯）。
+    只更新登記本身的欄位，`approved`／`created_by`／`created_at` 不受
+    影響——核准狀態有自己的操作入口（見 bulk_approve_sick_leaves），不該
+    被這裡的編輯表單意外洗掉。紀錄不存在回傳 False、不會寫入。"""
+    ref = sick_leaves_ref().document(sick_leave_id)
+    if not ref.get().exists:
+        return False
+    payload = {
+        "personnel_name": data.get("personnel_name", ""),
+        "vendor": data.get("vendor", ""),
+        "leave_type": data.get("leave_type", ""),
+        "leave_date": data.get("leave_date", ""),
+        "hours": data.get("hours", 0),
+        "reason": data.get("reason", ""),
+    }
+    ref.update(payload)
+    return True
+
+
 def sick_leave_record_date(record: dict) -> str:
     """取這筆紀錄「用來篩選/排序/顯示」的日期字串：新格式用 leave_date，
     上線前的舊格式（沒有 leave_date）退回用 start_date。"""

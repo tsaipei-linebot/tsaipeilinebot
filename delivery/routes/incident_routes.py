@@ -40,6 +40,31 @@ _INCIDENT_REQUIRED_FIELDS = (
 _LEGACY_POLICE_CALLED_DISPLAY = {"有": "是", "無": "否"}
 
 
+def _format_incident_notify_message(data: dict, action: str) -> str:
+    """組成「網站新增意外事件」要推播到群組的通知文字——2026-09-16 改成
+    比照 LINE 群組回報同仁貼的完整 11 個欄位格式（而不是原本只有一句話的
+    簡短確認），並且這則訊息會**同時**送到「配送組作業群組」跟 LINE 那邊
+    才有的「管理／督導」第二個群組（見 group_notify.notify_group() 的
+    also_notify_incident_group 參數），確保不管同仁是從 LINE 群組回報、
+    還是直接在網站上填寫，兩個群組看到的內容都一樣完整，管理／督導層
+    不用另外登入系統查細節。"""
+    lines = [f"📝［網站新增］✅ {action}意外事件回報", f"1.廠商名稱：{VENDOR_MAP.get(data['vendor'], data['vendor'])}"]
+    lines.append(f"2.身分類別：{data['identity_type']}")
+    lines.append(f"3.人員名稱：{data['personnel_name']}")
+    lines.append(f"4.發生時間：{data['occurred_at']}")
+    lines.append(f"5.發生地點：{data['location']}")
+    lines.append(f"6.執行勤務中/上下班途中：{data['duty_status']}")
+    lines.append(f"7.是否報警：{data['police_called']}")
+    lines.append(f"8.受傷情形：{data['injury']}")
+    lines.append(f"9.是否聯繫家屬：{data['family_contacted']}")
+    lines.append(f"10.是否牽扯他人：{data['third_party_involved']}")
+    lines.append(f"11.意外事件經過：{data['description']}")
+    if data.get("license_plate"):
+        lines.append(f"車牌號碼：{data['license_plate']}")
+    lines.append("已寫入系統，後續由管理員評估風險等級並追蹤結案。")
+    return "\n".join(lines)
+
+
 def _validate_incident_form(data: dict) -> str:
     """驗證意外事件表單資料（新增／編輯共用同一套規則），回傳空字串代表
     通過，否則回傳要顯示給使用者看的錯誤訊息。"""
@@ -202,8 +227,7 @@ def new_incident_submit(
         incident_id, created = repository.create_incident_event(data)
         action = "已登記" if created else "已更新"
         group_notify.notify_group(
-            f"📝［網站新增］✅ {action}意外事件回報：{data['personnel_name']}（{data['identity_type']}），"
-            f"{data['occurred_at']}，{data['location']}。已寫入系統，後續由管理員評估風險等級並追蹤結案。"
+            _format_incident_notify_message(data, action), also_notify_incident_group=True
         )
         return RedirectResponse(url=f"/delivery/incidents/{incident_id}", status_code=303)
 

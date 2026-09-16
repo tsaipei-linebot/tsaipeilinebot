@@ -5327,6 +5327,53 @@ CI/CD 自動 `clasp push` + `clasp deploy`，**不用手動跑 clasp**。但要
 群組」就會即時收到一則「📝［網站新增］」開頭的通知，內容跟 LINE 群組
 回報看到的格式一樣。
 
+### 追加：意外事件通知內容改成完整欄位＋同時通知第二個群組（2026-09-16）
+
+使用者實測這個功能上線後，回報希望跟 LINE 群組回報的體驗完全一致：
+1. **推播內容要跟 LINE 同仁貼的完整內容一樣**：原本網站新增意外事件
+   推播的只有一句簡短確認（「✅ 已登記意外事件回報：林子椉（雇傭）…」），
+   現在改成跟 LINE 範本一樣的完整 11 個欄位（新增
+   `incident_routes._format_incident_notify_message()`），額外的
+   「車牌號碼」欄位（只有網站表單才有）也會附在最後一行，只有真的有
+   填才會出現。
+2. **要同時通知第二個群組**：LINE 群組回報時，管理／督導層看的「第二個
+   群組」（`INCIDENT_NOTIFY_GROUP_ID`）只有真的成功登記才會收到完整
+   內容；網站新增原本完全沒有推播到這個群組。現在網站新增也會推播到
+   這個第二個群組，內容跟第一個群組完全一樣。
+
+**架構**：`group_notify.notify_group()` 新增 `also_notify_incident_group`
+參數，為 True 時會在打給 GAS 橋接的網址上多帶一個 `alsoNotify=incident`
+參數。**故意不直接傳第二個群組的 ID**——那個 ID 只有 GAS
+（`delivery-gas-project`）那邊知道，Cloud Run 這邊只表達「這是一筆
+意外事件，麻煩也通知第二個群組」的意圖，維持「群組 ID／Token 只留在
+GAS 那邊」的既有安全邊界。GAS 那邊的改動見
+`delivery-gas-project`（PR #11）：`Project7_DeliveryNotify.js` 收到
+`alsoNotify=incident` 後，除了照舊推播到 `VEHICLE_REPORT_GROUP_ID`，
+還會額外讀 `INCIDENT_NOTIFY_GROUP_ID` 這個指令碼屬性推播過去，沒設定
+的話只記 log、不影響第一個群組的推播結果。車輛領還車
+（`manual_vehicle_event`）不受影響，呼叫時不會帶這個參數。
+
+**使用者不需要額外設定任何東西**：如果 `INCIDENT_NOTIFY_GROUP_ID`
+先前已經因為 LINE 群組回報功能設定過，這次會直接沿用生效；沒設定過的
+話行為維持原樣（只有第一個群組收到通知），不會報錯。
+
+順便新增「假別查詢」頁面的編輯功能（管理員限定，比照意外事件編輯
+`incident_routes.edit_incident_form` 的權限層級）：`repository.
+get_sick_leave()` / `update_sick_leave()`、新路由
+`GET/POST /delivery/function/sick-leave/records/{id}/edit`、新模板
+`sick_leave_edit.html`，查詢頁列表在管理員登入時多一欄「編輯」連結
+（舊格式、沒有 `leave_date` 的紀錄不開放編輯，避免編輯表單顯示空白
+日期造成混淆）。只更新登記內容本身，`approved`／`created_by`／
+`created_at` 不受影響（核准狀態有自己的操作入口）。
+
+測試：`tests/test_delivery_group_notify.py`／`test_delivery_incident_routes.py`
+新增訊息內容/`alsoNotify` 參數相關測試；新增
+`tests/test_delivery_sick_leave_routes.py`（編輯表單/送出）；
+`tests/test_delivery_repayment_sickleave.py` 新增
+`get_sick_leave`/`update_sick_leave` 的 repository 測試。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1354 個全數
+通過。
+
 ## 合約產生器新增第五個版本「傳統一口價」（2026-09-15）
 
 ### 背景
