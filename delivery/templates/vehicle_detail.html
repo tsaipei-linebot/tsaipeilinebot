@@ -8,7 +8,9 @@
     服務區域：{{ service_area_map.get(vehicle.service_area, "未設定") }}
     狀態：<span class="badge {{ 'badge-ok' if vehicle.status == 'available' else ('badge-missing' if vehicle.status == 'maintenance' else 'badge-pending') }}">{{ vehicle_status_map.get(vehicle.status, vehicle.status) }}</span>
     目前使用人：{{ vehicle.current_holder or "-" }}
+    目前使用人電話：{{ vehicle.current_holder_phone or "-" }}
     目前地點：{{ vehicle.current_location or "-" }}
+    備註：{{ vehicle.current_note or "-" }}
 </p>
 
 {% if error %}<p class="error">{{ error_message }}</p>{% endif %}
@@ -76,6 +78,18 @@
     <label>地點
         <input type="text" name="location" required>
     </label>
+    <label>電話（選填）
+        <input type="text" name="phone">
+    </label>
+    <label>待維修
+        <select name="needs_maintenance">
+            <option value="">否</option>
+            <option value="1">是（車輛故障，直接標記待維修）</option>
+        </select>
+    </label>
+    <label>備註（選填）
+        <input type="text" name="note">
+    </label>
     <button type="submit" class="btn btn-primary">送出</button>
 </form>
 
@@ -87,7 +101,10 @@
             <th>日期</th>
             <th>事件</th>
             <th>姓名</th>
+            <th>電話</th>
             <th>地點</th>
+            <th>備註</th>
+            <th>待維修</th>
             <th>來源</th>
             <th></th>
         </tr>
@@ -98,7 +115,10 @@
             <td>{{ e.event_date }}</td>
             <td>{{ "領車" if e.event_type == "checkout" else "還車" }}</td>
             <td>{{ e.personnel_name }}</td>
+            <td>{{ e.phone or "-" }}</td>
             <td>{{ e.location }}</td>
+            <td>{{ e.note or "-" }}</td>
+            <td>{% if e.needs_maintenance %}<span class="badge badge-missing">是</span>{% else %}-{% endif %}</td>
             <td>{{ "LINE 群組" if e.source == "line" else "手動補登" }}</td>
             <td><a href="/delivery/vehicles/{{ vehicle.vehicle_no }}/events/{{ e.id }}/edit">編輯</a></td>
         </tr>

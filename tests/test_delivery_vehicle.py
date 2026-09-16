@@ -31,6 +31,40 @@ class ParseVehicleReportTests(unittest.TestCase):
         self.assertEqual(result["vehicle_no"], "ERV-2360")
         self.assertEqual(result["event_date"], "2026-08-26")
         self.assertEqual(result["location"], "臺北市北投區八仙里公舘路423巷6弄")
+        # 2026-09-16 新增：電話/待維修/備註都是選填，沒填時要是空字串/False，
+        # 不能讓解析失敗。
+        self.assertEqual(result["phone"], "")
+        self.assertEqual(result["note"], "")
+        self.assertFalse(result["needs_maintenance"])
+
+    def test_optional_phone_note_and_maintenance_fields_parse(self):
+        text = (
+            "車輛管理\n"
+            "廠商：UD\n"
+            "姓名：李睿哲\n"
+            "開始日期：2026-8-26\n"
+            "結束日期：\n"
+            "車號：ERV-2360\n"
+            "服務門市：台北市\n"
+            "電話：0912345678\n"
+            "待維修：是\n"
+            "備註：輪胎有點磨損"
+        )
+        result = parse_vehicle_report(text)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["phone"], "0912345678")
+        self.assertTrue(result["needs_maintenance"])
+        self.assertEqual(result["note"], "輪胎有點磨損")
+
+    def test_needs_maintenance_only_true_when_exactly_yes(self):
+        for raw, expected in [("否", False), ("", False), ("要", False), ("是", True), (" 是 ", True)]:
+            text = (
+                "車輛管理\n"
+                f"廠商：UD\n姓名：李睿哲\n開始日期：2026-8-26\n結束日期：\n"
+                f"車號：ERV-2360\n服務門市：台北市\n待維修：{raw}"
+            )
+            result = parse_vehicle_report(text)
+            self.assertEqual(result["needs_maintenance"], expected, f"raw={raw!r}")
 
     def test_return_message_parses(self):
         text = (
@@ -175,8 +209,10 @@ class VehicleEventErrorTests(unittest.TestCase):
         self.assertEqual(vehicle_event_error(vehicle, "ud", "checkout"), "not_available")
 
     def test_checkout_blocked_when_maintenance(self):
+        # 2026-09-16：跟「使用中被別人領走」拆成不同錯誤代碼，訊息才能講
+        # 清楚車子是本來就已經在等維修、不是被別人領走了。
         vehicle = self._vehicle(status="maintenance")
-        self.assertEqual(vehicle_event_error(vehicle, "ud", "checkout"), "not_available")
+        self.assertEqual(vehicle_event_error(vehicle, "ud", "checkout"), "already_maintenance")
 
     def test_return_allowed_when_in_use(self):
         vehicle = self._vehicle(status="in_use")
@@ -250,6 +286,18 @@ class NormalizeVehicleNoTests(unittest.TestCase):
     def test_none_and_empty(self):
         self.assertEqual(_normalize_vehicle_no(""), "")
         self.assertEqual(_normalize_vehicle_no(None), "")
+
+
+class EventErrorMessagesTests(unittest.TestCase):
+    """2026-09-16：車輛已經是待維修狀態時又被回報領車，訊息要講清楚是
+    「本來就在等維修」，不是套用「使用中」那句籠統的訊息。"""
+
+    def test_already_maintenance_message_differs_from_not_available(self):
+        from delivery.vehicle_report import EVENT_ERROR_MESSAGES
+
+        self.assertIn("already_maintenance", EVENT_ERROR_MESSAGES)
+        self.assertIn("待維修", EVENT_ERROR_MESSAGES["already_maintenance"])
+        self.assertNotEqual(EVENT_ERROR_MESSAGES["already_maintenance"], EVENT_ERROR_MESSAGES["not_available"])
 
 
 class ParseErrorMessagesIncludeExampleTests(unittest.TestCase):

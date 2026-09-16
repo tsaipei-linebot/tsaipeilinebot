@@ -27,10 +27,22 @@
     <label>地點
         <input type="text" name="location" value="{{ event.location }}" required>
     </label>
+    <label>電話（選填）
+        <input type="text" name="phone" value="{{ event.phone or '' }}">
+    </label>
+    <label>待維修
+        <select name="needs_maintenance">
+            <option value="" {% if not event.needs_maintenance %}selected{% endif %}>否</option>
+            <option value="1" {% if event.needs_maintenance %}selected{% endif %}>是（車輛故障，直接標記待維修）</option>
+        </select>
+    </label>
+    <label>備註（選填）
+        <input type="text" name="note" value="{{ event.note or '' }}">
+    </label>
     <button type="submit" class="btn btn-primary">儲存修改</button>
 </form>
 
-<p class="hint">如果這筆是目前這台車最新的一筆紀錄，儲存後「目前使用人／地點／狀態」也會一併更新。</p>
+<p class="hint">如果這筆是目前這台車最新的一筆紀錄，儲存後「目前使用人／地點／狀態」也會一併更新；但如果車輛目前已經是「待維修」狀態，這裡的修改不會反過來改變車輛目前狀態，要撤銷待維修請到車輛詳細頁按「解除待維修」。</p>
 
 <p class="back-link"><a href="/delivery/vehicles/{{ vehicle.vehicle_no }}">&larr; 回車輛詳細</a></p>
 {% endblock %}

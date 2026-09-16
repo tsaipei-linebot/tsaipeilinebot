@@ -1106,6 +1106,8 @@ def get_vehicle(vehicle_no: str):
     # config.py 的說明）。
     data.setdefault("wheel_type", DEFAULT_WHEEL_TYPE)
     data.setdefault("service_area", "")
+    data.setdefault("current_holder_phone", "")
+    data.setdefault("current_note", "")
     return data
 
 
@@ -1150,6 +1152,8 @@ def list_vehicles(
         data["vehicle_no"] = snapshot.id
         data.setdefault("wheel_type", DEFAULT_WHEEL_TYPE)
         data.setdefault("service_area", "")
+        data.setdefault("current_holder_phone", "")
+        data.setdefault("current_note", "")
         if vehicle_matches_filters(
             data, vendor_filter, status_filter, vehicle_no_filter, wheel_type_filter, service_area_filter
         ):
@@ -1164,6 +1168,11 @@ def list_vehicle_events(vehicle_no: str) -> list:
     for snapshot in vehicle_events_ref().where("vehicle_no", "==", vehicle_no).stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
+        # 電話/備註/待維修是 2026-09-16 才新增的欄位，這之前寫入的舊紀錄
+        # 沒有這三個 key，統一補上空字串／False，畫面上顯示空白即可。
+        data.setdefault("phone", "")
+        data.setdefault("note", "")
+        data.setdefault("needs_maintenance", False)
         result.append(data)
     result.sort(key=lambda e: e.get("created_at", 0), reverse=True)
     return result
@@ -1229,7 +1238,10 @@ def vehicle_event_error(vehicle, vendor: str, event_type: str) -> str:
     錯誤代碼：
     - "vehicle_not_found"：車號不存在，要先在網頁新增這台車。
     - "vendor_mismatch"：回報的廠商跟這台車登記的廠商不一樣。
-    - "not_available"：領車時車輛目前是使用中或待維修，不能再派車。
+    - "not_available"：領車時車輛目前是使用中，不能再派車。
+    - "already_maintenance"：領車時車輛目前已經是待維修狀態，不能再派車；
+      跟 "not_available" 分開是因為原因不一樣（一個是被別人領走了，一個是
+      車子本來就已經在等維修），錯誤訊息也要分開講清楚。
     - "not_in_use"：還車時車輛目前不是使用中，沒有領用中的紀錄可以還。
     """
     if vehicle is None:
@@ -1237,8 +1249,11 @@ def vehicle_event_error(vehicle, vendor: str, event_type: str) -> str:
     if vehicle.get("vendor") != vendor:
         return "vendor_mismatch"
     status = vehicle.get("status", DEFAULT_VEHICLE_STATUS)
-    if event_type == "checkout" and status in ("in_use", "maintenance"):
-        return "not_available"
+    if event_type == "checkout":
+        if status == "maintenance":
+            return "already_maintenance"
+        if status == "in_use":
+            return "not_available"
     if event_type == "return" and status != "in_use":
         return "not_in_use"
     return ""
@@ -1253,12 +1268,22 @@ def record_vehicle_event(
     location: str,
     source: str,
     reported_by: str = "",
+    phone: str = "",
+    note: str = "",
+    needs_maintenance: bool = False,
 ) -> tuple:
     """驗證通過（見 vehicle_event_error）才會真的寫入事件紀錄、同步更新車輛
     主檔的狀態/使用人/地點。回傳 (True, "") 代表成功；(False, 錯誤代碼) 代表
     被擋下，呼叫端可以把錯誤代碼轉成對應的訊息（LINE 回覆或網頁錯誤提示）。
     source 是 "line" 或 "manual"，用來區分這筆事件是 LINE 群組回報還是網頁
-    手動補登的。"""
+    手動補登的。
+
+    needs_maintenance=True（回報時「待維修」填「是」）代表同仁發現車輛故障，
+    不管這筆是領車還是還車，車輛最終狀態都直接變成「待維修」，不走原本
+    領車→使用中／還車→可用的轉換，同仁不用再另外進系統點一次「標記待維修」。
+    這種情況下「目前使用人」統一清空，不填領車人姓名——因為車子其實沒有真的
+    被騎走，這裡填了人名畫面上容易讓人誤以為車在他手上（詳見 2026-09-16
+    HANDOFF.md 的討論）。"""
     vehicle_no = _normalize_vehicle_no(vehicle_no)
     vehicle = get_vehicle(vehicle_no)
     error = vehicle_event_error(vehicle, vendor, event_type)
@@ -1276,16 +1301,26 @@ def record_vehicle_event(
             "location": location,
             "source": source,
             "reported_by": reported_by,
+            "phone": phone,
+            "note": note,
+            "needs_maintenance": needs_maintenance,
             "created_at": now,
         }
     )
 
-    new_status = "in_use" if event_type == "checkout" else "available"
+    if needs_maintenance:
+        new_status = "maintenance"
+        new_holder = ""
+    else:
+        new_status = "in_use" if event_type == "checkout" else "available"
+        new_holder = personnel_name if event_type == "checkout" else ""
     vehicles_ref().document(vehicle_no).update(
         {
             "status": new_status,
-            "current_holder": personnel_name if event_type == "checkout" else "",
+            "current_holder": new_holder,
+            "current_holder_phone": phone if new_holder else "",
             "current_location": location,
+            "current_note": note,
             "last_event_at": now,
         }
     )
@@ -1298,6 +1333,9 @@ def get_vehicle_event(event_id: str):
         return None
     data = snapshot.to_dict() or {}
     data["id"] = snapshot.id
+    data.setdefault("phone", "")
+    data.setdefault("note", "")
+    data.setdefault("needs_maintenance", False)
     return data
 
 
@@ -1308,6 +1346,9 @@ def update_vehicle_event(
     event_type: str,
     event_date: str,
     location: str,
+    phone: str = "",
+    note: str = "",
+    needs_maintenance: bool = False,
 ) -> bool:
     """網頁上修正一筆既有的領還紀錄（例如日期、地點打錯）。只接受合法的
     事件類型，事件不存在回傳 False、不會寫入。
@@ -1316,9 +1357,13 @@ def update_vehicle_event(
     跟車輛主檔的 last_event_at 比對——兩者是同一次 record_vehicle_event()
     呼叫寫入的同一個時間戳，可以直接比對是否相等），連動更新車輛主檔目前
     的使用人／地點／狀態，避免歷史紀錄改完之後跟主檔顯示的「目前狀態」
-    兜不起來；車輛目前是「待維修」時跳過這個連動，因為那是管理員另外
-    手動標記的狀態，不該被歷史紀錄的編輯覆寫掉。修正比較舊的一筆歷史
-    紀錄則完全不影響車輛主檔目前狀態，純粹只是改歷史紀錄本身。"""
+    兜不起來；車輛目前是「待維修」時跳過這個連動，因為待維修狀態可能是
+    管理員另外手動標記的（跟這筆事件無關），也可能就是這筆事件自己造成的
+    ——不管哪一種，都不該被這裡的編輯悄悄覆寫掉（例如把「待維修」改回
+    「使用中」）；如果同仁是想撤銷這筆事件造成的待維修狀態，要另外到車輛
+    詳細頁按「解除待維修」，不是透過編輯歷史紀錄改。修正比較舊的一筆歷史
+    紀錄，或車輛目前本來就已經是待維修，都完全不影響車輛主檔目前狀態，
+    純粹只是改歷史紀錄本身。"""
     if event_type not in ("checkout", "return"):
         return False
     ref = vehicle_events_ref().document(event_id)
@@ -1335,17 +1380,28 @@ def update_vehicle_event(
             "event_type": event_type,
             "event_date": event_date,
             "location": location,
+            "phone": phone,
+            "note": note,
+            "needs_maintenance": needs_maintenance,
         }
     )
 
     vehicle = get_vehicle(vehicle_no)
     is_latest_event = vehicle and vehicle.get("last_event_at") == existing.get("created_at")
     if is_latest_event and vehicle.get("status") != "maintenance":
+        if needs_maintenance:
+            new_status = "maintenance"
+            new_holder = ""
+        else:
+            new_status = "in_use" if event_type == "checkout" else "available"
+            new_holder = personnel_name if event_type == "checkout" else ""
         vehicles_ref().document(vehicle_no).update(
             {
-                "status": "in_use" if event_type == "checkout" else "available",
-                "current_holder": personnel_name if event_type == "checkout" else "",
+                "status": new_status,
+                "current_holder": new_holder,
+                "current_holder_phone": phone if new_holder else "",
                 "current_location": location,
+                "current_note": note,
             }
         )
     return True

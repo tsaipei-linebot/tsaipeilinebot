@@ -228,6 +228,9 @@ class EditVehicleEventSubmitTests(unittest.TestCase):
                         event_type="return",
                         event_date="2026-01-02",
                         location=" 台北市 ",
+                        phone="",
+                        note="",
+                        needs_maintenance="",
                         redirect=None,
                     )
         mock_update.assert_called_once_with(
@@ -237,8 +240,43 @@ class EditVehicleEventSubmitTests(unittest.TestCase):
             event_type="return",
             event_date="2026-01-02",
             location="台北市",
+            phone="",
+            note="",
+            needs_maintenance=False,
         )
         self.assertEqual(resp.status_code, 303)
+
+    def test_valid_submit_with_maintenance_flagged(self):
+        # 2026-09-16 新增：編輯表單也能勾選待維修、填電話備註。
+        vehicle, event = self._vehicle_and_event()
+        with mock.patch.object(vehicle_routes.repository, "get_vehicle", return_value=vehicle):
+            with mock.patch.object(vehicle_routes.repository, "get_vehicle_event", return_value=event):
+                with mock.patch.object(vehicle_routes.repository, "update_vehicle_event", return_value=True) as mock_update:
+                    vehicle_routes.edit_vehicle_event_submit(
+                        "ERV-1",
+                        "evt1",
+                        _FakeRequest(_staff_account()),
+                        vendor="ud",
+                        personnel_name="王小明",
+                        event_type="checkout",
+                        event_date="2026-01-02",
+                        location="台北市",
+                        phone=" 0912345678 ",
+                        note=" 輪胎異音 ",
+                        needs_maintenance="1",
+                        redirect=None,
+                    )
+        mock_update.assert_called_once_with(
+            event_id="evt1",
+            vendor="ud",
+            personnel_name="王小明",
+            event_type="checkout",
+            event_date="2026-01-02",
+            location="台北市",
+            phone="0912345678",
+            note="輪胎異音",
+            needs_maintenance=True,
+        )
 
     def test_missing_personnel_name_shows_error_and_does_not_update(self):
         vehicle, event = self._vehicle_and_event()
@@ -255,6 +293,9 @@ class EditVehicleEventSubmitTests(unittest.TestCase):
                             event_type="return",
                             event_date="2026-01-02",
                             location="台北市",
+                            phone="",
+                            note="",
+                            needs_maintenance="",
                             redirect=None,
                         )
         mock_update.assert_not_called()
@@ -276,6 +317,9 @@ class EditVehicleEventSubmitTests(unittest.TestCase):
                             event_type="return",
                             event_date="2026-01-02",
                             location="台北市",
+                            phone="",
+                            note="",
+                            needs_maintenance="",
                             redirect=None,
                         )
         mock_update.assert_not_called()
@@ -295,6 +339,9 @@ class EditVehicleEventSubmitTests(unittest.TestCase):
                             event_type="lost",
                             event_date="2026-01-02",
                             location="台北市",
+                            phone="",
+                            note="",
+                            needs_maintenance="",
                             redirect=None,
                         )
         mock_update.assert_not_called()
@@ -336,6 +383,9 @@ class ManualVehicleEventGroupNotifyTests(unittest.TestCase):
                     event_type="checkout",
                     event_date="2026-09-15",
                     location="台北市",
+                    phone="",
+                    note="",
+                    needs_maintenance="",
                     redirect=None,
                 )
         mock_notify.assert_called_once()
@@ -355,10 +405,49 @@ class ManualVehicleEventGroupNotifyTests(unittest.TestCase):
                     event_type="return",
                     event_date="2026-09-15",
                     location="台北市",
+                    phone="",
+                    note="",
+                    needs_maintenance="",
                     redirect=None,
                 )
         text = mock_notify.call_args.args[0]
         self.assertIn("還車", text)
+
+    def test_maintenance_flagged_event_notifies_with_maintenance_note(self):
+        # 2026-09-16 新增：手動補登也能勾選待維修、填電話備註，推播訊息要
+        # 一併帶上，跟 LINE 群組回報體驗一致。
+        with mock.patch.object(vehicle_routes.repository, "record_vehicle_event", return_value=(True, "")) as mock_record:
+            with mock.patch.object(vehicle_routes.group_notify, "notify_group") as mock_notify:
+                vehicle_routes.manual_vehicle_event(
+                    "ERV-1",
+                    _FakeRequest(_staff_account()),
+                    vendor="ud",
+                    personnel_name="王小明",
+                    event_type="checkout",
+                    event_date="2026-09-15",
+                    location="台北市",
+                    phone="0912345678",
+                    note="輪胎異音",
+                    needs_maintenance="1",
+                    redirect=None,
+                )
+        mock_record.assert_called_once_with(
+            vehicle_no="ERV-1",
+            vendor="ud",
+            personnel_name="王小明",
+            event_type="checkout",
+            event_date="2026-09-15",
+            location="台北市",
+            source="manual",
+            reported_by="bob",
+            phone="0912345678",
+            note="輪胎異音",
+            needs_maintenance=True,
+        )
+        text = mock_notify.call_args.args[0]
+        self.assertIn("待維修", text)
+        self.assertIn("0912345678", text)
+        self.assertIn("輪胎異音", text)
 
     def test_blocked_event_does_not_notify_group(self):
         with mock.patch.object(
@@ -373,6 +462,9 @@ class ManualVehicleEventGroupNotifyTests(unittest.TestCase):
                     event_type="checkout",
                     event_date="2026-09-15",
                     location="台北市",
+                    phone="",
+                    note="",
+                    needs_maintenance="",
                     redirect=None,
                 )
         mock_notify.assert_not_called()
