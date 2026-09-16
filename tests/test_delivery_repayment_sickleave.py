@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -10,6 +11,7 @@ _stub_gcp.install()
 
 from datetime import date
 
+from delivery import repository
 from delivery.excel_export import build_repayment_workbook, build_sick_leave_workbook
 from delivery.repository import (
     compute_annual_leave_days,
@@ -309,6 +311,100 @@ class ExcelExportTests(unittest.TestCase):
         ws = wb.active
         row = [cell.value for cell in ws[2]]
         self.assertEqual(row[0], "2026-02-01 ~ 2026-02-02")
+
+
+class SickLeaveEditRepositoryTests(unittest.TestCase):
+    """`repository.get_sick_leave()` / `update_sick_leave()`：2026-09-16
+    新增，讓假別查詢頁能修正假別/時數等打錯的內容（比照
+    get_incident_event()/update_incident_event() 的做法）。"""
+
+    def test_get_sick_leave_returns_none_when_missing(self):
+        fake_snapshot = mock.Mock(exists=False)
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.get.return_value = fake_snapshot
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(repository, "sick_leaves_ref", return_value=fake_collection):
+            self.assertIsNone(repository.get_sick_leave("missing"))
+
+    def test_get_sick_leave_returns_data_with_id(self):
+        fake_snapshot = mock.Mock(exists=True)
+        fake_snapshot.id = "s1"
+        fake_snapshot.to_dict.return_value = {"personnel_name": "林子椉", "hours": 8, "leave_type": "sick"}
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.get.return_value = fake_snapshot
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(repository, "sick_leaves_ref", return_value=fake_collection):
+            record = repository.get_sick_leave("s1")
+        self.assertEqual(record["id"], "s1")
+        self.assertEqual(record["personnel_name"], "林子椉")
+
+    def test_update_sick_leave_writes_fields_and_returns_true(self):
+        fake_snapshot = mock.Mock(exists=True)
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.get.return_value = fake_snapshot
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(repository, "sick_leaves_ref", return_value=fake_collection):
+            result = repository.update_sick_leave(
+                "s1",
+                {
+                    "personnel_name": "林子椉",
+                    "vendor": "ud",
+                    "leave_type": "personal",
+                    "leave_date": "2026-09-16",
+                    "hours": 4.0,
+                    "reason": "看醫生",
+                },
+            )
+        self.assertTrue(result)
+        fake_doc_ref.update.assert_called_once_with(
+            {
+                "personnel_name": "林子椉",
+                "vendor": "ud",
+                "leave_type": "personal",
+                "leave_date": "2026-09-16",
+                "hours": 4.0,
+                "reason": "看醫生",
+            }
+        )
+
+    def test_update_sick_leave_returns_false_when_missing(self):
+        fake_snapshot = mock.Mock(exists=False)
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.get.return_value = fake_snapshot
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(repository, "sick_leaves_ref", return_value=fake_collection):
+            result = repository.update_sick_leave("missing", {"personnel_name": "x"})
+        self.assertFalse(result)
+        fake_doc_ref.update.assert_not_called()
+
+    def test_update_sick_leave_does_not_touch_approved_or_created_fields(self):
+        """approved/created_by/created_at 有各自的操作入口，編輯表單不該
+        意外洗掉。"""
+        fake_snapshot = mock.Mock(exists=True)
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.get.return_value = fake_snapshot
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(repository, "sick_leaves_ref", return_value=fake_collection):
+            repository.update_sick_leave(
+                "s1",
+                {
+                    "personnel_name": "林子椉",
+                    "vendor": "ud",
+                    "leave_type": "personal",
+                    "leave_date": "2026-09-16",
+                    "hours": 4.0,
+                    "reason": "",
+                },
+            )
+        payload = fake_doc_ref.update.call_args.args[0]
+        self.assertNotIn("approved", payload)
+        self.assertNotIn("created_by", payload)
+        self.assertNotIn("created_at", payload)
 
 
 if __name__ == "__main__":

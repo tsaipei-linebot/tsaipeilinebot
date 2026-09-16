@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}編輯假別登記：{{ record.personnel_name }} - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<h1 class="page-title">編輯假別登記：{{ record.personnel_name }}</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<p class="hint">這裡只修正登記內容，核准狀態請回假別查詢頁另外操作。</p>
+
+<form method="post" action="/delivery/function/sick-leave/records/{{ record.id }}/edit" class="form-stack form-narrow">
+    <label>廠商
+        <select name="vendor" required>
+            {% for v in vendors %}
+            <option value="{{ v.code }}" {% if record.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>人員姓名
+        <input type="text" name="personnel_name" value="{{ record.personnel_name }}" required>
+    </label>
+    <label>假別
+        <select name="leave_type" required>
+            {% for t in leave_types %}
+            <option value="{{ t.code }}" {% if record.leave_type == t.code %}selected{% endif %}>{{ t.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>申請日期
+        <input type="date" name="leave_date" value="{{ record.leave_date }}" required>
+    </label>
+    <label>申請時數
+        <input type="number" name="hours" step="0.5" min="0.5" value="{{ record.hours }}" required>
+    </label>
+    <label>原因說明
+        <textarea name="reason" rows="3">{{ record.reason or "" }}</textarea>
+    </label>
+    <button type="submit" class="btn btn-primary">儲存修改</button>
+</form>
+
+<p class="back-link"><a href="/delivery/function/sick-leave/records">&larr; 回假別查詢</a></p>
+{% endblock %}

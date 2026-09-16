@@ -161,6 +161,44 @@ class NewIncidentSubmitTests(unittest.TestCase):
         mock_create.assert_not_called()
         mock_notify.assert_not_called()
 
+    def test_notify_group_message_includes_all_fields(self):
+        """2026-09-16 使用者要求：網站新增意外事件推播到群組的內容要跟
+        LINE 群組回報一樣完整（11 個欄位都要有），不是只有一句簡短確認。"""
+        with mock.patch.object(
+            incident_routes.repository, "create_incident_event", return_value=("inc1", True)
+        ):
+            with mock.patch.object(incident_routes.group_notify, "notify_group") as mock_notify:
+                incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **_VALID_FORM, redirect=None)
+        text = mock_notify.call_args.args[0]
+        self.assertIn("UD", text)  # VENDOR_MAP 對應後的廠商顯示名稱
+        self.assertIn("雇傭", text)
+        self.assertIn("林子椉", text)
+        self.assertIn("2026-09-04 11:00", text)
+        self.assertIn("金山南路一段126號", text)
+        self.assertIn("執行勤務中", text)
+        self.assertIn("是", text)
+        self.assertIn("行進其間與汽車後照鏡擦撞", text)
+
+    def test_notify_group_message_includes_license_plate_when_present(self):
+        form = dict(_VALID_FORM, license_plate="ABC-1234")
+        with mock.patch.object(
+            incident_routes.repository, "create_incident_event", return_value=("inc1", True)
+        ):
+            with mock.patch.object(incident_routes.group_notify, "notify_group") as mock_notify:
+                incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **form, redirect=None)
+        text = mock_notify.call_args.args[0]
+        self.assertIn("ABC-1234", text)
+
+    def test_notify_group_also_notifies_incident_group(self):
+        """2026-09-16 使用者要求：意外事件也要推播到第二個（管理／督導）
+        群組，不是只有配送組作業群組。"""
+        with mock.patch.object(
+            incident_routes.repository, "create_incident_event", return_value=("inc1", True)
+        ):
+            with mock.patch.object(incident_routes.group_notify, "notify_group") as mock_notify:
+                incident_routes.new_incident_submit(_FakeRequest(_staff_account()), **_VALID_FORM, redirect=None)
+        self.assertTrue(mock_notify.call_args.kwargs.get("also_notify_incident_group"))
+
 
 class EditIncidentFormTests(unittest.TestCase):
     def test_renders_when_incident_exists(self):
