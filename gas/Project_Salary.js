@@ -35,6 +35,28 @@ const SalaryWorkflowService = {
       };
     }
 
+    // 重複申請偵測：補款員工姓名 + 身分證字號 + 補請款月份 三者都相同時，
+    // 視為疑似重複申請，直接擋下不給送出（已退回的申請單會被整列刪除，
+    // 所以這裡掃到的都是「待審核」或「已核准」的有效紀錄，不需要再另外篩狀態）
+    const dupIdCard = String(info.id_card || '').trim().toUpperCase();
+    const dupCompensateMonth = String(info.compensate_month || '').trim();
+    const dupCheckSheet = SpreadsheetService.getOrCreateSheet(CONFIG.SHEET_NAME_SALARY);
+    if (dupCheckSheet.getLastRow() > 1) {
+      const existingRows = dupCheckSheet.getDataRange().getValues();
+      for (let i = 1; i < existingRows.length; i++) {
+        const rowName = String(existingRows[i][4] || '').trim();
+        const rowIdCard = String(existingRows[i][5] || '').trim().toUpperCase();
+        const rowCompensateMonth = normalizeMonthValue(existingRows[i][10]);
+
+        if (rowName === employeeName && rowIdCard === dupIdCard && rowCompensateMonth === dupCompensateMonth) {
+          return {
+            status: 'error',
+            message: `系統偵測到員工【${employeeName}】在補請款月份【${dupCompensateMonth}】已有一筆補款申請紀錄（單號：${existingRows[i][0]}），請勿重複申請！如需修改請確認原申請單的處理狀況，或聯繫系統管理員協助處理。`
+          };
+        }
+      }
+    }
+
     const employeeBinding = OrgService.getEmployeeBindingByName(applicantName);
     if (!employeeBinding.isBound) {
       return {
@@ -432,6 +454,32 @@ const SalarySheetService = {
   }
 };
 
+// 將試算表讀出的日期值（Sheets 常會把日期/月份字串自動轉成 Date 物件）格式化成
+// 民國年簡短格式（如 115.09.14 或月份型的 115.09），避免信件裡直接印出 Date 物件
+// toString() 的完整英文長字串（如 "Mon Sep 14 2026 00:00:00 GMT+0800..."）
+function formatMinguoDate(value, includeDay) {
+  if (!value) return '';
+  let d = value;
+  if (!(d instanceof Date)) {
+    d = new Date(value);
+    if (isNaN(d.getTime())) return String(value).trim(); // 無法解析就照原樣顯示，不強行硬轉
+  }
+  const minguoYear = d.getFullYear() - 1911;
+  const monthDay = Utilities.formatDate(d, 'Asia/Taipei', includeDay ? 'MM.dd' : 'MM');
+  return `${minguoYear}.${monthDay}`;
+}
+
+// 把試算表讀出的「補請款月份」正規化成 yyyy-MM 字串，用於重複申請比對；
+// 該欄位常被 Sheets 自動轉成 Date 物件存放，跟表單送來的 "2026-09" 字串型式不同，
+// 需要統一格式才能正確比對是否為同一個月份
+function normalizeMonthValue(value) {
+  if (!value) return '';
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, 'Asia/Taipei', 'yyyy-MM');
+  }
+  return String(value).trim();
+}
+
 // ==============================================================================
 // 3. 電子郵件報表發送服務 (EmailService)
 // ==============================================================================
@@ -545,16 +593,16 @@ const EmailService = {
           <div class="section-title">一、基本資料與請款明細</div>
           <table class="info-table">
             <tr>
-              <th>申請員工姓名</th>
-              <td><b style="color:#0284c7;">${record.applicantName || '同仁'}</b></td>
+              <th>廠商 / 店家</th>
+              <td><b style="color:#0284c7;">${record.vendor}</b></td>
               <th>補款員工姓名</th>
               <td><b>${record.name}</b></td>
             </tr>
             <tr>
               <th>身分證字號</th>
               <td>${record.idCard}</td>
-              <th>廠商 / 店家</th>
-              <td>${record.vendor}</td>
+              <th>駐廠姓名</th>
+              <td>${record.applicantName || '同仁'}</td>
             </tr>
             <tr>
               <th>補款方式</th>
@@ -564,15 +612,15 @@ const EmailService = {
             </tr>
             <tr>
               <th>申請日期</th>
-              <td>${record.applyDate}</td>
+              <td>${formatMinguoDate(record.applyDate, true)}</td>
               <th>付款日期</th>
-              <td>${record.payDate || '尚未指定'}</td>
+              <td>${record.payDate ? formatMinguoDate(record.payDate, true) : '尚未指定'}</td>
             </tr>
             <tr>
               <th>扣分鐘月份</th>
-              <td>${record.deductMonth || '無'}</td>
+              <td>${record.deductMonth ? formatMinguoDate(record.deductMonth, false) : '無'}</td>
               <th>補請款月份</th>
-              <td>${record.compensateMonth}</td>
+              <td>${formatMinguoDate(record.compensateMonth, false)}</td>
             </tr>
             <tr>
               <th>備註說明</th>
