@@ -51,7 +51,9 @@
             <th>服務區域</th>
             <th>狀態</th>
             <th>目前使用人</th>
+            <th>手機號碼</th>
             <th>目前地點</th>
+            <th>備註</th>
             <th></th>
         </tr>
     </thead>
@@ -68,7 +70,9 @@
                 </span>
             </td>
             <td>{{ v.current_holder or "-" }}</td>
+            <td>{{ v.current_holder_phone or "-" }}</td>
             <td>{{ v.current_location or "-" }}</td>
+            <td>{{ v.current_note or "-" }}</td>
             <td><a href="/delivery/vehicles/{{ v.vehicle_no }}">查看詳細</a></td>
         </tr>
         {% endfor %}

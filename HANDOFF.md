@@ -5503,3 +5503,115 @@ contract_summary_service.py` 補上這個版本的摘要格式測試。全部測
 回覆內容包含「正確範例」字樣）。全部測試（`python3 -m unittest
 discover -s tests -p "test_*.py"`）1360 個全數通過。**不需要任何
 手動部署步驟。**
+
+## 配送部系統：車輛回報新增電話/待維修/備註欄位（2026-09-16）
+
+使用者一次提出五項車輛管理的需求，先討論確認邏輯（尤其是「待維修」
+這個新欄位在不同情境下該怎麼影響車輛狀態），確認完才動手：
+
+1. LINE 回報格式（領車/還車）加三個選填欄位：電話、待維修、備註。
+2. 網頁「手動補登事件」「編輯歷史紀錄」也要能填這三個欄位。
+3. 車輛列表要能看到目前使用人的手機號碼。
+4. 車輛的廠商要能自己修正（**這項其實 2026-09-16 稍早的 PR #134
+   已經做完，這次沒有再動**，見上一節）。
+5. 車輛管理主頁要比照「全台三輪車」試算表，一目了然看到地區、車號、
+   廠商、目前使用人、手機號碼、狀態、停車地點、備註。
+
+### 「待維修」欄位的規則（跟使用者討論確認過三輪才定案）
+
+同仁去交車給司機、或還車當下，如果發現車輛其實故障了，「待維修」
+欄填「是」（其餘任何值，包含留空、填「否」，都當作沒勾選——不因為
+這個新欄位擋下整筆回報），車輛就直接變成「待維修」狀態，不用同仁
+再另外進系統點一次「標記待維修」：
+
+- **領車 + 待維修＝是**：前提還是要車輛目前是「可用」（沒有放寬
+  `vehicle_event_error` 對領車的驗證），但車輛最終狀態不是變成
+  「使用中」，而是直接變「待維修」。「目前使用人」統一留空——因為
+  車子其實沒有真的被騎走，填了人名畫面上容易誤以為車在他手上（這是
+  跟使用者討論後選定的「做法 A」，另一個選項「做法 B：填領車人
+  姓名方便追蹤是誰通報的」使用者確認不需要）。
+- **還車 + 待維修＝是**：這個規則同時涵蓋「原本使用中的車，用到一半
+  發現故障」這個情境——同仁只要照正常「還車」回報（不用先假裝車輛
+  沒事還車、再另外標記待維修），姓名、地點照實際狀況填，待維修勾
+  「是」即可。跟正常還車一樣清空「目前使用人」，差別只在最終狀態是
+  「待維修」不是「可用」。
+- **車輛已經是待維修，又被回報「領車」**：這種「重複回報」情況
+  維持原本「擋下」的行為（不會真的又寫入一筆），但錯誤訊息從原本
+  跟「使用中」共用的籠統說法，改成專門講清楚「這台車已經是待維修
+  狀態，不用重複回報」，讓同仁知道不是格式打錯。
+
+### 程式碼變更
+
+- `delivery/vehicle_report.py`：`_FIELD_PATTERNS` 新增
+  `phone`／`needs_maintenance`／`note` 三個選填欄位的解析規則；新增
+  `_is_yes()`，只有完全填「是」才算勾選待維修。`parse_vehicle_report()`
+  回傳的 dict 多這三個 key。`_CORRECT_EXAMPLE` 範例文字補上這三欄的
+  示範跟選填說明。`EVENT_ERROR_MESSAGES` 把 `not_available` 拆成
+  `not_available`（使用中）跟新增的 `already_maintenance`（已經待維修）
+  兩個獨立代碼跟訊息。`handle_vehicle_report()` 成功登記且有勾待維修時，
+  回覆訊息額外附上一行「已同步標記待維修」。
+- `delivery/repository.py`：
+  - `vehicle_event_error()`：領車時依車輛現況分別回傳
+    `already_maintenance`（本來就待維修）或 `not_available`（使用中）。
+  - `record_vehicle_event()` / `update_vehicle_event()`：新增
+    `phone`／`note`／`needs_maintenance` 參數，寫進事件紀錄；
+    `needs_maintenance=True` 時車輛主檔狀態直接寫 `maintenance`、
+    「目前使用人」清空，其餘情況維持原本領車/還車的狀態切換邏輯。
+    `update_vehicle_event()` 保留原本「車輛目前已經是待維修時，跳過
+    歷史紀錄編輯連動車輛主檔狀態」這個保護機制，並延伸適用到這次新
+    加的待維修情境——如果要撤銷某筆事件造成的待維修狀態，要到車輛
+    詳細頁按「解除待維修」，不能單靠編輯歷史紀錄表單悄悄改回來。
+  - `get_vehicle()` / `list_vehicles()` 新增 `current_holder_phone`／
+    `current_note` 欄位（跟隨事件更新，反映「目前使用人的電話」「目前
+    備註」）；`get_vehicle_event()` / `list_vehicle_events()` 新增
+    `phone`／`note`／`needs_maintenance` 欄位。這四個函式都對舊資料
+    （這次上線前寫入的車輛/事件文件）補上預設值（空字串／False），
+    沿用這個系統一貫「不回頭改寫舊資料、讀取時做相容處理」的做法，
+    舊紀錄不會壞掉，只是這三個新欄位顯示空白。
+- `delivery/routes/vehicle_routes.py`：`manual_vehicle_event()`／
+  `edit_vehicle_event_submit()` 新增 `phone`／`note`／`needs_maintenance`
+  三個表單欄位（待維修用下拉選單送出 `"1"`/空字串，不是 HTML
+  checkbox——checkbox 沒勾選時瀏覽器根本不會送出這個欄位，用下拉選單
+  可以確保後端一定收得到值）。手動補登成功推播到群組的訊息，如果有
+  填電話/備註/待維修，也會一併附上。
+- 範本：`vehicle_detail.html`（頂部資訊列加「目前使用人電話」「備註」；
+  手動補登表單加電話/待維修/備註；歷史紀錄表格加電話/備註/待維修欄）、
+  `vehicle_event_edit.html`（編輯表單加電話/待維修/備註）、
+  `vehicle_list.html`（列表加「手機號碼」「備註」兩欄，對應需求 3、5）。
+
+### GAS 那邊完全不用動
+
+`delivery-gas-project` 的 `Project5_Vehicle.js` 只是把同仁在群組貼的
+原始文字整段轉發給這個 repo 的 webhook，格式解析全部在 Python 這邊
+做，這次新增欄位不影響轉發邏輯，**不需要 `clasp push` 或改任何
+指令碼屬性**。
+
+### 測試
+
+`tests/test_delivery_vehicle.py` 新增：
+`ParseVehicleReportTests`（電話/備註/待維修的解析、待維修只有填「是」
+才算真的勾選的各種變化）、`EventErrorMessagesTests`
+（`already_maintenance` 訊息確實跟 `not_available` 不同）；
+`VehicleEventErrorTests.test_checkout_blocked_when_maintenance`
+更新為驗證新的 `already_maintenance` 代碼。`tests/test_delivery_
+vehicle_routes.py` 新增：`EditVehicleEventSubmitTests.
+test_valid_submit_with_maintenance_flagged`、
+`ManualVehicleEventGroupNotifyTests.
+test_maintenance_flagged_event_notifies_with_maintenance_note`，
+並更新既有測試補上新的表單欄位。全部測試（`python3 -m unittest
+discover -s tests -p "test_*.py"`）1365 個全數通過。
+
+### 使用者需要知道的事
+
+**不需要任何手動部署步驟**，合併後就直接生效。操作上：
+
+- 之後同仁在 LINE 群組回報車輛，可以多填「電話」「待維修」「備註」
+  三行（不填也沒關係，不會被當成格式錯誤）；發現車輛故障時，
+  「待維修」那行填「是」，系統就會直接把車輛標成待維修，不用再另外
+  進網頁點一次。
+- 網頁「車輛詳細」頁的「手動補登事件」表單、還有「編輯歷史紀錄」
+  表單，都補上了電話、待維修（下拉選單）、備註這三欄。
+- 車輛列表頁（`/delivery/vehicles`）現在會多顯示「手機號碼」跟
+  「備註」兩欄，一目了然。
+- 這次上線前的舊車輛/舊回報紀錄，因為當時系統還沒有這些欄位，這三欄
+  會顯示空白，不是資料遺失，之後有新的回報才會開始有資料。

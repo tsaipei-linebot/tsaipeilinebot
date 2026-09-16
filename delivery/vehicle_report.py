@@ -38,6 +38,11 @@ _FIELD_PATTERNS = {
     "end_date": re.compile(r"結束日期[：:]\s*(.*)"),
     "vehicle_no": re.compile(r"車號[：:]\s*(.*)"),
     "location": re.compile(r"(?:服務門市|還車地點)[：:]\s*(.*)"),
+    # 2026-09-16 新增：電話、待維修、備註三個選填欄位，不在必填檢查
+    # （_missing_fields 判斷）裡，沒填也不會被當成格式錯誤。
+    "phone": re.compile(r"電話[：:]\s*(.*)"),
+    "needs_maintenance": re.compile(r"待維修[：:]\s*(.*)"),
+    "note": re.compile(r"備註[：:]\s*(.*)"),
 }
 
 _DATE_PATTERN = re.compile(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$")
@@ -51,6 +56,14 @@ _BLANK_PLACEHOLDER_PATTERN = re.compile(r"^[（(]?\s*空白\s*[）)]?$")
 def _is_blank_placeholder(value: str) -> bool:
     return bool(_BLANK_PLACEHOLDER_PATTERN.match((value or "").strip()))
 
+
+def _is_yes(value: str) -> bool:
+    """「待維修」欄只認完全填「是」才算勾選，其餘（留空、填「否」、打錯字）
+    一律當作沒有勾選，不會擋下整筆回報——比起嚴格擋錯，讓同仁「沒填清楚
+    就當作沒事」風險更低（車輛正常，只是差了一個待維修的標記，管理員之後
+    在網頁上還是能補標記）。"""
+    return (value or "").strip() == "是"
+
 # 2026-09-16 使用者要求：格式錯誤時除了說明哪裡錯，直接附上一份正確範例，
 # 同仁不用另外去找範本、照著這份重新填一次貼上就好。統一放在每一種格式
 # 錯誤訊息的最後——用領車當範例（比還車常見），還車的差異用一行文字補充
@@ -63,9 +76,13 @@ _CORRECT_EXAMPLE = (
     "開始日期：2026-8-26\n"
     "結束日期：\n"
     "車號：ERV-2360\n"
-    "服務門市：台北市中正區忠孝東路一段1號\n\n"
+    "服務門市：台北市中正區忠孝東路一段1號\n"
+    "電話：0912345678\n"
+    "待維修：\n"
+    "備註：\n\n"
     "（還車的話「開始日期」留空、改填「結束日期」，「服務門市」那行改填"
-    "「還車地點：」）"
+    "「還車地點：」；電話／待維修／備註三欄可以不填，車輛狀況正常「待維修」"
+    "留空即可，發現車輛故障才填「是」）"
 )
 
 PARSE_ERROR_MESSAGES = {
@@ -80,10 +97,16 @@ PARSE_ERROR_MESSAGES = {
 # 一堆錯誤說明，很擾民。
 NOT_A_REPORT = "not_a_report"
 
+# 2026-09-16 使用者要求：車輛「已經是待維修」時又被回報「領車」，這種情況
+# 原本跟「已經使用中」共用同一個 not_available 錯誤代碼跟訊息，但兩種情境
+# 原因不一樣（一個是被別人領走了，一個是車子本來就已經在等維修），拆成
+# 兩個獨立代碼，訊息也分開講清楚，讓同仁知道不是格式打錯、是車子本來就
+# 不能領。
 EVENT_ERROR_MESSAGES = {
     "vehicle_not_found": "❌ 系統裡查不到這台車，請先請管理員到網頁「車輛管理」新增這台車再回報。",
     "vendor_mismatch": "❌ 這台車登記的廠商跟回報的不一樣，請確認車號或廠商有沒有打錯。",
-    "not_available": "❌ 這台車目前使用中或待維修，沒辦法再次派車。",
+    "not_available": "❌ 這台車目前使用中，沒辦法再次派車。",
+    "already_maintenance": "❌ 這台車目前已經是待維修狀態，不用重複回報，如已完成維修請聯絡管理員到網頁解除待維修。",
     "not_in_use": "❌ 系統裡這台車目前不是使用中狀態，沒有領用中的紀錄可以還車。",
 }
 
@@ -154,6 +177,9 @@ def parse_vehicle_report(text: str) -> dict:
         "vehicle_no": vehicle_no,
         "event_date": start_date or end_date,
         "location": location,
+        "phone": fields.get("phone", "").strip(),
+        "note": fields.get("note", "").strip(),
+        "needs_maintenance": _is_yes(fields.get("needs_maintenance", "")),
     }
 
 
@@ -178,12 +204,18 @@ def handle_vehicle_report(text: str) -> str:
         event_date=parsed["event_date"],
         location=parsed["location"],
         source="line",
+        phone=parsed["phone"],
+        note=parsed["note"],
+        needs_maintenance=parsed["needs_maintenance"],
     )
     if not ok:
         return EVENT_ERROR_MESSAGES.get(error, "❌ 這筆回報無法處理，請確認車輛狀態。")
 
     action_name = "領車" if parsed["event_type"] == "checkout" else "還車"
-    return (
+    reply = (
         f"✅ 已登記{action_name}：車號 {parsed['vehicle_no']}，{parsed['personnel_name']}，"
         f"{parsed['event_date']}，{parsed['location']}"
     )
+    if parsed["needs_maintenance"]:
+        reply += "\n🔧 已同步標記這台車為「待維修」狀態。"
+    return reply

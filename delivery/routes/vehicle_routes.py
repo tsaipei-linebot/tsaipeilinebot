@@ -215,16 +215,24 @@ def manual_vehicle_event(
     event_type: str = Form(...),
     event_date: str = Form(...),
     location: str = Form(...),
+    phone: str = Form(""),
+    note: str = Form(""),
+    needs_maintenance: str = Form(""),
     redirect=Depends(login_required),
 ):
     """網頁手動補登一筆領車/還車事件，跟 LINE 群組回報共用同一套驗證邏輯
     （repository.record_vehicle_event），套用同一組「擋下」規則，避免網頁跟
     LINE 兩條路徑各自有各自的例外狀況。成功補登後額外推播一則通知到配送組
     作業群組（見 delivery/group_notify.py），讓同仁不用另外登入系統查，
-    跟 LINE 群組回報的體驗一致；推播失敗不影響這筆補登本身是否成功。"""
+    跟 LINE 群組回報的體驗一致；推播失敗不影響這筆補登本身是否成功。
+
+    needs_maintenance 是表單下拉選單送出的值（"1" 代表勾選待維修，空字串
+    代表沒勾），不是真的 checkbox，是為了避免 HTML checkbox「沒勾就不會送出
+    這個欄位」的行為讓後端收不到值。"""
     if redirect:
         return redirect
     user = current_user(request)
+    is_maintenance = needs_maintenance == "1"
     ok, error = repository.record_vehicle_event(
         vehicle_no=vehicle_no,
         vendor=vendor,
@@ -234,13 +242,20 @@ def manual_vehicle_event(
         location=location,
         source="manual",
         reported_by=user["username"],
+        phone=phone,
+        note=note,
+        needs_maintenance=is_maintenance,
     )
     if ok:
         action_name = "領車" if event_type == "checkout" else "還車"
-        group_notify.notify_group(
-            f"📝［網站新增］✅ 已登記{action_name}：車號 {vehicle_no}，{personnel_name}，"
-            f"{event_date}，{location}"
-        )
+        text = f"📝［網站新增］✅ 已登記{action_name}：車號 {vehicle_no}，{personnel_name}，{event_date}，{location}"
+        if phone:
+            text += f"，電話 {phone}"
+        if note:
+            text += f"，備註：{note}"
+        if is_maintenance:
+            text += "\n🔧 已同步標記這台車為「待維修」狀態。"
+        group_notify.notify_group(text)
     redirect_url = f"/delivery/vehicles/{vehicle_no}"
     if not ok:
         redirect_url += f"?error={error}"
@@ -290,13 +305,17 @@ def edit_vehicle_event_submit(
     event_type: str = Form(...),
     event_date: str = Form(...),
     location: str = Form(...),
+    phone: str = Form(""),
+    note: str = Form(""),
+    needs_maintenance: str = Form(""),
     redirect=Depends(login_required),
 ):
     """修正一筆既有的領還紀錄（例如日期、地點打錯）。不套用
     vehicle_event_error 那套「目前車輛狀態合不合理」的檢查——那是給
     新增事件用的，用來判斷這台車現在能不能再被領/還；編輯的是已經發生過
     的歷史紀錄，只要欄位都有填、事件類型合法即可，見
-    repository.update_vehicle_event() 的說明。"""
+    repository.update_vehicle_event() 的說明。needs_maintenance 跟
+    manual_vehicle_event() 一樣是下拉選單的 "1"/空字串，不是 checkbox。"""
     if redirect:
         return redirect
     vehicle, event = _get_vehicle_and_own_event(vehicle_no, event_id)
@@ -306,6 +325,9 @@ def edit_vehicle_event_submit(
     vendor = vendor.strip()
     personnel_name = personnel_name.strip()
     location = location.strip()
+    phone = phone.strip()
+    note = note.strip()
+    is_maintenance = needs_maintenance == "1"
 
     error = ""
     if not vendor or vendor not in VENDOR_MAP:
@@ -323,6 +345,9 @@ def edit_vehicle_event_submit(
             event_type=event_type,
             event_date=event_date,
             location=location,
+            phone=phone,
+            note=note,
+            needs_maintenance=is_maintenance,
         )
         return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
 
@@ -339,6 +364,9 @@ def edit_vehicle_event_submit(
                 "event_type": event_type,
                 "event_date": event_date,
                 "location": location,
+                "phone": phone,
+                "note": note,
+                "needs_maintenance": is_maintenance,
             },
             "vendors": VENDORS,
             "error": error,
