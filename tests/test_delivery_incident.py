@@ -103,13 +103,31 @@ class ParseIncidentReportTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "invalid_police_called")
 
-    def test_legacy_you_wu_police_called_value_now_rejected(self):
-        """2026-09-15 起「是否報警」改用「是」「否」，跟其他仍用「有」
-        「無」的欄位不同——舊範本習慣打「有」「無」的訊息現在要被擋下。"""
+    def test_police_called_accepts_you_wu_as_synonym(self):
+        """2026-09-17 起「是否報警」改成「是」「否」跟「有」「無」互通——
+        同仁常把這兩組詞混著填，寫入資料庫時一律正規化成「是」「否」。"""
         text = _replace_field(_VALID_TEXT, "7.是否報警", "7.是否報警：有")
         result = parse_incident_report(text)
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"], "invalid_police_called")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["police_called"], "是")
+
+        text2 = _replace_field(_VALID_TEXT, "7.是否報警", "7.是否報警：無")
+        result2 = parse_incident_report(text2)
+        self.assertTrue(result2["ok"], result2)
+        self.assertEqual(result2["police_called"], "否")
+
+    def test_family_contacted_and_third_party_accept_shi_fou_as_synonym(self):
+        """反過來，「是否聯繫家屬」「是否牽扯他人」本來用「有」「無」，
+        同仁填「是」「否」一樣要接受，正規化成「有」「無」寫入。"""
+        text = _replace_field(_VALID_TEXT, "9.是否聯繫家屬", "9.是否聯繫家屬：是")
+        result = parse_incident_report(text)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["family_contacted"], "有")
+
+        text2 = _replace_field(_VALID_TEXT, "10.是否牽扯他人", "10.是否牽扯他人：否")
+        result2 = parse_incident_report(text2)
+        self.assertTrue(result2["ok"], result2)
+        self.assertEqual(result2["third_party_involved"], "無")
 
     def test_invalid_family_contacted(self):
         text = _replace_field(_VALID_TEXT, "9.是否聯繫家屬", "9.是否聯繫家屬：正在聯繫")
