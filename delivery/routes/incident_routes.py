@@ -319,6 +319,16 @@ def edit_incident_form(incident_id: str, request: Request, redirect=Depends(admi
     )
 
 
+@router.post("/incidents/{incident_id}/delete")
+def delete_incident(incident_id: str, request: Request, redirect=Depends(admin_required)):
+    """刪除一筆意外事件回報，只開放管理員（比照風險等級／結案／編輯的
+    權限層級，見 repository.delete_incident_event()）。"""
+    if redirect:
+        return redirect
+    repository.delete_incident_event(incident_id)
+    return RedirectResponse(url="/delivery/incidents", status_code=303)
+
+
 @router.post("/incidents/{incident_id}/edit")
 def edit_incident_submit(
     incident_id: str,

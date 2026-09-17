@@ -43,6 +43,12 @@
     <button type="submit" class="btn">標記結案</button>
 </form>
 {% endif %}
+
+<h2 class="section-title">刪除這筆回報</h2>
+<form method="post" action="/delivery/incidents/{{ incident.id }}/delete"
+      onsubmit="return confirm('確定要刪除這筆意外事件回報嗎？刪除後無法復原。');">
+    <button type="submit" class="btn btn-danger">刪除</button>
+</form>
 {% else %}
 <h2 class="section-title">風險等級</h2>
 <p>

@@ -310,5 +310,14 @@ class EditIncidentSubmitTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
 
 
+class DeleteIncidentTests(unittest.TestCase):
+    def test_calls_repository_and_redirects(self):
+        with mock.patch.object(incident_routes.repository, "delete_incident_event", return_value=True) as mock_delete:
+            resp = incident_routes.delete_incident("inc1", _FakeRequest(_admin_account()), redirect=None)
+        mock_delete.assert_called_once_with("inc1")
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/delivery/incidents")
+
+
 if __name__ == "__main__":
     unittest.main()

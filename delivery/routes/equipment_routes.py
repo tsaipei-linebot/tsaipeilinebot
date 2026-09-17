@@ -289,6 +289,121 @@ def records(
     )
 
 
+@router.get("/equipment/records/{transaction_id}/edit")
+def edit_transaction_form(transaction_id: str, request: Request, redirect=Depends(admin_required)):
+    """修正一筆既有的裝備異動登記，只開放管理員。品項／異動類型不開放
+    修改（見 repository.update_equipment_transaction() 的說明），畫面上
+    只顯示這個類型實際會用到的欄位。"""
+    if redirect:
+        return redirect
+    transaction = repository.get_equipment_transaction(transaction_id)
+    if not transaction:
+        return RedirectResponse(url="/delivery/equipment/records", status_code=303)
+    item = repository.get_equipment_item(transaction.get("item_id", ""))
+    return templates.TemplateResponse(
+        request,
+        "equipment_transaction_edit.html",
+        {
+            "user": current_user(request),
+            "transaction": transaction,
+            "item_name": item.get("name") if item else "（已刪除品項）",
+            "type_name": EQUIPMENT_TRANSACTION_TYPE_MAP.get(transaction.get("type"), transaction.get("type")),
+            "locations": repository.list_equipment_locations(),
+            "personnel_list": _eligible_personnel(),
+            "requires_personnel": EQUIPMENT_TRANSACTION_TYPES_REQUIRING_PERSONNEL,
+            "requires_two_locations": EQUIPMENT_TRANSACTION_TYPES_REQUIRING_TWO_LOCATIONS,
+            "error": "",
+        },
+    )
+
+
+@router.post("/equipment/records/{transaction_id}/edit")
+def edit_transaction_submit(
+    transaction_id: str,
+    request: Request,
+    quantity: int = Form(0),
+    from_location_id: str = Form(""),
+    to_location_id: str = Form(""),
+    personnel_id: str = Form(""),
+    payment_received: str = Form(""),
+    reason: str = Form(""),
+    override_stock_check: str = Form(""),
+    redirect=Depends(admin_required),
+):
+    if redirect:
+        return redirect
+    transaction = repository.get_equipment_transaction(transaction_id)
+    if not transaction:
+        return RedirectResponse(url="/delivery/equipment/records", status_code=303)
+    transaction_type = transaction.get("type", "")
+    user = current_user(request)
+
+    if transaction_type == "writeoff":
+        # 核銷只開放改「原因」，其餘參數 repository 端會直接忽略（見
+        # update_equipment_transaction() 的說明），不需要跑欄位驗證。
+        repository.update_equipment_transaction(transaction_id, quantity=0, reason=reason)
+        return RedirectResponse(url="/delivery/equipment/records", status_code=303)
+
+    error = _validate_transaction_fields(
+        transaction_type, transaction.get("item_id", ""), from_location_id, to_location_id, personnel_id
+    )
+    unit_price = transaction.get("unit_price")
+    if not error and transaction_type == "buyout":
+        item = repository.get_equipment_item(transaction.get("item_id", ""))
+        unit_price = item.get("buyout_unit_price") if item else None
+        if unit_price is None:
+            error = "buyout_price_not_set"
+
+    if not error:
+        ok, err = repository.update_equipment_transaction(
+            transaction_id,
+            quantity=quantity,
+            from_location_id=from_location_id,
+            to_location_id=to_location_id,
+            personnel_id=personnel_id,
+            unit_price=unit_price,
+            payment_received=payment_received == "1",
+            reason=reason,
+            override_stock_check=user["role"] == "admin" and override_stock_check == "1",
+        )
+        if not ok:
+            error = err
+
+    if error:
+        item = repository.get_equipment_item(transaction.get("item_id", ""))
+        merged = {**transaction, "quantity": quantity, "from_location_id": from_location_id,
+                  "to_location_id": to_location_id, "personnel_id": personnel_id, "reason": reason}
+        return templates.TemplateResponse(
+            request,
+            "equipment_transaction_edit.html",
+            {
+                "user": user,
+                "transaction": merged,
+                "item_name": item.get("name") if item else "（已刪除品項）",
+                "type_name": EQUIPMENT_TRANSACTION_TYPE_MAP.get(transaction_type, transaction_type),
+                "locations": repository.list_equipment_locations(),
+                "personnel_list": _eligible_personnel(),
+                "requires_personnel": EQUIPMENT_TRANSACTION_TYPES_REQUIRING_PERSONNEL,
+                "requires_two_locations": EQUIPMENT_TRANSACTION_TYPES_REQUIRING_TWO_LOCATIONS,
+                "error": _error_message(error),
+            },
+            status_code=400,
+        )
+
+    return RedirectResponse(url="/delivery/equipment/records", status_code=303)
+
+
+@router.post("/equipment/records/{transaction_id}/delete")
+def delete_transaction(transaction_id: str, request: Request, redirect=Depends(admin_required)):
+    """刪除一筆裝備異動登記，只開放管理員。見
+    repository.delete_equipment_transaction()：刪除前會先復原這筆紀錄
+    造成的庫存/尚欠效果，庫存/尚欠總表刪除後仍然正確。"""
+    if redirect:
+        return redirect
+    repository.delete_equipment_transaction(transaction_id)
+    return RedirectResponse(url="/delivery/equipment/records", status_code=303)
+
+
 # ---------- 品項管理（限管理員） ----------
 
 @router.get("/equipment/items")

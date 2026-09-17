@@ -39,6 +39,7 @@ def _mock_form_context_lookups():
         list_equipment_items=mock.DEFAULT,
         list_equipment_locations=mock.DEFAULT,
         search_personnel=mock.DEFAULT,
+        get_equipment_item=mock.DEFAULT,
     )
 
 
@@ -264,6 +265,123 @@ class LocationsAdminRoutesTests(unittest.TestCase):
                 "loc1", _FakeRequest(_admin_account()), active="0", redirect=None
             )
         mock_set.assert_called_once_with("loc1", False)
+        self.assertEqual(resp.status_code, 303)
+
+
+class EditTransactionFormTests(unittest.TestCase):
+    """主管在裝備異動記錄頁的「編輯」按鈕：只開放管理員，品項/異動類型
+    不能改（見 repository.update_equipment_transaction() 的說明）。"""
+
+    def test_renders_when_transaction_exists(self):
+        transaction = {"id": "t1", "type": "purchase", "item_id": "item1", "quantity": 5}
+        with mock.patch.object(equipment_routes.repository, "get_equipment_transaction", return_value=transaction):
+            with _mock_form_context_lookups():
+                with mock.patch.object(equipment_routes, "templates") as mock_templates:
+                    equipment_routes.edit_transaction_form("t1", _FakeRequest(_admin_account()), redirect=None)
+        mock_templates.TemplateResponse.assert_called_once()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["transaction"], transaction)
+
+    def test_redirects_when_missing(self):
+        with mock.patch.object(equipment_routes.repository, "get_equipment_transaction", return_value=None):
+            resp = equipment_routes.edit_transaction_form("missing", _FakeRequest(_admin_account()), redirect=None)
+        self.assertEqual(resp.status_code, 303)
+
+
+class EditTransactionSubmitTests(unittest.TestCase):
+    def test_valid_purchase_edit_calls_repository_and_redirects(self):
+        transaction = {
+            "id": "t1", "type": "purchase", "item_id": "item1", "quantity": 5,
+            "from_location_id": "", "to_location_id": "loc-old", "personnel_id": "", "unit_price": None,
+        }
+        with mock.patch.object(equipment_routes.repository, "get_equipment_transaction", return_value=transaction):
+            with mock.patch.object(
+                equipment_routes.repository, "update_equipment_transaction", return_value=(True, "")
+            ) as mock_update:
+                resp = equipment_routes.edit_transaction_submit(
+                    "t1",
+                    _FakeRequest(_admin_account()),
+                    quantity=9,
+                    from_location_id="",
+                    to_location_id="loc-new",
+                    personnel_id="",
+                    reason="",
+                    redirect=None,
+                )
+        mock_update.assert_called_once_with(
+            "t1",
+            quantity=9,
+            from_location_id="",
+            to_location_id="loc-new",
+            personnel_id="",
+            unit_price=None,
+            payment_received=False,
+            reason="",
+            override_stock_check=False,
+        )
+        self.assertEqual(resp.status_code, 303)
+
+    def test_writeoff_only_updates_reason_without_field_validation(self):
+        transaction = {"id": "t1", "type": "writeoff", "item_id": "item1", "personnel_id": "p1"}
+        with mock.patch.object(equipment_routes.repository, "get_equipment_transaction", return_value=transaction):
+            with mock.patch.object(
+                equipment_routes.repository, "update_equipment_transaction", return_value=(True, "")
+            ) as mock_update:
+                resp = equipment_routes.edit_transaction_submit(
+                    "t1", _FakeRequest(_admin_account()), reason="盤點對不起來", redirect=None
+                )
+        mock_update.assert_called_once_with("t1", quantity=0, reason="盤點對不起來")
+        self.assertEqual(resp.status_code, 303)
+
+    def test_invalid_fields_rerenders_form_without_updating(self):
+        transaction = {
+            "id": "t1", "type": "transfer", "item_id": "item1", "quantity": 5,
+            "from_location_id": "loc-a", "to_location_id": "loc-a", "personnel_id": "",
+        }
+        with mock.patch.object(equipment_routes.repository, "get_equipment_transaction", return_value=transaction):
+            with mock.patch.object(equipment_routes.repository, "update_equipment_transaction") as mock_update:
+                with _mock_form_context_lookups():
+                    with mock.patch.object(equipment_routes, "templates") as mock_templates:
+                        equipment_routes.edit_transaction_submit(
+                            "t1",
+                            _FakeRequest(_admin_account()),
+                            quantity=2,
+                            from_location_id="loc-a",
+                            to_location_id="loc-a",
+                            redirect=None,
+                        )
+        mock_update.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertTrue(context["error"])
+
+    def test_non_admin_override_stock_check_is_ignored(self):
+        transaction = {
+            "id": "t1", "type": "borrow", "item_id": "item1", "quantity": 5,
+            "from_location_id": "loc-a", "to_location_id": "", "personnel_id": "p1",
+        }
+        with mock.patch.object(equipment_routes.repository, "get_equipment_transaction", return_value=transaction):
+            with mock.patch.object(
+                equipment_routes.repository, "update_equipment_transaction", return_value=(True, "")
+            ) as mock_update:
+                equipment_routes.edit_transaction_submit(
+                    "t1",
+                    _FakeRequest(_staff_account()),
+                    quantity=2,
+                    from_location_id="loc-a",
+                    personnel_id="p1",
+                    override_stock_check="1",
+                    redirect=None,
+                )
+        self.assertFalse(mock_update.call_args.kwargs["override_stock_check"])
+
+
+class DeleteTransactionTests(unittest.TestCase):
+    def test_calls_repository_and_redirects(self):
+        with mock.patch.object(
+            equipment_routes.repository, "delete_equipment_transaction", return_value=True
+        ) as mock_delete:
+            resp = equipment_routes.delete_transaction("t1", _FakeRequest(_admin_account()), redirect=None)
+        mock_delete.assert_called_once_with("t1")
         self.assertEqual(resp.status_code, 303)
 
 

@@ -3,10 +3,13 @@
 {% block content %}
 <div class="page-head">
     <h1 class="page-title">假別查詢</h1>
-    <a class="btn"
-       href="/delivery/function/sick-leave/records/export?name={{ filter_name }}&vendor={{ filter_vendor }}&month={{ filter_month }}&leave_type={{ filter_leave_type }}">
-        一鍵下載 EXCEL
-    </a>
+    <div class="btn-list" style="flex-direction: row;">
+        <a class="btn btn-primary" href="/delivery/function/sick-leave">新增假別登記</a>
+        <a class="btn"
+           href="/delivery/function/sick-leave/records/export?name={{ filter_name }}&vendor={{ filter_vendor }}&month={{ filter_month }}&leave_type={{ filter_leave_type }}">
+            一鍵下載 EXCEL
+        </a>
+    </div>
 </div>
 
 <form method="get" action="/delivery/function/sick-leave/records" class="filter-bar">
@@ -65,74 +68,83 @@
 {% endif %}
 
 {% if records %}
-<form method="post" action="/delivery/function/sick-leave/records/approve">
+<!-- 「核准所選」的核取方塊/按鈕用 form="sick-leave-approve-form" 屬性
+     關聯到下面這個表單，而不是把整張表格包在 <form> 裡——這樣每一列才能
+     各自再放一個獨立的「刪除」表單，HTML 不允許 <form> 巢狀。 -->
+<form id="sick-leave-approve-form" method="post" action="/delivery/function/sick-leave/records/approve">
     <input type="hidden" name="filter_name" value="{{ filter_name }}">
     <input type="hidden" name="filter_vendor" value="{{ filter_vendor }}">
     <input type="hidden" name="filter_month" value="{{ filter_month }}">
     <input type="hidden" name="filter_leave_type" value="{{ filter_leave_type }}">
-
-    {% if user.role == "admin" %}
-    <button type="submit" class="btn btn-primary btn-bulk-update">核准所選</button>
-    {% endif %}
-
-    <div class="table-scroll">
-    <table class="data-table sticky-head">
-        <thead>
-            <tr>
-                <th>申請日期</th>
-                <th>時數</th>
-                <th>假別</th>
-                <th>廠商</th>
-                <th>人員</th>
-                <th>原因</th>
-                <th>收據</th>
-                <th>核准</th>
-                {% if user.role == "admin" %}<th>編輯</th>{% endif %}
-            </tr>
-        </thead>
-        <tbody>
-            {% for r in records %}
-            <tr>
-                {% if r.leave_date %}
-                <td>{{ r.leave_date }}</td>
-                <td>{{ r.hours }}</td>
-                {% else %}
-                <td>{{ r.start_date }} ~ {{ r.end_date }}</td>
-                <td>-</td>
-                {% endif %}
-                <td>{{ leave_type_map.get(r.leave_type, r.leave_type or "-") }}</td>
-                <td>{{ r.vendor }}</td>
-                <td>{{ r.personnel_name }}</td>
-                <td>{{ r.reason or "-" }}</td>
-                <td>
-                    {% if r.receipt_file_path %}
-                    <a href="/delivery/files/{{ r.receipt_file_path }}" target="_blank" rel="noopener">查看</a>
-                    {% else %}-{% endif %}
-                </td>
-                <td>
-                    {% if r.approved %}
-                    <span class="badge badge-ok">已核准</span>
-                    {% elif user.role == "admin" %}
-                    <label><input type="checkbox" name="approve_{{ r.id }}"> 核准</label>
-                    {% else %}
-                    <span class="badge badge-pending">未核准</span>
-                    {% endif %}
-                </td>
-                {% if user.role == "admin" %}
-                <td>
-                    <a href="/delivery/function/sick-leave/records/{{ r.id }}/edit">編輯</a>
-                </td>
-                {% endif %}
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    </div>
-
-    {% if user.role == "admin" %}
-    <button type="submit" class="btn btn-primary btn-bulk-update">核准所選</button>
-    {% endif %}
 </form>
+
+{% if user.role == "admin" %}
+<button type="submit" form="sick-leave-approve-form" class="btn btn-primary btn-bulk-update">核准所選</button>
+{% endif %}
+
+<div class="table-scroll">
+<table class="data-table sticky-head">
+    <thead>
+        <tr>
+            <th>申請日期</th>
+            <th>時數</th>
+            <th>假別</th>
+            <th>廠商</th>
+            <th>人員</th>
+            <th>原因</th>
+            <th>收據</th>
+            <th>核准</th>
+            {% if user.role == "admin" %}<th>編輯</th>{% endif %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in records %}
+        <tr>
+            {% if r.leave_date %}
+            <td>{{ r.leave_date }}</td>
+            <td>{{ r.hours }}</td>
+            {% else %}
+            <td>{{ r.start_date }} ~ {{ r.end_date }}</td>
+            <td>-</td>
+            {% endif %}
+            <td>{{ leave_type_map.get(r.leave_type, r.leave_type or "-") }}</td>
+            <td>{{ r.vendor }}</td>
+            <td>{{ r.personnel_name }}</td>
+            <td>{{ r.reason or "-" }}</td>
+            <td>
+                {% if r.receipt_file_path %}
+                <a href="/delivery/files/{{ r.receipt_file_path }}" target="_blank" rel="noopener">查看</a>
+                {% else %}-{% endif %}
+            </td>
+            <td>
+                {% if r.approved %}
+                <span class="badge badge-ok">已核准</span>
+                {% elif user.role == "admin" %}
+                <label><input type="checkbox" name="approve_{{ r.id }}" form="sick-leave-approve-form"> 核准</label>
+                {% else %}
+                <span class="badge badge-pending">未核准</span>
+                {% endif %}
+            </td>
+            {% if user.role == "admin" %}
+            <td>
+                <a href="/delivery/function/sick-leave/records/{{ r.id }}/edit">編輯</a>
+                {% if not r.approved %}
+                <form method="post" action="/delivery/function/sick-leave/records/{{ r.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除這筆假別登記嗎？刪除後無法復原。');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+                {% endif %}
+            </td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+{% if user.role == "admin" %}
+<button type="submit" form="sick-leave-approve-form" class="btn btn-primary btn-bulk-update">核准所選</button>
+{% endif %}
 {% else %}
 <p class="empty">目前沒有符合條件的假別登記紀錄。</p>
 {% endif %}

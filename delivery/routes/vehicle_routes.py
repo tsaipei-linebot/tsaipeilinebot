@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 
 from delivery import group_notify, repository
-from delivery.auth import current_user, login_required
+from delivery.auth import admin_required, current_user, login_required
 from delivery.config import (
     DEFAULT_WHEEL_TYPE,
     SERVICE_AREA_MAP,
@@ -373,3 +373,17 @@ def edit_vehicle_event_submit(
         },
         status_code=400,
     )
+
+
+@router.post("/vehicles/{vehicle_no}/events/{event_id}/delete")
+def delete_vehicle_event(vehicle_no: str, event_id: str, request: Request, redirect=Depends(admin_required)):
+    """刪除一筆領還車歷史紀錄，只開放管理員（比照補款/假別/意外事件的
+    刪除權限層級）。見 repository.delete_vehicle_event() 的說明：刪除
+    不會連動改車輛主檔目前狀態，如果刪的剛好是最新一筆事件，需要的話
+    請自行到上面用既有功能修正。"""
+    if redirect:
+        return redirect
+    vehicle, event = _get_vehicle_and_own_event(vehicle_no, event_id)
+    if vehicle and event:
+        repository.delete_vehicle_event(event_id)
+    return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
