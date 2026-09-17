@@ -45,7 +45,7 @@
                 <td>{{ record.purchase_month }}</td>
                 <td>{{ record.points }}</td>
                 <td>NT$ {{ "{:,}".format(record.amount) }}</td>
-                <td>{{ record.created_at }}</td>
+                <td>{{ record.created_at | taipei_time }}</td>
                 <td>
                     {% if record.signed_image_base64 %}
                     <img src="{{ record.signed_image_base64 }}" alt="簽名表單縮圖" style="max-height: 50px; cursor: pointer; border: 1px solid var(--border); border-radius: 4px;" onclick="showSignedImage(this.src)">

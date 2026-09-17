@@ -40,7 +40,7 @@
                 <td>{{ record.client_name }}</td>
                 <td>{{ record.work_address }}</td>
                 <td>{{ record.submitted_by }}</td>
-                <td>{{ record.created_at }}</td>
+                <td>{{ record.created_at | taipei_time }}</td>
                 <td>
                     {% if record.pdf_blob_path %}
                     <a href="/dispatch-contracts/{{ record.id }}/preview" target="_blank" class="btn btn-small">預覽</a>

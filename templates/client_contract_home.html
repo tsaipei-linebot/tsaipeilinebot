@@ -51,7 +51,7 @@
                 <td>{{ contract_versions.get(record.contract_version, {}).get("label", record.contract_version) }}</td>
                 <td>{{ record.contract_start_date }} ~ {{ record.contract_end_date }}</td>
                 <td>{{ record.submitted_by }}</td>
-                <td>{{ record.created_at }}</td>
+                <td>{{ record.created_at | taipei_time }}</td>
                 <td>
                     {% if record.sent_to_project_contracts_at %}
                     <span class="success" style="margin:0;">已送出</span>
