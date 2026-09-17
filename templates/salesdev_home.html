@@ -4,7 +4,14 @@
 <div class="page-head">
     <h1 class="page-title">少凱業務開發專區</h1>
 </div>
-<p class="hint">派遣客戶開發名單、新登記工廠監控彙整，資料直接讀取自後台維護的 Google 試算表（唯讀，不會改到原始資料）。</p>
+<p class="hint">派遣客戶開發名單、新登記工廠監控彙整，資料直接讀取自後台維護的 Google 試算表（大部分是唯讀，不會改到原始資料；有「審查狀態」欄位的分頁可以勾選職缺送出反查）。</p>
+
+{% if selected_count %}
+<p class="success">已送出 {{ selected_count }} 筆職缺，狀態改成「已勾選待反查」，會排進每日反查排程處理。</p>
+{% endif %}
+{% if select_error %}
+<p class="warning">{{ select_error }}</p>
+{% endif %}
 
 {% if error %}
 <p class="warning">{{ error }}</p>
@@ -25,23 +32,42 @@
     {% if not tab.rows %}
     <p class="empty">這個分頁目前沒有資料。</p>
     {% else %}
+    {% if tab.review_status_col_index is not none %}
+    <p class="hint">勾選想深入了解、要反查要派公司電話/email 的職缺，按下方「送出勾選」後，這些職缺會排進每日反查排程處理；只有「{{ tab.headers[tab.review_status_col_index] }}」欄位是「待審查」的職缺可以勾選。</p>
+    <form method="post" action="/salesdev/select">
+        <input type="hidden" name="tab_title" value="{{ tab.title }}">
+    {% endif %}
     <input type="text" class="sheet-search" data-search-for="sheet-table-{{ loop.index }}" placeholder="搜尋「{{ tab.title }}」...">
     <div class="table-scroll">
         <table class="data-table sticky-head" id="sheet-table-{{ loop.index }}">
             <thead>
                 <tr>
+                    {% if tab.review_status_col_index is not none %}<th>勾選</th>{% endif %}
                     {% for h in tab.headers %}<th>{{ h }}</th>{% endfor %}
                 </tr>
             </thead>
             <tbody>
                 {% for row in tab.rows %}
                 <tr>
-                    {% for cell in row %}<td>{{ cell }}</td>{% endfor %}
+                    {% if tab.review_status_col_index is not none %}
+                    <td>
+                        {% if row.cells[tab.review_status_col_index] == '待審查' %}
+                        <input type="checkbox" name="row_numbers" value="{{ row.row_number }}">
+                        {% else %}
+                        &mdash;
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                    {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
+    {% if tab.review_status_col_index is not none %}
+        <p><button type="submit" class="btn btn-primary">送出勾選</button></p>
+    </form>
+    {% endif %}
     {% endif %}
 </div>
 {% endfor %}
