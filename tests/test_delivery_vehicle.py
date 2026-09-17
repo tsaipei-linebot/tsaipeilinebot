@@ -56,8 +56,13 @@ class ParseVehicleReportTests(unittest.TestCase):
         self.assertTrue(result["needs_maintenance"])
         self.assertEqual(result["note"], "輪胎有點磨損")
 
-    def test_needs_maintenance_only_true_when_exactly_yes(self):
-        for raw, expected in [("否", False), ("", False), ("要", False), ("是", True), (" 是 ", True)]:
+    def test_needs_maintenance_accepts_shi_or_you_as_synonyms(self):
+        # 2026-09-17 起「待維修」跟意外事件回報的是否類欄位一樣，
+        # 「是」「有」互通當肯定詞，其餘一律視為沒有勾選。
+        for raw, expected in [
+            ("否", False), ("無", False), ("", False), ("要", False),
+            ("是", True), (" 是 ", True), ("有", True), (" 有 ", True),
+        ]:
             text = (
                 "車輛管理\n"
                 f"廠商：UD\n姓名：李睿哲\n開始日期：2026-8-26\n結束日期：\n"

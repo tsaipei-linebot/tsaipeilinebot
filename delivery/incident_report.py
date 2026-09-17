@@ -19,8 +19,9 @@ handle_incident_report() 才會真的寫資料庫。
     4.發生時間：9/4 11:00        <- 月/日 時:分，沒有年份，用系統目前年份補上
     5.發生地點：金山南路一段126號
     6.執行勤務中/上下班途中：執行勤務中
-    7.是否報警：是                <- 2026-09-15 改成「是」「否」，跟其他
-                                     「有」「無」的欄位不同，不要填錯
+    7.是否報警：是                <- 範本統一寫「是」「否」，但填「有」
+                                     「無」系統一樣看得懂（2026-09-17
+                                     起兩組詞互通，不用擔心填錯組）
     8.受傷情形：無
     9.是否聯繫家屬：無
     10.是否牽扯他人：有
@@ -74,6 +75,32 @@ _YES_NO_FIELD_NAMES = {
     "third_party_involved": "是否牽扯他人",
 }
 _POLICE_CALLED_FIELD_NAME = "是否報警"
+
+# 2026-09-17 使用者反映：同仁常常把「是／否」跟「有／無」這兩組詞混著填
+# （例如「是否報警」填成「有」、「是否聯繫家屬」填成「是」），這兩組詞
+# 意思上本來就是同一件事，沒必要因為填錯詞組就擋下整筆回報。這裡統一
+# 把兩組詞都當同義詞接受，寫入資料庫前正規化成該欄位原本慣用的詞
+# （是否報警→是/否，其餘兩項→有/無），不會因此新增第三種可能的值。
+_AFFIRMATIVE_WORDS = {"是", "有"}
+_NEGATIVE_WORDS = {"否", "無"}
+
+
+def _normalize_police_called_value(value: str) -> str:
+    value = (value or "").strip()
+    if value in _AFFIRMATIVE_WORDS:
+        return "是"
+    if value in _NEGATIVE_WORDS:
+        return "否"
+    return value
+
+
+def _normalize_yes_no_value(value: str) -> str:
+    value = (value or "").strip()
+    if value in _AFFIRMATIVE_WORDS:
+        return "有"
+    if value in _NEGATIVE_WORDS:
+        return "無"
+    return value
 
 PARSE_ERROR_MESSAGES = {
     "missing_fields": "❌ 回報格式有誤：11 個欄位都要填，請照範本重新回覆。",
@@ -140,10 +167,12 @@ def parse_incident_report(text: str) -> dict:
     if fields["duty_status"] not in DUTY_STATUSES:
         return {"ok": False, "error": "invalid_duty_status"}
 
+    fields["police_called"] = _normalize_police_called_value(fields["police_called"])
     if fields["police_called"] not in POLICE_CALLED_VALUES:
         return {"ok": False, "error": "invalid_police_called"}
 
     for key in _YES_NO_FIELD_NAMES:
+        fields[key] = _normalize_yes_no_value(fields[key])
         if fields[key] not in YES_NO_VALUES:
             return {"ok": False, "error": f"invalid_{key}"}
 
