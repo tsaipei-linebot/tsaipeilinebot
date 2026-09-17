@@ -19,6 +19,11 @@ APPLICANTS_COLLECTION = "delivery_applicants"
 VEHICLES_COLLECTION = "delivery_vehicles"
 VEHICLE_EVENTS_COLLECTION = "delivery_vehicle_events"
 INCIDENT_EVENTS_COLLECTION = "delivery_incident_events"
+EQUIPMENT_ITEMS_COLLECTION = "delivery_equipment_items"
+EQUIPMENT_LOCATIONS_COLLECTION = "delivery_equipment_locations"
+EQUIPMENT_STOCK_COLLECTION = "delivery_equipment_stock"
+EQUIPMENT_DEBT_COLLECTION = "delivery_equipment_debt"
+EQUIPMENT_TRANSACTIONS_COLLECTION = "delivery_equipment_transactions"
 
 
 def personnel_ref():
@@ -47,3 +52,23 @@ def vehicle_events_ref():
 
 def incident_events_ref():
     return get_db().collection(INCIDENT_EVENTS_COLLECTION)
+
+
+def equipment_items_ref():
+    return get_db().collection(EQUIPMENT_ITEMS_COLLECTION)
+
+
+def equipment_locations_ref():
+    return get_db().collection(EQUIPMENT_LOCATIONS_COLLECTION)
+
+
+def equipment_stock_ref():
+    return get_db().collection(EQUIPMENT_STOCK_COLLECTION)
+
+
+def equipment_debt_ref():
+    return get_db().collection(EQUIPMENT_DEBT_COLLECTION)
+
+
+def equipment_transactions_ref():
+    return get_db().collection(EQUIPMENT_TRANSACTIONS_COLLECTION)

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}裝備借還管理 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">裝備借還管理</h1>
+</div>
+
+<div class="btn-list" style="flex-direction: row; flex-wrap: wrap;">
+    <a class="btn btn-primary" href="/delivery/equipment/transaction?type=borrow">借用登記</a>
+    <a class="btn btn-primary" href="/delivery/equipment/transaction?type=return">歸還登記</a>
+    <a class="btn" href="/delivery/equipment/transaction">其他異動（轉倉／採購新增／買斷{% if user.role == "admin" %}／核銷{% endif %}）</a>
+    <a class="btn" href="/delivery/equipment/records">記錄查詢／尚欠總表</a>
+    {% if user.role == "admin" %}
+    <a class="btn" href="/delivery/equipment/items">品項管理</a>
+    <a class="btn" href="/delivery/equipment/locations">放置點管理</a>
+    {% endif %}
+</div>
+
+<h2 class="section-title">庫存總覽</h2>
+{% if not items %}
+<p class="empty">目前還沒有任何品項，請先到「品項管理」新增（例如：籃子、橘衣、彈力繩……）。</p>
+{% elif not locations %}
+<p class="empty">目前還沒有任何放置點，請先到「放置點管理」新增（例如：新北所、桃園所……）。</p>
+{% else %}
+<div style="overflow-x:auto;">
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>放置點 \ 品項</th>
+            {% for item in items %}
+            <th>{{ item.name }}</th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in matrix %}
+        <tr>
+            <td>{{ row.location.name }}</td>
+            {% for cell in row.cells %}
+            <td>
+                {% if cell.below_threshold %}
+                <span class="badge badge-missing" title="低於警戒值，可以考慮叫貨">{{ cell.quantity }} ⚠️</span>
+                {% else %}
+                {{ cell.quantity }}
+                {% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+<p class="hint">⚠️ 代表庫存低於這個放置點/品項設定的警戒值，純提醒不會擋借用，記得安排叫貨。</p>
+
+{% if user.role == "admin" %}
+<h2 class="section-title">警戒值設定</h2>
+<p class="hint">警戒值是「低於這個數字就顯示 ⚠️ 提醒」，設 0 代表不提醒。庫存不夠這次借用量時，系統會直接擋下申請，不受這裡的警戒值影響。</p>
+{% if threshold_rows %}
+<table class="data-table">
+    <thead>
+        <tr><th>放置點</th><th>品項</th><th>目前警戒值</th><th>修改</th></tr>
+    </thead>
+    <tbody>
+        {% for row in threshold_rows %}
+        <tr>
+            <td>{{ row.location_name }}</td>
+            <td>{{ row.item_name }}</td>
+            <td>{{ row.warning_threshold }}</td>
+            <td>
+                <form method="post" action="/delivery/equipment/stock/threshold" class="inline-form">
+                    <input type="hidden" name="location_id" value="{{ row.location_id }}">
+                    <input type="hidden" name="item_id" value="{{ row.item_id }}">
+                    <input type="number" name="threshold" min="0" value="{{ row.warning_threshold }}" style="width:80px;">
+                    <button type="submit" class="btn btn-small">儲存</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+<form method="post" action="/delivery/equipment/stock/threshold" class="form-stack form-narrow">
+    <label>放置點
+        <select name="location_id" required>
+            {% for loc in locations %}
+            <option value="{{ loc.id }}">{{ loc.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>品項
+        <select name="item_id" required>
+            {% for item in items %}
+            <option value="{{ item.id }}">{{ item.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>警戒值
+        <input type="number" name="threshold" min="0" value="0" required>
+    </label>
+    <button type="submit" class="btn">設定／修改警戒值</button>
+</form>
+{% endif %}
+{% endif %}
+
+<h2 class="section-title">尚欠總表</h2>
+{% if outstanding_debt %}
+<table class="data-table">
+    <thead>
+        <tr><th>騎士</th><th>品項</th><th>尚欠數量</th></tr>
+    </thead>
+    <tbody>
+        {% for row in outstanding_debt %}
+        <tr>
+            <td>{{ row.personnel_name }}</td>
+            <td>{{ row.item_name }}</td>
+            <td>{{ row.quantity_owed }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有任何人有尚欠裝備。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

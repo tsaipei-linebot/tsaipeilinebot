@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}裝備品項管理 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<h1 class="page-title">裝備品項管理</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<h2 class="section-title">新增品項</h2>
+<form method="post" action="/delivery/equipment/items/new" class="form-stack form-narrow">
+    <label>品項名稱
+        <input type="text" name="name" required placeholder="例如：籃子、橘衣、UE籃子">
+    </label>
+    <label>買斷單價（選填，登記買斷時會用這個單價計算金額）
+        <input type="number" name="buyout_unit_price" min="0" placeholder="不填代表這個品項還不能登記買斷">
+    </label>
+    <button type="submit" class="btn btn-primary">新增</button>
+</form>
+
+<h2 class="section-title">品項清單</h2>
+{% if items %}
+<table class="data-table">
+    <thead>
+        <tr><th>名稱</th><th>買斷單價</th><th>狀態</th><th>修改</th><th></th></tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        <tr>
+            <td>
+                <form method="post" action="/delivery/equipment/items/{{ item.id }}/edit" class="inline-form">
+                    <input type="text" name="name" value="{{ item.name }}" required style="width:120px;">
+                    <input type="number" name="buyout_unit_price" min="0" value="{{ item.buyout_unit_price if item.buyout_unit_price is not none else '' }}" placeholder="買斷單價" style="width:100px;">
+                    <button type="submit" class="btn btn-small">儲存</button>
+                </form>
+            </td>
+            <td>{{ item.buyout_unit_price if item.buyout_unit_price is not none else "未設定" }}</td>
+            <td><span class="badge {{ 'badge-ok' if item.active else 'badge-resigned' }}">{{ "啟用中" if item.active else "已停用" }}</span></td>
+            <td>
+                <form method="post" action="/delivery/equipment/items/{{ item.id }}/active" style="display:inline">
+                    <input type="hidden" name="active" value="{{ '0' if item.active else '1' }}">
+                    <button type="submit" class="btn btn-small">{{ "停用" if item.active else "啟用" }}</button>
+                </form>
+            </td>
+            <td>
+                {% if not item.has_history %}
+                <form method="post" action="/delivery/equipment/items/{{ item.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除「{{ item.name }}」這個品項嗎？刪除後無法復原。');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+                {% else %}
+                <span class="hint">已有異動紀錄，只能停用不能刪除</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有任何品項。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/equipment">&larr; 回裝備借還管理</a></p>
+{% endblock %}
