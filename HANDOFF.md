@@ -5455,6 +5455,53 @@ contract_summary_service.py` 補上這個版本的摘要格式測試。全部測
 費率，右側的「由乙方招募派遣員工／每員每月收取／以上報價不含稅」
 說明文字是固定的，不能在表單上修改。
 
+## 合約產生器：修正「代招版本仍顯示撤換條款欄位」的 CSS 錯誤（2026-09-17）
+
+使用者回報：產生「白領代招」「台籍代招」合約時，「撤換人員通知期限
+（日）」跟「資遣費用及預告工資由」這兩個欄位還是會出現在表單上，但
+這兩個版本本來就不該有這兩個欄位。
+
+### 根本原因
+
+一開始檢查 `templates/client_contract_form.html` 跟 `client_contract_
+routes.py`，切版本要不要顯示這兩個欄位的邏輯（`VERSION_REQUIREMENTS`
+／`applyPricingVisibility()`）看起來完全正確，用 Playwright 純測
+template（不載入 CSS）也真的會正確隱藏，一度以為使用者操作有誤。
+
+後來把 `delivery/static/style.css` 也一起載入重新測試，才抓到真正
+的問題：JS 是用 `el.hidden = true` 隱藏欄位，這要靠瀏覽器內建的
+`[hidden] { display: none }`（屬於「使用者代理樣式表」）才會生效，
+但 `delivery/static/style.css` 裡本來就有 `.form-stack label {
+display: flex; ... }` 這條規則——**作者自訂的 CSS 規則，優先權本來
+就比瀏覽器內建樣式表高**（不管 selector 的 specificity 高低），所以
+凡是 `<label>` 元素被設定 `hidden` 屬性，只要它同時符合
+`.form-stack label`，這條規則就會蓋掉 `display: none`，變成「屬性
+設了 hidden，畫面卻還是看得到」。這不只影響這兩個欄位，理論上也影響
+「簽約日期」那個欄位（`data-requires="sign_date"`）跟其他表單上任何
+用同一招隱藏的 `<label>`。
+
+### 修正方式
+
+在 `delivery/static/style.css` 最前面加一條全域規則：
+```css
+[hidden] { display: none !important; }
+```
+用 `!important` 把「有 hidden 屬性就一定要隱藏」的優先權拉到最高，
+不會被任何其他規則蓋掉。這是全站共用的樣式表，所以這個修正對所有
+用 `.hidden`／`el.hidden` 隱藏欄位的表單都有效，不是只修合約產生器
+這一處。
+
+用 Playwright 重新測過：選「白領代招」「台籍代招」時，「簽約日期」
+跟「撤換人員通知期限（日）」「資遣費用及預告工資由」都正確消失；
+選其他版本時維持顯示。全部測試（`python3 -m unittest discover -s
+tests`）1435 個全數通過。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**，純粹是網頁樣式的修正，PR 合併
+後 Cloud Run 重新部署就會生效。之後改版本下拉選單，代招版本就不會
+再看到那兩個跟一般派遣合約有關的欄位了。
+
 ## 配送部系統：車輛管理新增「廠商」編輯功能（2026-09-16）
 
 使用者發現車輛詳細頁的狀態、輪別、服務區域都各自有編輯表單，唯獨
