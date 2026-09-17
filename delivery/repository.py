@@ -17,6 +17,10 @@ from delivery.config import (
     DEFAULT_VEHICLE_STATUS,
     DEFAULT_WHEEL_TYPE,
     DOC_TYPES,
+    EQUIPMENT_ADMIN_ONLY_TRANSACTION_TYPES,
+    EQUIPMENT_TRANSACTION_TYPE_MAP,
+    EQUIPMENT_TRANSACTION_TYPES_REQUIRING_PERSONNEL,
+    EQUIPMENT_TRANSACTION_TYPES_REQUIRING_TWO_LOCATIONS,
     HIDDEN_PERSONNEL_STATUSES,
     LEAVE_QUOTA_ALERT_RATIO,
     LEAVE_TYPE_LOOKUP,
@@ -35,6 +39,11 @@ from delivery.config import (
 )
 from delivery.db import (
     applicants_ref,
+    equipment_debt_ref,
+    equipment_items_ref,
+    equipment_locations_ref,
+    equipment_stock_ref,
+    equipment_transactions_ref,
     get_db,
     incident_events_ref,
     personnel_ref,
@@ -1578,3 +1587,432 @@ def update_incident_event(incident_id: str, data: dict) -> bool:
     payload = {key: data.get(key, "") for key in _INCIDENT_FIELDS}
     ref.update(payload)
     return True
+
+
+# ==========================================
+# 裝備借還管理（2026-09-17 新增）
+#
+# 品項、放置點是主管可以自己在網頁上新增/停用的動態清單（不像廠商/假別
+# 寫死在 config.py），庫存跟尚欠都是「流水帳自動結算」的概念：每一筆
+# 異動（借用/歸還/轉倉/採購新增/買斷/核銷）都會即時更新對應的庫存文件
+# 跟尚欠文件，不需要每次都重新掃描全部歷史紀錄加總。
+# ==========================================
+
+# ---------- 品項管理 ----------
+
+def list_equipment_items(include_inactive: bool = False) -> list:
+    result = []
+    for snapshot in equipment_items_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        data.setdefault("active", True)
+        data.setdefault("buyout_unit_price", None)
+        if include_inactive or data["active"]:
+            result.append(data)
+    result.sort(key=lambda i: i.get("name", ""))
+    return result
+
+
+def get_equipment_item(item_id: str):
+    snapshot = equipment_items_ref().document(item_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    data.setdefault("active", True)
+    data.setdefault("buyout_unit_price", None)
+    return data
+
+
+def create_equipment_item(name: str, buyout_unit_price=None, created_by: str = "") -> str:
+    now = time.time()
+    doc_ref = equipment_items_ref().document()
+    doc_ref.set(
+        {
+            "name": name,
+            "buyout_unit_price": buyout_unit_price,
+            "active": True,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    return doc_ref.id
+
+
+def update_equipment_item(item_id: str, name: str, buyout_unit_price=None) -> bool:
+    ref = equipment_items_ref().document(item_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"name": name, "buyout_unit_price": buyout_unit_price, "updated_at": time.time()})
+    return True
+
+
+def set_equipment_item_active(item_id: str, active: bool) -> bool:
+    ref = equipment_items_ref().document(item_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"active": active, "updated_at": time.time()})
+    return True
+
+
+def equipment_item_has_history(item_id: str) -> bool:
+    """判斷這個品項有沒有任何異動紀錄過——有的話不能真的刪除（會讓歷史
+    紀錄查不到品項名稱、帳也對不起來），只能停用。"""
+    return next(equipment_transactions_ref().where("item_id", "==", item_id).limit(1).stream(), None) is not None
+
+
+def delete_equipment_item(item_id: str) -> bool:
+    """真的從 Firestore 刪除，只有完全沒有異動紀錄過的品項才允許（例如
+    剛新增打錯字想刪掉重打）；有歷史紀錄的品項只能停用
+    （set_equipment_item_active(item_id, False)），不能刪除。"""
+    if equipment_item_has_history(item_id):
+        return False
+    equipment_items_ref().document(item_id).delete()
+    return True
+
+
+# ---------- 放置點管理 ----------
+
+def list_equipment_locations(include_inactive: bool = False) -> list:
+    result = []
+    for snapshot in equipment_locations_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        data.setdefault("active", True)
+        if include_inactive or data["active"]:
+            result.append(data)
+    result.sort(key=lambda loc: loc.get("name", ""))
+    return result
+
+
+def get_equipment_location(location_id: str):
+    snapshot = equipment_locations_ref().document(location_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    data.setdefault("active", True)
+    return data
+
+
+def create_equipment_location(name: str, created_by: str = "") -> str:
+    now = time.time()
+    doc_ref = equipment_locations_ref().document()
+    doc_ref.set({"name": name, "active": True, "created_by": created_by, "created_at": now, "updated_at": now})
+    return doc_ref.id
+
+
+def set_equipment_location_active(location_id: str, active: bool) -> bool:
+    ref = equipment_locations_ref().document(location_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"active": active, "updated_at": time.time()})
+    return True
+
+
+def equipment_location_has_history(location_id: str) -> bool:
+    from_hit = next(
+        equipment_transactions_ref().where("from_location_id", "==", location_id).limit(1).stream(), None
+    )
+    if from_hit is not None:
+        return True
+    return next(equipment_transactions_ref().where("to_location_id", "==", location_id).limit(1).stream(), None) is not None
+
+
+def delete_equipment_location(location_id: str) -> bool:
+    if equipment_location_has_history(location_id):
+        return False
+    equipment_locations_ref().document(location_id).delete()
+    return True
+
+
+# ---------- 庫存 ----------
+
+def _equipment_stock_doc_id(location_id: str, item_id: str) -> str:
+    return f"{location_id}__{item_id}"
+
+
+def get_equipment_stock(location_id: str, item_id: str) -> dict:
+    """回傳這個放置點/品項的庫存資料；沒有異動過的組合當作數量0、門檻0，
+    不會回傳 None，呼叫端不用另外判斷有沒有這筆紀錄。"""
+    snapshot = equipment_stock_ref().document(_equipment_stock_doc_id(location_id, item_id)).get()
+    if not snapshot.exists:
+        return {"location_id": location_id, "item_id": item_id, "quantity": 0, "warning_threshold": 0}
+    data = snapshot.to_dict() or {}
+    data.setdefault("quantity", 0)
+    data.setdefault("warning_threshold", 0)
+    return data
+
+
+def list_equipment_stock(location_id: str = "") -> list:
+    """庫存總覽用：回傳目前有紀錄的「放置點 x 品項」庫存列。從沒異動過的
+    組合不會出現在這裡（視為庫存0），畫面上用品項/放置點清單自己補齊
+    顯示0的組合，這裡不強求回傳完整矩陣。"""
+    result = []
+    query = equipment_stock_ref()
+    if location_id:
+        query = query.where("location_id", "==", location_id)
+    for snapshot in query.stream():
+        data = snapshot.to_dict() or {}
+        data.setdefault("quantity", 0)
+        data.setdefault("warning_threshold", 0)
+        result.append(data)
+    return result
+
+
+def set_equipment_stock_threshold(location_id: str, item_id: str, threshold: int) -> None:
+    """設定第一層警戒值門檻（純提醒用，不擋借用）。用 set(merge=True) 而不是
+    update()，因為這個放置點/品項組合可能還沒有庫存紀錄（數量是0、只是
+    想先把門檻設好），update() 對不存在的文件會丟例外。"""
+    doc_ref = equipment_stock_ref().document(_equipment_stock_doc_id(location_id, item_id))
+    doc_ref.set(
+        {"location_id": location_id, "item_id": item_id, "warning_threshold": threshold, "updated_at": time.time()},
+        merge=True,
+    )
+
+
+def equipment_stock_below_threshold(location_id: str, item_id: str) -> bool:
+    """門檻是0代表「沒設定/不提醒」，永遠回傳False。"""
+    stock = get_equipment_stock(location_id, item_id)
+    threshold = stock.get("warning_threshold", 0)
+    return threshold > 0 and stock.get("quantity", 0) < threshold
+
+
+def _adjust_equipment_stock(location_id: str, item_id: str, delta: int) -> None:
+    """異動庫存數量（正數增加、負數減少）。跟系統其他地方一致，用「讀出
+    現有值再寫回去」而不是 Firestore 的原子遞增——配送部整體流量小，
+    暫時不需要處理併發衝突覆寫的問題。"""
+    doc_ref = equipment_stock_ref().document(_equipment_stock_doc_id(location_id, item_id))
+    current = get_equipment_stock(location_id, item_id)
+    doc_ref.set(
+        {
+            "location_id": location_id,
+            "item_id": item_id,
+            "quantity": current["quantity"] + delta,
+            "warning_threshold": current["warning_threshold"],
+            "updated_at": time.time(),
+        },
+        merge=True,
+    )
+
+
+# ---------- 尚欠 ----------
+
+def _equipment_debt_doc_id(personnel_id: str, item_id: str) -> str:
+    return f"{personnel_id}__{item_id}"
+
+
+def get_equipment_debt(personnel_id: str, item_id: str) -> dict:
+    snapshot = equipment_debt_ref().document(_equipment_debt_doc_id(personnel_id, item_id)).get()
+    if not snapshot.exists:
+        return {"personnel_id": personnel_id, "item_id": item_id, "quantity_owed": 0}
+    data = snapshot.to_dict() or {}
+    data.setdefault("quantity_owed", 0)
+    return data
+
+
+def list_equipment_debt(personnel_id: str = "", only_outstanding: bool = True) -> list:
+    """尚欠總表用：每個人在每個品項的尚欠數量。只有借用/歸還/買斷/核銷
+    會異動這裡，轉倉、採購新增不影響任何人的尚欠。"""
+    result = []
+    query = equipment_debt_ref()
+    if personnel_id:
+        query = query.where("personnel_id", "==", personnel_id)
+    for snapshot in query.stream():
+        data = snapshot.to_dict() or {}
+        data.setdefault("quantity_owed", 0)
+        if only_outstanding and data["quantity_owed"] <= 0:
+            continue
+        result.append(data)
+    result.sort(key=lambda d: d.get("quantity_owed", 0), reverse=True)
+    return result
+
+
+def _adjust_equipment_debt(personnel_id: str, item_id: str, delta: int) -> None:
+    doc_ref = equipment_debt_ref().document(_equipment_debt_doc_id(personnel_id, item_id))
+    current = get_equipment_debt(personnel_id, item_id)
+    doc_ref.set(
+        {
+            "personnel_id": personnel_id,
+            "item_id": item_id,
+            "quantity_owed": current["quantity_owed"] + delta,
+            "updated_at": time.time(),
+        },
+        merge=True,
+    )
+
+
+# ---------- 異動登記 ----------
+
+def equipment_transaction_error(
+    transaction_type: str,
+    personnel,
+    from_stock: dict,
+    quantity,
+    debt: dict = None,
+    override_stock_check: bool = False,
+) -> str:
+    """純函式：判斷一筆裝備異動能不能記錄（vehicle_event_error 的做法，
+    Firestore 讀取跟驗證邏輯分開，方便直接寫單元測試）。回傳空字串代表
+    可以記錄；非空字串是擋下的錯誤代碼：
+    - "invalid_quantity"：數量不是大於0的整數。
+    - "personnel_not_found"：這個異動類型需要選騎士，但沒查到這個人。
+    - "personnel_missing_documents"：這個人缺件資料還沒補齊，不能借用
+      （沿用 missing_documents() 既有的缺件判斷，人員缺件清單用同一套
+      規則，不另外維護一份）。
+    - "insufficient_stock"：借用/轉倉時，來源放置點庫存不夠這次數量
+      （override_stock_check=True 時略過，給主管特批例外用，但其餘檢查
+      照樣要過）。
+    - "insufficient_debt"：歸還/買斷的數量超過這個人目前實際尚欠的數量。
+    """
+    if not isinstance(quantity, int) or quantity <= 0:
+        return "invalid_quantity"
+
+    if transaction_type in EQUIPMENT_TRANSACTION_TYPES_REQUIRING_PERSONNEL:
+        if personnel is None:
+            return "personnel_not_found"
+        if missing_documents(personnel):
+            return "personnel_missing_documents"
+
+    if transaction_type in ("borrow", "transfer") and not override_stock_check:
+        available = (from_stock or {}).get("quantity", 0)
+        if available < quantity:
+            return "insufficient_stock"
+
+    if transaction_type in ("return", "buyout"):
+        owed = (debt or {}).get("quantity_owed", 0)
+        if quantity > owed:
+            return "insufficient_debt"
+
+    return ""
+
+
+def record_equipment_transaction(
+    transaction_type: str,
+    item_id: str,
+    quantity: int,
+    from_location_id: str = "",
+    to_location_id: str = "",
+    personnel_id: str = "",
+    unit_price=None,
+    payment_received: bool = False,
+    reported_by: str = "",
+    override_stock_check: bool = False,
+) -> tuple:
+    """驗證通過（見 equipment_transaction_error）才會真的寫入一筆裝備異動
+    紀錄，同步更新庫存／尚欠。回傳 (True, "") 代表成功；(False, 錯誤代碼)
+    代表被擋下。
+
+    各異動類型實際影響：
+    - 借用（borrow）：來源放置點庫存 -quantity，這個人在這個品項的尚欠
+      +quantity。
+    - 歸還（return）：來源放置點庫存 +quantity，尚欠 -quantity。
+    - 轉倉（transfer）：來源放置點庫存 -quantity、目的放置點庫存
+      +quantity，一筆紀錄同時處理「轉出」跟「轉入」，不影響任何人的
+      尚欠。
+    - 採購新增（purchase）：目的放置點庫存 +quantity，不影響尚欠。
+    - 買斷（buyout）：尚欠 -quantity，但**不**加回任何放置點庫存——裝備
+      留在騎士手上，沒有實體歸還這回事。
+    """
+    personnel = get_personnel(personnel_id) if personnel_id else None
+    from_stock = get_equipment_stock(from_location_id, item_id) if from_location_id else None
+    debt = get_equipment_debt(personnel_id, item_id) if personnel_id else None
+
+    error = equipment_transaction_error(
+        transaction_type, personnel, from_stock, quantity, debt=debt, override_stock_check=override_stock_check
+    )
+    if error:
+        return False, error
+
+    now = time.time()
+    equipment_transactions_ref().document().set(
+        {
+            "type": transaction_type,
+            "item_id": item_id,
+            "quantity": quantity,
+            "from_location_id": from_location_id,
+            "to_location_id": to_location_id,
+            "personnel_id": personnel_id,
+            "unit_price": unit_price,
+            "total_amount": (unit_price * quantity) if unit_price is not None else None,
+            "payment_received": payment_received,
+            "override_stock_check": override_stock_check,
+            "reported_by": reported_by,
+            "created_at": now,
+        }
+    )
+
+    if transaction_type == "borrow":
+        _adjust_equipment_stock(from_location_id, item_id, -quantity)
+        _adjust_equipment_debt(personnel_id, item_id, quantity)
+    elif transaction_type == "return":
+        _adjust_equipment_stock(from_location_id, item_id, quantity)
+        _adjust_equipment_debt(personnel_id, item_id, -quantity)
+    elif transaction_type == "transfer":
+        _adjust_equipment_stock(from_location_id, item_id, -quantity)
+        _adjust_equipment_stock(to_location_id, item_id, quantity)
+    elif transaction_type == "purchase":
+        _adjust_equipment_stock(to_location_id, item_id, quantity)
+    elif transaction_type == "buyout":
+        _adjust_equipment_debt(personnel_id, item_id, -quantity)
+
+    return True, ""
+
+
+def record_equipment_writeoff(personnel_id: str, item_id: str, reason: str, operated_by: str) -> tuple:
+    """核銷：把這個人在這個品項的尚欠直接歸零，公司自己吸收成本。限主管
+    操作（路由層擋，這裡不重複判斷角色）。回傳 (True, "") 或
+    (False, 錯誤代碼)：
+    - "no_outstanding_debt"：這個人這項裝備目前沒有尚欠，沒什麼好核銷的。
+    - "reason_required"：核銷一定要填原因，方便事後追查。
+    """
+    debt = get_equipment_debt(personnel_id, item_id)
+    owed = debt.get("quantity_owed", 0)
+    if owed <= 0:
+        return False, "no_outstanding_debt"
+    if not (reason or "").strip():
+        return False, "reason_required"
+
+    now = time.time()
+    equipment_transactions_ref().document().set(
+        {
+            "type": "writeoff",
+            "item_id": item_id,
+            "quantity": owed,
+            "from_location_id": "",
+            "to_location_id": "",
+            "personnel_id": personnel_id,
+            "unit_price": None,
+            "total_amount": None,
+            "payment_received": False,
+            "reason": reason.strip(),
+            "reported_by": operated_by,
+            "created_at": now,
+        }
+    )
+    _adjust_equipment_debt(personnel_id, item_id, -owed)
+    return True, ""
+
+
+def list_equipment_transactions(
+    location_id: str = "", item_id: str = "", personnel_id: str = "", transaction_type: str = ""
+) -> list:
+    """歷史紀錄查詢。location_id 篩選會同時比對來源／目的放置點——轉倉
+    一筆紀錄橫跨兩個放置點，篩某個放置點時，不管它是轉出方還是轉入方
+    都要看得到這筆。"""
+    result = []
+    for snapshot in equipment_transactions_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        if item_id and data.get("item_id") != item_id:
+            continue
+        if personnel_id and data.get("personnel_id") != personnel_id:
+            continue
+        if transaction_type and data.get("type") != transaction_type:
+            continue
+        if location_id and location_id not in (data.get("from_location_id"), data.get("to_location_id")):
+            continue
+        result.append(data)
+    result.sort(key=lambda t: t.get("created_at", 0), reverse=True)
+    return result

@@ -427,3 +427,40 @@ INCIDENT_STATUSES = [
 ]
 INCIDENT_STATUS_MAP = {s["code"]: s["name"] for s in INCIDENT_STATUSES}
 DEFAULT_INCIDENT_STATUS = "open"
+
+# ==========================================
+# 裝備借還管理
+# 2026-09-17 新增。品項（籃子、橘衣...）跟放置點（新北所、桃園所...）刻意
+# 不像廠商/假別那樣寫死在這裡——這兩份清單預期會比車輛廠商還常變動，改成
+# 主管可以自己在網頁上新增/停用的動態清單，存在 Firestore
+# （delivery_equipment_items / delivery_equipment_locations），這裡只放
+# 「異動類型」這種真的不會讓使用者自己增加種類的固定清單。
+# ==========================================
+EQUIPMENT_TRANSACTION_TYPES = [
+    {"code": "borrow", "name": "借用"},
+    {"code": "return", "name": "歸還"},
+    {"code": "transfer", "name": "轉倉（轉出／轉入）"},
+    {"code": "purchase", "name": "採購新增"},
+    {"code": "buyout", "name": "買斷"},
+    {"code": "writeoff", "name": "核銷"},
+]
+EQUIPMENT_TRANSACTION_TYPE_MAP = {t["code"]: t["name"] for t in EQUIPMENT_TRANSACTION_TYPES}
+
+# 「轉倉」原始需求文件把「轉出」「轉入」列成兩種異動類型，但這裡刻意合併
+# 成一種「轉倉」動作、一次選「從哪個放置點→到哪個放置點」，用同一筆紀錄
+# 同時扣掉來源庫存、加回目的庫存——這樣「轉入一定對應轉出」是資料結構
+# 保證的（同一筆紀錄），不需要另外做「登記轉出後，等對方確認收到才算
+# 轉入」這種跨兩個步驟、中途會有「在途中」狀態的流程。如果之後發現運送
+# 中途真的需要有「已出貨、對方還沒收到」這種待確認狀態，才需要拆成兩步。
+EQUIPMENT_TRANSACTION_TYPES_REQUIRING_PERSONNEL = {"borrow", "return", "buyout"}
+EQUIPMENT_TRANSACTION_TYPES_REQUIRING_TWO_LOCATIONS = {"transfer"}
+
+# 核銷（公司認賠、尚欠直接歸零）風險最高、直接影響帳務，限主管操作。
+# 買斷雖然也涉及金錢，但性質是「同仁登記騎士已經付錢了結」，同仁本來就是
+# 第一線在處理離職人員的裝備結算，開放一般同仁登記；使用者未來如果覺得
+# 買斷也該限主管，這個集合直接加 "buyout" 即可。
+EQUIPMENT_ADMIN_ONLY_TRANSACTION_TYPES = {"writeoff"}
+
+# 只有「在職」的人員才能借裝備——跟人員缺件清單預設隱藏離職/放棄報到的人
+# 是同一個道理，不應該讓已經離職的人還掛在借用名單裡。
+EQUIPMENT_ELIGIBLE_PERSONNEL_STATUS = "employed"

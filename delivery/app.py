@@ -8,6 +8,7 @@ from delivery.config import SESSION_SECRET_KEY
 from delivery.routes import (
     applicant_routes,
     auth_routes,
+    equipment_routes,
     file_routes,
     home_routes,
     import_routes,
@@ -51,3 +52,4 @@ delivery_app.include_router(webhook_routes.router)
 delivery_app.include_router(reminder_routes.router)
 delivery_app.include_router(vehicle_routes.router)
 delivery_app.include_router(incident_routes.router)
+delivery_app.include_router(equipment_routes.router)
