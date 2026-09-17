@@ -20,6 +20,12 @@
 
 * { box-sizing: border-box; }
 
+/* JS 用 el.hidden 隱藏欄位（例如合約產生器切換版本時）依賴的是瀏覽器對
+   [hidden] 內建的 display:none，但那只是「使用者代理樣式表」，任何自訂
+   的 display 規則（例如下面 .form-stack label 的 display:flex）都會蓋掉
+   它，導致設了 hidden 卻還是看得到——這裡用 !important 補回優先權。 */
+[hidden] { display: none !important; }
+
 body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
