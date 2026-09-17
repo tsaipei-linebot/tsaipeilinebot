@@ -156,6 +156,44 @@ def _faq_page(question: str, answer: str = "", status: str = "") -> dict:
     }
 
 
+class FetchFaqsDataTests(unittest.TestCase):
+    """fetch_faqs_data() 的「啟用狀態」改成白名單制（2026-09）：只有明確等於
+    「啟用」才會被沛沛拿來回覆，光填答案、或狀態留白/其他值都不夠——取代原本
+    「只要不是明確停用就算數」的黑名單制，避免同仁還在編輯中的草稿被誤送出去。"""
+
+    def setUp(self):
+        n._cached_faqs, n._last_faqs_fetch = None, 0
+
+    def tearDown(self):
+        n._cached_faqs, n._last_faqs_fetch = None, 0
+
+    def test_status_enabled_with_answer_is_included(self):
+        pages = [_faq_page("發薪日是哪天", answer="每月5號", status="啟用")]
+        with patch("services.notion_service.query_notion_database_direct", return_value=pages):
+            faqs = n.fetch_faqs_data()
+        self.assertEqual(faqs, [{"question": "發薪日是哪天", "answer": "每月5號"}])
+
+    def test_blank_status_with_answer_is_excluded(self):
+        # 光填了答案，但同仁還沒手動切成「啟用」，不該自動上線回覆求職者
+        pages = [_faq_page("發薪日是哪天", answer="每月5號")]
+        with patch("services.notion_service.query_notion_database_direct", return_value=pages):
+            faqs = n.fetch_faqs_data()
+        self.assertEqual(faqs, [])
+
+    def test_status_disabled_with_answer_is_excluded(self):
+        pages = [_faq_page("發薪日是哪天", answer="每月5號", status="停用")]
+        with patch("services.notion_service.query_notion_database_direct", return_value=pages):
+            faqs = n.fetch_faqs_data()
+        self.assertEqual(faqs, [])
+
+    def test_status_enabled_without_answer_is_excluded(self):
+        # 答案沒填，就算狀態已經是「啟用」也不該被拿去回覆（避免回覆空白內容）
+        pages = [_faq_page("發薪日是哪天", status="啟用")]
+        with patch("services.notion_service.query_notion_database_direct", return_value=pages):
+            faqs = n.fetch_faqs_data()
+        self.assertEqual(faqs, [])
+
+
 class FetchPendingFaqCandidatesTests(unittest.TestCase):
     def test_blank_answer_and_blank_status_is_pending(self):
         pages = [_faq_page("加班費怎麼計算？")]
