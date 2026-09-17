@@ -26,6 +26,10 @@ def _staff_account():
     return {"username": "bob", "modules": {"delivery": "staff"}, "is_platform_admin": False, "rank": "specialist"}
 
 
+def _admin_account():
+    return {"username": "alice", "modules": {"delivery": "staff"}, "is_platform_admin": False, "rank": "manager"}
+
+
 class CreateVehicleWheelTypeTests(unittest.TestCase):
     """2026-09-14 新增：新增車輛時要能選輪別（三輪／二輪），預設三輪。"""
 
@@ -468,6 +472,37 @@ class ManualVehicleEventGroupNotifyTests(unittest.TestCase):
                     redirect=None,
                 )
         mock_notify.assert_not_called()
+
+
+class DeleteVehicleEventTests(unittest.TestCase):
+    """主管在車輛詳細頁歷史紀錄的「刪除」按鈕：只開放管理員，且要確認
+    這筆事件確實屬於這台車（跟編輯共用 _get_vehicle_and_own_event()），
+    避免用別台車的事件 ID 硬湊網址刪到不相干車輛的歷史紀錄。"""
+
+    def _event(self, vehicle_no="ERV-1"):
+        return {"id": "evt1", "vehicle_no": vehicle_no}
+
+    def test_deletes_when_event_belongs_to_vehicle(self):
+        vehicle = {"vehicle_no": "ERV-1"}
+        event = self._event()
+        with mock.patch.object(vehicle_routes.repository, "get_vehicle", return_value=vehicle):
+            with mock.patch.object(vehicle_routes.repository, "get_vehicle_event", return_value=event):
+                with mock.patch.object(vehicle_routes.repository, "delete_vehicle_event", return_value=True) as mock_delete:
+                    resp = vehicle_routes.delete_vehicle_event(
+                        "ERV-1", "evt1", _FakeRequest(_admin_account()), redirect=None
+                    )
+        mock_delete.assert_called_once_with("evt1")
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/delivery/vehicles/ERV-1")
+
+    def test_does_not_delete_when_event_belongs_to_different_vehicle(self):
+        vehicle = {"vehicle_no": "ERV-1"}
+        event = self._event(vehicle_no="ERV-9")
+        with mock.patch.object(vehicle_routes.repository, "get_vehicle", return_value=vehicle):
+            with mock.patch.object(vehicle_routes.repository, "get_vehicle_event", return_value=event):
+                with mock.patch.object(vehicle_routes.repository, "delete_vehicle_event") as mock_delete:
+                    vehicle_routes.delete_vehicle_event("ERV-1", "evt1", _FakeRequest(_admin_account()), redirect=None)
+        mock_delete.assert_not_called()
 
 
 if __name__ == "__main__":

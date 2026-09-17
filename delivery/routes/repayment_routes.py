@@ -165,6 +165,17 @@ def repayment_edit_submit(
     return RedirectResponse(url="/delivery/function/repayment/records", status_code=303)
 
 
+@router.post("/function/repayment/records/{repayment_id}/delete")
+def repayment_delete(repayment_id: str, request: Request, redirect=Depends(admin_required)):
+    """刪除一筆補款登記，只開放管理員（見 repository.delete_repayment()
+    的說明：已核准的登記不能刪除，直接刪不掉也不會報錯，只是畫面上
+    不會有變化——刪除按鈕在樣板裡本來就只會顯示在未核准的紀錄上）。"""
+    if redirect:
+        return redirect
+    repository.delete_repayment(repayment_id)
+    return RedirectResponse(url="/delivery/function/repayment/records", status_code=303)
+
+
 @router.post("/function/repayment/records/approve")
 async def repayment_records_approve(request: Request, redirect=Depends(admin_required)):
     """核准是單向的，只開放管理員操作：勾選的補款登記會被標記為已核准，沒有

@@ -260,6 +260,16 @@ def sick_leave_edit_submit(
     return RedirectResponse(url="/delivery/function/sick-leave/records", status_code=303)
 
 
+@router.post("/function/sick-leave/records/{sick_leave_id}/delete")
+def sick_leave_delete(sick_leave_id: str, request: Request, redirect=Depends(admin_required)):
+    """刪除一筆假別登記，只開放管理員（見 repository.delete_sick_leave()：
+    已核准的登記不能刪除，刪除按鈕在樣板裡只會顯示在未核准的紀錄上）。"""
+    if redirect:
+        return redirect
+    repository.delete_sick_leave(sick_leave_id)
+    return RedirectResponse(url="/delivery/function/sick-leave/records", status_code=303)
+
+
 @router.post("/function/sick-leave/records/approve")
 async def sick_leave_records_approve(request: Request, redirect=Depends(admin_required)):
     """核准是單向的，只開放管理員操作，沒有取消核准的路徑（見

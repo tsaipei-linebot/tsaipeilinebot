@@ -126,5 +126,185 @@ class EquipmentTransactionErrorTests(unittest.TestCase):
         )
 
 
+def _fake_doc_snapshot(exists: bool, data: dict = None):
+    snapshot = mock.Mock(exists=exists)
+    snapshot.to_dict.return_value = data or {}
+    return snapshot
+
+
+def _fake_transaction_collection(snapshot):
+    fake_doc_ref = mock.Mock()
+    fake_doc_ref.get.return_value = snapshot
+    fake_collection = mock.Mock()
+    fake_collection.document.return_value = fake_doc_ref
+    return fake_collection, fake_doc_ref
+
+
+class ApplyEquipmentTransactionEffectTests(unittest.TestCase):
+    """_apply_equipment_transaction_effect() 是 record/update/delete 共用的
+    庫存/尚欠異動邏輯，sign=-1 要是 sign=1 的精確鏡像（新增-刪除同一筆
+    紀錄，庫存/尚欠要完全回到刪除前的樣子）。"""
+
+    def _adjust_calls(self, transaction_type, sign, **kwargs):
+        with mock.patch.object(repository, "_adjust_equipment_stock") as mock_stock:
+            with mock.patch.object(repository, "_adjust_equipment_debt") as mock_debt:
+                repository._apply_equipment_transaction_effect(
+                    transaction_type,
+                    kwargs.get("item_id", "item1"),
+                    kwargs.get("quantity", 3),
+                    kwargs.get("from_location_id", "loc-a"),
+                    kwargs.get("to_location_id", "loc-b"),
+                    kwargs.get("personnel_id", "p1"),
+                    sign=sign,
+                )
+        return mock_stock.call_args_list, mock_debt.call_args_list
+
+    def test_borrow_forward_and_reverse_are_mirror_images(self):
+        stock_fwd, debt_fwd = self._adjust_calls("borrow", 1)
+        stock_rev, debt_rev = self._adjust_calls("borrow", -1)
+        self.assertEqual(stock_fwd, [mock.call("loc-a", "item1", -3)])
+        self.assertEqual(debt_fwd, [mock.call("p1", "item1", 3)])
+        self.assertEqual(stock_rev, [mock.call("loc-a", "item1", 3)])
+        self.assertEqual(debt_rev, [mock.call("p1", "item1", -3)])
+
+    def test_return_forward_and_reverse_are_mirror_images(self):
+        stock_fwd, debt_fwd = self._adjust_calls("return", 1)
+        stock_rev, debt_rev = self._adjust_calls("return", -1)
+        self.assertEqual(stock_fwd, [mock.call("loc-a", "item1", 3)])
+        self.assertEqual(debt_fwd, [mock.call("p1", "item1", -3)])
+        self.assertEqual(stock_rev, [mock.call("loc-a", "item1", -3)])
+        self.assertEqual(debt_rev, [mock.call("p1", "item1", 3)])
+
+    def test_transfer_forward_and_reverse_are_mirror_images(self):
+        stock_fwd, debt_fwd = self._adjust_calls("transfer", 1)
+        stock_rev, _ = self._adjust_calls("transfer", -1)
+        self.assertEqual(stock_fwd, [mock.call("loc-a", "item1", -3), mock.call("loc-b", "item1", 3)])
+        self.assertEqual(stock_rev, [mock.call("loc-a", "item1", 3), mock.call("loc-b", "item1", -3)])
+        self.assertEqual(debt_fwd, [])
+
+    def test_purchase_only_touches_destination_stock(self):
+        stock_fwd, debt_fwd = self._adjust_calls("purchase", 1)
+        self.assertEqual(stock_fwd, [mock.call("loc-b", "item1", 3)])
+        self.assertEqual(debt_fwd, [])
+
+    def test_buyout_only_touches_debt(self):
+        stock_fwd, debt_fwd = self._adjust_calls("buyout", 1)
+        self.assertEqual(stock_fwd, [])
+        self.assertEqual(debt_fwd, [mock.call("p1", "item1", -3)])
+
+
+class DeleteEquipmentTransactionTests(unittest.TestCase):
+    def test_missing_transaction_returns_false(self):
+        snapshot = _fake_doc_snapshot(False)
+        fake_collection, fake_doc_ref = _fake_transaction_collection(snapshot)
+        with mock.patch.object(repository, "equipment_transactions_ref", return_value=fake_collection):
+            self.assertFalse(repository.delete_equipment_transaction("missing"))
+        fake_doc_ref.delete.assert_not_called()
+
+    def test_borrow_reverses_effect_then_deletes(self):
+        data = {
+            "type": "borrow", "item_id": "item1", "quantity": 4,
+            "from_location_id": "loc-a", "to_location_id": "", "personnel_id": "p1",
+        }
+        snapshot = _fake_doc_snapshot(True, data)
+        fake_collection, fake_doc_ref = _fake_transaction_collection(snapshot)
+        with mock.patch.object(repository, "equipment_transactions_ref", return_value=fake_collection):
+            with mock.patch.object(repository, "_adjust_equipment_stock") as mock_stock:
+                with mock.patch.object(repository, "_adjust_equipment_debt") as mock_debt:
+                    result = repository.delete_equipment_transaction("t1")
+        self.assertTrue(result)
+        mock_stock.assert_called_once_with("loc-a", "item1", 4)
+        mock_debt.assert_called_once_with("p1", "item1", -4)
+        fake_doc_ref.delete.assert_called_once()
+
+    def test_writeoff_adds_debt_back_then_deletes(self):
+        data = {"type": "writeoff", "item_id": "item1", "quantity": 7, "personnel_id": "p1"}
+        snapshot = _fake_doc_snapshot(True, data)
+        fake_collection, fake_doc_ref = _fake_transaction_collection(snapshot)
+        with mock.patch.object(repository, "equipment_transactions_ref", return_value=fake_collection):
+            with mock.patch.object(repository, "_adjust_equipment_debt") as mock_debt:
+                result = repository.delete_equipment_transaction("t1")
+        self.assertTrue(result)
+        mock_debt.assert_called_once_with("p1", "item1", 7)
+        fake_doc_ref.delete.assert_called_once()
+
+
+class UpdateEquipmentTransactionTests(unittest.TestCase):
+    def test_missing_transaction_returns_not_found(self):
+        snapshot = _fake_doc_snapshot(False)
+        fake_collection, _ = _fake_transaction_collection(snapshot)
+        with mock.patch.object(repository, "equipment_transactions_ref", return_value=fake_collection):
+            ok, error = repository.update_equipment_transaction("missing", quantity=1)
+        self.assertFalse(ok)
+        self.assertEqual(error, "not_found")
+
+    def test_writeoff_only_updates_reason_and_skips_validation(self):
+        data = {"type": "writeoff", "item_id": "item1", "quantity": 5, "personnel_id": "p1"}
+        snapshot = _fake_doc_snapshot(True, data)
+        fake_collection, fake_doc_ref = _fake_transaction_collection(snapshot)
+        with mock.patch.object(repository, "equipment_transactions_ref", return_value=fake_collection):
+            ok, error = repository.update_equipment_transaction("t1", quantity=0, reason="盤點對不起來")
+        self.assertTrue(ok)
+        self.assertEqual(error, "")
+        fake_doc_ref.update.assert_called_once_with({"reason": "盤點對不起來"})
+
+    def test_invalid_new_quantity_rolls_back_reversed_effect(self):
+        data = {
+            "type": "purchase", "item_id": "item1", "quantity": 5,
+            "from_location_id": "", "to_location_id": "loc-b", "personnel_id": "",
+        }
+        snapshot = _fake_doc_snapshot(True, data)
+        fake_collection, fake_doc_ref = _fake_transaction_collection(snapshot)
+        with mock.patch.object(repository, "equipment_transactions_ref", return_value=fake_collection):
+            with mock.patch.object(repository, "_adjust_equipment_stock") as mock_stock:
+                ok, error = repository.update_equipment_transaction("t1", quantity=-1, to_location_id="loc-b")
+        self.assertFalse(ok)
+        self.assertEqual(error, "invalid_quantity")
+        # 復原舊效果（+5）失敗後要加回去（-5 的反向，也就是再 -5），
+        # 兩次呼叫合計等於完全沒發生過任何淨異動。
+        self.assertEqual(
+            mock_stock.call_args_list,
+            [mock.call("loc-b", "item1", -5), mock.call("loc-b", "item1", 5)],
+        )
+        fake_doc_ref.update.assert_not_called()
+
+    def test_valid_update_reapplies_new_effect_and_writes_fields(self):
+        data = {
+            "type": "purchase", "item_id": "item1", "quantity": 5,
+            "from_location_id": "", "to_location_id": "loc-b", "personnel_id": "",
+        }
+        snapshot = _fake_doc_snapshot(True, data)
+        fake_collection, fake_doc_ref = _fake_transaction_collection(snapshot)
+        with mock.patch.object(repository, "equipment_transactions_ref", return_value=fake_collection):
+            with mock.patch.object(repository, "_adjust_equipment_stock") as mock_stock:
+                ok, error = repository.update_equipment_transaction("t1", quantity=8, to_location_id="loc-b")
+        self.assertTrue(ok)
+        self.assertEqual(error, "")
+        self.assertEqual(
+            mock_stock.call_args_list,
+            [mock.call("loc-b", "item1", -5), mock.call("loc-b", "item1", 8)],
+        )
+        payload = fake_doc_ref.update.call_args.args[0]
+        self.assertEqual(payload["quantity"], 8)
+        self.assertEqual(payload["to_location_id"], "loc-b")
+
+
+class GetEquipmentTransactionTests(unittest.TestCase):
+    def test_returns_none_when_missing(self):
+        snapshot = _fake_doc_snapshot(False)
+        fake_collection, _ = _fake_transaction_collection(snapshot)
+        with mock.patch.object(repository, "equipment_transactions_ref", return_value=fake_collection):
+            self.assertIsNone(repository.get_equipment_transaction("missing"))
+
+    def test_returns_data_with_id(self):
+        snapshot = _fake_doc_snapshot(True, {"type": "purchase"})
+        snapshot.id = "t1"
+        fake_collection, _ = _fake_transaction_collection(snapshot)
+        with mock.patch.object(repository, "equipment_transactions_ref", return_value=fake_collection):
+            data = repository.get_equipment_transaction("t1")
+        self.assertEqual(data["id"], "t1")
+        self.assertEqual(data["type"], "purchase")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -41,6 +41,7 @@
             <th>騎士</th>
             <th>金額</th>
             <th>備註</th>
+            {% if user.role == "admin" %}<th></th>{% endif %}
         </tr>
     </thead>
     <tbody>
@@ -59,6 +60,15 @@
                 {% else %}-{% endif %}
             </td>
             <td>{{ t.reason or "-" }}</td>
+            {% if user.role == "admin" %}
+            <td>
+                <a href="/delivery/equipment/records/{{ t.id }}/edit">編輯</a>
+                <form method="post" action="/delivery/equipment/records/{{ t.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除這筆裝備異動紀錄嗎？刪除後會自動復原對應的庫存/尚欠，且無法復原。');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+            </td>
+            {% endif %}
         </tr>
         {% endfor %}
     </tbody>

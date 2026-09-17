@@ -120,7 +120,15 @@
             <td>{{ e.note or "-" }}</td>
             <td>{% if e.needs_maintenance %}<span class="badge badge-missing">是</span>{% else %}-{% endif %}</td>
             <td>{{ "LINE 群組" if e.source == "line" else "手動補登" }}</td>
-            <td><a href="/delivery/vehicles/{{ vehicle.vehicle_no }}/events/{{ e.id }}/edit">編輯</a></td>
+            <td>
+                <a href="/delivery/vehicles/{{ vehicle.vehicle_no }}/events/{{ e.id }}/edit">編輯</a>
+                {% if user.role == "admin" %}
+                <form method="post" action="/delivery/vehicles/{{ vehicle.vehicle_no }}/events/{{ e.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除這筆領還車歷史紀錄嗎？刪除後無法復原，也不會自動更新車輛主檔目前顯示的狀態。');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>

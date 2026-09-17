@@ -133,5 +133,25 @@ class RepaymentEditSubmitTests(unittest.TestCase):
         self.assertIs(resp, blocking_redirect)
 
 
+class RepaymentDeleteTests(unittest.TestCase):
+    """主管在補款記錄頁的「刪除」按鈕：見 repository.delete_repayment()，
+    已核准的登記刪不掉，這裡只需要確認路由把結果轉成正確的重新導向。"""
+
+    def test_calls_repository_and_redirects(self):
+        with mock.patch.object(repayment_routes.repository, "delete_repayment", return_value=True) as mock_delete:
+            resp = repayment_routes.repayment_delete("r1", _FakeRequest(_admin_account()), redirect=None)
+        mock_delete.assert_called_once_with("r1")
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/delivery/function/repayment/records")
+
+    def test_redirects_even_when_repository_refuses(self):
+        # 已核准的登記 delete_repayment() 會回傳 False，路由端不用另外
+        # 顯示錯誤——樣板本來就只在未核准的紀錄上顯示刪除按鈕。
+        with mock.patch.object(repayment_routes.repository, "delete_repayment", return_value=False) as mock_delete:
+            resp = repayment_routes.repayment_delete("r1", _FakeRequest(_admin_account()), redirect=None)
+        mock_delete.assert_called_once_with("r1")
+        self.assertEqual(resp.status_code, 303)
+
+
 if __name__ == "__main__":
     unittest.main()

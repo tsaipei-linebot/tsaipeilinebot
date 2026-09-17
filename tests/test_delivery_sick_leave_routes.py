@@ -147,5 +147,14 @@ class SickLeaveEditSubmitTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
 
 
+class SickLeaveDeleteTests(unittest.TestCase):
+    def test_calls_repository_and_redirects(self):
+        with mock.patch.object(sick_leave_routes.repository, "delete_sick_leave", return_value=True) as mock_delete:
+            resp = sick_leave_routes.sick_leave_delete("s1", _FakeRequest(_admin_account()), redirect=None)
+        mock_delete.assert_called_once_with("s1")
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/delivery/function/sick-leave/records")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -560,6 +560,19 @@ def update_repayment(
     return True
 
 
+def delete_repayment(repayment_id: str) -> bool:
+    """刪除一筆補款登記，只限管理員操作（路由層擋，這裡不重複判斷角色）。
+    **已核准的登記不能刪除**——核准代表這筆金額可能已經對過帳、算進薪資
+    發放，刪掉會讓帳對不起來；如果是核准錯了，應該先確認清楚再處理，
+    不是直接刪除證據。回傳 False 代表沒有刪除成功（登記不存在，或已經
+    核准）。"""
+    record = get_repayment(repayment_id)
+    if not record or record.get("approved"):
+        return False
+    repayments_ref().document(repayment_id).delete()
+    return True
+
+
 # ==========================================
 # 假別登記
 # 2026-09-11 起改成「一天一筆、記時數」（leave_date + hours），取代原本
@@ -625,6 +638,18 @@ def update_sick_leave(sick_leave_id: str, data: dict) -> bool:
         "reason": data.get("reason", ""),
     }
     ref.update(payload)
+    return True
+
+
+def delete_sick_leave(sick_leave_id: str) -> bool:
+    """刪除一筆假別登記，只限管理員操作。比照 delete_repayment()：**已核准
+    的登記不能刪除**——已核准的假別已經算進年度額度累積（見
+    leave_quota_summary_for_person()），刪掉會讓額度試算跟實際請假天數
+    對不起來。回傳 False 代表沒有刪除成功（登記不存在，或已經核准）。"""
+    record = get_sick_leave(sick_leave_id)
+    if not record or record.get("approved"):
+        return False
+    sick_leaves_ref().document(sick_leave_id).delete()
     return True
 
 
@@ -1416,6 +1441,22 @@ def update_vehicle_event(
     return True
 
 
+def delete_vehicle_event(event_id: str) -> bool:
+    """刪除一筆領還車歷史紀錄，只限管理員操作。**刻意不去反推、連動更新
+    車輛主檔目前的狀態/使用人/地點**——跟 update_vehicle_event() 不同，
+    刪除這個動作沒有「新的值」可以拿來同步，就算刪的剛好是目前反映在
+    主檔上的最新一筆事件，車輛主檔也不會自動改變（避免猜錯方向，憑空
+    把車輛狀態改成不知道對不對的值）；如果刪除後發現車輛主檔顯示的
+    狀態/使用人不對，請直接在車輛詳細頁用「標記待維修」／更新廠商等
+    既有功能手動修正，或者新增一筆正確的事件蓋過去。事件不存在回傳
+    False。"""
+    ref = vehicle_events_ref().document(event_id)
+    if not ref.get().exists:
+        return False
+    ref.delete()
+    return True
+
+
 # ==========================================
 # 意外事件回報
 # 跟車輛回報同一個 LINE 群組，但資料完全獨立的一份 collection。風險等級
@@ -1586,6 +1627,18 @@ def update_incident_event(incident_id: str, data: dict) -> bool:
         return False
     payload = {key: data.get(key, "") for key in _INCIDENT_FIELDS}
     ref.update(payload)
+    return True
+
+
+def delete_incident_event(incident_id: str) -> bool:
+    """刪除一筆意外事件回報，只限管理員操作。不管風險等級／結案狀態，
+    管理員都可以刪除——跟補款/假別不同，這裡沒有「已核准」之類會被其他
+    地方引用/對帳的欄位，刪除單純是移除這筆回報本身。事件不存在回傳
+    False。"""
+    ref = incident_events_ref().document(incident_id)
+    if not ref.get().exists:
+        return False
+    ref.delete()
     return True
 
 
@@ -1888,6 +1941,38 @@ def equipment_transaction_error(
     return ""
 
 
+def _apply_equipment_transaction_effect(
+    transaction_type: str,
+    item_id: str,
+    quantity: int,
+    from_location_id: str,
+    to_location_id: str,
+    personnel_id: str,
+    sign: int = 1,
+) -> None:
+    """實際異動庫存/尚欠的共用邏輯，被 record_equipment_transaction()（新增，
+    sign=1）跟 update_equipment_transaction()／delete_equipment_transaction()
+    （復原舊效果，sign=-1）共用，確保「反向」永遠是同一份邏輯的鏡像，
+    不會有兩邊各自維護、改一邊忘了改另一邊的風險。sign=-1 時每個 delta
+    直接反過來，不需要另外為每種異動類型各寫一次反向規則。writeoff（核銷）
+    不經過這裡——它的效果只有「尚欠歸零」，用自己的邏輯處理（見
+    record_equipment_writeoff() 跟 delete_equipment_transaction()）。"""
+    q = quantity * sign
+    if transaction_type == "borrow":
+        _adjust_equipment_stock(from_location_id, item_id, -q)
+        _adjust_equipment_debt(personnel_id, item_id, q)
+    elif transaction_type == "return":
+        _adjust_equipment_stock(from_location_id, item_id, q)
+        _adjust_equipment_debt(personnel_id, item_id, -q)
+    elif transaction_type == "transfer":
+        _adjust_equipment_stock(from_location_id, item_id, -q)
+        _adjust_equipment_stock(to_location_id, item_id, q)
+    elif transaction_type == "purchase":
+        _adjust_equipment_stock(to_location_id, item_id, q)
+    elif transaction_type == "buyout":
+        _adjust_equipment_debt(personnel_id, item_id, -q)
+
+
 def record_equipment_transaction(
     transaction_type: str,
     item_id: str,
@@ -1943,19 +2028,9 @@ def record_equipment_transaction(
         }
     )
 
-    if transaction_type == "borrow":
-        _adjust_equipment_stock(from_location_id, item_id, -quantity)
-        _adjust_equipment_debt(personnel_id, item_id, quantity)
-    elif transaction_type == "return":
-        _adjust_equipment_stock(from_location_id, item_id, quantity)
-        _adjust_equipment_debt(personnel_id, item_id, -quantity)
-    elif transaction_type == "transfer":
-        _adjust_equipment_stock(from_location_id, item_id, -quantity)
-        _adjust_equipment_stock(to_location_id, item_id, quantity)
-    elif transaction_type == "purchase":
-        _adjust_equipment_stock(to_location_id, item_id, quantity)
-    elif transaction_type == "buyout":
-        _adjust_equipment_debt(personnel_id, item_id, -quantity)
+    _apply_equipment_transaction_effect(
+        transaction_type, item_id, quantity, from_location_id, to_location_id, personnel_id, sign=1
+    )
 
     return True, ""
 
@@ -1993,6 +2068,129 @@ def record_equipment_writeoff(personnel_id: str, item_id: str, reason: str, oper
     )
     _adjust_equipment_debt(personnel_id, item_id, -owed)
     return True, ""
+
+
+def update_equipment_transaction(
+    transaction_id: str,
+    quantity: int,
+    from_location_id: str = "",
+    to_location_id: str = "",
+    personnel_id: str = "",
+    unit_price=None,
+    payment_received: bool = False,
+    reason: str = "",
+    override_stock_check: bool = False,
+) -> tuple:
+    """修正一筆既有的裝備異動登記（例如數量、騎士選錯）。限主管操作（路由層
+    擋）。做法是「先把舊的效果復原，用復原後的庫存/尚欠狀態驗證新的值，
+    通過才套用新效果」——不能只是單純改欄位，因為庫存/尚欠是每筆異動當下
+    即時累加的流水帳（見 repository.py 開頭「裝備借還管理」那節的說明），
+    改掉一筆歷史異動的數量，庫存/尚欠也要跟著調整，不然帳會對不起來。
+    驗證沒過會把復原的效果加回去（rollback），不會留下「復原了但沒套用
+    新效果」的中間狀態。
+
+    **核銷（writeoff）不吃這套邏輯**——它的「數量」是核銷當下的實際尚欠，
+    不是使用者填的值，改動量沒有意義；這裡只讓核銷改「原因」欄位，其他
+    參數會被忽略。
+
+    回傳 (True, "") 或 (False, 錯誤代碼)：
+    - "not_found"：這筆異動紀錄不存在。
+    - 其餘錯誤代碼跟 equipment_transaction_error() 一致。
+    """
+    ref = equipment_transactions_ref().document(transaction_id)
+    snapshot = ref.get()
+    if not snapshot.exists:
+        return False, "not_found"
+    old = snapshot.to_dict() or {}
+    transaction_type = old.get("type", "")
+
+    if transaction_type == "writeoff":
+        ref.update({"reason": (reason or "").strip()})
+        return True, ""
+
+    item_id = old.get("item_id", "")
+    _apply_equipment_transaction_effect(
+        transaction_type,
+        item_id,
+        old.get("quantity", 0),
+        old.get("from_location_id", ""),
+        old.get("to_location_id", ""),
+        old.get("personnel_id", ""),
+        sign=-1,
+    )
+
+    personnel = get_personnel(personnel_id) if personnel_id else None
+    from_stock = get_equipment_stock(from_location_id, item_id) if from_location_id else None
+    debt = get_equipment_debt(personnel_id, item_id) if personnel_id else None
+    error = equipment_transaction_error(
+        transaction_type, personnel, from_stock, quantity, debt=debt, override_stock_check=override_stock_check
+    )
+    if error:
+        _apply_equipment_transaction_effect(
+            transaction_type,
+            item_id,
+            old.get("quantity", 0),
+            old.get("from_location_id", ""),
+            old.get("to_location_id", ""),
+            old.get("personnel_id", ""),
+            sign=1,
+        )
+        return False, error
+
+    _apply_equipment_transaction_effect(
+        transaction_type, item_id, quantity, from_location_id, to_location_id, personnel_id, sign=1
+    )
+    ref.update(
+        {
+            "quantity": quantity,
+            "from_location_id": from_location_id,
+            "to_location_id": to_location_id,
+            "personnel_id": personnel_id,
+            "unit_price": unit_price,
+            "total_amount": (unit_price * quantity) if unit_price is not None else None,
+            "payment_received": payment_received,
+            "reason": (reason or "").strip(),
+            "override_stock_check": override_stock_check,
+        }
+    )
+    return True, ""
+
+
+def delete_equipment_transaction(transaction_id: str) -> bool:
+    """刪除一筆裝備異動登記，限主管操作（路由層擋）。刪除前先把這筆紀錄
+    造成的庫存/尚欠效果復原（核銷是把核銷掉的尚欠加回去；其餘類型復用
+    _apply_equipment_transaction_effect 的反向邏輯），確保刪除歷史紀錄後
+    庫存/尚欠總表仍然正確，不會殘留這筆已刪除紀錄的影響。紀錄不存在
+    回傳 False。"""
+    ref = equipment_transactions_ref().document(transaction_id)
+    snapshot = ref.get()
+    if not snapshot.exists:
+        return False
+    data = snapshot.to_dict() or {}
+    transaction_type = data.get("type", "")
+    if transaction_type == "writeoff":
+        _adjust_equipment_debt(data.get("personnel_id", ""), data.get("item_id", ""), data.get("quantity", 0))
+    else:
+        _apply_equipment_transaction_effect(
+            transaction_type,
+            data.get("item_id", ""),
+            data.get("quantity", 0),
+            data.get("from_location_id", ""),
+            data.get("to_location_id", ""),
+            data.get("personnel_id", ""),
+            sign=-1,
+        )
+    ref.delete()
+    return True
+
+
+def get_equipment_transaction(transaction_id: str):
+    snapshot = equipment_transactions_ref().document(transaction_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
 
 
 def list_equipment_transactions(
