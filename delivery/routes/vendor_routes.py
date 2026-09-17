@@ -138,6 +138,20 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
     if not person:
         return RedirectResponse(url="/delivery/", status_code=303)
     vendor_code = person.get("vendor")
+
+    # 裝備尚欠提醒（2026-09-17 新增）：這個人名下如果還有借用未歸還的裝備，
+    # 不管目前是不是已經離職，都在這頁列出來——「離職但裝備還沒追回」是
+    # 明確要提醒的問題狀態；「在職中借用未歸還」則是正常狀態，不需要顯示
+    # 成警告，樣板端只會在「已離職」時把這個清單畫成警告色。真正在「改成
+    # 離職」那個瞬間跳出提醒視窗，是樣板裡的 JS 在偵測到下拉選單改選
+    # 「離職」時觸發，不是這裡的伺服器端邏輯（那時候使用者根本還沒送出
+    # 表單，伺服器端還看不到「將要改成離職」這件事）。
+    debt_rows = repository.list_equipment_debt(personnel_id=personnel_id)
+    if debt_rows:
+        item_map = {i["id"]: i["name"] for i in repository.list_equipment_items(include_inactive=True)}
+        for row in debt_rows:
+            row["item_name"] = item_map.get(row["item_id"], "（已刪除品項）")
+
     return templates.TemplateResponse(
         request,
         "personnel_detail.html",
@@ -154,6 +168,7 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
             "show_client": vendor_code in CLIENT_VENDORS,
             "doc_statuses": repository.all_document_statuses(person),
             "storage_configured": is_configured(),
+            "equipment_debt": debt_rows,
             "error": error,
         },
     )

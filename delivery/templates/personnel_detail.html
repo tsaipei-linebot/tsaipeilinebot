@@ -12,6 +12,14 @@
 <p class="warning">尚未設定檔案儲存空間（DELIVERY_GCS_BUCKET），目前只能記錄到期日，無法上傳檔案。</p>
 {% endif %}
 
+{% if current_employment_status == "resigned" and equipment_debt %}
+<p class="warning">
+    ⚠️ 這位騎士已標記離職，但裝備借還管理裡還有未歸還裝備：
+    {% for row in equipment_debt %}{{ row.item_name }} x{{ row.quantity_owed }}{% if not loop.last %}、{% endif %}{% endfor %}
+    ，請先到<a href="/delivery/equipment/records?personnel_id={{ person.id }}">裝備借還管理</a>追回，避免退保後追不回來。
+</p>
+{% endif %}
+
 <form method="post" action="/delivery/personnel/{{ person.id }}/bulk-update" enctype="multipart/form-data">
     <div class="filter-bar">
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
@@ -24,7 +32,7 @@
         </label>
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
             人員狀態
-            <select name="employment_status">
+            <select name="employment_status" id="employment_status">
                 {% for s in personnel_statuses %}
                 <option value="{{ s.code }}" {% if current_employment_status == s.code %}selected{% endif %}>{{ s.name }}</option>
                 {% endfor %}
@@ -132,6 +140,31 @@
     <button type="submit" class="btn btn-primary btn-bulk-update">一鍵全部更新</button>
 </form>
 <p class="hint" style="margin-top:12px;">強制險等需要到期日的項目，上傳檔案後系統會自動辨識到期日；辨識不出來的話可以在「到期日」欄位手動輸入，跟其他欄位一起按「一鍵全部更新」送出。</p>
+
+<script>
+(function () {
+    // 退保連動提醒（2026-09-17 新增）：選單改選「離職」的當下，如果這個人
+    // 名下還有裝備借還管理登記的未歸還裝備，跳出提醒視窗——純提醒、不擋
+    // 送出，經辦人看到之後還是可以繼續把狀態改成離職，只是希望能先去把
+    // 裝備追回來再辦退保。「退保」本身這個系統目前還沒有對應的功能（見
+    // platform_companies.py 的說明，屬於之後才要做的人資功能），這裡先
+    // 暫時掛在最接近的既有動作——人員狀態改成「離職」——上面，之後真的
+    // 串接退保流程時再把觸發點換過去。
+    var EQUIPMENT_DEBT = {{ equipment_debt | tojson }};
+    var select = document.getElementById('employment_status');
+    if (select && EQUIPMENT_DEBT.length > 0) {
+        select.addEventListener('change', function () {
+            if (select.value !== 'resigned') {
+                return;
+            }
+            var items = EQUIPMENT_DEBT.map(function (row) {
+                return row.item_name + ' x' + row.quantity_owed;
+            }).join('、');
+            window.alert('⚠️ 該騎手還有未歸還裝備（' + items + '），需先追回，再辦理退保。');
+        });
+    }
+})();
+</script>
 
 <p class="back-link"><a href="/delivery/vendor/{{ person.vendor }}">&larr; 回 {{ vendor_name }} 人員清單</a></p>
 {% endblock %}
