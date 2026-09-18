@@ -1,23 +1,7 @@
 {% extends "base.html" %}
 {% block title %}主頁 - 材霈有限公司-新北所(配送組)系統{% endblock %}
 {% block content %}
-<div class="page-head">
-    <h1 class="page-title">主頁</h1>
-    {% if user.role == "admin" %}
-    <a class="btn" href="/delivery/announcements">公告管理</a>
-    {% endif %}
-</div>
-{% if announcements %}
-<div class="announcement-list">
-    {% for a in announcements %}
-    <div class="announcement-card">
-        <p class="announcement-title">📢 {{ a.title }}</p>
-        {% if a.content %}<p class="announcement-content">{{ a.content }}</p>{% endif %}
-        <p class="announcement-date">{{ a.created_at_display }}</p>
-    </div>
-    {% endfor %}
-</div>
-{% endif %}
+<h1 class="page-title">主頁</h1>
 {% if open_incident_count > 0 %}
 <p class="warning">⚠️ 目前有 {{ open_incident_count }} 筆未結案意外事件，<a href="/delivery/incidents?status=open">點此查看</a></p>
 {% endif %}

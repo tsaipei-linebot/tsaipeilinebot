@@ -17,6 +17,10 @@
 Collection 名稱沿用歷史上的 delivery_users（這個系統最早只有配送部一個
 模組時取的名字），刻意不为了改名而搬移既有正式環境資料，純粹是命名上的
 歷史包袱，不影響實際功能。
+
+`announcements_ref()`（2026-09-18 新增，見 `platform_announcements.py`）：
+/portal 入口頁的全公司公告，同樣不屬於任何單一部門模組，登入的每個帳號
+都看得到同一份，不像 `/portal` 卡片本身要依模組權限篩選。
 """
 from google.cloud import firestore
 
@@ -26,6 +30,7 @@ USERS_COLLECTION = "delivery_users"
 COMPANIES_COLLECTION = "companies"
 VENDORS_COLLECTION = "platform_vendors"
 DEPARTMENTS_COLLECTION = "platform_departments"
+ANNOUNCEMENTS_COLLECTION = "platform_announcements"
 
 _client = None
 
@@ -51,3 +56,7 @@ def vendors_ref():
 
 def departments_ref():
     return get_db().collection(DEPARTMENTS_COLLECTION)
+
+
+def announcements_ref():
+    return get_db().collection(ANNOUNCEMENTS_COLLECTION)

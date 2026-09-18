@@ -5,14 +5,22 @@
 權限管理，登入 /portal 的每個人都看得到那張卡片——差別只在有沒有幫他
 對應到職缺系統的自動登入身分（見 job_portal_sso.py），比對得到就直接
 免登入進去，比對不到就照舊導去手動輸入姓名/PIN 的畫面，不會擋人。
+
+**公告管理**（2026-09-18 新增，見 platform_announcements.py 開頭的說明）：
+`/announcements` 系列路由，全平台管理員可以自行發佈全公司公告，顯示在
+/portal 最上方，任何登入的帳號都看得到同一份，不像卡片本身要依模組權限
+篩選。
 """
 import hmac
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 import job_portal_sso
 import platform_accounts
+import platform_announcements
+from platform_announcements import ANNOUNCEMENT_DEFAULT_DAYS
 from platform_templating import templates
 
 router = APIRouter()
@@ -77,6 +85,14 @@ def _require_login(request: Request):
     return None
 
 
+def _with_display_date(announcement: dict) -> dict:
+    return {
+        **announcement,
+        "created_at_display": datetime.fromtimestamp(announcement.get("created_at", 0)).strftime("%Y-%m-%d"),
+        "expires_at_display": datetime.fromtimestamp(announcement.get("expires_at", 0)).strftime("%Y-%m-%d"),
+    }
+
+
 @router.get("/portal")
 def portal_home(request: Request, redirect=Depends(_require_login)):
     if redirect:
@@ -101,8 +117,70 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
             "user": account,
             "cards": cards,
             "job_listing_url": job_portal_sso.JOB_LISTING_BASE_URL,
+            "announcements": [_with_display_date(a) for a in platform_announcements.list_active_announcements()],
         },
     )
+
+
+@router.get("/announcements")
+def announcements_page(request: Request, redirect=Depends(platform_accounts.require_platform_admin)):
+    """全公司公告管理，限全平台管理員（2026-09-18 新增，見
+    platform_announcements.py 開頭的說明：這是全公司層級的公告，不是任何
+    單一部門模組的功能）。"""
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(
+        request,
+        "announcements.html",
+        {
+            "user": platform_accounts.current_account(request),
+            "announcements": [_with_display_date(a) for a in platform_announcements.list_announcements()],
+            "default_days": ANNOUNCEMENT_DEFAULT_DAYS,
+            "error": "",
+        },
+    )
+
+
+@router.post("/announcements/new")
+def create_announcement_submit(
+    request: Request,
+    title: str = Form(...),
+    content: str = Form(""),
+    days: int = Form(ANNOUNCEMENT_DEFAULT_DAYS),
+    redirect=Depends(platform_accounts.require_platform_admin),
+):
+    if redirect:
+        return redirect
+    title = title.strip()
+    if title:
+        account = platform_accounts.current_account(request)
+        platform_announcements.create_announcement(
+            title, content.strip(), created_by=account["username"], days=days if days > 0 else ANNOUNCEMENT_DEFAULT_DAYS
+        )
+    return RedirectResponse(url="/announcements", status_code=303)
+
+
+@router.post("/announcements/{announcement_id}/active")
+def toggle_announcement_active(
+    announcement_id: str,
+    request: Request,
+    active: str = Form(...),
+    redirect=Depends(platform_accounts.require_platform_admin),
+):
+    if redirect:
+        return redirect
+    platform_announcements.set_announcement_active(announcement_id, active == "1")
+    return RedirectResponse(url="/announcements", status_code=303)
+
+
+@router.post("/announcements/{announcement_id}/delete")
+def delete_announcement_submit(
+    announcement_id: str, request: Request, redirect=Depends(platform_accounts.require_platform_admin)
+):
+    if redirect:
+        return redirect
+    platform_announcements.delete_announcement(announcement_id)
+    return RedirectResponse(url="/announcements", status_code=303)
 
 
 @router.get("/portal/job-system-login")
