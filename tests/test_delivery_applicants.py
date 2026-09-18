@@ -115,9 +115,15 @@ class ApplicantNeedsTestDriveTests(unittest.TestCase):
     def test_uc_always_needs_test_drive(self):
         self.assertTrue(applicant_needs_test_drive("uc", ""))
 
-    def test_sf_never_needs_test_drive(self):
+    def test_sf_without_three_wheel_employed_does_not_need_test_drive(self):
         self.assertFalse(applicant_needs_test_drive("sf", ""))
-        self.assertFalse(applicant_needs_test_drive("sf", "three_wheel_employed"))
+
+    def test_any_vendor_with_three_wheel_employed_needs_test_drive(self):
+        """2026-09-18：合作方式改成動態、可套用到任何廠商之後，試駕判斷改成
+        只看合作方式本身是不是「三輪雇傭」，不再限定蝦皮那幾個廠商代碼——
+        「三輪雇傭」這個合作方式底下的工作內容本來就該試駕，不管掛在哪個
+        廠商名下。"""
+        self.assertTrue(applicant_needs_test_drive("sf", "three_wheel_employed"))
 
     def test_shopee_needs_test_drive_only_for_three_wheel_employed(self):
         self.assertTrue(applicant_needs_test_drive("shopee", "three_wheel_employed"))
@@ -280,16 +286,35 @@ class ApplicantsListRouteContextTests(unittest.TestCase):
             "username": "bob", "name": "Bob", "modules": ["delivery"],
             "rank": "manager", "is_platform_admin": False,
         }
+        fake_coop_types = [
+            {"id": "two_wheel_contract", "name": "二輪承攬", "vendors": ["shopee", "shopee_speed_warehouse"]},
+            {"id": "three_wheel_employed", "name": "三輪雇傭", "vendors": ["shopee", "shopee_speed_warehouse"]},
+        ]
         with mock.patch.object(applicant_routes, "templates") as mock_templates:
             with mock.patch.object(applicant_routes.repository, "list_applicants", return_value=[]):
-                applicant_routes.applicants_list(self._FakeRequest(account), redirect=None)
+                with mock.patch.object(
+                    applicant_routes.repository, "list_cooperation_types", return_value=fake_coop_types
+                ):
+                    applicant_routes.applicants_list(self._FakeRequest(account), redirect=None)
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertEqual(context["test_drive_required_vendors"], applicant_routes.TEST_DRIVE_REQUIRED_VENDORS)
         self.assertEqual(
             context["test_drive_required_shopee_cooperation_types"],
             applicant_routes.TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
         )
-        self.assertEqual(context["cooperation_type_vendors"], applicant_routes.COOPERATION_TYPE_VENDORS)
+        self.assertEqual(
+            context["cooperation_types_by_vendor"],
+            {
+                "shopee": [
+                    {"id": "two_wheel_contract", "name": "二輪承攬"},
+                    {"id": "three_wheel_employed", "name": "三輪雇傭"},
+                ],
+                "shopee_speed_warehouse": [
+                    {"id": "two_wheel_contract", "name": "二輪承攬"},
+                    {"id": "three_wheel_employed", "name": "三輪雇傭"},
+                ],
+            },
+        )
 
 
 if __name__ == "__main__":

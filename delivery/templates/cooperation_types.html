@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}合作方式管理 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<h1 class="page-title">合作方式管理</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<p class="hint">
+    一筆合作方式可以同時勾選多個適用廠商——蝦皮跟蝦皮三輪速配倉通常會共用同一組合作方式
+    （例如「二輪承攬」「二輪雇傭」「三輪雇傭」），其他廠商可以自己獨立設定，也可以跟其他
+    廠商共用，視需要勾選即可。
+</p>
+
+<h2 class="section-title">新增合作方式</h2>
+<form method="post" action="/delivery/cooperation-types/new" class="form-stack form-narrow">
+    <label>名稱
+        <input type="text" name="name" required placeholder="例如：二輪承攬、二輪雇傭、三輪雇傭">
+    </label>
+    <fieldset>
+        <legend>適用廠商</legend>
+        {% for v in vendors %}
+        <label style="display:inline-flex; align-items:center; gap:4px; margin-right:12px;">
+            <input type="checkbox" name="vendors" value="{{ v.code }}"> {{ v.name }}
+        </label>
+        {% endfor %}
+    </fieldset>
+    <button type="submit" class="btn btn-primary">新增</button>
+</form>
+
+<h2 class="section-title">合作方式清單</h2>
+{% if cooperation_types %}
+<table class="data-table">
+    <thead>
+        <tr><th>名稱</th><th>適用廠商</th><th>狀態</th><th>修改</th><th></th></tr>
+    </thead>
+    <tbody>
+        {% for c in cooperation_types %}
+        <tr>
+            <td>
+                <form method="post" action="/delivery/cooperation-types/{{ c.id }}/edit" class="inline-form">
+                    <input type="text" name="name" value="{{ c.name }}" required style="width:120px;">
+                    <fieldset style="display:inline-block; border:none; padding:0; margin:0;">
+                        {% for v in vendors %}
+                        <label style="display:inline-flex; align-items:center; gap:4px; margin-right:8px;">
+                            <input type="checkbox" name="vendors" value="{{ v.code }}" {% if v.code in c.vendors %}checked{% endif %}> {{ v.name }}
+                        </label>
+                        {% endfor %}
+                    </fieldset>
+                    <button type="submit" class="btn btn-small">儲存</button>
+                </form>
+            </td>
+            <td>
+                {% for v in vendors %}
+                {% if v.code in c.vendors %}<span class="badge">{{ v.name }}</span>{% endif %}
+                {% endfor %}
+                {% if not c.vendors %}<span class="hint">尚未設定適用廠商</span>{% endif %}
+            </td>
+            <td><span class="badge {{ 'badge-ok' if c.active else 'badge-resigned' }}">{{ "啟用中" if c.active else "已停用" }}</span></td>
+            <td>
+                <form method="post" action="/delivery/cooperation-types/{{ c.id }}/active" style="display:inline">
+                    <input type="hidden" name="active" value="{{ '0' if c.active else '1' }}">
+                    <button type="submit" class="btn btn-small">{{ "停用" if c.active else "啟用" }}</button>
+                </form>
+            </td>
+            <td>
+                {% if not c.has_history %}
+                <form method="post" action="/delivery/cooperation-types/{{ c.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除「{{ c.name }}」這個合作方式嗎？刪除後無法復原。');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+                {% else %}
+                <span class="hint">已有人員/應徵者使用這個合作方式，只能停用不能刪除</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有任何合作方式。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

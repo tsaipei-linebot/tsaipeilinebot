@@ -84,8 +84,9 @@ class ApplicableDocTypesTests(unittest.TestCase):
         self.assertNotIn("email", sf_codes)
 
     def test_sf_insurance_and_guild_insurance_only_for_sf_and_not_gated_by_cooperation_type(self):
-        # 順豐沒有「合作方式」欄位（不在 COOPERATION_TYPE_VENDORS 裡），所以人員的
-        # cooperation_type 一律是空字串，這裡就用空字串驗證這兩項還是會出現。
+        # 順豐目前還沒有設定任何合作方式選項（合作方式是動態清單，見
+        # repository.list_cooperation_types()），所以人員的 cooperation_type
+        # 一律是空字串，這裡就用空字串驗證這兩項還是會出現。
         sf_codes = {d["code"] for d in applicable_doc_types("sf", "")}
         ud_codes = {d["code"] for d in applicable_doc_types("ud", "")}
         self.assertIn("sf_insurance", sf_codes)

@@ -9,8 +9,6 @@ from datetime import date, datetime, timedelta
 
 from delivery.config import (
     ANNUAL_LEAVE_MAX_DAYS,
-    COOPERATION_TYPE_MAP,
-    COOPERATION_TYPE_VENDORS,
     DEFAULT_INCIDENT_STATUS,
     DEFAULT_PERSONNEL_STATUS,
     DEFAULT_TEST_DRIVE_STATUS,
@@ -38,6 +36,7 @@ from delivery.config import (
 )
 from delivery.db import (
     applicants_ref,
+    cooperation_types_ref,
     equipment_debt_ref,
     equipment_items_ref,
     equipment_locations_ref,
@@ -174,6 +173,110 @@ def missing_documents(personnel: dict) -> list:
 def all_document_statuses(personnel: dict) -> list:
     doc_types = applicable_doc_types(personnel.get("vendor"), personnel.get("cooperation_type"), personnel.get("client"))
     return [doc_status(dt, personnel) for dt in doc_types]
+
+
+# ==========================================
+# 合作方式管理（2026-09-18 新增）
+#
+# 原本合作方式（二輪承攬/二輪雇傭/三輪雇傭）是 config.py 寫死的固定清單，
+# 只給蝦皮三輪/蝦皮三輪速配倉這兩個廠商用。使用者要求其他廠商（UD/UC/
+# 順豐...）也要能有自己的合作方式選項，而且要能自行新增/停用，不用再找
+# 人改代碼——改成存 Firestore 的動態清單，比照裝備品項/車輛服務區域同一套
+# 「停用不刪除，除非完全沒人在用」設計。
+#
+# 跟裝備品項/車輛服務區域不同的地方：**一個合作方式選項可以同時適用多個
+# 廠商**（`vendors` 是一個廠商代碼的陣列，不是單一廠商）——這是刻意的，
+# 因為蝦皮三輪跟蝦皮三輪速配倉目前就是共用同一份合作方式清單，而且下面
+# DOC_TYPES 的保險規則判斷是直接比對「合作方式的值」，不是比對「廠商+
+# 合作方式」的組合，所以這兩個廠商的人員選了同一個選項時，儲存的值必須
+# 是同一個 Firestore 文件 ID，不能是兩個各自獨立、外觀相同但 ID 不同的
+# 選項（不然其中一邊的保險判斷會抓不到）。
+# ==========================================
+
+def list_cooperation_types(vendor: str = "", include_inactive: bool = False) -> list:
+    """回傳合作方式清單。有給 vendor 時只回傳「適用廠商包含這個代碼」的
+    選項（用 Firestore 的 array_contains 查詢 `vendors` 欄位）；沒給就是
+    全部選項，給合作方式管理頁面的總表使用。"""
+    result = []
+    query = cooperation_types_ref()
+    if vendor:
+        query = query.where("vendors", "array_contains", vendor)
+    for snapshot in query.stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        data.setdefault("active", True)
+        data.setdefault("vendors", [])
+        if include_inactive or data["active"]:
+            result.append(data)
+    result.sort(key=lambda c: c.get("name", ""))
+    return result
+
+
+def get_cooperation_type(type_id: str):
+    if not type_id:
+        return None
+    snapshot = cooperation_types_ref().document(type_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    data.setdefault("active", True)
+    data.setdefault("vendors", [])
+    return data
+
+
+def create_cooperation_type(name: str, vendors: list, type_id: str = "", created_by: str = "") -> str:
+    """新增一個合作方式選項。`type_id` 留空時用 Firestore 自動產生的文件
+    ID（主管在網頁上新增走這條路）；有指定時直接用它當文件 ID，只給
+    `scripts/seed_cooperation_types.py` 那支一次性遷移腳本使用，讓蝦皮
+    三輪/速配倉既有人員存的舊代碼（"two_wheel_contract"…）可以原封不動
+    對應到新建的選項，不需要搬移人員資料，DOC_TYPES 的保險規則判斷也
+    完全不受影響。"""
+    now = time.time()
+    doc_ref = cooperation_types_ref().document(type_id) if type_id else cooperation_types_ref().document()
+    doc_ref.set(
+        {
+            "name": name,
+            "vendors": vendors or [],
+            "active": True,
+            "created_by": created_by,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+    return doc_ref.id
+
+
+def update_cooperation_type(type_id: str, name: str, vendors: list) -> bool:
+    ref = cooperation_types_ref().document(type_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"name": name, "vendors": vendors or [], "updated_at": time.time()})
+    return True
+
+
+def set_cooperation_type_active(type_id: str, active: bool) -> bool:
+    ref = cooperation_types_ref().document(type_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"active": active, "updated_at": time.time()})
+    return True
+
+
+def cooperation_type_has_history(type_id: str) -> bool:
+    """判斷有沒有任何人員或應徵者的合作方式指到這個 ID——有的話不能真的
+    刪除，只能停用。"""
+    personnel_hit = next(personnel_ref().where("cooperation_type", "==", type_id).limit(1).stream(), None)
+    if personnel_hit is not None:
+        return True
+    return next(applicants_ref().where("cooperation_type", "==", type_id).limit(1).stream(), None) is not None
+
+
+def delete_cooperation_type(type_id: str) -> bool:
+    if cooperation_type_has_history(type_id):
+        return False
+    cooperation_types_ref().document(type_id).delete()
+    return True
 
 
 # ==========================================
@@ -949,12 +1052,12 @@ def applicant_matches_filters(
 
 
 def applicant_needs_test_drive(vendor: str, cooperation_type: str) -> bool:
-    """判斷這個應徵者需不需要試駕：UD、UC 一律需要；蝦皮三輪／蝦皮三輪速配倉
-    （COOPERATION_TYPE_VENDORS 這幾個廠商代碼）只有合作方式是「三輪雇傭」才
-    需要（二輪承攬/二輪雇傭不用）；順豐不需要。"""
+    """判斷這個應徵者需不需要試駕：UD、UC 一律需要；合作方式是「三輪雇傭」
+    （目前只有蝦皮／蝦皮三輪速配倉會用到這個合作方式）才需要（二輪承攬/
+    二輪雇傭不用）；其他廠商不需要。"""
     if vendor in TEST_DRIVE_REQUIRED_VENDORS:
         return True
-    if vendor in COOPERATION_TYPE_VENDORS and cooperation_type in TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES:
+    if cooperation_type in TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES:
         return True
     return False
 
@@ -1057,7 +1160,7 @@ def bulk_update_applicants(updates: dict) -> None:
         if vendor is not None and (vendor == "" or vendor in VENDOR_MAP):
             patch["vendor"] = vendor
         cooperation_type = fields.get("cooperation_type")
-        if cooperation_type is not None and (cooperation_type == "" or cooperation_type in COOPERATION_TYPE_MAP):
+        if cooperation_type is not None and (cooperation_type == "" or get_cooperation_type(cooperation_type)):
             patch["cooperation_type"] = cooperation_type
         test_drive = fields.get("test_drive")
         if test_drive is not None and test_drive in TEST_DRIVE_STATUS_MAP:

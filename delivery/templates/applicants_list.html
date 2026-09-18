@@ -2,12 +2,17 @@
 {% block title %}應徵名單 - 材霈有限公司-新北所(配送組)系統{% endblock %}
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
-<h1 class="page-title">應徵名單</h1>
+<div class="page-head">
+    <h1 class="page-title">應徵名單</h1>
+    {% if user.role == "admin" %}
+    <a class="btn" href="/delivery/cooperation-types">合作方式管理</a>
+    {% endif %}
+</div>
 <p class="hint">
-    Google 表單送出後會自動出現在這裡，新資料預設為「未面試」，廠商（蝦皮三輪的話還有合作方式）
-    會依表單來源自動帶入，同仁可以自己改；如果實際上是蝦皮二輪公司車／二輪雇傭自備車／承攬，
-    錄取時記得改選正確的廠商。「已錄取」「放棄」的人預設不會顯示，主動搜尋姓名、或直接篩選
-    狀態為「已錄取」／「放棄」才會列出來。UD、UC 的應徵者、以及蝦皮三輪合作方式為「三輪雇傭」的應徵者需要先
+    Google 表單送出後會自動出現在這裡，新資料預設為「未面試」，廠商（有設定合作方式的廠商還會
+    帶合作方式）會依表單來源自動帶入，同仁可以自己改；如果實際上是蝦皮二輪公司車／二輪雇傭自備車／
+    承攬，錄取時記得改選正確的廠商。「已錄取」「放棄」的人預設不會顯示，主動搜尋姓名、或直接篩選
+    狀態為「已錄取」／「放棄」才會列出來。UD、UC 的應徵者、以及合作方式為「三輪雇傭」的應徵者需要先
     通過試駕才能錄取；「錄取」需要先確認廠商，送出後會自動建立正式人員資料，之後再到人員詳細頁
     補身分證字號、上傳報到文件即可。
 </p>
@@ -88,13 +93,14 @@
                     </select>
                 </td>
                 <td>
-                    {% set show_coop = a.vendor in cooperation_type_vendors %}
+                    {% set coop_options = cooperation_types_by_vendor.get(a.vendor, []) %}
+                    {% set show_coop = coop_options|length > 0 %}
                     <span data-dash-for="cooperation_type_{{ a.id }}" style="display:{% if show_coop %}none{% else %}inline{% endif %}">-</span>
                     <select name="cooperation_type_{{ a.id }}" onchange="syncApplicantRow('{{ a.id }}')"
                             style="display:{% if show_coop %}inline{% else %}none{% endif %}" {% if not show_coop %}disabled{% endif %}>
                         <option value="" {% if not a.cooperation_type %}selected{% endif %}>尚未決定</option>
-                        {% for c in cooperation_types %}
-                        <option value="{{ c.code }}" {% if a.cooperation_type == c.code %}selected{% endif %}>{{ c.name }}</option>
+                        {% for c in coop_options %}
+                        <option value="{{ c.id }}" {% if a.cooperation_type == c.id %}selected{% endif %}>{{ c.name }}</option>
                         {% endfor %}
                     </select>
                 </td>
@@ -157,10 +163,30 @@
 // applicant_needs_test_drive() 是同一套規則，這裡照抄一份給瀏覽器端用，
 // 讓選廠商/合作方式後不用先按「一鍵全部更新」重新整理頁面，欄位就能
 // 馬上跟著顯示/隱藏（2026-09-15 新增）。
-var COOPERATION_TYPE_VENDORS = [{% for v in cooperation_type_vendors %}"{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+var COOPERATION_TYPES_BY_VENDOR = {{ cooperation_types_by_vendor | tojson }};
 var TEST_DRIVE_REQUIRED_VENDORS = [{% for v in test_drive_required_vendors %}"{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %}];
 var TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES = [{% for c in test_drive_required_shopee_cooperation_types %}"{{ c }}"{% if not loop.last %}, {% endif %}{% endfor %}];
 var APPLICANT_IDS = [{% for a in applicants %}"{{ a.id }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+
+// 依「目前選的廠商」重建合作方式下拉選單的選項（永遠保留一個空白的
+// 「尚未決定」選項），回傳這個廠商是不是真的有合作方式可以選——
+// 沒有的話欄位維持隱藏、顯示成「-」。
+function rebuildCoopOptions(select, vendor, currentValue) {
+    var options = COOPERATION_TYPES_BY_VENDOR[vendor] || [];
+    select.innerHTML = "";
+    var blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "尚未決定";
+    select.appendChild(blank);
+    options.forEach(function (c) {
+        var opt = document.createElement("option");
+        opt.value = c.id;
+        opt.textContent = c.name;
+        select.appendChild(opt);
+    });
+    select.value = options.some(function (c) { return c.id === currentValue; }) ? currentValue : "";
+    return options.length > 0;
+}
 
 function syncApplicantRow(id) {
     var vendorSelect = document.querySelector('select[name="vendor_' + id + '"]');
@@ -169,8 +195,9 @@ function syncApplicantRow(id) {
 
     var coopSelect = document.querySelector('select[name="cooperation_type_' + id + '"]');
     var coopDash = document.querySelector('[data-dash-for="cooperation_type_' + id + '"]');
-    var showCoop = COOPERATION_TYPE_VENDORS.indexOf(vendor) !== -1;
+    var showCoop = false;
     if (coopSelect) {
+        showCoop = rebuildCoopOptions(coopSelect, vendor, coopSelect.value);
         coopSelect.style.display = showCoop ? "inline" : "none";
         coopSelect.disabled = !showCoop;
     }
@@ -182,7 +209,7 @@ function syncApplicantRow(id) {
     var testSelect = document.querySelector('select[name="test_drive_' + id + '"]');
     var testDash = document.querySelector('[data-dash-for="test_drive_' + id + '"]');
     var showTest = TEST_DRIVE_REQUIRED_VENDORS.indexOf(vendor) !== -1
-        || (COOPERATION_TYPE_VENDORS.indexOf(vendor) !== -1 && TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES.indexOf(cooperationType) !== -1);
+        || TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES.indexOf(cooperationType) !== -1;
     if (testSelect) {
         testSelect.style.display = showTest ? "inline" : "none";
         testSelect.disabled = !showTest;
