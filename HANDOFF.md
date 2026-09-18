@@ -6367,3 +6367,67 @@ Firestore）。
 
 不是系統故障，是反查邏輯本來就依賴姓名（可能還有電話）能不能對得上
 人員資料。
+
+## 配送部系統：主頁新增公告功能（2026-09-18）
+
+使用者要求主頁能有公告功能，先討論設計再實作，確認的規格：顯示在主頁、
+可以同時有多則、一週後自動下架、系統有更新/新增功能也比照列入公告。
+
+### 設計
+
+跟裝備品項/服務區域/合作方式那幾個動態清單同一套 Firestore 設計，差在
+兩點：（1）公告沒有「有歷史紀錄不能刪除」的保護，因為沒有其他資料會
+引用公告 ID，可以隨時刪除；（2）多了「到期時間」的概念——`expires_at`
+存「建立時間 + N 天」，`list_active_announcements()`（主頁用）每次查詢
+時都重新比對目前時間是不是還沒超過 `expires_at`，超過的自動不顯示，
+不需要另外寫排程去清資料或改狀態。`active` 欄位是給主管「不用等到期，
+想馬上下架」用的手動開關，跟其他清單一致（`set_X_active` 同一套命名/
+行為）。
+
+- `delivery/db.py`：新增 `ANNOUNCEMENTS_COLLECTION` 跟
+  `announcements_ref()`。
+- `delivery/repository.py`「公告管理」那節：
+  `list_active_announcements()`（主頁用，只回傳啟用中且未過期、新到舊
+  排序）／`list_announcements()`（管理頁用，回傳全部並標記 `expired`）／
+  `get_announcement()`／`create_announcement(title, content, created_by,
+  days=7)`（`ANNOUNCEMENT_DEFAULT_DAYS = 7`）／`set_announcement_active()`
+  ／`delete_announcement()`。
+- `delivery/routes/home_routes.py`：`home()` 路由多傳
+  `announcements`（`list_active_announcements()` 查來的清單，附加
+  `created_at_display` 顯示用日期）；新增公告管理頁面路由
+  `GET /announcements`（限管理員）、`POST /announcements/new`、
+  `POST /announcements/{id}/active`、`POST /announcements/{id}/delete`。
+- 樣板：`home.html` 主頁標題旁加「公告管理」按鈕（限管理員），標題
+  下方、「未結案意外事件」警示上方新增公告卡片區塊（多則往下疊、新的
+  在最上面）；新增 `announcements.html` 管理頁（新增表單：標題、說明、
+  幾天後自動下架；清單顯示發布/下架日期、狀態徽章「顯示中／已過期／
+  已下架」、提前下架/恢復顯示/刪除操作）。`delivery/static/style.css`
+  新增 `.announcement-list`／`.announcement-card` 樣式，用淺藍色跟意外
+  事件的紅色警示做區隔，避免同仁誤以為是緊急事件。
+
+### 「系統更新列入公告」是操作流程，不是額外程式功能
+
+這個需求主要靠**我這邊的工作流程**落實：之後每次配送部系統有新功能
+上線，我會同時到「公告管理」頁面新增一則公告說明，跟現在每次改版都
+更新這份 HANDOFF.md 是同一個習慣，不需要額外寫串接程式。
+
+### 測試
+
+`tests/test_delivery_announcements.py`（新檔案）：
+`list_active_announcements()`（排除已過期、排除已手動下架、新到舊
+排序、舊資料沒有 active 欄位時預設當作啟用中）／`list_announcements()`
+（含過期的並標記 `expired`）／`create_announcement()`（預設 7 天後
+過期、自訂天數）／`set_announcement_active()`／`delete_announcement()`
+的各種情境；`home()` 路由把 `list_active_announcements()` 的結果
+（附加顯示用日期）傳給樣板；公告管理路由（限管理員，含標題空白時
+不建立、天數輸入 0 或負數時退回預設 7 天的防呆）。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1520 個
+全數通過。
+
+### 使用者需要知道的事
+
+**不需要任何手動部署步驟**，合併後就直接生效。主頁標題旁會出現「公告
+管理」按鈕（只有管理員看得到），點進去可以新增公告——標題、說明、
+幾天後自動下架（預設 7 天，可以改）。公告會馬上出現在主頁最上方，
+過期後系統會自動不再顯示，不用你手動處理；如果想提早下架，管理頁面
+有「提前下架」按鈕。

@@ -26,6 +26,7 @@ EQUIPMENT_LOCATIONS_COLLECTION = "delivery_equipment_locations"
 EQUIPMENT_STOCK_COLLECTION = "delivery_equipment_stock"
 EQUIPMENT_DEBT_COLLECTION = "delivery_equipment_debt"
 EQUIPMENT_TRANSACTIONS_COLLECTION = "delivery_equipment_transactions"
+ANNOUNCEMENTS_COLLECTION = "delivery_announcements"
 
 
 def personnel_ref():
@@ -82,3 +83,7 @@ def equipment_debt_ref():
 
 def equipment_transactions_ref():
     return get_db().collection(EQUIPMENT_TRANSACTIONS_COLLECTION)
+
+
+def announcements_ref():
+    return get_db().collection(ANNOUNCEMENTS_COLLECTION)
