@@ -47,7 +47,7 @@
     <select name="service_area">
         <option value="" {% if not vehicle.service_area %}selected{% endif %}>未設定</option>
         {% for a in service_areas %}
-        <option value="{{ a.code }}" {% if vehicle.service_area == a.code %}selected{% endif %}>{{ a.name }}</option>
+        <option value="{{ a.id }}" {% if vehicle.service_area == a.id %}selected{% endif %}>{{ a.name }}</option>
         {% endfor %}
     </select>
     <button type="submit" class="btn">更新服務區域</button>

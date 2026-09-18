@@ -28,7 +28,6 @@ from delivery.config import (
     LEGACY_PERSONNEL_STATUS,
     RISK_LEVELS,
     SELECTABLE_APPLICANT_STATUSES,
-    SERVICE_AREA_MAP,
     WORKDAY_HOURS,
     TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
     TEST_DRIVE_REQUIRED_VENDORS,
@@ -50,6 +49,7 @@ from delivery.db import (
     repayments_ref,
     sick_leaves_ref,
     vehicle_events_ref,
+    vehicle_service_areas_ref,
     vehicles_ref,
 )
 from delivery.validators import is_valid_taiwan_id
@@ -1254,15 +1254,76 @@ def set_vehicle_wheel_type(vehicle_no: str, wheel_type: str) -> bool:
 
 def set_vehicle_service_area(vehicle_no: str, service_area: str) -> bool:
     """網頁上手動設定/修正車輛的服務區域。空字串代表「未分區」，一樣接受
-    （等於清空這個欄位）；有填就要是合法的代碼。車輛不存在或代碼不合法
-    都回傳 False、不會寫入。"""
-    if service_area and service_area not in SERVICE_AREA_MAP:
+    （等於清空這個欄位）；有填就要是存在的服務區域 ID（不限啟用中，
+    停用的服務區域底下如果還有車輛，一樣可以繼續顯示/選擇，只是新增
+    畫面的下拉選單不會再列出來，見 list_vehicle_service_areas()）。車輛
+    不存在或 ID 不存在都回傳 False、不會寫入。"""
+    if service_area and not get_vehicle_service_area(service_area):
         return False
     vehicle_no = _normalize_vehicle_no(vehicle_no)
     ref = vehicles_ref().document(vehicle_no)
     if not ref.get().exists:
         return False
     ref.update({"service_area": service_area})
+    return True
+
+
+# ---------- 車輛服務區域管理 ----------
+
+def list_vehicle_service_areas(include_inactive: bool = False) -> list:
+    result = []
+    for snapshot in vehicle_service_areas_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        data.setdefault("active", True)
+        if include_inactive or data["active"]:
+            result.append(data)
+    result.sort(key=lambda a: a.get("name", ""))
+    return result
+
+
+def get_vehicle_service_area(area_id: str):
+    if not area_id:
+        return None
+    snapshot = vehicle_service_areas_ref().document(area_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    data.setdefault("active", True)
+    return data
+
+
+def create_vehicle_service_area(name: str, area_id: str = "", created_by: str = "") -> str:
+    """新增一個服務區域。`area_id` 留空時用 Firestore 自動產生的文件 ID
+    （主管在網頁上新增走這條路）；有指定時直接用它當文件 ID，只給
+    `scripts/seed_vehicle_service_areas.py` 那支一次性遷移腳本使用，讓既有
+    車輛存的舊代碼（"taipei"…）可以原封不動對應到新建的服務區域文件，
+    不需要另外搬移車輛資料。"""
+    now = time.time()
+    doc_ref = vehicle_service_areas_ref().document(area_id) if area_id else vehicle_service_areas_ref().document()
+    doc_ref.set({"name": name, "active": True, "created_by": created_by, "created_at": now, "updated_at": now})
+    return doc_ref.id
+
+
+def set_vehicle_service_area_active(area_id: str, active: bool) -> bool:
+    ref = vehicle_service_areas_ref().document(area_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"active": active, "updated_at": time.time()})
+    return True
+
+
+def vehicle_service_area_has_history(area_id: str) -> bool:
+    """判斷有沒有任何車輛的服務區域指到這個 ID——有的話不能真的刪除
+    （車輛清單/報告會找不到名稱），只能停用。"""
+    return next(vehicles_ref().where("service_area", "==", area_id).limit(1).stream(), None) is not None
+
+
+def delete_vehicle_service_area(area_id: str) -> bool:
+    if vehicle_service_area_has_history(area_id):
+        return False
+    vehicle_service_areas_ref().document(area_id).delete()
     return True
 
 

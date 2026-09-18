@@ -5,8 +5,6 @@ from delivery import group_notify, repository
 from delivery.auth import admin_required, current_user, login_required
 from delivery.config import (
     DEFAULT_WHEEL_TYPE,
-    SERVICE_AREA_MAP,
-    SERVICE_AREAS,
     VEHICLE_STATUS_MAP,
     VEHICLE_STATUSES,
     VENDOR_MAP,
@@ -40,6 +38,7 @@ def vehicle_list(
         wheel_type_filter=wheel_type,
         service_area_filter=service_area,
     )
+    service_area_map = {a["id"]: a["name"] for a in repository.list_vehicle_service_areas(include_inactive=True)}
     return templates.TemplateResponse(
         request,
         "vehicle_list.html",
@@ -51,8 +50,8 @@ def vehicle_list(
             "vendor_map": VENDOR_MAP,
             "wheel_types": WHEEL_TYPES,
             "wheel_type_map": WHEEL_TYPE_MAP,
-            "service_areas": SERVICE_AREAS,
-            "service_area_map": SERVICE_AREA_MAP,
+            "service_areas": repository.list_vehicle_service_areas(),
+            "service_area_map": service_area_map,
             "vehicles": vehicles,
             "filter_vehicle_no": vehicle_no,
             "filter_vendor": vendor,
@@ -71,12 +70,56 @@ def vehicle_status_report_page(request: Request, redirect=Depends(login_required
     會被當成車號吃掉，永遠進不到這支函式。"""
     if redirect:
         return redirect
-    report_text = build_fleet_status_report(repository.list_vehicles())
+    service_areas = repository.list_vehicle_service_areas(include_inactive=True)
+    report_text = build_fleet_status_report(repository.list_vehicles(), service_areas)
     return templates.TemplateResponse(
         request,
         "vehicle_status_report.html",
         {"user": current_user(request), "report_text": report_text},
     )
+
+
+@router.get("/vehicles/service-areas")
+def service_areas_page(request: Request, redirect=Depends(admin_required)):
+    """服務區域管理，限管理員——比照裝備借還管理的品項/放置點管理，這個
+    路由要註冊在 `/vehicles/{vehicle_no}` 之前，不然 "service-areas" 會被
+    當成車號吃掉。"""
+    if redirect:
+        return redirect
+    areas = repository.list_vehicle_service_areas(include_inactive=True)
+    for area in areas:
+        area["has_history"] = repository.vehicle_service_area_has_history(area["id"])
+    return templates.TemplateResponse(
+        request, "vehicle_service_areas.html", {"user": current_user(request), "areas": areas, "error": ""}
+    )
+
+
+@router.post("/vehicles/service-areas/new")
+def create_service_area(request: Request, name: str = Form(...), redirect=Depends(admin_required)):
+    if redirect:
+        return redirect
+    name = name.strip()
+    if name:
+        repository.create_vehicle_service_area(name, created_by=current_user(request)["username"])
+    return RedirectResponse(url="/delivery/vehicles/service-areas", status_code=303)
+
+
+@router.post("/vehicles/service-areas/{area_id}/active")
+def toggle_service_area_active(
+    area_id: str, request: Request, active: str = Form(...), redirect=Depends(admin_required)
+):
+    if redirect:
+        return redirect
+    repository.set_vehicle_service_area_active(area_id, active == "1")
+    return RedirectResponse(url="/delivery/vehicles/service-areas", status_code=303)
+
+
+@router.post("/vehicles/service-areas/{area_id}/delete")
+def delete_service_area(area_id: str, request: Request, redirect=Depends(admin_required)):
+    if redirect:
+        return redirect
+    repository.delete_vehicle_service_area(area_id)
+    return RedirectResponse(url="/delivery/vehicles/service-areas", status_code=303)
 
 
 @router.get("/vehicles/new")
@@ -91,7 +134,7 @@ def new_vehicle_form(request: Request, redirect=Depends(login_required)):
             "vendors": VENDORS,
             "wheel_types": WHEEL_TYPES,
             "default_wheel_type": DEFAULT_WHEEL_TYPE,
-            "service_areas": SERVICE_AREAS,
+            "service_areas": repository.list_vehicle_service_areas(),
             "error": "",
         },
     )
@@ -114,7 +157,7 @@ def create_vehicle_submit(
     error = ""
     if not vehicle_no or vendor not in VENDOR_MAP or wheel_type not in WHEEL_TYPE_MAP:
         error = "車號、廠商都要填。"
-    elif service_area not in SERVICE_AREA_MAP:
+    elif not repository.get_vehicle_service_area(service_area):
         error = "服務區域請重新選擇。"
     elif not repository.create_vehicle(
         vehicle_no, vendor, user["username"], wheel_type=wheel_type, service_area=service_area
@@ -130,7 +173,7 @@ def create_vehicle_submit(
                 "vendors": VENDORS,
                 "wheel_types": WHEEL_TYPES,
                 "default_wheel_type": wheel_type or DEFAULT_WHEEL_TYPE,
-                "service_areas": SERVICE_AREAS,
+                "service_areas": repository.list_vehicle_service_areas(),
                 "error": error,
             },
             status_code=400,
@@ -146,6 +189,7 @@ def vehicle_detail(vehicle_no: str, request: Request, error: str = "", redirect=
     vehicle = repository.get_vehicle(vehicle_no)
     if not vehicle:
         return RedirectResponse(url="/delivery/vehicles", status_code=303)
+    service_area_map = {a["id"]: a["name"] for a in repository.list_vehicle_service_areas(include_inactive=True)}
     return templates.TemplateResponse(
         request,
         "vehicle_detail.html",
@@ -157,8 +201,8 @@ def vehicle_detail(vehicle_no: str, request: Request, error: str = "", redirect=
             "vendors": VENDORS,
             "wheel_types": WHEEL_TYPES,
             "wheel_type_map": WHEEL_TYPE_MAP,
-            "service_areas": SERVICE_AREAS,
-            "service_area_map": SERVICE_AREA_MAP,
+            "service_areas": repository.list_vehicle_service_areas(),
+            "service_area_map": service_area_map,
             "events": repository.list_vehicle_events(vehicle_no),
             "error": error,
             "error_message": EVENT_ERROR_MESSAGES.get(error, "這筆事件無法處理。") if error else "",
