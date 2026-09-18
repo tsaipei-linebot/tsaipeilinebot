@@ -953,3 +953,42 @@ const SalaryFlexMessageBuilder = {
     };
   }
 };
+
+/**
+ * 一次性測試工具：手動在 Apps Script 編輯器執行這個函式一次，目的是：
+ * 1. 觸發 Google 的授權同意畫面，讓這個 Web App 部署帳號授權「Google 文件」
+ *    這個新用到的服務（第一次用到 DocumentApp，之前只有用過試算表/Gmail/
+ *    雲端硬碟），部署後第一次核准薪資補款單觸發寄信時才不會因為權限不足
+ *    導致 PDF 附件產生失敗。
+ * 2. 順便驗證 PDF 產生邏輯本身沒問題（不會真的寄信，也不會寫進試算表）。
+ *
+ * 用法：Apps Script 編輯器右上角函式下拉選單選 testPdfGeneration，
+ * 按執行（▶️），第一次執行會跳出 Google 授權畫面，點「允許」即可。
+ * 執行完打開左側「執行項目」看紀錄，看到「✅ PDF 測試產生成功」代表沒問題，
+ * 之後這個函式就用不到了，可以留著或刪除都不影響任何正式功能。
+ */
+function testPdfGeneration() {
+  const fakeRecord = {
+    salaryId: 'TEST-0000000000',
+    vendor: '測試廠商',
+    name: '測試員工',
+    idCard: 'A123456789',
+    applicantName: '測試申請人',
+    payType: '立即補款',
+    isClaimable: '可',
+    applyDate: new Date(),
+    payDate: new Date(),
+    remitFee: 15,
+    compensateMonth: new Date(),
+    notes: '這是測試用假資料，不是真實補款紀錄。',
+    totalEarnings: 1000,
+    totalDeductions: 50,
+    netTotal: 950,
+    reviewStatus: '已核准',
+    approvedSupervisor: '測試主管',
+    approvedTime: Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss')
+  };
+
+  const pdfBlob = EmailService.buildSalaryPdfBlob(fakeRecord);
+  console.log(`✅ PDF 測試產生成功，檔名：${pdfBlob.getName()}，大小：${pdfBlob.getBytes().length} bytes`);
+}
