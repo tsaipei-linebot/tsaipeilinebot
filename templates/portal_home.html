@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}內部系統入口 - 材霈有限公司{% endblock %}
 {% block content %}
+{% if announcements %}
+<div class="announcement-list" style="max-width: 720px; margin: 0 auto 24px;">
+    {% for a in announcements %}
+    <div class="announcement-card">
+        <p class="announcement-title">📢 {{ a.title }}</p>
+        {% if a.content %}<p class="announcement-content">{{ a.content }}</p>{% endif %}
+        <p class="announcement-date">{{ a.created_at_display }}</p>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
 <div style="text-align: center; margin: 24px 0 32px;">
     <h1 class="page-title" style="margin-bottom: 8px;">內部系統入口</h1>
     <p class="hint" style="margin: 0;">{{ user.name }}，請選擇要進入的系統</p>

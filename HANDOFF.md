@@ -6368,66 +6368,88 @@ Firestore）。
 不是系統故障，是反查邏輯本來就依賴姓名（可能還有電話）能不能對得上
 人員資料。
 
-## 配送部系統：主頁新增公告功能（2026-09-18）
+## 全公司公告功能：從配送部主頁搬到 /portal 入口頁（2026-09-18）
 
-使用者要求主頁能有公告功能，先討論設計再實作，確認的規格：顯示在主頁、
-可以同時有多則、一週後自動下架、系統有更新/新增功能也比照列入公告。
+先前一版把公告功能做在配送部系統主頁（Firestore collection
+`delivery_announcements`，`delivery/repository.py` 的「公告管理」那節、
+`delivery/routes/home_routes.py`／`delivery/templates/home.html`／
+`announcements.html`），部署上線後使用者才澄清：**公告要放在全公司登入
+後都會先看到的 `/portal` 入口頁，不是配送部專屬**——馬上把配送部那一版
+整個拿掉（db.py／repository.py／home_routes.py／home.html 都revert回
+原狀，`delivery/templates/announcements.html`／
+`tests/test_delivery_announcements.py` 直接刪除），改在平台層重做一次。
+**下面才是目前實際存在的設計**，配送部主頁沒有公告功能。
 
-### 設計
+### 確認的規格
 
-跟裝備品項/服務區域/合作方式那幾個動態清單同一套 Firestore 設計，差在
-兩點：（1）公告沒有「有歷史紀錄不能刪除」的保護，因為沒有其他資料會
-引用公告 ID，可以隨時刪除；（2）多了「到期時間」的概念——`expires_at`
-存「建立時間 + N 天」，`list_active_announcements()`（主頁用）每次查詢
-時都重新比對目前時間是不是還沒超過 `expires_at`，超過的自動不顯示，
-不需要另外寫排程去清資料或改狀態。`active` 欄位是給主管「不用等到期，
-想馬上下架」用的手動開關，跟其他清單一致（`set_X_active` 同一套命名/
-行為）。
+- 顯示在 `/portal`（所有系統的共用入口頁），不是某個部門子系統。
+- 可以同時有多則，一週後自動下架（可調整天數）。
+- 系統任何新功能/更新，都比照公司公告發佈——**只有一個例外：「少凱
+  業務開發專區」（salesdev 模組）的任何事項/功能異動不列入公告**，那是
+  少凱個人的業務開發專區，跟其他人無關，不用全公司廣播。這條是**內容
+  原則，不是程式邏輯**，寫在 `platform_announcements.py` 開頭的說明裡，
+  提醒我（或之後接手的人）發公告前要記得排除。
+- 公告顯示**不分權限**：任何登入的帳號在 `/portal` 都看到同一份公告
+  清單，不像卡片本身要依「這個帳號開了哪些模組」篩選——跟配送部那版
+  「限管理員」的權限概念不一樣，這版公告是公司層級訊息，登入即可見。
+- 發佈/管理公告限**全平台管理員**（`platform_accounts.
+  require_platform_admin`，目前就是老闆本人那組帳號）——`/portal` 沒有
+  「部門管理員」的概念，公告內容是全公司層級的事，交給老闆帳號管理。
 
-- `delivery/db.py`：新增 `ANNOUNCEMENTS_COLLECTION` 跟
-  `announcements_ref()`。
-- `delivery/repository.py`「公告管理」那節：
-  `list_active_announcements()`（主頁用，只回傳啟用中且未過期、新到舊
-  排序）／`list_announcements()`（管理頁用，回傳全部並標記 `expired`）／
-  `get_announcement()`／`create_announcement(title, content, created_by,
-  days=7)`（`ANNOUNCEMENT_DEFAULT_DAYS = 7`）／`set_announcement_active()`
-  ／`delete_announcement()`。
-- `delivery/routes/home_routes.py`：`home()` 路由多傳
-  `announcements`（`list_active_announcements()` 查來的清單，附加
-  `created_at_display` 顯示用日期）；新增公告管理頁面路由
-  `GET /announcements`（限管理員）、`POST /announcements/new`、
-  `POST /announcements/{id}/active`、`POST /announcements/{id}/delete`。
-- 樣板：`home.html` 主頁標題旁加「公告管理」按鈕（限管理員），標題
-  下方、「未結案意外事件」警示上方新增公告卡片區塊（多則往下疊、新的
-  在最上面）；新增 `announcements.html` 管理頁（新增表單：標題、說明、
-  幾天後自動下架；清單顯示發布/下架日期、狀態徽章「顯示中／已過期／
-  已下架」、提前下架/恢復顯示/刪除操作）。`delivery/static/style.css`
-  新增 `.announcement-list`／`.announcement-card` 樣式，用淺藍色跟意外
-  事件的紅色警示做區隔，避免同仁誤以為是緊急事件。
+### 程式碼異動
 
-### 「系統更新列入公告」是操作流程，不是額外程式功能
-
-這個需求主要靠**我這邊的工作流程**落實：之後每次配送部系統有新功能
-上線，我會同時到「公告管理」頁面新增一則公告說明，跟現在每次改版都
-更新這份 HANDOFF.md 是同一個習慣，不需要額外寫串接程式。
+- `platform_db.py`：新增 `ANNOUNCEMENTS_COLLECTION = "platform_announcements"`
+  跟 `announcements_ref()`，比照 `users_ref()`／`companies_ref()`／
+  `vendors_ref()`／`departments_ref()` 放在這裡（不屬於任何單一部門
+  模組的跨系統共用資料）。
+- 新檔案 `platform_announcements.py`（跟 `platform_accounts.py`／
+  `platform_departments.py` 同一層級）：`ANNOUNCEMENT_DEFAULT_DAYS = 7`、
+  `list_active_announcements()`（`/portal` 用，只回傳啟用中且未過期、
+  新到舊排序）、`list_announcements()`（管理頁用，回傳全部並標記
+  `expired`）、`get_announcement()`、`create_announcement(title, content,
+  created_by, days=7)`、`set_announcement_active()`、
+  `delete_announcement()`——邏輯跟配送部那一版幾乎一樣，只是資料源換成
+  平台層的 `announcements_ref()`。
+- `portal_routes.py`：`portal_home()` 多傳 `announcements`
+  （`list_active_announcements()` 查來的清單，附加 `created_at_display`
+  顯示用日期）；新增公告管理路由 `GET /announcements`（限全平台管理員）、
+  `POST /announcements/new`、`POST /announcements/{id}/active`、
+  `POST /announcements/{id}/delete`，都掛在根 app（沒有 `/delivery`
+  之類的前綴，跟 `/accounts`／`/departments`／`/companies`／`/vendors`
+  同一層級）。
+- 樣板：`templates/portal_home.html`（根目錄，不是 `delivery/templates/`
+  底下那份）標題上方新增公告卡片區塊；`templates/base.html`（根目錄）
+  導覽列 `user.is_platform_admin` 那塊多一個「公告管理」連結；新增
+  `templates/announcements.html`（根目錄）管理頁面，樣式/欄位跟配送部
+  那版幾乎一樣（新增表單：標題、說明、幾天後自動下架；清單顯示發布/
+  下架日期、狀態徽章「顯示中／已過期／已下架」、提前下架/恢復顯示/
+  刪除）。**`delivery/static/style.css` 的 `.announcement-list`／
+  `.announcement-card` 樣式沿用不動**——根目錄的樣板本來就是直接引用
+  `/delivery/static/style.css` 這份共用 CSS（見 `templates/base.html`），
+  不用另外複製一份樣式。
 
 ### 測試
 
-`tests/test_delivery_announcements.py`（新檔案）：
-`list_active_announcements()`（排除已過期、排除已手動下架、新到舊
-排序、舊資料沒有 active 欄位時預設當作啟用中）／`list_announcements()`
-（含過期的並標記 `expired`）／`create_announcement()`（預設 7 天後
-過期、自訂天數）／`set_announcement_active()`／`delete_announcement()`
-的各種情境；`home()` 路由把 `list_active_announcements()` 的結果
-（附加顯示用日期）傳給樣板；公告管理路由（限管理員，含標題空白時
-不建立、天數輸入 0 或負數時退回預設 7 天的防呆）。全部測試
-（`python3 -m unittest discover -s tests -p "test_*.py"`）1520 個
+新增 `tests/test_platform_announcements.py`：CRUD 函式的各種情境（排除
+已過期、排除已手動下架、新到舊排序、舊資料沒有 active 欄位時預設當作
+啟用中、含過期的並標記 `expired`、預設 7 天後過期、自訂天數等）。
+`tests/test_portal.py` 新增 `AnnouncementRoutingSmokeTests`（未登入時
+導向 `/portal`）、`PortalHomeAnnouncementTests`（`portal_home()` 傳給
+樣板的公告清單含顯示用日期）、`AnnouncementAdminRoutesTests`（新增/
+切換啟用/刪除路由呼叫 `platform_announcements` 的各種情境，含標題空白
+不建立、天數 0 或負數退回預設 7 天的防呆）。刪除
+`tests/test_delivery_announcements.py`（配送部那版已經整個撤掉）。全部
+測試（`python3 -m unittest discover -s tests -p "test_*.py"`）1522 個
 全數通過。
 
 ### 使用者需要知道的事
 
-**不需要任何手動部署步驟**，合併後就直接生效。主頁標題旁會出現「公告
-管理」按鈕（只有管理員看得到），點進去可以新增公告——標題、說明、
-幾天後自動下架（預設 7 天，可以改）。公告會馬上出現在主頁最上方，
-過期後系統會自動不再顯示，不用你手動處理；如果想提早下架，管理頁面
-有「提前下架」按鈕。
+**不需要任何手動部署步驟**，合併後就直接生效。用你（老闆）的帳號登入
+`/portal`，導覽列會看到「公告管理」連結，點進去可以新增公告——標題、
+說明、幾天後自動下架（預設 7 天，可以改）。公告會馬上出現在 `/portal`
+入口頁最上方，**所有登入的帳號都看得到同一份**，不分部門/權限；過期
+後系統自動不再顯示，不用你手動處理，也可以隨時「提前下架」。
+
+之後配送部（或其他部門）系統有新功能上線，我會同步在這裡發公告——
+**唯一的例外是「少凱業務開發專區」**，那邊的異動不會公告，因為那是
+少凱個人的業務開發專區，跟其他同仁無關。

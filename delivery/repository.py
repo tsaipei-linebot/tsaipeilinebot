@@ -35,7 +35,6 @@ from delivery.config import (
     WHEEL_TYPE_MAP,
 )
 from delivery.db import (
-    announcements_ref,
     applicants_ref,
     cooperation_types_ref,
     equipment_debt_ref,
@@ -2408,98 +2407,3 @@ def list_equipment_transactions(
         result.append(data)
     result.sort(key=lambda t: t.get("created_at", 0), reverse=True)
     return result
-
-
-# ==========================================
-# 公告管理（2026-09-18 新增）
-#
-# 主頁公告欄：主管可以自行發佈公告（例如系統維護時間、新功能上線通知），
-# 不用找工程師改網頁。跟裝備品項/服務區域/合作方式那些動態清單一樣走
-# Firestore，差別在這裡沒有「有沒有歷史紀錄」的刪除保護——公告本來就是
-# 用完即丟的內容，沒有其他資料會引用到某一則公告的 ID，可以隨時刪除。
-#
-# 「到期自動下架」是用 expires_at 這個時間戳記比對目前時間算出來的，
-# 不是排程去改資料库——list_active_announcements() 每次查詢都重新算一次
-# 「還沒過期」，超過期限的公告不用另外清除，只是查不到而已（管理頁面
-# 用 list_announcements() 撈全部，包含已過期的，讓主管可以回顧/手動
-# 提前刪除）。active 這個欄位是給主管「不用等到期，想馬上下架」用的
-# 手動開關，跟其他清單一致（set_X_active 的命名/行為同一套）。
-# ==========================================
-
-ANNOUNCEMENT_DEFAULT_DAYS = 7
-
-
-def list_active_announcements() -> list:
-    """主頁顯示用：只回傳「還在啟用中，而且還沒過期」的公告，新到舊排序。"""
-    now = time.time()
-    result = []
-    for snapshot in announcements_ref().stream():
-        data = snapshot.to_dict() or {}
-        data["id"] = snapshot.id
-        data.setdefault("active", True)
-        if not data["active"]:
-            continue
-        if data.get("expires_at", 0) <= now:
-            continue
-        result.append(data)
-    result.sort(key=lambda a: a.get("created_at", 0), reverse=True)
-    return result
-
-
-def list_announcements() -> list:
-    """公告管理頁用：回傳全部公告（含已停用、已過期的），新到舊排序，
-    讓主管可以回顧之前發過什麼公告。"""
-    now = time.time()
-    result = []
-    for snapshot in announcements_ref().stream():
-        data = snapshot.to_dict() or {}
-        data["id"] = snapshot.id
-        data.setdefault("active", True)
-        data["expired"] = data.get("expires_at", 0) <= now
-        result.append(data)
-    result.sort(key=lambda a: a.get("created_at", 0), reverse=True)
-    return result
-
-
-def get_announcement(announcement_id: str):
-    if not announcement_id:
-        return None
-    snapshot = announcements_ref().document(announcement_id).get()
-    if not snapshot.exists:
-        return None
-    data = snapshot.to_dict() or {}
-    data["id"] = snapshot.id
-    data.setdefault("active", True)
-    return data
-
-
-def create_announcement(title: str, content: str, created_by: str = "", days: int = ANNOUNCEMENT_DEFAULT_DAYS) -> str:
-    now = time.time()
-    doc_ref = announcements_ref().document()
-    doc_ref.set(
-        {
-            "title": title,
-            "content": content,
-            "active": True,
-            "created_by": created_by,
-            "created_at": now,
-            "expires_at": now + days * 86400,
-        }
-    )
-    return doc_ref.id
-
-
-def set_announcement_active(announcement_id: str, active: bool) -> bool:
-    ref = announcements_ref().document(announcement_id)
-    if not ref.get().exists:
-        return False
-    ref.update({"active": active})
-    return True
-
-
-def delete_announcement(announcement_id: str) -> bool:
-    ref = announcements_ref().document(announcement_id)
-    if not ref.get().exists:
-        return False
-    ref.delete()
-    return True
