@@ -597,5 +597,78 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         self.assertEqual([v["vehicle_no"] for v in context["vehicles"]], ["ERV-1"])
 
 
+class VehicleDetailRiderCooperationTypeTests(unittest.TestCase):
+    """2026-09-19 新增：清單頁 2026-09-18 就有騎手身份反查，詳細頁一直
+    沒有補上，這次補齊。"""
+
+    def test_passes_resolved_cooperation_type_to_template(self):
+        vehicle = {"vehicle_no": "ERV-1", "vendor": "ud", "current_holder": "小明", "current_holder_phone": "0912345678"}
+        coop = {"id": "coop1", "name": "晴天名店合作"}
+        with mock.patch.object(vehicle_routes.repository, "get_vehicle", return_value=vehicle):
+            with mock.patch.object(vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=coop) as mock_resolve:
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_vehicle_events", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_detail("ERV-1", _FakeRequest(_staff_account()), redirect=None)
+        mock_resolve.assert_called_once_with(vehicle)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["rider_cooperation_type"], coop)
+
+    def test_no_match_passes_none(self):
+        vehicle = {"vehicle_no": "ERV-1", "vendor": "ud", "current_holder": "", "current_holder_phone": ""}
+        with mock.patch.object(vehicle_routes.repository, "get_vehicle", return_value=vehicle):
+            with mock.patch.object(vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=None):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_vehicle_events", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_detail("ERV-1", _FakeRequest(_staff_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIsNone(context["rider_cooperation_type"])
+
+
+class VehiclePersonnelLookupTests(unittest.TestCase):
+    """2026-09-19 新增：登記領/還車表單姓名欄位自動帶出電話／騎手身份用
+    的 AJAX 查詢端點。"""
+
+    def test_found_returns_phone_and_cooperation_type_name(self):
+        person = {"name": "小明", "vendor": "ud", "phone": "0912345678", "cooperation_type": "coop1"}
+        coop = {"id": "coop1", "name": "晴天名店合作"}
+        with mock.patch.object(vehicle_routes, "current_user", return_value=_staff_account()):
+            with mock.patch.object(vehicle_routes.repository, "find_personnel_by_name_vendor", return_value=person) as mock_find:
+                with mock.patch.object(vehicle_routes.repository, "get_cooperation_type", return_value=coop):
+                    result = vehicle_routes.vehicle_personnel_lookup(_FakeRequest(_staff_account()), vendor="ud", name="小明")
+        mock_find.assert_called_once_with("ud", "小明")
+        self.assertEqual(result, {"found": True, "phone": "0912345678", "cooperation_type_name": "晴天名店合作"})
+
+    def test_found_without_cooperation_type_set(self):
+        person = {"name": "小明", "vendor": "ud", "phone": "0912345678", "cooperation_type": ""}
+        with mock.patch.object(vehicle_routes, "current_user", return_value=_staff_account()):
+            with mock.patch.object(vehicle_routes.repository, "find_personnel_by_name_vendor", return_value=person):
+                with mock.patch.object(vehicle_routes.repository, "get_cooperation_type", return_value=None):
+                    result = vehicle_routes.vehicle_personnel_lookup(_FakeRequest(_staff_account()), vendor="ud", name="小明")
+        self.assertEqual(result, {"found": True, "phone": "0912345678", "cooperation_type_name": ""})
+
+    def test_not_found_returns_found_false(self):
+        with mock.patch.object(vehicle_routes, "current_user", return_value=_staff_account()):
+            with mock.patch.object(vehicle_routes.repository, "find_personnel_by_name_vendor", return_value=None) as mock_find:
+                result = vehicle_routes.vehicle_personnel_lookup(_FakeRequest(_staff_account()), vendor="ud", name="不存在的人")
+        mock_find.assert_called_once_with("ud", "不存在的人")
+        self.assertEqual(result, {"found": False})
+
+    def test_missing_vendor_or_name_returns_found_false_without_querying(self):
+        with mock.patch.object(vehicle_routes, "current_user", return_value=_staff_account()):
+            with mock.patch.object(vehicle_routes.repository, "find_personnel_by_name_vendor") as mock_find:
+                result = vehicle_routes.vehicle_personnel_lookup(_FakeRequest(_staff_account()), vendor="", name="小明")
+        mock_find.assert_not_called()
+        self.assertEqual(result, {"found": False})
+
+    def test_not_logged_in_returns_found_false_without_querying(self):
+        with mock.patch.object(vehicle_routes, "current_user", return_value=None):
+            with mock.patch.object(vehicle_routes.repository, "find_personnel_by_name_vendor") as mock_find:
+                result = vehicle_routes.vehicle_personnel_lookup(_FakeRequest(None), vendor="ud", name="小明")
+        mock_find.assert_not_called()
+        self.assertEqual(result, {"found": False})
+
+
 if __name__ == "__main__":
     unittest.main()

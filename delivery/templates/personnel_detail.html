@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ person.name }} - 缺件狀況{% endblock %}
+{% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">{{ person.name }}</h1>
 <p class="meta">廠商：{{ vendor_name }}　電話：{{ person.phone or "-" }}</p>

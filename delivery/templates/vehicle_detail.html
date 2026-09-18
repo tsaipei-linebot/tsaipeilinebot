@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ vehicle.vehicle_no }} - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">車輛：{{ vehicle.vehicle_no }}</h1>
 <p class="meta">
@@ -9,6 +10,7 @@
     狀態：<span class="badge {{ 'badge-ok' if vehicle.status == 'available' else ('badge-missing' if vehicle.status == 'maintenance' else 'badge-pending') }}">{{ vehicle_status_map.get(vehicle.status, vehicle.status) }}</span>
     目前使用人：{{ vehicle.current_holder or "-" }}
     目前使用人電話：{{ vehicle.current_holder_phone or "-" }}
+    騎手身份：{% if rider_cooperation_type %}<span class="badge">{{ rider_cooperation_type.name }}</span>{% else %}-{% endif %}
     目前地點：{{ vehicle.current_location or "-" }}
     備註：{{ vehicle.current_note or "-" }}
 </p>
@@ -55,7 +57,7 @@
 
 <h2 class="section-title">手動補登事件</h2>
 <p class="hint">用於 LINE 群組回報漏勾、或需要人工修正的情況，套用跟 LINE 回報一樣的驗證規則。</p>
-<form method="post" action="/delivery/vehicles/{{ vehicle.vehicle_no }}/manual-event" class="form-stack form-narrow">
+<form method="post" action="/delivery/vehicles/{{ vehicle.vehicle_no }}/manual-event" class="form-stack form-narrow" id="manual-event-form">
     <label>事件類型
         <select name="event_type" required>
             <option value="checkout">領車</option>
@@ -63,23 +65,24 @@
         </select>
     </label>
     <label>廠商
-        <select name="vendor" required>
+        <select name="vendor" id="manual-event-vendor" required>
             {% for v in vendors %}
             <option value="{{ v.code }}" {% if vehicle.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
             {% endfor %}
         </select>
     </label>
     <label>姓名
-        <input type="text" name="personnel_name" required>
+        <input type="text" name="personnel_name" id="manual-event-name" required>
     </label>
+    <span class="hint" id="manual-event-lookup-status" style="margin:0;"></span>
     <label>日期
         <input type="date" name="event_date" required>
     </label>
     <label>地點
         <input type="text" name="location" required>
     </label>
-    <label>電話（選填）
-        <input type="text" name="phone">
+    <label>電話（選填，系統查得到人員資料時會自動帶入，仍可手動修改）
+        <input type="text" name="phone" id="manual-event-phone">
     </label>
     <label>待維修
         <select name="needs_maintenance">
@@ -138,4 +141,42 @@
 {% endif %}
 
 <p class="back-link"><a href="/delivery/vehicles">&larr; 回車輛管理</a></p>
+
+<script>
+(function () {
+    // 補登領/還車表單：姓名打完離開欄位時，用「姓名+廠商」查在職人員
+    // 資料，查得到就自動帶入電話（跟騎手身份反查共用同一個後端比對
+    // 邏輯，見 delivery/repository.py 的 find_personnel_by_name_vendor()
+    // 說明），查不到就維持原樣讓同仁手動填，不擋住送出（2026-09-19 新增）。
+    var vendorSelect = document.getElementById('manual-event-vendor');
+    var nameInput = document.getElementById('manual-event-name');
+    var phoneInput = document.getElementById('manual-event-phone');
+    var status = document.getElementById('manual-event-lookup-status');
+
+    function runLookup() {
+        var name = nameInput.value.trim();
+        var vendor = vendorSelect.value;
+        if (!name || !vendor) { return; }
+        status.textContent = '查詢中...';
+        fetch('/delivery/vehicles/personnel-lookup?vendor=' + encodeURIComponent(vendor) + '&name=' + encodeURIComponent(name))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (!data.found) {
+                    status.textContent = '系統查無此人員資料，請自行手動填寫電話。';
+                    return;
+                }
+                if (data.phone) {
+                    phoneInput.value = data.phone;
+                }
+                status.textContent = '已自動帶入電話' + (data.cooperation_type_name ? '（合作方式：' + data.cooperation_type_name + '）' : '') + '，仍可手動修改。';
+            })
+            .catch(function () { status.textContent = ''; });
+    }
+
+    nameInput.addEventListener('blur', runLookup);
+    vendorSelect.addEventListener('change', function () {
+        if (nameInput.value.trim()) { runLookup(); }
+    });
+})();
+</script>
 {% endblock %}

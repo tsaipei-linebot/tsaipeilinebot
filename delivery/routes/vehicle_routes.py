@@ -197,6 +197,36 @@ def create_vehicle_submit(
     return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
 
 
+@router.get("/vehicles/personnel-lookup")
+def vehicle_personnel_lookup(request: Request, vendor: str = "", name: str = ""):
+    """登記領/還車表單「姓名」欄位自動帶出電話／騎手身份用的 AJAX 端點
+    （2026-09-19 新增）——回傳 JSON，不是完整頁面。做法比照合約產生器
+    甲方查詢（client_contract_routes.client_contract_company_lookup）：
+    沒登入一律回傳查無資料，不透露任何錯誤細節。用「姓名+廠商」查在職
+    人員（repository.find_personnel_by_name_vendor()，跟騎手身份反查
+    共用同一個既有函式），查不到就回傳 found=False，交給同仁自己手動
+    填，不擋住送出。
+
+    **路由順序注意**：這個路徑要放在 `/vehicles/{vehicle_no}` 之前
+    宣告，不然 FastAPI 會先比對到那個萬用路徑，把 "personnel-lookup"
+    當成車號吃掉，這個端點永遠不會被呼叫到。"""
+    if not current_user(request):
+        return {"found": False}
+    vendor = vendor.strip()
+    name = name.strip()
+    if not vendor or not name:
+        return {"found": False}
+    person = repository.find_personnel_by_name_vendor(vendor, name)
+    if not person:
+        return {"found": False}
+    cooperation_type = repository.get_cooperation_type(person.get("cooperation_type") or "")
+    return {
+        "found": True,
+        "phone": person.get("phone") or "",
+        "cooperation_type_name": cooperation_type["name"] if cooperation_type else "",
+    }
+
+
 @router.get("/vehicles/{vehicle_no}")
 def vehicle_detail(vehicle_no: str, request: Request, error: str = "", redirect=Depends(login_required)):
     if redirect:
@@ -205,12 +235,16 @@ def vehicle_detail(vehicle_no: str, request: Request, error: str = "", redirect=
     if not vehicle:
         return RedirectResponse(url="/delivery/vehicles", status_code=303)
     service_area_map = {a["id"]: a["name"] for a in repository.list_vehicle_service_areas(include_inactive=True)}
+    # 騎手身份（2026-09-19 補上）：清單頁 2026-09-18 就有這個反查邏輯，
+    # 詳細頁一直沒有補上，這裡套用同一個既有函式，不重新設計。
+    rider_cooperation_type = repository.resolve_vehicle_rider_cooperation_type(vehicle)
     return templates.TemplateResponse(
         request,
         "vehicle_detail.html",
         {
             "user": current_user(request),
             "vehicle": vehicle,
+            "rider_cooperation_type": rider_cooperation_type,
             "vendor_name": VENDOR_MAP.get(vehicle.get("vendor"), vehicle.get("vendor")),
             "vehicle_status_map": VEHICLE_STATUS_MAP,
             "vendors": VENDORS,
