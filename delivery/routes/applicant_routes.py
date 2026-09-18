@@ -8,9 +8,6 @@ from delivery import repository
 from delivery.auth import admin_required, current_user, login_required
 from delivery.config import (
     APPLICANT_STATUSES,
-    COOPERATION_TYPE_MAP,
-    COOPERATION_TYPE_VENDORS,
-    COOPERATION_TYPES,
     DEFAULT_TEST_DRIVE_STATUS,
     SELECTABLE_APPLICANT_STATUSES,
     TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
@@ -52,6 +49,12 @@ def applicants_list(
                 ),
             }
         )
+    cooperation_types_by_vendor = {}
+    for coop in repository.list_cooperation_types():
+        for vendor_code in coop.get("vendors", []):
+            cooperation_types_by_vendor.setdefault(vendor_code, []).append(
+                {"id": coop["id"], "name": coop.get("name", "")}
+            )
     return templates.TemplateResponse(
         request,
         "applicants_list.html",
@@ -59,8 +62,7 @@ def applicants_list(
             "user": current_user(request),
             "applicants": rows,
             "vendors": VENDORS,
-            "cooperation_types": COOPERATION_TYPES,
-            "cooperation_type_vendors": COOPERATION_TYPE_VENDORS,
+            "cooperation_types_by_vendor": cooperation_types_by_vendor,
             "test_drive_required_vendors": TEST_DRIVE_REQUIRED_VENDORS,
             "test_drive_required_shopee_cooperation_types": TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
             "test_drive_statuses": TEST_DRIVE_STATUSES,
@@ -121,7 +123,8 @@ async def accept_applicant(applicant_id: str, request: Request, redirect=Depends
 
     if vendor not in VENDOR_MAP:
         return RedirectResponse(url="/delivery/applicants?error=vendor_required", status_code=303)
-    if vendor != "shopee" or cooperation_type not in COOPERATION_TYPE_MAP:
+    coop = repository.get_cooperation_type(cooperation_type)
+    if not coop or vendor not in coop.get("vendors", []):
         cooperation_type = ""
     if test_drive not in TEST_DRIVE_STATUS_MAP:
         test_drive = DEFAULT_TEST_DRIVE_STATUS
@@ -140,7 +143,7 @@ async def accept_applicant(applicant_id: str, request: Request, redirect=Depends
         return RedirectResponse(url="/delivery/applicants?error=test_drive_required", status_code=303)
 
     user = current_user(request)
-    create_kwargs = {"cooperation_type": cooperation_type} if vendor == "shopee" and cooperation_type else {}
+    create_kwargs = {"cooperation_type": cooperation_type} if cooperation_type else {}
     personnel_id = repository.create_personnel(
         applicant["name"], "", applicant.get("phone", ""), vendor, user["username"], **create_kwargs
     )

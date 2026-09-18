@@ -13,6 +13,7 @@
 from platform_db import get_db, users_ref  # noqa: F401  (向下相容既有匯入)
 
 PERSONNEL_COLLECTION = "delivery_personnel"
+COOPERATION_TYPES_COLLECTION = "delivery_cooperation_types"
 REPAYMENTS_COLLECTION = "delivery_repayments"
 SICK_LEAVES_COLLECTION = "delivery_sick_leaves"
 APPLICANTS_COLLECTION = "delivery_applicants"
@@ -29,6 +30,10 @@ EQUIPMENT_TRANSACTIONS_COLLECTION = "delivery_equipment_transactions"
 
 def personnel_ref():
     return get_db().collection(PERSONNEL_COLLECTION)
+
+
+def cooperation_types_ref():
+    return get_db().collection(COOPERATION_TYPES_COLLECTION)
 
 
 def repayments_ref():

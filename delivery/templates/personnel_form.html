@@ -12,16 +12,14 @@
     <label>聯絡電話
         <input type="text" name="phone">
     </label>
-    {% if show_cooperation_type %}
     <label>合作方式（可之後在人員詳細頁再設定）
         <select name="cooperation_type">
             <option value="">尚未決定</option>
             {% for c in cooperation_types %}
-            <option value="{{ c.code }}">{{ c.name }}</option>
+            <option value="{{ c.id }}">{{ c.name }}</option>
             {% endfor %}
         </select>
     </label>
-    {% endif %}
     {% if show_client %}
     <label>負責客戶（可之後在人員詳細頁再設定）
         <select name="client">

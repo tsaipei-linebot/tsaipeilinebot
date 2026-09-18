@@ -6121,3 +6121,169 @@ python -m scripts.seed_vehicle_service_areas
 跑完遷移腳本後，之後如果要新增/停用/刪除服務區域（例如公司拓點到新
 縣市），直接到「車輛管理」→「服務區域管理」網頁上操作即可，不用再
 找我加代碼。
+
+## 配送部系統：合作方式（cooperation_type）改成主管可自行維護的動態清單，並擴大到全部廠商跟應徵名單（2026-09-18）
+
+使用者原本只是想在「車輛管理」清單頁加一欄「騎手身份」（顯示/篩選
+這台車目前使用人的合作方式），討論過程中發現這個功能會依賴
+`cooperation_type` 這個欄位，但這個欄位有兩個問題：
+
+1. 原本只有蝦皮／蝦皮三輪速配倉這兩個廠商代碼會被要求填合作方式
+   （`COOPERATION_TYPE_VENDORS` 寫死在 `config.py`），UD/UC/順豐等其他
+   廠商的人員完全沒有這個欄位可以選，畫面會整片空白。
+2. 合作方式的選項（二輪承攬/二輪雇傭/三輪雇傭）也是寫死在
+   `config.py` 的固定清單，使用者希望「之後都有可能變動」，要能自己
+   在網頁上維護，不要每次調整都要找 Claude 改代碼。
+
+跟使用者討論後確認：合作方式要改成跟裝備借還管理的品項/放置點、車輛
+服務區域同一套「Firestore 動態清單」設計，而且要開放給**全部廠商**
+設定，不只蝦皮系列；同時使用者也要求應徵名單（`/delivery/applicants`）
+的合作方式選單一併改成動態（原本也是抄一份 `COOPERATION_TYPES` 固定
+清單）。「騎手身份」欄位本身**還沒開始做**，是下一步——這次先把
+合作方式這個底層欄位做成動態、且對所有廠商都能填，「騎手身份」才有
+資料可以顯示。
+
+### 設計上跟其他動態清單不一樣的地方：一筆合作方式可以套用到多個廠商
+
+裝備品項、車輛服務區域都是「單一擁有者」的清單，合作方式不一樣：
+DOC_TYPES 的保險文件規則（`shopee_contract_insurance`／
+`shopee_employed_own_car_insurance` 等）是直接比對 `cooperation_type`
+這個字串值本身（例如 `"two_wheel_contract"`），蝦皮跟蝦皮三輪速配倉
+必須繼續共用完全相同的這幾個 ID，不能各自獨立一份清單，不然這兩個
+廠商可能會慢慢長出不同的選項、悄悄弄壞共用的保險規則判斷。
+
+跟使用者討論兩個做法：
+- A：每個廠商各自獨立一份合作方式清單（風險：蝦皮跟蝦皮三輪速配倉的
+  清單可能會逐漸長歪，弄壞共用的保險規則）。
+- B（使用者選定）：新增/編輯合作方式時，勾選這筆資料適用哪些廠商——
+  蝦皮/蝦皮三輪速配倉可以繼續勾選同一筆（沿用原本共用的行為），其他
+  廠商可以獨立勾自己的，也可以跟蝦皮共用，彈性由主管自己決定。
+
+因此 `delivery_cooperation_types` 這個 Firestore collection 的每筆文件
+多了一個 `vendors`（字串陣列）欄位，查詢時用 Firestore 的
+`array_contains` 運算子（`list_cooperation_types(vendor="shopee")`）。
+
+### 程式碼異動
+
+- `delivery/db.py`：新增 `COOPERATION_TYPES_COLLECTION` 跟
+  `cooperation_types_ref()`。
+- `delivery/repository.py`「合作方式管理」那節：`list_cooperation_types
+  (vendor="", include_inactive=False)`／`get_cooperation_type(id)`／
+  `create_cooperation_type(name, vendors, type_id="", created_by="")`／
+  `update_cooperation_type(id, name, vendors)`／
+  `set_cooperation_type_active(id, active)`／
+  `cooperation_type_has_history(id)`（人員或應徵者有任何一筆在用這個
+  ID 就算有歷史紀錄，比照裝備品項「有異動紀錄就只能停用不能刪除」）／
+  `delete_cooperation_type(id)`。
+  另外修正 `applicant_needs_test_drive()`：不再檢查
+  「廠商是不是蝦皮系列」，改成直接看合作方式的值是不是
+  `"three_wheel_employed"`（試駕判斷邏輯本來就已經是看這個固定 ID 本身，
+  這個 ID 現在對哪些廠商開放完全交給主管在管理頁面上決定）；
+  `bulk_update_applicants()` 的合作方式驗證改成呼叫
+  `get_cooperation_type()` 確認 ID 存在，不再查固定的
+  `COOPERATION_TYPE_MAP`。
+- `delivery/config.py`：移除 `COOPERATION_TYPES`／`COOPERATION_TYPE_MAP`
+  ／`COOPERATION_TYPE_VENDORS` 這幾個固定清單常數，改成註解說明動態
+  清單怎麼運作；`TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES =
+  ["three_wheel_employed"]` 保留（試駕規則要靠這個固定 ID 判斷，遷移
+  腳本會確保這個 ID 繼續存在）。
+- `delivery/routes/vendor_routes.py`：
+  - `personnel_detail()`／`new_personnel_form()` 的合作方式選單改成
+    `repository.list_cooperation_types(vendor=vendor_code)`，**拿掉原本
+    只有蝦皮系列才顯示欄位的 `show_cooperation_type` 判斷**，所有廠商
+    一律顯示這個欄位（沒有設定任何選項的廠商，選單就只有「尚未決定」
+    一個選項，主管要去「合作方式管理」頁面幫這個廠商新增選項）。
+  - `create_personnel_submit()`／`bulk_update_personnel()` 的合作方式
+    驗證改成 `repository.get_cooperation_type()` 存在性檢查（`
+    create_personnel_submit` 另外還檢查這個合作方式的 `vendors` 陣列
+    有沒有包含目前這個廠商代碼，避免透過改網址硬塞不屬於這個廠商的
+    合作方式）。
+  - 新增合作方式管理頁面：`GET /cooperation-types`（限管理員）、
+    `POST /cooperation-types/new`、`POST /cooperation-types/{id}/edit`
+    （改名稱＋改適用廠商勾選）、`POST /cooperation-types/{id}/active`、
+    `POST /cooperation-types/{id}/delete`；`vendor_list.html`／
+    `applicants_list.html` 頁首都加了「合作方式管理」按鈕（限管理員）。
+- `delivery/routes/applicant_routes.py`：
+  - `applicants_list()` 改傳 `cooperation_types_by_vendor`（
+    `{廠商代碼: [{id, name}, ...]}` 的字典，用 `list_cooperation_types()`
+    依每筆的 `vendors` 陣列分組）給樣板，取代原本的
+    `cooperation_types`／`cooperation_type_vendors` 兩個固定清單。
+  - `accept_applicant()`：**順便修正一個既有 bug**——原本合作方式的
+    保留邏輯寫死 `vendor != "shopee"`，只認蝦皮，沒把蝦皮三輪速配倉
+    算進去，代表蝦皮三輪速配倉的應徵者錄取時，合作方式很可能被悄悄
+    清空。改成動態驗證（`vendor in coop.get("vendors", [])`）後這個
+    廠商代碼也會正確保留合作方式，不用再特別列出廠商名稱。
+- `delivery/routes/webhook_routes.py`（`/api/form-submission`，GAS 表單
+  webhook 的接收端）：合作方式驗證改成 `repository.get_cooperation_type
+  ()` 存在性檢查，不再查固定的 `COOPERATION_TYPE_MAP`。
+- 樣板：`personnel_form.html`／`personnel_detail.html` 拿掉
+  `show_cooperation_type` 判斷、選單值從 `c.code` 改成 `c.id`；
+  `applicants_list.html` 的合作方式欄位改成依「目前選的廠商」動態組出
+  選項（伺服器端初始渲染用 `cooperation_types_by_vendor.get(a.vendor,
+  [])`；JS 端新增 `COOPERATION_TYPES_BY_VENDOR` 對照表跟
+  `rebuildCoopOptions()` 函式，改廠商時即時重建合作方式選單，不用等
+  「一鍵全部更新」整頁重新整理）；試駕欄位要不要顯示的判斷簡化成只看
+  合作方式的值，不再另外檢查廠商是不是蝦皮系列；新增
+  `cooperation_types.html`（管理頁，新增/編輯都用勾選框決定適用哪些
+  廠商，樣式比照 `equipment_items.html`）。
+
+### 既有資料怎麼辦：一次性遷移腳本
+
+既有人員/應徵者的 `cooperation_type` 欄位存的是舊代碼
+（`"two_wheel_contract"`／`"two_wheel_employed"`／
+`"three_wheel_employed"`），改版後如果 Firestore 裡完全沒有合作方式
+資料，人員詳細頁的合作方式選單會顯示「尚未決定」被選中（不是資料
+不見了，只是查不到對應名稱可以顯示成已選取狀態；DOC_TYPES 的保險
+規則、應徵名單試駕判斷因為是直接比對字串值，不受影響會繼續正常
+運作）。新增 `scripts/seed_cooperation_types.py`，把原本 3 個合作方式
+**用跟舊代碼完全相同的文件 ID**、`vendors: ["shopee",
+"shopee_speed_warehouse"]` 建進 Firestore，既有資料完全不用搬移，
+建立完成後選單就能立刻正確顯示已選取的名稱。這支腳本可以放心重複
+執行——已經存在的合作方式（例如主管已經手動改過名稱或適用廠商）會
+直接跳過，不會覆蓋。
+
+### 測試
+
+`tests/test_delivery_cooperation_types.py`（新檔案）：
+`list/get/create/update/set_active/has_history/delete_cooperation_type()`
+的各種情境（含 `vendors` 陣列的 `array_contains` 查詢、多廠商共用）、
+合作方式管理路由（限管理員，含勾選框廠商過濾未知代碼的防呆）。
+`tests/test_seed_cooperation_types.py`（新檔案）：遷移腳本的規劃邏輯。
+`tests/test_delivery_applicants.py`：`applicant_needs_test_drive()`
+不再檢查廠商群組的新行為、`applicants_list()` 傳給樣板的
+`cooperation_types_by_vendor` 內容。
+`tests/test_delivery_personnel_equipment_debt.py`：
+`personnel_detail()` 相關測試補上 `list_cooperation_types` 的 mock。
+`tests/test_delivery_doc_types.py`：更新一處過時的註解（合作方式現在
+是動態清單，不是寫死的 `COOPERATION_TYPE_VENDORS`）。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1493 個
+全數通過。
+
+### 使用者需要知道的事：部署後要手動跑一次遷移腳本，之後才能開始用「騎手身份」功能
+
+**這次有一個手動步驟，一定要做，不然人員詳細頁的合作方式選單會顯示
+「尚未決定」（既有資料沒有不見，只是暫時查不到名稱）**：合併部署
+完成後，請用有 GCP 憑證的環境（例如 Google Cloud Shell）依序執行：
+
+```bash
+git pull
+python -m scripts.seed_cooperation_types
+```
+
+腳本會先列出即將新增的 3 個合作方式（二輪承攬、二輪雇傭、三輪雇傭，
+適用廠商：蝦皮、蝦皮三輪速配倉），輸入 `yes` 才會真的寫入。跑完之後，
+人員詳細頁的合作方式選單就會恢復正常顯示已選取的名稱。
+
+**這次多了一個新頁面「合作方式管理」**（管理員登入後，在「應徵名單」
+或任何廠商的人員清單頁首都會看到按鈕），可以自行新增合作方式、勾選
+適用哪些廠商、停用/刪除。**如果 UD、UC、順豐等其他廠商也想比照蝦皮
+用合作方式管理保險文件規則**，目前系統只有「二輪承攬/二輪雇傭/三輪
+雇傭」這三個固定 ID 的保險判斷邏輯是內建的（因為這幾個 ID 直接綁在
+`config.py` 的 DOC_TYPES 保險規則裡）；如果要幫其他廠商新增全新的
+合作方式選項、且需要搭配對應的保險文件規則，還是要跟我說一聲，讓我
+在 `config.py` 加上對應的邏輯——**單純新增合作方式選項本身**（不涉及
+保險規則）可以直接在管理頁面上自己操作，不用等我。
+
+「騎手身份」欄位（車輛管理清單頁顯示/篩選）還沒開始做，這次先把
+底層的合作方式欄位做成動態、且對所有廠商開放，下一步才會實作這個
+欄位本身。

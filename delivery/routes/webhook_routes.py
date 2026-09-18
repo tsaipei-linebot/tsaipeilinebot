@@ -11,7 +11,6 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 from delivery import repository
 from delivery.config import (
-    COOPERATION_TYPE_MAP,
     FORM_WEBHOOK_SECRET,
     INCIDENT_REPORT_WEBHOOK_SECRET,
     VEHICLE_REPORT_WEBHOOK_SECRET,
@@ -55,7 +54,7 @@ async def form_submission(request: Request, x_delivery_form_secret: str = Header
     if vendor not in VENDOR_MAP:
         vendor = ""
     cooperation_type = body.get("cooperation_type") or ""
-    if cooperation_type not in COOPERATION_TYPE_MAP:
+    if not repository.get_cooperation_type(cooperation_type):
         cooperation_type = ""
 
     name = extract_answer(answers, "姓名")
