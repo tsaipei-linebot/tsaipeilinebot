@@ -61,6 +61,16 @@ def salesdev_home(
     )
 
 
+@router.get("/salesdev/help")
+def salesdev_help(request: Request, redirect=Depends(_require_access)):
+    """少凱業務開發專區使用說明（2026-09-18 新增）。跟 salesdev_home() 一樣
+    用 _require_access，跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組
+    權限判斷（見 portal_routes.py 的說明）。"""
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(request, "salesdev_help.html", {"user": platform_accounts.current_account(request)})
+
+
 @router.post("/salesdev/select")
 async def salesdev_select(request: Request, redirect=Depends(_require_access)):
     """使用者在畫面上勾選職缺後送出：把這些列的「審查狀態」改成

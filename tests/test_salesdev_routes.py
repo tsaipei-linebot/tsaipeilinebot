@@ -27,6 +27,13 @@ class SalesdevRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/salesdev")
 
+    def test_help_page_redirects_to_login_when_not_authenticated(self):
+        """使用說明頁（2026-09-18 新增）跟 /salesdev 共用同一個
+        _require_access。"""
+        resp = self.client.get("/salesdev/help", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/salesdev")
+
     def test_select_post_redirects_to_login_when_not_authenticated(self):
         """/salesdev/select（2026-09-17 新增的「勾選送出」路由）跟 /salesdev
         共用同一個 _require_access，未登入時一樣要導去登入頁，不能繞過

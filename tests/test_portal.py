@@ -176,25 +176,31 @@ class PortalHomeAnnouncementTests(unittest.TestCase):
 
 
 class PortalHomeHelpLinkTests(unittest.TestCase):
-    """/portal 卡片的「使用說明」按鈕（2026-09-18 新增）：只有寫好說明頁的
-    模組（目前只有配送部）卡片才會帶 help_href，其他模組還沒寫，卡片上
-    就不會顯示這個按鈕。"""
+    """/portal 卡片的「使用說明」按鈕（2026-09-18 新增，2026-09-18 擴大到
+    全部模組）：每個寫好說明頁的模組卡片都帶對應的 help_href。"""
 
-    def test_delivery_card_has_help_href(self):
+    def _cards(self):
         with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=[]):
             with mock.patch.object(portal_routes, "templates") as mock_templates:
                 portal_routes.portal_home(_FakeRequest(_admin_account()), redirect=None)
         context = mock_templates.TemplateResponse.call_args[0][2]
-        delivery_card = next(c for c in context["cards"] if c["name"] == "新北所(配送組)系統")
-        self.assertEqual(delivery_card["help_href"], "/delivery/help")
+        return {c["name"]: c for c in context["cards"]}
 
-    def test_module_without_help_page_has_blank_help_href(self):
-        with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=[]):
-            with mock.patch.object(portal_routes, "templates") as mock_templates:
-                portal_routes.portal_home(_FakeRequest(_admin_account()), redirect=None)
-        context = mock_templates.TemplateResponse.call_args[0][2]
-        management_card = next(c for c in context["cards"] if c["name"] == "管理部")
-        self.assertEqual(management_card["help_href"], "")
+    def test_all_modules_have_help_href(self):
+        cards = self._cards()
+        expected = {
+            "新北所(配送組)系統": "/delivery/help",
+            "管理部": "/management/help",
+            "人資專區": "/hr/help",
+            "少凱業務開發專區": "/salesdev/help",
+            "職缺維護": "/job-listings/help",
+            "專案合約維護": "/project-contracts/help",
+            "小雞點數自費申請": "/chicken-points/help",
+            "派遣契約產生器": "/dispatch-contracts/help",
+            "合約產生器": "/client-contracts/help",
+        }
+        for name, help_href in expected.items():
+            self.assertEqual(cards[name]["help_href"], help_href, name)
 
 
 class AnnouncementAdminRoutesTests(unittest.TestCase):

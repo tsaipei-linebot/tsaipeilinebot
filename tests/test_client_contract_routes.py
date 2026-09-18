@@ -48,6 +48,13 @@ class ClientContractRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/client-contracts")
 
+    def test_help_page_redirects_to_login_when_not_authenticated(self):
+        """使用說明頁（2026-09-18 新增）跟 /client-contracts 共用同一個
+        _require_access。"""
+        resp = self.client.get("/client-contracts/help", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/client-contracts")
+
     def test_submit_redirects_to_login_when_not_authenticated(self):
         resp = self.client.post("/client-contracts/new", data={}, follow_redirects=False)
         self.assertEqual(resp.status_code, 303)
