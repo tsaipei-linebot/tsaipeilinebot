@@ -770,11 +770,13 @@ const EmailService = {
         { label: '實補金額（撥款總計）', value: `NT$ ${Number(record.netTotal || 0).toLocaleString()}`, bg: '#fffbeb', color: '#b45309' }
       ];
       summaryCells.forEach(item => {
-        const cell = summaryRow.appendTableCell('');
+        // 建立儲存格時直接帶入文字（不要先建空字串儲存格再回頭抓段落設定，
+        // 那樣 Google Docs 服務會回傳 null，導致後續設定樣式時噴錯）
+        const cell = summaryRow.appendTableCell(item.label);
         cell.setBackgroundColor(item.bg);
         cell.setPaddingTop(8).setPaddingBottom(8);
         const labelPara = cell.getChild(0).asParagraph();
-        labelPara.setText(item.label).setFontSize(9).setForegroundColor('#64748b')
+        labelPara.setFontSize(9).setForegroundColor('#64748b')
           .setAlignment(DocumentApp.HorizontalAlignment.CENTER);
         const valuePara = cell.appendParagraph(item.value);
         valuePara.setFontSize(14).setBold(true).setForegroundColor(item.color)
