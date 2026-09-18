@@ -22,7 +22,7 @@ repository.list_vehicles() 撈出全部車輛再傳進來。
 """
 from datetime import date
 
-from delivery.config import SERVICE_AREAS, VENDORS
+from delivery.config import VENDORS
 
 _UNASSIGNED_AREA_LABEL = "未分區"
 
@@ -38,31 +38,41 @@ def _status_counts(vehicles: list) -> dict:
     return counts
 
 
-def _region_breakdown(vehicles: list) -> list:
-    """回傳 [(地區名稱, counts_dict), ...]，依 SERVICE_AREAS 宣告順序排列；
-    完全沒有車輛的地區直接跳過。如果有車輛沒設定服務區域（例如這個欄位
-    新增之前建立的舊資料，還沒被管理員補上），額外補一行「未分區」放在
-    最後，確保總數對得起來、不會有車輛悄悄從報告裡消失。"""
-    by_area_code = {}
+def _region_breakdown(vehicles: list, service_areas: list) -> list:
+    """回傳 [(地區名稱, counts_dict), ...]，依 service_areas 這個清單的順序
+    排列（呼叫端從 repository.list_vehicle_service_areas() 查來、依名稱排序
+    後傳進來——這個函式本身不碰 Firestore，維持純函式方便測試）；完全沒有
+    車輛的地區直接跳過。如果有車輛沒設定服務區域（例如這個欄位新增之前
+    建立的舊資料，還沒被管理員補上；或指到一個後來被刪除的服務區域），
+    額外補一行「未分區」放在最後，確保總數對得起來、不會有車輛悄悄從
+    報告裡消失。"""
+    by_area_id = {}
+    known_area_ids = {area["id"] for area in service_areas}
     for vehicle in vehicles:
-        area_code = vehicle.get("service_area", "")
-        by_area_code.setdefault(area_code, []).append(vehicle)
+        area_id = vehicle.get("service_area", "")
+        if area_id not in known_area_ids:
+            area_id = ""
+        by_area_id.setdefault(area_id, []).append(vehicle)
 
     result = []
-    for area in SERVICE_AREAS:
-        area_vehicles = by_area_code.get(area["code"], [])
+    for area in service_areas:
+        area_vehicles = by_area_id.get(area["id"], [])
         if area_vehicles:
             result.append((area["name"], _status_counts(area_vehicles)))
 
-    unassigned = by_area_code.get("", [])
+    unassigned = by_area_id.get("", [])
     if unassigned:
         result.append((_UNASSIGNED_AREA_LABEL, _status_counts(unassigned)))
     return result
 
 
-def build_vendor_fleet_report(vendor_name: str, vehicles: list, today: date = None) -> str:
+def build_vendor_fleet_report(vendor_name: str, vehicles: list, service_areas: list, today: date = None) -> str:
     """單一廠商的車輛現況報告文字。vehicles 需已經是篩選過、只含這個廠商
-    的車輛清單（呼叫端負責分好，這裡不再依廠商過濾）。"""
+    的車輛清單（呼叫端負責分好，這裡不再依廠商過濾）。service_areas 是
+    repository.list_vehicle_service_areas(include_inactive=True) 查來的
+    服務區域清單——這裡用 include_inactive=True 是刻意的，已經停用的服務
+    區域底下如果還有車輛，報告要照樣顯示這個區域的名稱，不能因為停用就
+    讓這些車輛的地區資訊消失、掉進「未分區」。"""
     today = today or date.today()
     counts = _status_counts(vehicles)
     lines = [
@@ -75,7 +85,7 @@ def build_vendor_fleet_report(vendor_name: str, vehicles: list, today: date = No
         "",
         "地區分布：",
     ]
-    for area_name, area_counts in _region_breakdown(vehicles):
+    for area_name, area_counts in _region_breakdown(vehicles, service_areas):
         area_total = area_counts["available"] + area_counts["in_use"] + area_counts["maintenance"]
         lines.append(
             f"・{area_name}：共{area_total}台／空車{area_counts['available']}／"
@@ -84,11 +94,11 @@ def build_vendor_fleet_report(vendor_name: str, vehicles: list, today: date = No
     return "\n".join(lines)
 
 
-def build_fleet_status_report(all_vehicles: list, today: date = None) -> str:
+def build_fleet_status_report(all_vehicles: list, service_areas: list, today: date = None) -> str:
     """全部廠商的車輛現況報告，依 VENDORS 宣告順序，每個廠商各自一段、
     中間空一行分隔；完全沒有車輛的廠商直接跳過，不產生空段落。整個系統
     目前沒有任何車輛資料時回傳提示文字，不回傳空字串（避免呼叫端誤判成
-    程式出錯）。"""
+    程式出錯）。service_areas 直接轉傳給 build_vendor_fleet_report()。"""
     if not all_vehicles:
         return EMPTY_REPORT_MESSAGE
 
@@ -100,7 +110,7 @@ def build_fleet_status_report(all_vehicles: list, today: date = None) -> str:
     for vendor in VENDORS:
         vendor_vehicles = by_vendor_code.get(vendor["code"], [])
         if vendor_vehicles:
-            blocks.append(build_vendor_fleet_report(vendor["name"], vendor_vehicles, today=today))
+            blocks.append(build_vendor_fleet_report(vendor["name"], vendor_vehicles, service_areas, today=today))
 
     if not blocks:
         return EMPTY_REPORT_MESSAGE

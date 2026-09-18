@@ -6034,3 +6034,90 @@ discover -s tests -p "test_*.py"`）1432 個全數通過。
 裝備，畫面會跳出提醒視窗（純提醒，還是可以繼續存檔）；如果已經是
 離職狀態、裝備還沒追回，頁面上方也會有常駐的警告文字，直到裝備歸還
 或核銷/買斷結案才會消失。
+
+## 配送部系統：車輛管理的服務區域改成主管可自行新增/停用（2026-09-18）
+
+使用者要求：車輛管理的服務區域需要能自行增減，不要再像原本那樣寫死在
+`config.py`、拓點到新縣市就要找 Claude 加代碼。改成跟裝備借還管理的
+品項/放置點同一套「動態清單」設計：存 Firestore
+（`delivery_vehicle_service_areas`），主管可以在網頁上自行新增/停用/
+（無歷史紀錄時）刪除，不用改程式碼。
+
+- `delivery/db.py`：新增 `VEHICLE_SERVICE_AREAS_COLLECTION` 跟
+  `vehicle_service_areas_ref()`。
+- `delivery/repository.py`「車輛服務區域管理」那節：
+  `list_vehicle_service_areas()`／`get_vehicle_service_area()`／
+  `create_vehicle_service_area()`／`set_vehicle_service_area_active()`／
+  `vehicle_service_area_has_history()`／`delete_vehicle_service_area()`，
+  完全比照裝備品項/放置點的「停用不刪除，除非完全沒有車輛在用」設計。
+  `set_vehicle_service_area()`（車輛詳細頁的更新入口）驗證邏輯改成查
+  `get_vehicle_service_area()` 存不存在，不再查固定的 `SERVICE_AREA_MAP`。
+- `delivery/config.py`：移除 `SERVICE_AREAS`／`SERVICE_AREA_MAP` 這兩個
+  固定清單常數。
+- `delivery/vehicle_status_report.py`：`_region_breakdown()`／
+  `build_vendor_fleet_report()`／`build_fleet_status_report()` 這幾個
+  純函式不再自己 import `SERVICE_AREAS`，改成由呼叫端（
+  `vehicle_routes.vehicle_status_report_page()`）傳入
+  `repository.list_vehicle_service_areas(include_inactive=True)` 查來的
+  清單——**故意包含已停用的服務區域**，這樣即使某個服務區域後來被停用，
+  底下如果還掛著車輛，報告照樣能顯示正確的區域名稱，不會被硬塞進
+  「未分區」。
+- `delivery/routes/vehicle_routes.py`：新增
+  `/vehicles/service-areas`（管理頁，限管理員）、
+  `/vehicles/service-areas/new`、`/vehicles/service-areas/{id}/active`、
+  `/vehicles/service-areas/{id}/delete`，跟 `/vehicles/status-report`
+  一樣要註冊在 `/vehicles/{vehicle_no}` 之前，不然會被當成車號吃掉。
+  車輛清單/新增/詳細頁的服務區域下拉選單改用
+  `repository.list_vehicle_service_areas()`（只列啟用中的），畫面上顯示
+  名稱時額外用 `include_inactive=True` 查一份 id→name 對照表，確保車輛
+  目前指到的服務區域即使已經停用，畫面上還是能正確顯示名稱，不會顯示
+  成「未設定」。
+- 樣板：`vehicle_list.html`／`vehicle_form.html`／`vehicle_detail.html`
+  的下拉選單/顯示邏輯，`a.code` 全部改成 `a.id`（服務區域現在用
+  Firestore 文件 ID 當識別碼，不再是英文代號）；新增
+  `vehicle_service_areas.html`（管理頁，樣式比照
+  `equipment_locations.html`）；`vehicle_list.html` 頁首新增「服務區域
+  管理」按鈕（限管理員）。
+
+### 既有資料怎麼辦：一次性遷移腳本
+
+既有車輛的 `service_area` 欄位存的是舊代碼（`"taipei"`／`"new_taipei"`
+…），改版後如果 Firestore 裡完全沒有服務區域資料，這些舊代碼會顯示成
+「未設定」（不是資料不見了，只是查不到對應名稱）。新增
+`scripts/seed_vehicle_service_areas.py`，把原本 7 個服務區域**用跟舊
+代碼完全相同的文件 ID** 建進 Firestore，既有車輛資料完全不用搬移，
+建立完成後就能立刻正確顯示名稱。這支腳本可以放心重複執行——已經存在
+的服務區域（例如主管已經手動改過名稱）會直接跳過，不會覆蓋。
+
+### 測試
+
+`tests/test_delivery_vehicle_service_areas.py`（新檔案）：
+`list/get/create/set_active/has_history/delete_vehicle_service_area()`
+的各種情境、`set_vehicle_service_area()` 改用動態查詢後的驗證邏輯、
+服務區域管理路由（限管理員）。`tests/test_seed_vehicle_service_areas.py`
+（新檔案）：遷移腳本的規劃邏輯（已存在的服務區域會跳過、不會覆蓋）。
+`tests/test_delivery_vehicle_status_report.py`／
+`tests/test_delivery_vehicle_routes.py`：既有測試改成明確傳入
+`service_areas` 參數/mock 動態查詢，確保報告排序/名稱行為不變。全部
+測試（`python3 -m unittest discover -s tests -p "test_*.py"`）1454 個
+全數通過。
+
+### 使用者需要知道的事：部署後要手動跑一次遷移腳本
+
+**這次有一個手動步驟，一定要做，不然車輛列表/報告會暫時看不到服務
+區域名稱**：合併部署完成後，請用有 GCP 憑證的環境（例如 Google Cloud
+Shell）依序執行：
+
+```bash
+git pull
+python -m scripts.seed_vehicle_service_areas
+```
+
+腳本會先列出即將新增的 7 個服務區域（台北、新北、桃園、新竹、台中、
+台南、高雄），輸入 `yes` 才會真的寫入。跑完之後，車輛列表/詳細頁/
+「一鍵整理車輛狀況」報告就會恢復正常顯示，既有車輛的服務區域資料
+完全不受影響。
+
+跑完遷移腳本後，之後如果要新增/停用/刪除服務區域（例如公司拓點到新
+縣市），直接到「車輛管理」→「服務區域管理」網頁上操作即可，不用再
+找我加代碼。
