@@ -5,6 +5,9 @@
     <h1 class="page-title">{{ vendor_name }} - 人員缺件狀況</h1>
     <div class="btn-list" style="flex-direction: row;">
         <a class="btn" href="/delivery/import">批次匯入</a>
+        {% if user.role == "admin" %}
+        <a class="btn" href="/delivery/cooperation-types">合作方式管理</a>
+        {% endif %}
         <a class="btn btn-primary" href="/delivery/vendor/{{ vendor_code }}/new">新增人員</a>
     </div>
 </div>

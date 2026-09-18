@@ -46,10 +46,11 @@ DELIVERY_NOTIFY_WEBHOOK_SECRET = os.getenv("DELIVERY_NOTIFY_WEBHOOK_SECRET", "")
 # 改任何欄位值，畫面上顯示的名稱自動變成新名稱），另外三個是全新代碼。
 # 拆分後這三個新代碼底下的人員，應備文件/保險規則直接綁代碼本身
 # （見下面 DOC_TYPES 的 shopee_contract_*／shopee_employed_own_car_*
-# 那幾項），不再像「蝦皮三輪」那樣要另外選「合作方式」才能決定——「合作
-# 方式」下拉選單只保留給 "shopee" 這個代碼用（COOPERATION_TYPE_VENDORS
-# 沒有一併把三個新代碼加進去），純粹是為了不去動既有「蝦皮」人員資料
-# 尚未被同仁手動改分類前的既有行為，見 HANDOFF.md 的說明。
+# 那幾項），不再像「蝦皮三輪」那樣要另外選「合作方式」才能決定——這三個
+# 新代碼當初刻意沒有被加進合作方式適用的廠商清單（那份清單 2026-09-18
+# 起已經改成動態清單，見下面合作方式那節的說明；這裡只是保留原始決策的
+# 脈絡），純粹是為了不去動既有「蝦皮」人員資料尚未被同仁手動改分類前的
+# 既有行為，見 HANDOFF.md 的說明。
 #
 # 已知限制（不是這裡的程式碼能處理的）：應徵名單目前是由外部 Google
 # 表單自己的 Apps Script 觸發器寫死帶 vendor="shopee" 過來（見
@@ -59,8 +60,8 @@ DELIVERY_NOTIFY_WEBHOOK_SECRET = os.getenv("DELIVERY_NOTIFY_WEBHOOK_SECRET", "")
 #
 # 2026-09-14：新增「蝦皮三輪速配倉」（代碼 shopee_speed_warehouse），使用者
 # 確認這批人員的應備文件/保險規則要跟「蝦皮三輪」（shopee）完全一樣——
-# 不是像上面三個新代碼那樣直接綁代碼本身，而是比照 "shopee" 也放進下面的
-# COOPERATION_TYPE_VENDORS、以及 DOC_TYPES 裡 police_clearance 的
+# 不是像上面三個新代碼那樣直接綁代碼本身，而是比照 "shopee" 也放進合作
+# 方式適用的廠商清單、以及 DOC_TYPES 裡 police_clearance 的
 # exclude_vendors，靠「合作方式」欄位決定保險規則。純粹是為了讓這批人員
 # 在系統裡（人員清單、車輛、意外事件）用獨立的廠商代碼分開追蹤，不是要
 # 另外訂一套不一樣的文件規則。
@@ -82,13 +83,22 @@ for _v in VENDORS:
     VENDOR_LOOKUP[_v["code"].lower()] = _v["code"]
     VENDOR_LOOKUP[_v["name"].lower()] = _v["code"]
 
-# 合作方式：決定這個人除了基本項目之外還要備哪些保險/證明文件。
-COOPERATION_TYPES = [
-    {"code": "two_wheel_contract", "name": "二輪承攬"},
-    {"code": "two_wheel_employed", "name": "二輪雇傭"},
-    {"code": "three_wheel_employed", "name": "三輪雇傭"},
-]
-COOPERATION_TYPE_MAP = {c["code"]: c["name"] for c in COOPERATION_TYPES}
+# 合作方式：決定這個人除了基本項目之外還要備哪些保險/證明文件。2026-09-18
+# 起改成主管可自行在「合作方式管理」頁面維護的動態清單（存 Firestore，見
+# repository.py「合作方式管理」那節），不再是這裡的固定清單——使用者要求
+# 除了蝦皮三輪/速配倉，UD/UC/順豐等其他廠商也要能設定自己的合作方式選項，
+# 而且同一個選項可以勾選套用到多個廠商（例如蝦皮三輪跟蝦皮三輪速配倉繼續
+# 共用同一份，其他廠商各自獨立）。
+#
+# **既有的 3 個選項（二輪承攬/二輪雇傭/三輪雇傭）刻意保留跟以前完全相同的
+# 文件 ID**（"two_wheel_contract"／"two_wheel_employed"／
+# "three_wheel_employed"，見 scripts/seed_cooperation_types.py 遷移腳本）：
+# 下面 DOC_TYPES 的 `cooperation_types` 篩選欄位、
+# TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES 都還在直接比對這幾個固定
+# 字串，只要新建的 Firestore 文件 ID 跟舊代碼一模一樣，這些既有的保險/
+# 試駕判斷邏輯完全不用改、既有人員資料也不用搬移。之後主管在「合作方式
+# 管理」頁面新增的其他選項，會拿到 Firestore 自動產生的新 ID，不會跟這
+# 三個固定判斷邏輯衝突（因為那些邏輯只認得這三個舊代碼字串本身）。
 
 # 負責客戶：目前只有 UD 的人員會用到（決定要不要多備 MOMO 測驗），但欄位本身
 # 不綁死在特定廠商上，之後其他廠商如果也分客戶，不用改架構。
@@ -98,18 +108,11 @@ CLIENTS = [
 ]
 CLIENT_MAP = {c["code"]: c["name"] for c in CLIENTS}
 
-# 哪些廠商的人員詳細頁要顯示「合作方式」「負責客戶」這兩個選單。這兩個欄位
-# 本身是全域欄位（值不因廠商而異），但畫面上只有真的會用到的廠商才顯示，
-# 避免同仁在用不到的廠商頁面上看到無意義的選單。
-#
-# 2026-09-13 蝦皮廠商拆分後，"shopee_company_car"／"shopee_employed_own_car"／
-# "shopee_contract" 這三個新代碼刻意沒有加進來：這三個代碼本身已經講清楚
-# 雇用/承攬關係跟保險規則（見 DOC_TYPES），不需要再選一次「合作方式」；
-# 只有 "shopee"（改名後的「蝦皮三輪」）維持原本的行為，讓還沒被同仁手動
-# 改分類到新代碼的既有蝦皮人員資料不受影響。"shopee_speed_warehouse"
-# （蝦皮三輪速配倉，2026-09-14 新增）刻意跟 "shopee" 用同一套規則，所以
-# 也加在這裡。
-COOPERATION_TYPE_VENDORS = ["shopee", "shopee_speed_warehouse"]
+# 哪些廠商的人員詳細頁要顯示「負責客戶」選單。這個欄位是全域欄位（值不因
+# 廠商而異），但畫面上只有真的會用到的廠商才顯示，避免同仁在用不到的廠商
+# 頁面上看到無意義的選單。「合作方式」選單改成動態清單後，哪些廠商看得到
+# 選單改成看 repository.list_cooperation_types(vendor=...) 有沒有資料
+# 決定，不再需要另外一份固定的廠商清單（見上面的說明）。
 CLIENT_VENDORS = ["ud"]
 
 # 報到前應備文件（人員缺件狀況即依此清單逐項檢查）。每一項的 kind 決定要怎麼
@@ -164,11 +167,12 @@ DOC_TYPES = [
         "cooperation_types": ["two_wheel_employed"],
     },
     # 蝦皮承攬／蝦皮二輪雇傭自備車專屬（2026-09-13 蝦皮廠商拆分後新增）：
-    # 這兩個是全新的廠商代碼，不會有「合作方式」欄位可以選（見上面
-    # VENDORS 的說明），保險規則直接綁廠商代碼本身，跟下面順豐的
-    # sf_insurance／sf_guild_insurance 是同一種寫法。「蝦皮二輪公司車」
-    # 依使用者確認，強制險等保險文件由公司統一投保，不需要同仁個人上傳，
-    # 所以沒有對應的項目。
+    # 這兩個代碼本身已經講清楚雇用/承攬關係，保險規則直接綁廠商代碼本身
+    # （不看合作方式），跟下面順豐的 sf_insurance／sf_guild_insurance 是
+    # 同一種寫法——即使 2026-09-18 起合作方式選單開放給全部廠商設定，這
+    # 兩個代碼的保險判斷邏輯還是不看合作方式欄位，維持原本的行為。「蝦皮
+    # 二輪公司車」依使用者確認，強制險等保險文件由公司統一投保，不需要
+    # 同仁個人上傳，所以沒有對應的項目。
     {
         "code": "shopee_contract_insurance",
         "name": "強制險",
@@ -324,11 +328,10 @@ WORKDAY_HOURS = 8
 LEAVE_QUOTA_ALERT_RATIO = 0.9
 
 # 應徵名單的廠商/合作方式：跟人員的 vendor/cooperation_type 是同一套代碼，
-# 沿用 VENDOR_MAP / COOPERATION_TYPE_MAP。應徵階段沒表單欄位可以填廠商，
-# 是由送出 webhook 的 Apps Script 各自帶固定的廠商代碼過來（見
+# 合作方式一樣是 repository.list_cooperation_types() 查來的動態清單（跟
+# 人員詳細頁共用同一份資料）。應徵階段沒表單欄位可以填廠商，是由送出
+# webhook 的 Apps Script 各自帶固定的廠商代碼過來（見
 # routes/webhook_routes.py），畫面上保留讓同仁手動修改的權限。
-# 合作方式選單只在 COOPERATION_TYPE_VENDORS 這幾個廠商代碼的應徵者顯示
-# （蝦皮三輪、蝦皮三輪速配倉），跟人員詳細頁那個是同一份設定。
 
 # 試駕狀態：未試駕（預設）／通過／未通過。
 TEST_DRIVE_STATUSES = [
@@ -339,14 +342,12 @@ TEST_DRIVE_STATUSES = [
 TEST_DRIVE_STATUS_MAP = {s["code"]: s["name"] for s in TEST_DRIVE_STATUSES}
 DEFAULT_TEST_DRIVE_STATUS = "not_tested"
 
-# 哪些應徵者需要試駕：UD、UC 一律需要；COOPERATION_TYPE_VENDORS 這幾個廠商
-# （蝦皮三輪、蝦皮三輪速配倉）只有合作方式是「三輪雇傭」才需要（二輪承攬/
-# 二輪雇傭不用）；順豐不需要。
-# 2026-09-15：蝦皮三輪速配倉原本沒被算進試駕規則（只判斷 vendor=="shopee"），
-# 使用者確認要跟蝦皮三輪用同一套規則，改成判斷 vendor in COOPERATION_TYPE_VENDORS
-# （這兩個廠商本來就共用同一套合作方式/保險規則，見上面 COOPERATION_TYPE_VENDORS
-# 的說明）。判斷邏輯見 repository.applicant_needs_test_drive()，這裡只放組成
-# 判斷用的資料。
+# 哪些應徵者需要試駕：UD、UC 一律需要；合作方式選了「三輪雇傭」（不分
+# 哪個廠商）也需要——目前只有蝦皮三輪/速配倉會用到「三輪雇傭」這個選項，
+# 但判斷邏輯本身（repository.applicant_needs_test_drive()）已經不再看
+# 廠商代碼，只看合作方式的值是不是「three_wheel_employed」這個固定 ID，
+# 這個 ID 是遷移腳本刻意保留下來的（見上面合作方式那節的說明），不會因為
+# 合作方式改成動態清單而失效。
 TEST_DRIVE_REQUIRED_VENDORS = ["ud", "uc"]
 TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES = ["three_wheel_employed"]
 
@@ -380,24 +381,15 @@ WHEEL_TYPES = [
 WHEEL_TYPE_MAP = {w["code"]: w["name"] for w in WHEEL_TYPES}
 DEFAULT_WHEEL_TYPE = "three_wheel"
 
-# 服務區域（車輛實際派駐/服務的縣市）：2026-09-14 新增，給「一鍵整理車輛
-# 狀況」報告（見 delivery/vehicle_status_report.py）分區統計用。固定清單
-# （不開放自由輸入文字）是刻意的：同仁自己打字容易「台北」跟「台北市」
-# 這種寫法不一致，分區統計就會對不起來。新增車輛時必填（沒有像輪別那樣
-# 的通用預設值可以套），既有車輛（這個欄位還沒存在之前建立的舊資料）
-# 讀取時當成空字串，報告裡會歸類到「未分區」，不會悄悄消失，管理員可以
-# 之後在車輛詳細頁個別補上。之後公司拓點到清單外的縣市，需要請 Claude
-# 加代碼進這個清單，不是同仁自己能在網頁上新增的欄位。
-SERVICE_AREAS = [
-    {"code": "taipei", "name": "台北"},
-    {"code": "new_taipei", "name": "新北"},
-    {"code": "taoyuan", "name": "桃園"},
-    {"code": "hsinchu", "name": "新竹"},
-    {"code": "taichung", "name": "台中"},
-    {"code": "tainan", "name": "台南"},
-    {"code": "kaohsiung", "name": "高雄"},
-]
-SERVICE_AREA_MAP = {a["code"]: a["name"] for a in SERVICE_AREAS}
+# 服務區域（車輛實際派駐/服務的縣市）：給「一鍵整理車輛狀況」報告（見
+# delivery/vehicle_status_report.py）分區統計用。2026-09-14 新增時是寫死
+# 在這裡的固定清單，2026-09-18 改成主管可以自行在網頁上新增/停用的動態
+# 清單（存 Firestore，見 repository.py「車輛服務區域管理」那節），跟裝備
+# 借還管理的品項/放置點是同一套「動態清單」設計——不再需要公司拓點到新
+# 縣市時特地找 Claude 加代碼。既有車輛的 service_area 欄位存的是舊代碼
+# （"taipei"／"new_taipei"…），改版時用 scripts/seed_vehicle_service_areas.py
+# 把這些舊代碼原封不動建成 Firestore 文件的「文件 ID」，確保既有車輛資料
+# 不需要搬移，讀取時一樣能對應到正確的服務區域名稱。
 
 # ==========================================
 # 意外事件回報

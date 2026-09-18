@@ -36,5 +36,40 @@ class FetchSheetTabsTests(unittest.TestCase):
         self.assertIn("SALESDEV_SHEET_ID", error)
 
 
+class ColIndexToLetterTests(unittest.TestCase):
+    """2026-09-17 新增：「勾選要反查」功能要把 0-indexed 的欄位位置換成
+    Google Sheets 的欄位字母（A1 表示法）才能組出要讀寫的儲存格範圍。"""
+
+    def test_single_letter_columns(self):
+        self.assertEqual(svc._col_index_to_letter(0), "A")
+        self.assertEqual(svc._col_index_to_letter(25), "Z")
+
+    def test_double_letter_columns(self):
+        self.assertEqual(svc._col_index_to_letter(26), "AA")
+        self.assertEqual(svc._col_index_to_letter(27), "AB")
+        self.assertEqual(svc._col_index_to_letter(51), "AZ")
+
+
+class MarkRowsSelectedForReverseLookupTests(unittest.TestCase):
+    """實際打 Google Sheets API 的路徑（含批次讀取目前狀態、批次寫回）留給
+    有 GCP 憑證的環境做整合測試，這裡只測試不需要網路連線就能確定行為的
+    部分。"""
+
+    def test_no_row_numbers_returns_zero_without_calling_api(self):
+        count, error = svc.mark_rows_selected_for_reverse_lookup("Leads", [])
+        self.assertEqual(count, 0)
+        self.assertIsNone(error)
+
+    def test_returns_friendly_error_when_sheet_id_not_configured(self):
+        original = svc.SALESDEV_SHEET_ID
+        svc.SALESDEV_SHEET_ID = ""
+        try:
+            count, error = svc.mark_rows_selected_for_reverse_lookup("Leads", [2, 3])
+        finally:
+            svc.SALESDEV_SHEET_ID = original
+        self.assertEqual(count, 0)
+        self.assertIn("SALESDEV_SHEET_ID", error)
+
+
 if __name__ == "__main__":
     unittest.main()

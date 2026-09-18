@@ -26,7 +26,7 @@
         <select name="service_area" required>
             <option value="">請選擇</option>
             {% for a in service_areas %}
-            <option value="{{ a.code }}">{{ a.name }}</option>
+            <option value="{{ a.id }}">{{ a.name }}</option>
             {% endfor %}
         </select>
     </label>

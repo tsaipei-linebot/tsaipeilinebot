@@ -5,14 +5,22 @@
 權限管理，登入 /portal 的每個人都看得到那張卡片——差別只在有沒有幫他
 對應到職缺系統的自動登入身分（見 job_portal_sso.py），比對得到就直接
 免登入進去，比對不到就照舊導去手動輸入姓名/PIN 的畫面，不會擋人。
+
+**公告管理**（2026-09-18 新增，見 platform_announcements.py 開頭的說明）：
+`/announcements` 系列路由，全平台管理員可以自行發佈全公司公告，顯示在
+/portal 最上方，任何登入的帳號都看得到同一份，不像卡片本身要依模組權限
+篩選。
 """
 import hmac
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 import job_portal_sso
 import platform_accounts
+import platform_announcements
+from platform_announcements import ANNOUNCEMENT_DEFAULT_DAYS
 from platform_templating import templates
 
 router = APIRouter()
@@ -21,15 +29,26 @@ router = APIRouter()
 # platform_accounts.MODULES 多一筆之外，這裡也要補一筆對應的顯示內容，
 # 不然新模組雖然有權限但卡片會找不到說明文字（見 portal_home() 的
 # fallback：找不到就用空字串，不會噴錯，只是畫面比較陽春）。
+#
+# help_href（2026-09-18 新增）：這個模組有沒有寫好「使用說明」頁面。
+# 卡片上會多顯示一個「使用說明」按鈕，連去該模組自己的說明頁（不是共用
+# 一頁，因為每個模組的操作內容差很多）；說明頁本身也是掛在該模組自己的
+# 子系統底下、走該模組自己的 login_required，跟這裡卡片顯示不顯示是
+# 同一組權限判斷，不會有「按鈕沒有但網址還是進得去」的落差。沒有
+# help_href 的模組（還沒寫說明頁）卡片上就不會顯示這個按鈕——之後每寫好
+# 一個模組的說明頁，這裡補上對應的 URL 即可。
 _MODULE_CARD_INFO = {
     "delivery": {
         "description": "廠商人員管理、應徵名單、補款假別、車輛與意外事件回報",
+        "help_href": "/delivery/help",
     },
     "management": {
         "description": "公告事項、會議記錄、規章/SOP 文件庫、業績報表、客戶拜訪、員工名冊、資產設備",
+        "help_href": "/management/help",
     },
     "hr": {
         "description": "意外通報、體檢報告、員工關懷、公司證照、教育訓練彙整",
+        "help_href": "/hr/help",
     },
     "salesdev": {
         "description": "派遣客戶開發名單、新登記工廠監控彙整",
@@ -37,36 +56,42 @@ _MODULE_CARD_INFO = {
         # 這個模組直接掛在根 app 上（見 salesdev_routes.py），沒有獨立的
         # 登入頁，卡片直接連過去即可。
         "href": "/salesdev",
+        "help_href": "/salesdev/help",
     },
     "job_listings": {
         "description": "新增/維護職缺，送審後同步 Notion 職缺資料庫、官網與招募機器人",
         # 跟 salesdev 一樣直接掛在根 app（見 job_listing_routes.py），
         # 沒有獨立的登入頁。
         "href": "/job-listings",
+        "help_href": "/job-listings/help",
     },
     "project_contracts": {
         "description": "提報新的專案合作廠商資訊，上傳合約檔案後自動寄送人資與財務單位",
         # 跟 job_listings 一樣直接掛在根 app（見 project_contract_routes.py），
         # 沒有獨立的登入頁。
         "href": "/project-contracts",
+        "help_href": "/project-contracts/help",
     },
     "chicken_points": {
         "description": "同仁自費購買小雞點數，線上填單、手指簽名送出，會計登入查看紀錄",
         # 跟 job_listings 一樣直接掛在根 app（見 chicken_points_routes.py），
         # 沒有獨立的登入頁。
         "href": "/chicken-points",
+        "help_href": "/chicken-points/help",
     },
     "dispatch_contracts": {
         "description": "填入客戶的班別/薪資/工作條件，自動套版產生派遣契約 Word 檔並存檔",
         # 跟 job_listings 一樣直接掛在根 app（見 dispatch_contract_routes.py），
         # 沒有獨立的登入頁。
         "href": "/dispatch-contracts",
+        "help_href": "/dispatch-contracts/help",
     },
     "client_contracts": {
         "description": "填入客戶公司資料、合約期間與費率，自動套版產生企業服務合約 Word 檔並存檔",
         # 跟 job_listings 一樣直接掛在根 app（見 client_contract_routes.py），
         # 沒有獨立的登入頁。
         "href": "/client-contracts",
+        "help_href": "/client-contracts/help",
     },
 }
 
@@ -75,6 +100,14 @@ def _require_login(request: Request):
     if not platform_accounts.current_account(request):
         return RedirectResponse(url="/login?next=/portal", status_code=303)
     return None
+
+
+def _with_display_date(announcement: dict) -> dict:
+    return {
+        **announcement,
+        "created_at_display": datetime.fromtimestamp(announcement.get("created_at", 0)).strftime("%Y-%m-%d"),
+        "expires_at_display": datetime.fromtimestamp(announcement.get("expires_at", 0)).strftime("%Y-%m-%d"),
+    }
 
 
 @router.get("/portal")
@@ -92,6 +125,7 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
                 "name": module["name"],
                 "description": info.get("description", ""),
                 "href": info.get("href", f"/{module['code']}/login"),
+                "help_href": info.get("help_href", ""),
             }
         )
     return templates.TemplateResponse(
@@ -101,8 +135,70 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
             "user": account,
             "cards": cards,
             "job_listing_url": job_portal_sso.JOB_LISTING_BASE_URL,
+            "announcements": [_with_display_date(a) for a in platform_announcements.list_active_announcements()],
         },
     )
+
+
+@router.get("/announcements")
+def announcements_page(request: Request, redirect=Depends(platform_accounts.require_platform_admin)):
+    """全公司公告管理，限全平台管理員（2026-09-18 新增，見
+    platform_announcements.py 開頭的說明：這是全公司層級的公告，不是任何
+    單一部門模組的功能）。"""
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(
+        request,
+        "announcements.html",
+        {
+            "user": platform_accounts.current_account(request),
+            "announcements": [_with_display_date(a) for a in platform_announcements.list_announcements()],
+            "default_days": ANNOUNCEMENT_DEFAULT_DAYS,
+            "error": "",
+        },
+    )
+
+
+@router.post("/announcements/new")
+def create_announcement_submit(
+    request: Request,
+    title: str = Form(...),
+    content: str = Form(""),
+    days: int = Form(ANNOUNCEMENT_DEFAULT_DAYS),
+    redirect=Depends(platform_accounts.require_platform_admin),
+):
+    if redirect:
+        return redirect
+    title = title.strip()
+    if title:
+        account = platform_accounts.current_account(request)
+        platform_announcements.create_announcement(
+            title, content.strip(), created_by=account["username"], days=days if days > 0 else ANNOUNCEMENT_DEFAULT_DAYS
+        )
+    return RedirectResponse(url="/announcements", status_code=303)
+
+
+@router.post("/announcements/{announcement_id}/active")
+def toggle_announcement_active(
+    announcement_id: str,
+    request: Request,
+    active: str = Form(...),
+    redirect=Depends(platform_accounts.require_platform_admin),
+):
+    if redirect:
+        return redirect
+    platform_announcements.set_announcement_active(announcement_id, active == "1")
+    return RedirectResponse(url="/announcements", status_code=303)
+
+
+@router.post("/announcements/{announcement_id}/delete")
+def delete_announcement_submit(
+    announcement_id: str, request: Request, redirect=Depends(platform_accounts.require_platform_admin)
+):
+    if redirect:
+        return redirect
+    platform_announcements.delete_announcement(announcement_id)
+    return RedirectResponse(url="/announcements", status_code=303)
 
 
 @router.get("/portal/job-system-login")

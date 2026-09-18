@@ -1,6 +1,8 @@
 import os
 import sys
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -37,6 +39,26 @@ class PortalPageTests(unittest.TestCase):
         resp = self.client.get("/portal/job-system-login", follow_redirects=False)
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/portal")
+
+
+class AnnouncementRoutingSmokeTests(unittest.TestCase):
+    """/announcements 是全平台管理員專用的公告管理頁面（2026-09-18 新增），
+    跟 test_accounts_routes.py 的既有分工一致：只涵蓋不需要真的打 Firestore
+    的部分（未登入時的導向），需要模擬「已登入且是全平台管理員」才能測到
+    的頁面內容留給有 GCP 憑證的環境做整合測試。"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+
+    def test_announcements_page_redirects_to_portal_when_not_authenticated(self):
+        resp = self.client.get("/announcements", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/portal"))
+
+    def test_create_redirects_to_portal_when_not_authenticated(self):
+        resp = self.client.post("/announcements/new", data={"title": "x"}, follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/portal"))
 
 
 class JobSystemSsoExchangeTests(unittest.TestCase):
@@ -118,6 +140,109 @@ class RequireLoginDependencyTests(unittest.TestCase):
         account = {"username": "alice", "name": "Alice", "modules": {}, "is_platform_admin": False}
         result = portal_routes._require_login(self._FakeRequest(account))
         self.assertIsNone(result)
+
+
+class _FakeSession(dict):
+    def get(self, key, default=None):
+        return dict.get(self, key, default)
+
+
+class _FakeRequest:
+    def __init__(self, user=None):
+        self.session = _FakeSession()
+        if user is not None:
+            self.session["user"] = user
+
+
+def _admin_account():
+    return {"username": "boss", "name": "老闆", "modules": [], "is_platform_admin": True}
+
+
+class PortalHomeAnnouncementTests(unittest.TestCase):
+    """/portal 首頁把全公司公告（附加顯示用日期）傳給樣板，任何登入帳號
+    看到的都是同一份，不像卡片本身要依模組權限篩選（2026-09-18 新增）。"""
+
+    def test_passes_active_announcements_with_display_date(self):
+        now = time.time()
+        announcements = [
+            {"id": "a", "title": "標題", "content": "說明", "active": True, "created_at": now, "expires_at": now + 100}
+        ]
+        with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=announcements):
+            with mock.patch.object(portal_routes, "templates") as mock_templates:
+                portal_routes.portal_home(_FakeRequest(_admin_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["announcements"][0]["title"], "標題")
+        self.assertIn("created_at_display", context["announcements"][0])
+
+
+class PortalHomeHelpLinkTests(unittest.TestCase):
+    """/portal 卡片的「使用說明」按鈕（2026-09-18 新增，2026-09-18 擴大到
+    全部模組）：每個寫好說明頁的模組卡片都帶對應的 help_href。"""
+
+    def _cards(self):
+        with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=[]):
+            with mock.patch.object(portal_routes, "templates") as mock_templates:
+                portal_routes.portal_home(_FakeRequest(_admin_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        return {c["name"]: c for c in context["cards"]}
+
+    def test_all_modules_have_help_href(self):
+        cards = self._cards()
+        expected = {
+            "新北所(配送組)系統": "/delivery/help",
+            "管理部": "/management/help",
+            "人資專區": "/hr/help",
+            "少凱業務開發專區": "/salesdev/help",
+            "職缺維護": "/job-listings/help",
+            "專案合約維護": "/project-contracts/help",
+            "小雞點數自費申請": "/chicken-points/help",
+            "派遣契約產生器": "/dispatch-contracts/help",
+            "合約產生器": "/client-contracts/help",
+        }
+        for name, help_href in expected.items():
+            self.assertEqual(cards[name]["help_href"], help_href, name)
+
+
+class AnnouncementAdminRoutesTests(unittest.TestCase):
+    """公告管理路由（限全平台管理員）：直接呼叫路由函式，跳過
+    require_platform_admin 依賴（redirect=None 等同已通過檢查），
+    跟 test_accounts_routes.py 的既有測試風格一致。"""
+
+    def test_create_calls_platform_announcements(self):
+        with mock.patch.object(portal_routes.platform_announcements, "create_announcement") as mock_create:
+            resp = portal_routes.create_announcement_submit(
+                _FakeRequest(_admin_account()), title="標題", content="說明", days=7, redirect=None
+            )
+        mock_create.assert_called_once_with("標題", "說明", created_by="boss", days=7)
+        self.assertEqual(resp.status_code, 303)
+
+    def test_blank_title_is_ignored(self):
+        with mock.patch.object(portal_routes.platform_announcements, "create_announcement") as mock_create:
+            portal_routes.create_announcement_submit(
+                _FakeRequest(_admin_account()), title="   ", content="說明", days=7, redirect=None
+            )
+        mock_create.assert_not_called()
+
+    def test_non_positive_days_falls_back_to_default(self):
+        with mock.patch.object(portal_routes.platform_announcements, "create_announcement") as mock_create:
+            portal_routes.create_announcement_submit(
+                _FakeRequest(_admin_account()), title="標題", content="", days=0, redirect=None
+            )
+        mock_create.assert_called_once_with("標題", "", created_by="boss", days=portal_routes.ANNOUNCEMENT_DEFAULT_DAYS)
+
+    def test_toggle_active_calls_platform_announcements(self):
+        with mock.patch.object(portal_routes.platform_announcements, "set_announcement_active") as mock_set:
+            resp = portal_routes.toggle_announcement_active(
+                "a", _FakeRequest(_admin_account()), active="0", redirect=None
+            )
+        mock_set.assert_called_once_with("a", False)
+        self.assertEqual(resp.status_code, 303)
+
+    def test_delete_calls_platform_announcements(self):
+        with mock.patch.object(portal_routes.platform_announcements, "delete_announcement", return_value=True) as mock_delete:
+            resp = portal_routes.delete_announcement_submit("a", _FakeRequest(_admin_account()), redirect=None)
+        mock_delete.assert_called_once_with("a")
+        self.assertEqual(resp.status_code, 303)
 
 
 if __name__ == "__main__":

@@ -8,9 +8,6 @@ from delivery.config import (
     CLIENT_MAP,
     CLIENT_VENDORS,
     CLIENTS,
-    COOPERATION_TYPE_MAP,
-    COOPERATION_TYPE_VENDORS,
-    COOPERATION_TYPES,
     MAX_UPLOAD_BYTES,
     PERSONNEL_STATUS_BADGE_CLASS,
     PERSONNEL_STATUS_MAP,
@@ -96,9 +93,8 @@ def new_personnel_form(vendor_code: str, request: Request, redirect=Depends(logi
             "user": current_user(request),
             "vendor_code": vendor_code,
             "vendor_name": VENDOR_MAP[vendor_code],
-            "cooperation_types": COOPERATION_TYPES,
+            "cooperation_types": repository.list_cooperation_types(vendor=vendor_code),
             "clients": CLIENTS,
-            "show_cooperation_type": vendor_code in COOPERATION_TYPE_VENDORS,
             "show_client": vendor_code in CLIENT_VENDORS,
         },
     )
@@ -119,7 +115,8 @@ def create_personnel_submit(
         return redirect
     if vendor_code not in VENDOR_MAP:
         return RedirectResponse(url="/delivery/", status_code=303)
-    if cooperation_type not in COOPERATION_TYPE_MAP:
+    coop = repository.get_cooperation_type(cooperation_type)
+    if not coop or vendor_code not in coop.get("vendors", []):
         cooperation_type = ""
     if client not in CLIENT_MAP:
         client = ""
@@ -160,11 +157,10 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
             "person": person,
             "vendor_name": VENDOR_MAP.get(vendor_code, vendor_code),
             "vendors": VENDORS,
-            "cooperation_types": COOPERATION_TYPES,
+            "cooperation_types": repository.list_cooperation_types(vendor=vendor_code),
             "clients": CLIENTS,
             "personnel_statuses": PERSONNEL_STATUSES,
             "current_employment_status": repository.personnel_employment_status(person),
-            "show_cooperation_type": vendor_code in COOPERATION_TYPE_VENDORS,
             "show_client": vendor_code in CLIENT_VENDORS,
             "doc_statuses": repository.all_document_statuses(person),
             "storage_configured": is_configured(),
@@ -214,7 +210,7 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
     if "cooperation_type" in form:
         cooperation_type = form.get("cooperation_type", "")
         repository.update_personnel_cooperation_type(
-            personnel_id, cooperation_type if cooperation_type in COOPERATION_TYPE_MAP else ""
+            personnel_id, cooperation_type if repository.get_cooperation_type(cooperation_type) else ""
         )
 
     if "client" in form:
@@ -288,3 +284,65 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
     if old_vendor_code in VENDOR_MAP:
         return RedirectResponse(url=f"/delivery/vendor/{old_vendor_code}", status_code=303)
     return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
+
+
+@router.get("/cooperation-types")
+def cooperation_types_page(request: Request, redirect=Depends(admin_required)):
+    """合作方式管理，限管理員（2026-09-18 新增）——比照車輛服務區域管理
+    （vehicle_routes.py 的 service_areas_page），差別在於一筆合作方式可以
+    同時套用到多個廠商：蝦皮／蝦皮三輪速配倉需要繼續共用同一組合作方式
+    （見 repository.py「合作方式管理」段落的說明），因為 DOC_TYPES 的保險
+    文件規則、以及應徵名單的試駕規則，都是照 cooperation_type 這個字串值
+    本身判斷，不是照「廠商 + 合作方式」的組合。"""
+    if redirect:
+        return redirect
+    types = repository.list_cooperation_types(include_inactive=True)
+    for coop in types:
+        coop["has_history"] = repository.cooperation_type_has_history(coop["id"])
+    return templates.TemplateResponse(
+        request,
+        "cooperation_types.html",
+        {"user": current_user(request), "cooperation_types": types, "vendors": VENDORS, "error": ""},
+    )
+
+
+@router.post("/cooperation-types/new")
+async def create_cooperation_type_submit(request: Request, redirect=Depends(admin_required)):
+    if redirect:
+        return redirect
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    vendors = [v for v in form.getlist("vendors") if v in VENDOR_MAP]
+    if name:
+        repository.create_cooperation_type(name, vendors, created_by=current_user(request)["username"])
+    return RedirectResponse(url="/delivery/cooperation-types", status_code=303)
+
+
+@router.post("/cooperation-types/{type_id}/edit")
+async def edit_cooperation_type_submit(type_id: str, request: Request, redirect=Depends(admin_required)):
+    if redirect:
+        return redirect
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    vendors = [v for v in form.getlist("vendors") if v in VENDOR_MAP]
+    if name:
+        repository.update_cooperation_type(type_id, name, vendors)
+    return RedirectResponse(url="/delivery/cooperation-types", status_code=303)
+
+
+@router.post("/cooperation-types/{type_id}/active")
+def toggle_cooperation_type_active(
+    type_id: str, request: Request, active: str = Form(...), redirect=Depends(admin_required)
+):
+    if redirect:
+        return redirect
+    repository.set_cooperation_type_active(type_id, active == "1")
+    return RedirectResponse(url="/delivery/cooperation-types", status_code=303)
+
+
+@router.post("/cooperation-types/{type_id}/delete")
+def delete_cooperation_type_submit(type_id: str, request: Request, redirect=Depends(admin_required)):
+    if redirect:
+        return redirect
+    repository.delete_cooperation_type(type_id)
+    return RedirectResponse(url="/delivery/cooperation-types", status_code=303)

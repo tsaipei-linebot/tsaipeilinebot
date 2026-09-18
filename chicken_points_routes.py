@@ -89,6 +89,16 @@ def chicken_points_home(request: Request, submitted: str = "", deleted: str = ""
     )
 
 
+@router.get("/chicken-points/help")
+def chicken_points_help(request: Request, redirect=Depends(_require_access)):
+    """小雞點數自費申請使用說明（2026-09-18 新增）。跟 chicken_points_home()
+    一樣用 _require_access，跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組
+    權限判斷（見 portal_routes.py 的說明）。"""
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(request, "chicken_points_help.html", {"user": platform_accounts.current_account(request)})
+
+
 @router.post("/chicken-points/{request_id}/delete")
 def chicken_points_delete(request_id: str, redirect=Depends(_require_admin_access)):
     if redirect:

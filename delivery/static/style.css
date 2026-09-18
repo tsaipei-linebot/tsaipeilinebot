@@ -778,6 +778,33 @@ body {
 
 .empty { color: var(--muted); font-size: 14px; }
 
+/* 使用說明頁（templates/help.html）：一段一個功能區塊的說明文章排版。 */
+.help-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
+.help-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    scroll-margin-top: 16px;
+}
+.help-section h2 { margin: 0 0 6px; font-size: 18px; color: var(--ink); }
+.help-section p.hint { margin: 0 0 12px; }
+.help-section ul { margin: 0; padding-left: 20px; }
+.help-section li { margin-bottom: 8px; line-height: 1.6; font-size: 14px; }
+.help-section li:last-child { margin-bottom: 0; }
+
+.announcement-list { display: flex; flex-direction: column; gap: 10px; margin: 0 0 20px; }
+.announcement-card {
+    background: #eaf2fb;
+    color: #1e3a5f;
+    border-radius: 6px;
+    padding: 12px 16px;
+}
+.announcement-card .announcement-title { font-weight: 700; margin: 0 0 4px; }
+.announcement-card .announcement-content { font-size: 13px; line-height: 1.6; white-space: pre-line; }
+.announcement-card .announcement-date { font-size: 11px; color: #4b6b8a; margin-top: 6px; }
+
 .back-link { margin-top: 24px; }
 .back-link a { color: var(--brand-dark); text-decoration: none; font-size: 14px; font-weight: 600; }
 

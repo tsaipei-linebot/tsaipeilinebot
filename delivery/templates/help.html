@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}使用說明 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<h1 class="page-title">使用說明</h1>
+<p class="hint">
+    這裡整理配送部系統目前所有功能的操作方式。系統每次上線新功能或調整既有功能，
+    這頁都會同步更新，不用擔心看到過時的說明。
+</p>
+
+<div class="help-nav">
+    <a class="btn btn-small" href="#overview">系統總覽</a>
+    <a class="btn btn-small" href="#access">登入與權限</a>
+    <a class="btn btn-small" href="#personnel">人員管理</a>
+    <a class="btn btn-small" href="#cooperation-types">合作方式管理</a>
+    <a class="btn btn-small" href="#applicants">應徵名單</a>
+    <a class="btn btn-small" href="#requests">補款／假別登記</a>
+    <a class="btn btn-small" href="#vehicles">車輛管理</a>
+    <a class="btn btn-small" href="#incidents">意外事件回報</a>
+    <a class="btn btn-small" href="#equipment">裝備借還管理</a>
+    <a class="btn btn-small" href="#tools">查詢人員／批次匯入</a>
+</div>
+
+<section id="overview" class="help-section">
+    <h2>系統總覽</h2>
+    <p class="hint">登入後從主頁（/delivery/）點選任一模組即可開始使用，各模組彼此獨立、互不影響。</p>
+    <ul>
+        <li><strong>人員管理</strong>：選擇廠商查看配送人員缺件狀況</li>
+        <li><strong>應徵名單</strong>：Google 表單自動匯入，錄取自動建立人員</li>
+        <li><strong>補款／假別</strong>：登記、主管核准、可匯出 Excel</li>
+        <li><strong>車輛管理</strong>：LINE 群組回報領還車，自動寫入記錄</li>
+        <li><strong>意外事件</strong>：LINE 群組回報自動建案，可設風險等級</li>
+        <li><strong>裝備借還</strong>：籃子、橘衣等裝備借用歸還轉倉買斷</li>
+        <li><strong>查詢人員</strong>：依姓名或身分證字號快速查詢</li>
+    </ul>
+</section>
+
+<section id="access" class="help-section">
+    <h2>登入與角色權限</h2>
+    <ul>
+        <li>使用材霈平台帳號密碼登入，跟職缺維護等其他系統共用同一組帳號</li>
+        <li>登入失敗次數過多，帳號會暫時鎖定，稍後再試或聯絡管理員</li>
+        <li>帳密正確但沒有配送部系統權限時，會看到提示訊息，請找管理員開通</li>
+        <li><strong>一般同仁</strong>：可以日常登記（補款、假別、裝備借還）、查詢、篩選、新增人員／車輛等資料</li>
+        <li><strong>主管（管理員）</strong>：多了核准補款／假別、結案意外事件、刪除紀錄、維護合作方式／服務區域等清單的權限</li>
+    </ul>
+</section>
+
+<section id="personnel" class="help-section">
+    <h2>人員管理</h2>
+    <p class="hint">主頁點選廠商（UD、UC、蝦皮、順豐…）進入該廠商的人員清單。</p>
+    <ul>
+        <li>預設只顯示「有缺件」且狀態不是離職／放棄報到的人員，畫面不會被無關紀錄塞滿</li>
+        <li>可用姓名、電話、在職狀態、缺件狀態篩選；主動搜尋姓名時，連離職的人也查得到</li>
+        <li>主管可以在清單刪除人員紀錄（不可逆，會一併刪除上傳過的所有檔案）</li>
+        <li>人員詳細頁是一頁式大表單：合作方式、負責客戶、身分證字號、Email、勾選類／上傳類文件，一次送出、一鍵更新</li>
+        <li>應備文件會依「廠商 + 合作方式」自動決定，例如強制險、公會加保證明、良民證等</li>
+        <li>上傳保險文件時，系統會自動辨識到期日（OCR）；辨識不到再手動補上即可</li>
+        <li>人員狀態改成「離職」時，如果名下還有裝備借用未歸還，畫面會跳出提醒視窗（提醒用，不會擋著不給存檔）</li>
+    </ul>
+</section>
+
+<section id="cooperation-types" class="help-section">
+    <h2>合作方式管理</h2>
+    <ul>
+        <li>合作方式（二輪承攬／二輪雇傭／三輪雇傭…）可以自行維護，不用再找工程師改程式</li>
+        <li>開放「全部廠商」使用，不再只有蝦皮系列才看得到這個欄位</li>
+        <li>新增／編輯一筆合作方式時，可以勾選「適用哪些廠商」——蝦皮與蝦皮三輪速配倉可以繼續共用同一組</li>
+        <li>入口：人員清單或應徵名單頁首的「合作方式管理」按鈕（主管專用）</li>
+    </ul>
+</section>
+
+<section id="applicants" class="help-section">
+    <h2>應徵名單</h2>
+    <p class="hint">流程：Google 表單送出 → 自動出現在名單 → 標記已面試／放棄 → （UD、UC 或合作方式為「三輪雇傭」需先通過試駕）→ 錄取並建立正式人員。</p>
+    <ul>
+        <li>廠商、合作方式會依表單來源自動帶入，同仁可以自己修改</li>
+        <li>「已錄取」「放棄」的人預設不顯示，主動搜尋姓名或篩選狀態才會列出來</li>
+        <li>錄取送出後自動建立正式人員資料，之後再到人員詳細頁補身分證字號、上傳報到文件即可</li>
+    </ul>
+</section>
+
+<section id="requests" class="help-section">
+    <h2>補款登記／假別登記</h2>
+    <ul>
+        <li><strong>補款登記</strong>：填寫送出 → 記錄頁可搜尋 → 主管核准 → 可匯出 Excel；已核准的紀錄不能刪除，避免帳務對不起來</li>
+        <li><strong>假別登記</strong>：填寫送出 → 額度達 90% 系統會自動提醒 → 主管核准 → 可匯出 Excel</li>
+    </ul>
+</section>
+
+<section id="vehicles" class="help-section">
+    <h2>車輛管理</h2>
+    <ul>
+        <li>同仁在指定的 LINE 群組回報領車／還車，格式化訊息會自動解析並寫入系統</li>
+        <li>系統會擋下不合理的操作，例如「車輛已在使用中，卻又被回報領車」</li>
+        <li>網頁上也可以「手動補登」一筆領還紀錄，送出後同步推播通知到 LINE 群組</li>
+        <li>「一鍵整理車輛狀況」可以產生文字報告，直接複製貼到群組</li>
+        <li>服務區域（台北、新北、桃園…）可自行新增／停用，公司拓點到新縣市不用再找工程師——入口在車輛管理頁首「服務區域管理」（主管專用）</li>
+        <li>車輛清單手機號碼旁邊會顯示這台車目前使用人的合作方式（騎手身份），篩選列也有對應的下拉選單；系統依姓名＋電話自動比對使用人資料，沒顯示代表比對不到人、或對方合作方式還沒填</li>
+    </ul>
+</section>
+
+<section id="incidents" class="help-section">
+    <h2>意外事件回報</h2>
+    <ul>
+        <li>同仁在指定的 LINE 群組回報意外事件，系統會自動建立事件紀錄</li>
+        <li>主管可以在詳細頁設定風險等級、標記結案</li>
+        <li>主頁會提示目前有幾筆「未結案」的意外事件，避免遺漏後續處理</li>
+    </ul>
+</section>
+
+<section id="equipment" class="help-section">
+    <h2>裝備借還管理</h2>
+    <ul>
+        <li>籃子、橘衣等裝備的借用／歸還／轉倉／採購／買斷，直接在網頁填表單即可，不用照 LINE 回報格式</li>
+        <li>裝備品項、放置點都是可自行新增／停用的清單，主管在管理頁面上自行維護</li>
+        <li>退保連動提醒：人員改成「離職」時，如果名下還有裝備沒還，畫面會跳出提醒視窗（提醒用，不會擋著不給存檔）</li>
+    </ul>
+</section>
+
+<section id="tools" class="help-section">
+    <h2>查詢人員／批次匯入</h2>
+    <ul>
+        <li>主頁輸入姓名或身分證字號，即可快速查詢缺件狀況，不用先知道這個人屬於哪個廠商</li>
+        <li>大量新人時，可以用 Excel／CSV 一次匯入，不用一筆一筆手動新增</li>
+        <li>系統會自動抓重複：同姓名＋電話已有在職人員時會自動跳過</li>
+    </ul>
+</section>
+
+<p class="hint">
+    操作上有疑問，或發現系統跟實際狀況對不起來，請聯絡系統管理窗口。
+</p>
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

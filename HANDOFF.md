@@ -1943,6 +1943,81 @@ tests -p "test_*.py"`（目前 652 個測試），測試沒過 PR 上會顯示�
    開發專區」的權限**——改完程式碼這一刻起，除了老闆本人，沒有人會自動
    看到這張卡片／能打開這個頁面。
 
+## 新增：少凱業務開發專區加上「勾選要反查的職缺」功能（2026-09-17）
+
+背景：`tsaipei-linebot-recruitment-leads-scraper` 這個獨立 repo（每天自動
+搜尋 104/1111/小雞上工的派遣客戶開發職缺，寫進跟 `/salesdev` 讀的同一份
+Google Sheet 的「Leads」分頁）這次改版，把「反查要派公司/電話/email」這
+一步從「抓到職缺就自動反查」改成「先審查、再反查」——新抓到的職缺一律是
+「審查狀態」＝「待審查」，要等使用者勾選過想深入了解的職缺，才由另一個
+獨立的每日反查排程（尚未建立，不在這個 repo）去處理。這裡要做的就是那個
+「勾選」的畫面，讓少凱不用打開 Google Sheet 原始畫面就能操作。
+
+### 怎麼運作
+
+- `/salesdev` 讀到的每個分頁，只要表頭裡有「審查狀態」這個欄位，這個分頁
+  的表格最左邊就會多一欄勾選框——只有「審查狀態」目前是「待審查」的列
+  才有勾選框，其他狀態（已勾選待反查／已反查）顯示「—」，不能重複勾選。
+  沒有「審查狀態」欄位的分頁（例如「新登記工廠監控」）維持原本純唯讀，
+  不會多這一欄。
+- 勾選幾筆之後按「送出勾選」，會 POST 到新的 `/salesdev/select` 路由，把
+  這些列的「審查狀態」改成「已勾選待反查」，然後導回 `/salesdev` 顯示
+  「已送出 N 筆」的提示。跟其他模組一樣，這個路由也是先過
+  `_require_access()` 的權限檢查，沒有 `salesdev` 模組權限的帳號沒辦法
+  用這個功能寫入資料（跟唯讀畫面用同一套權限設定，不用另外去 `/accounts`
+  加開權限）。
+- 送出的當下會**先重新讀一次這些列現在的「審查狀態」，只更新目前真的還是
+  「待審查」的列**才寫回「已勾選待反查」——防的是使用者畫面開著沒送出、
+  這段時間每日反查排程已經把某幾列處理掉的情況，避免舊畫面的送出動作把
+  排程剛寫好的結果覆蓋掉。
+- 「審查狀態」欄位三個狀態值的字串（「待審查」／「已勾選待反查」／
+  「已反查」）跟 `tsaipei-linebot-recruitment-leads-scraper` 的
+  `src/models.py`（`REVIEW_STATUS_*`）完全一致，因為兩邊讀寫的是同一份
+  Google Sheet 同一欄——**之後如果任何一邊要改這幾個字串，另一邊也要
+  跟著改，不然狀態會對不起來**。
+
+### 新增/修改的檔案
+
+- `services/salesdev_sheet_service.py`：
+  - `fetch_sheet_tabs()` 的 `rows` 從「每列直接是一串 cell」改成
+    `{"row_number", "cells"}`——`row_number` 是這一列在 Google Sheet 裡
+    實際的列號，畫面上的勾選框要靠這個列號才能精準指到正確的儲存格
+    （不能只靠畫面排第幾筆，因為有搜尋框篩選）。多回傳一個
+    `review_status_col_index`：這個分頁表頭裡「審查狀態」欄位的位置，
+    沒有這個欄位是 `None`，畫面靠這個值決定要不要顯示勾選框。
+  - 新增 `mark_rows_selected_for_reverse_lookup(tab_title, row_numbers)`：
+    寫入用的函式，回傳 `(實際更新的列數, error)`。**這是這份試算表第一次
+    需要被「寫入」**，改用可讀寫的 `spreadsheets` scope（`_get_sheets_
+    service_write()`），原本的讀取路徑維持唯讀 scope 不變。
+- `salesdev_routes.py`：新增 `POST /salesdev/select` 路由，接收勾選的
+  `tab_title` + `row_numbers`（表單欄位），呼叫上面的服務函式後導回
+  `/salesdev`。
+- `templates/salesdev_home.html`：有「審查狀態」欄位的分頁表格外面包一層
+  `<form>`，加上勾選框欄位跟「送出勾選」按鈕；畫面上方新增送出成功/失敗
+  的提示訊息區塊。
+- `tests/test_salesdev_sheet_service.py` / `tests/test_salesdev_routes.py`：
+  補上 `_col_index_to_letter()`、`mark_rows_selected_for_reverse_lookup()`
+  設定缺漏時的錯誤訊息、`/salesdev/select` 未登入時導向登入頁的測試（跟
+  既有分工一致，實際打 Google Sheets API 的路徑留給有 GCP 憑證的環境做
+  整合測試）。
+
+### 上線前要做的事
+
+1. **這份 Google Sheet 要額外分享「編輯者」權限給 Cloud Run 服務帳戶**
+   （原本只分享了「檢視者」，這次「勾選送出」需要能寫入）——到 Google
+   Sheet 右上角「共用」，找到原本分享的那個服務帳戶信箱（`tsaipei-505807`
+   專案的預設運算服務帳戶，或另外指定的服務帳戶信箱，跟唯讀權限分享的是
+   同一個信箱），把權限從「檢視者」改成「編輯者」即可，不用重新分享一次
+   或新增一筆分享紀錄。沒有升級權限的話，「送出勾選」會顯示「沒有權限
+   寫入這份 Google Sheet」的提示，不影響頁面原本唯讀顯示的部分。
+2. 確認 `tsaipei-linebot-recruitment-leads-scraper` 那邊的 `GOOGLE_SHEET_ID`
+   跟這裡的 `SALESDEV_SHEET_ID` 真的是同一份試算表、同一個「Leads」分頁
+   ——如果不是同一份，這個勾選功能會看不到抓職缺程式寫入的新職缺。
+3. 之後「每日反查排程」（讀取「已勾選待反查」的列去執行反查、寫回結果、
+   把狀態改成「已反查」）要另外建立，不在這個 repo 的範圍——`/salesdev`
+   這裡只負責讓使用者勾選、把狀態改成「已勾選待反查」，不執行任何反查
+   邏輯。
+
 ## 新增：我的專區（`/me`）＋ 第一項功能「薪資補款紀錄」
 
 背景：使用者想要一種跟「部門模組」（同部門的人看到的東西都一樣，差別只在
@@ -5998,3 +6073,575 @@ tests -p "test_*.py"`）1441 個全數通過。
 這次改動**不需要任何手動部署步驟**，合併後就直接生效，之後在合約
 產生器、派遣契約產生器、專案合約維護、雞排點數這幾個地方看到的
 「送出時間」都會是台灣時間，不用再自己心算加 8 小時。
+
+## 配送部系統：車輛管理的服務區域改成主管可自行新增/停用（2026-09-18）
+
+使用者要求：車輛管理的服務區域需要能自行增減，不要再像原本那樣寫死在
+`config.py`、拓點到新縣市就要找 Claude 加代碼。改成跟裝備借還管理的
+品項/放置點同一套「動態清單」設計：存 Firestore
+（`delivery_vehicle_service_areas`），主管可以在網頁上自行新增/停用/
+（無歷史紀錄時）刪除，不用改程式碼。
+
+- `delivery/db.py`：新增 `VEHICLE_SERVICE_AREAS_COLLECTION` 跟
+  `vehicle_service_areas_ref()`。
+- `delivery/repository.py`「車輛服務區域管理」那節：
+  `list_vehicle_service_areas()`／`get_vehicle_service_area()`／
+  `create_vehicle_service_area()`／`set_vehicle_service_area_active()`／
+  `vehicle_service_area_has_history()`／`delete_vehicle_service_area()`，
+  完全比照裝備品項/放置點的「停用不刪除，除非完全沒有車輛在用」設計。
+  `set_vehicle_service_area()`（車輛詳細頁的更新入口）驗證邏輯改成查
+  `get_vehicle_service_area()` 存不存在，不再查固定的 `SERVICE_AREA_MAP`。
+- `delivery/config.py`：移除 `SERVICE_AREAS`／`SERVICE_AREA_MAP` 這兩個
+  固定清單常數。
+- `delivery/vehicle_status_report.py`：`_region_breakdown()`／
+  `build_vendor_fleet_report()`／`build_fleet_status_report()` 這幾個
+  純函式不再自己 import `SERVICE_AREAS`，改成由呼叫端（
+  `vehicle_routes.vehicle_status_report_page()`）傳入
+  `repository.list_vehicle_service_areas(include_inactive=True)` 查來的
+  清單——**故意包含已停用的服務區域**，這樣即使某個服務區域後來被停用，
+  底下如果還掛著車輛，報告照樣能顯示正確的區域名稱，不會被硬塞進
+  「未分區」。
+- `delivery/routes/vehicle_routes.py`：新增
+  `/vehicles/service-areas`（管理頁，限管理員）、
+  `/vehicles/service-areas/new`、`/vehicles/service-areas/{id}/active`、
+  `/vehicles/service-areas/{id}/delete`，跟 `/vehicles/status-report`
+  一樣要註冊在 `/vehicles/{vehicle_no}` 之前，不然會被當成車號吃掉。
+  車輛清單/新增/詳細頁的服務區域下拉選單改用
+  `repository.list_vehicle_service_areas()`（只列啟用中的），畫面上顯示
+  名稱時額外用 `include_inactive=True` 查一份 id→name 對照表，確保車輛
+  目前指到的服務區域即使已經停用，畫面上還是能正確顯示名稱，不會顯示
+  成「未設定」。
+- 樣板：`vehicle_list.html`／`vehicle_form.html`／`vehicle_detail.html`
+  的下拉選單/顯示邏輯，`a.code` 全部改成 `a.id`（服務區域現在用
+  Firestore 文件 ID 當識別碼，不再是英文代號）；新增
+  `vehicle_service_areas.html`（管理頁，樣式比照
+  `equipment_locations.html`）；`vehicle_list.html` 頁首新增「服務區域
+  管理」按鈕（限管理員）。
+
+### 既有資料怎麼辦：一次性遷移腳本
+
+既有車輛的 `service_area` 欄位存的是舊代碼（`"taipei"`／`"new_taipei"`
+…），改版後如果 Firestore 裡完全沒有服務區域資料，這些舊代碼會顯示成
+「未設定」（不是資料不見了，只是查不到對應名稱）。新增
+`scripts/seed_vehicle_service_areas.py`，把原本 7 個服務區域**用跟舊
+代碼完全相同的文件 ID** 建進 Firestore，既有車輛資料完全不用搬移，
+建立完成後就能立刻正確顯示名稱。這支腳本可以放心重複執行——已經存在
+的服務區域（例如主管已經手動改過名稱）會直接跳過，不會覆蓋。
+
+### 測試
+
+`tests/test_delivery_vehicle_service_areas.py`（新檔案）：
+`list/get/create/set_active/has_history/delete_vehicle_service_area()`
+的各種情境、`set_vehicle_service_area()` 改用動態查詢後的驗證邏輯、
+服務區域管理路由（限管理員）。`tests/test_seed_vehicle_service_areas.py`
+（新檔案）：遷移腳本的規劃邏輯（已存在的服務區域會跳過、不會覆蓋）。
+`tests/test_delivery_vehicle_status_report.py`／
+`tests/test_delivery_vehicle_routes.py`：既有測試改成明確傳入
+`service_areas` 參數/mock 動態查詢，確保報告排序/名稱行為不變。全部
+測試（`python3 -m unittest discover -s tests -p "test_*.py"`）1454 個
+全數通過。
+
+### 使用者需要知道的事：部署後要手動跑一次遷移腳本
+
+**這次有一個手動步驟，一定要做，不然車輛列表/報告會暫時看不到服務
+區域名稱**：合併部署完成後，請用有 GCP 憑證的環境（例如 Google Cloud
+Shell）依序執行：
+
+```bash
+git pull
+python -m scripts.seed_vehicle_service_areas
+```
+
+腳本會先列出即將新增的 7 個服務區域（台北、新北、桃園、新竹、台中、
+台南、高雄），輸入 `yes` 才會真的寫入。跑完之後，車輛列表/詳細頁/
+「一鍵整理車輛狀況」報告就會恢復正常顯示，既有車輛的服務區域資料
+完全不受影響。
+
+跑完遷移腳本後，之後如果要新增/停用/刪除服務區域（例如公司拓點到新
+縣市），直接到「車輛管理」→「服務區域管理」網頁上操作即可，不用再
+找我加代碼。
+
+## 配送部系統：合作方式（cooperation_type）改成主管可自行維護的動態清單，並擴大到全部廠商跟應徵名單（2026-09-18）
+
+使用者原本只是想在「車輛管理」清單頁加一欄「騎手身份」（顯示/篩選
+這台車目前使用人的合作方式），討論過程中發現這個功能會依賴
+`cooperation_type` 這個欄位，但這個欄位有兩個問題：
+
+1. 原本只有蝦皮／蝦皮三輪速配倉這兩個廠商代碼會被要求填合作方式
+   （`COOPERATION_TYPE_VENDORS` 寫死在 `config.py`），UD/UC/順豐等其他
+   廠商的人員完全沒有這個欄位可以選，畫面會整片空白。
+2. 合作方式的選項（二輪承攬/二輪雇傭/三輪雇傭）也是寫死在
+   `config.py` 的固定清單，使用者希望「之後都有可能變動」，要能自己
+   在網頁上維護，不要每次調整都要找 Claude 改代碼。
+
+跟使用者討論後確認：合作方式要改成跟裝備借還管理的品項/放置點、車輛
+服務區域同一套「Firestore 動態清單」設計，而且要開放給**全部廠商**
+設定，不只蝦皮系列；同時使用者也要求應徵名單（`/delivery/applicants`）
+的合作方式選單一併改成動態（原本也是抄一份 `COOPERATION_TYPES` 固定
+清單）。「騎手身份」欄位本身**還沒開始做**，是下一步——這次先把
+合作方式這個底層欄位做成動態、且對所有廠商都能填，「騎手身份」才有
+資料可以顯示。
+
+### 設計上跟其他動態清單不一樣的地方：一筆合作方式可以套用到多個廠商
+
+裝備品項、車輛服務區域都是「單一擁有者」的清單，合作方式不一樣：
+DOC_TYPES 的保險文件規則（`shopee_contract_insurance`／
+`shopee_employed_own_car_insurance` 等）是直接比對 `cooperation_type`
+這個字串值本身（例如 `"two_wheel_contract"`），蝦皮跟蝦皮三輪速配倉
+必須繼續共用完全相同的這幾個 ID，不能各自獨立一份清單，不然這兩個
+廠商可能會慢慢長出不同的選項、悄悄弄壞共用的保險規則判斷。
+
+跟使用者討論兩個做法：
+- A：每個廠商各自獨立一份合作方式清單（風險：蝦皮跟蝦皮三輪速配倉的
+  清單可能會逐漸長歪，弄壞共用的保險規則）。
+- B（使用者選定）：新增/編輯合作方式時，勾選這筆資料適用哪些廠商——
+  蝦皮/蝦皮三輪速配倉可以繼續勾選同一筆（沿用原本共用的行為），其他
+  廠商可以獨立勾自己的，也可以跟蝦皮共用，彈性由主管自己決定。
+
+因此 `delivery_cooperation_types` 這個 Firestore collection 的每筆文件
+多了一個 `vendors`（字串陣列）欄位，查詢時用 Firestore 的
+`array_contains` 運算子（`list_cooperation_types(vendor="shopee")`）。
+
+### 程式碼異動
+
+- `delivery/db.py`：新增 `COOPERATION_TYPES_COLLECTION` 跟
+  `cooperation_types_ref()`。
+- `delivery/repository.py`「合作方式管理」那節：`list_cooperation_types
+  (vendor="", include_inactive=False)`／`get_cooperation_type(id)`／
+  `create_cooperation_type(name, vendors, type_id="", created_by="")`／
+  `update_cooperation_type(id, name, vendors)`／
+  `set_cooperation_type_active(id, active)`／
+  `cooperation_type_has_history(id)`（人員或應徵者有任何一筆在用這個
+  ID 就算有歷史紀錄，比照裝備品項「有異動紀錄就只能停用不能刪除」）／
+  `delete_cooperation_type(id)`。
+  另外修正 `applicant_needs_test_drive()`：不再檢查
+  「廠商是不是蝦皮系列」，改成直接看合作方式的值是不是
+  `"three_wheel_employed"`（試駕判斷邏輯本來就已經是看這個固定 ID 本身，
+  這個 ID 現在對哪些廠商開放完全交給主管在管理頁面上決定）；
+  `bulk_update_applicants()` 的合作方式驗證改成呼叫
+  `get_cooperation_type()` 確認 ID 存在，不再查固定的
+  `COOPERATION_TYPE_MAP`。
+- `delivery/config.py`：移除 `COOPERATION_TYPES`／`COOPERATION_TYPE_MAP`
+  ／`COOPERATION_TYPE_VENDORS` 這幾個固定清單常數，改成註解說明動態
+  清單怎麼運作；`TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES =
+  ["three_wheel_employed"]` 保留（試駕規則要靠這個固定 ID 判斷，遷移
+  腳本會確保這個 ID 繼續存在）。
+- `delivery/routes/vendor_routes.py`：
+  - `personnel_detail()`／`new_personnel_form()` 的合作方式選單改成
+    `repository.list_cooperation_types(vendor=vendor_code)`，**拿掉原本
+    只有蝦皮系列才顯示欄位的 `show_cooperation_type` 判斷**，所有廠商
+    一律顯示這個欄位（沒有設定任何選項的廠商，選單就只有「尚未決定」
+    一個選項，主管要去「合作方式管理」頁面幫這個廠商新增選項）。
+  - `create_personnel_submit()`／`bulk_update_personnel()` 的合作方式
+    驗證改成 `repository.get_cooperation_type()` 存在性檢查（`
+    create_personnel_submit` 另外還檢查這個合作方式的 `vendors` 陣列
+    有沒有包含目前這個廠商代碼，避免透過改網址硬塞不屬於這個廠商的
+    合作方式）。
+  - 新增合作方式管理頁面：`GET /cooperation-types`（限管理員）、
+    `POST /cooperation-types/new`、`POST /cooperation-types/{id}/edit`
+    （改名稱＋改適用廠商勾選）、`POST /cooperation-types/{id}/active`、
+    `POST /cooperation-types/{id}/delete`；`vendor_list.html`／
+    `applicants_list.html` 頁首都加了「合作方式管理」按鈕（限管理員）。
+- `delivery/routes/applicant_routes.py`：
+  - `applicants_list()` 改傳 `cooperation_types_by_vendor`（
+    `{廠商代碼: [{id, name}, ...]}` 的字典，用 `list_cooperation_types()`
+    依每筆的 `vendors` 陣列分組）給樣板，取代原本的
+    `cooperation_types`／`cooperation_type_vendors` 兩個固定清單。
+  - `accept_applicant()`：**順便修正一個既有 bug**——原本合作方式的
+    保留邏輯寫死 `vendor != "shopee"`，只認蝦皮，沒把蝦皮三輪速配倉
+    算進去，代表蝦皮三輪速配倉的應徵者錄取時，合作方式很可能被悄悄
+    清空。改成動態驗證（`vendor in coop.get("vendors", [])`）後這個
+    廠商代碼也會正確保留合作方式，不用再特別列出廠商名稱。
+- `delivery/routes/webhook_routes.py`（`/api/form-submission`，GAS 表單
+  webhook 的接收端）：合作方式驗證改成 `repository.get_cooperation_type
+  ()` 存在性檢查，不再查固定的 `COOPERATION_TYPE_MAP`。
+- 樣板：`personnel_form.html`／`personnel_detail.html` 拿掉
+  `show_cooperation_type` 判斷、選單值從 `c.code` 改成 `c.id`；
+  `applicants_list.html` 的合作方式欄位改成依「目前選的廠商」動態組出
+  選項（伺服器端初始渲染用 `cooperation_types_by_vendor.get(a.vendor,
+  [])`；JS 端新增 `COOPERATION_TYPES_BY_VENDOR` 對照表跟
+  `rebuildCoopOptions()` 函式，改廠商時即時重建合作方式選單，不用等
+  「一鍵全部更新」整頁重新整理）；試駕欄位要不要顯示的判斷簡化成只看
+  合作方式的值，不再另外檢查廠商是不是蝦皮系列；新增
+  `cooperation_types.html`（管理頁，新增/編輯都用勾選框決定適用哪些
+  廠商，樣式比照 `equipment_items.html`）。
+
+### 既有資料怎麼辦：一次性遷移腳本
+
+既有人員/應徵者的 `cooperation_type` 欄位存的是舊代碼
+（`"two_wheel_contract"`／`"two_wheel_employed"`／
+`"three_wheel_employed"`），改版後如果 Firestore 裡完全沒有合作方式
+資料，人員詳細頁的合作方式選單會顯示「尚未決定」被選中（不是資料
+不見了，只是查不到對應名稱可以顯示成已選取狀態；DOC_TYPES 的保險
+規則、應徵名單試駕判斷因為是直接比對字串值，不受影響會繼續正常
+運作）。新增 `scripts/seed_cooperation_types.py`，把原本 3 個合作方式
+**用跟舊代碼完全相同的文件 ID**、`vendors: ["shopee",
+"shopee_speed_warehouse"]` 建進 Firestore，既有資料完全不用搬移，
+建立完成後選單就能立刻正確顯示已選取的名稱。這支腳本可以放心重複
+執行——已經存在的合作方式（例如主管已經手動改過名稱或適用廠商）會
+直接跳過，不會覆蓋。
+
+### 測試
+
+`tests/test_delivery_cooperation_types.py`（新檔案）：
+`list/get/create/update/set_active/has_history/delete_cooperation_type()`
+的各種情境（含 `vendors` 陣列的 `array_contains` 查詢、多廠商共用）、
+合作方式管理路由（限管理員，含勾選框廠商過濾未知代碼的防呆）。
+`tests/test_seed_cooperation_types.py`（新檔案）：遷移腳本的規劃邏輯。
+`tests/test_delivery_applicants.py`：`applicant_needs_test_drive()`
+不再檢查廠商群組的新行為、`applicants_list()` 傳給樣板的
+`cooperation_types_by_vendor` 內容。
+`tests/test_delivery_personnel_equipment_debt.py`：
+`personnel_detail()` 相關測試補上 `list_cooperation_types` 的 mock。
+`tests/test_delivery_doc_types.py`：更新一處過時的註解（合作方式現在
+是動態清單，不是寫死的 `COOPERATION_TYPE_VENDORS`）。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1493 個
+全數通過。
+
+### 使用者需要知道的事：部署後要手動跑一次遷移腳本，之後才能開始用「騎手身份」功能
+
+**這次有一個手動步驟，一定要做，不然人員詳細頁的合作方式選單會顯示
+「尚未決定」（既有資料沒有不見，只是暫時查不到名稱）**：合併部署
+完成後，請用有 GCP 憑證的環境（例如 Google Cloud Shell）依序執行：
+
+```bash
+git pull
+python -m scripts.seed_cooperation_types
+```
+
+腳本會先列出即將新增的 3 個合作方式（二輪承攬、二輪雇傭、三輪雇傭，
+適用廠商：蝦皮、蝦皮三輪速配倉），輸入 `yes` 才會真的寫入。跑完之後，
+人員詳細頁的合作方式選單就會恢復正常顯示已選取的名稱。
+
+**這次多了一個新頁面「合作方式管理」**（管理員登入後，在「應徵名單」
+或任何廠商的人員清單頁首都會看到按鈕），可以自行新增合作方式、勾選
+適用哪些廠商、停用/刪除。**如果 UD、UC、順豐等其他廠商也想比照蝦皮
+用合作方式管理保險文件規則**，目前系統只有「二輪承攬/二輪雇傭/三輪
+雇傭」這三個固定 ID 的保險判斷邏輯是內建的（因為這幾個 ID 直接綁在
+`config.py` 的 DOC_TYPES 保險規則裡）；如果要幫其他廠商新增全新的
+合作方式選項、且需要搭配對應的保險文件規則，還是要跟我說一聲，讓我
+在 `config.py` 加上對應的邏輯——**單純新增合作方式選項本身**（不涉及
+保險規則）可以直接在管理頁面上自己操作，不用等我。
+
+「騎手身份」欄位（車輛管理清單頁顯示/篩選）還沒開始做，這次先把
+底層的合作方式欄位做成動態、且對所有廠商開放，下一步才會實作這個
+欄位本身。
+
+## 配送部系統：車輛管理清單頁新增「騎手身份」欄位跟篩選（2026-09-18）
+
+上一節把合作方式做成動態清單、開放全部廠商之後，這次接著實作使用者
+原本要的功能：車輛管理清單頁的手機號碼旁邊顯示這台車目前使用人的
+合作方式（畫面上稱「騎手身份」），並且能篩選。
+
+### 反查邏輯：車輛主檔沒有存人員 ID，只能靠姓名比對
+
+車輛主檔的 `current_holder`（目前使用人）是自由輸入的文字欄位，從一
+開始就沒有連到人員資料的 `personnel_id`（LINE 群組回報/網頁補登都只是
+輸入姓名），所以沒辦法直接查出這個人的合作方式，只能反查對應的人員
+資料。使用者原本問「如果有同名同姓的資料，能有什麼方式增加手機號碼的
+比對」，討論後採用兩段式比對：
+
+1. 車輛主檔如果有填 `current_holder_phone`（回報領車時填的電話），優先
+   用「姓名+電話」查在職人員（`find_active_personnel_by_name_and_phone`，
+   原本是批次匯入去重複用的既有函式），比對到的人員是唯一的，不會有
+   同名同姓混淆的問題。
+2. 車輛主檔完全沒填電話時，才退而用「姓名+廠商」查在職人員
+   （`find_personnel_by_name_vendor`，原本是假別額度計算反查人員用的
+   既有函式）——這個比對方式如果剛好同廠商有同名同姓的人員，可能會
+   抓到錯的人，這是自由輸入文字欄位先天的限制。
+
+**特別注意：如果車輛主檔有填電話、但比對不到人員，不會再退而用姓名+
+廠商比對**——寫測試時（`test_phone_match_miss_does_not_fall_back_to_
+vendor_match`）才抓到自己一開始寫錯的邏輯（誤把「只要沒比對到人」都
+當成要退而比對廠商，沒分清楚「完全沒填電話」跟「填了電話但沒比對
+到」是两回事），已經修正。
+
+- `delivery/repository.py`：新增 `resolve_vehicle_rider_cooperation_type
+  (vehicle)`，套用上面的兩段式比對邏輯，找不到人員、或人員沒設定合作
+  方式都回傳 `None`（畫面上顯示成沒有騎手身份資料，不是查詢錯誤）。
+- `delivery/routes/vehicle_routes.py`：`vehicle_list()` 新增
+  `cooperation_type` 篩選參數；套用完既有的廠商/狀態/車號/輪別/服務
+  區域篩選後，逐台車呼叫 `resolve_vehicle_rider_cooperation_type()`
+  反查騎手身份、附加到每台車的資料上，再套用騎手身份篩選（篩選是靠
+  反查出來的結果比對，不是車輛主檔本身存的欄位，所以要先反查完才能
+  篩）；篩選選項清單用 `repository.list_cooperation_types()`（全部
+  廠商合起來的清單，跟其他篩選下拉選單的做法一致）。
+- `delivery/templates/vehicle_list.html`：手機號碼欄位旁邊多顯示一個
+  騎手身份的徽章（有反查到才顯示，沒有就跟原本一樣只顯示電話）；篩選
+  列新增「全部騎手身份」下拉選單。
+
+### 效能上的取捨
+
+車輛清單頁面現在每一列都會多做 1～2 次 Firestore 查詢（姓名+電話或
+姓名+廠商各一次，比對到人員後還要再查一次合作方式文件），車輛數量
+多的話會比原本慢一些。目前公司車隊規模不大，這個做法跟系統裡其他
+「逐筆反查」的既有寫法（例如人員清單逐筆算缺件狀況）是同一種取捨，
+先求正確、之後如果車輛數量成長很多、頁面明顯變慢，再考慮優化查詢
+方式（例如一次把全部在職人員撈出來在記憶體裡比對，取代逐筆查
+Firestore）。
+
+### 測試
+
+`tests/test_delivery_vehicle.py`：新增
+`ResolveVehicleRiderCooperationTypeTests`，涵蓋沒有目前使用人、有填
+電話優先用電話比對、沒填電話才退而用廠商比對、**填了電話但比對不到
+人員時不會退而用廠商比對**、比對不到人員、比對到的人員沒設定合作
+方式等情境。`tests/test_delivery_vehicle_routes.py`：新增
+`VehicleListRiderCooperationTypeTests`，涵蓋反查結果會附加到每台車
+資料上、騎手身份篩選只留下比對相符的車輛、沒有反查到人員的車輛在
+篩選時會被排除、沒有套用篩選時保留全部車輛（含反查不到的）。全部
+測試（`python3 -m unittest discover -s tests -p "test_*.py"`）1503 個
+全數通過。
+
+### 使用者需要知道的事
+
+**不需要任何手動部署步驟**，合併後就直接生效。車輛管理清單頁的手機
+號碼欄位，如果系統能反查到這台車目前使用人的合作方式，就會多顯示
+一個小標籤；上面篩選列也多了「全部騎手身份」下拉選單可以篩選。如果
+某台車的騎手身份沒有顯示出來，通常代表：
+1. 這台車的目前使用人在人員資料裡找不到對應（姓名打錯字、或這個人
+   根本還沒建立正式人員資料），或
+2. 有找到對應的人員，但這個人的合作方式欄位還沒填（去人員詳細頁補上
+   即可）。
+
+不是系統故障，是反查邏輯本來就依賴姓名（可能還有電話）能不能對得上
+人員資料。
+
+## 全公司公告功能：從配送部主頁搬到 /portal 入口頁（2026-09-18）
+
+先前一版把公告功能做在配送部系統主頁（Firestore collection
+`delivery_announcements`，`delivery/repository.py` 的「公告管理」那節、
+`delivery/routes/home_routes.py`／`delivery/templates/home.html`／
+`announcements.html`），部署上線後使用者才澄清：**公告要放在全公司登入
+後都會先看到的 `/portal` 入口頁，不是配送部專屬**——馬上把配送部那一版
+整個拿掉（db.py／repository.py／home_routes.py／home.html 都revert回
+原狀，`delivery/templates/announcements.html`／
+`tests/test_delivery_announcements.py` 直接刪除），改在平台層重做一次。
+**下面才是目前實際存在的設計**，配送部主頁沒有公告功能。
+
+### 確認的規格
+
+- 顯示在 `/portal`（所有系統的共用入口頁），不是某個部門子系統。
+- 可以同時有多則，一週後自動下架（可調整天數）。
+- 系統任何新功能/更新，都比照公司公告發佈——**只有一個例外：「少凱
+  業務開發專區」（salesdev 模組）的任何事項/功能異動不列入公告**，那是
+  少凱個人的業務開發專區，跟其他人無關，不用全公司廣播。這條是**內容
+  原則，不是程式邏輯**，寫在 `platform_announcements.py` 開頭的說明裡，
+  提醒我（或之後接手的人）發公告前要記得排除。
+- 公告顯示**不分權限**：任何登入的帳號在 `/portal` 都看到同一份公告
+  清單，不像卡片本身要依「這個帳號開了哪些模組」篩選——跟配送部那版
+  「限管理員」的權限概念不一樣，這版公告是公司層級訊息，登入即可見。
+- 發佈/管理公告限**全平台管理員**（`platform_accounts.
+  require_platform_admin`，目前就是老闆本人那組帳號）——`/portal` 沒有
+  「部門管理員」的概念，公告內容是全公司層級的事，交給老闆帳號管理。
+
+### 程式碼異動
+
+- `platform_db.py`：新增 `ANNOUNCEMENTS_COLLECTION = "platform_announcements"`
+  跟 `announcements_ref()`，比照 `users_ref()`／`companies_ref()`／
+  `vendors_ref()`／`departments_ref()` 放在這裡（不屬於任何單一部門
+  模組的跨系統共用資料）。
+- 新檔案 `platform_announcements.py`（跟 `platform_accounts.py`／
+  `platform_departments.py` 同一層級）：`ANNOUNCEMENT_DEFAULT_DAYS = 7`、
+  `list_active_announcements()`（`/portal` 用，只回傳啟用中且未過期、
+  新到舊排序）、`list_announcements()`（管理頁用，回傳全部並標記
+  `expired`）、`get_announcement()`、`create_announcement(title, content,
+  created_by, days=7)`、`set_announcement_active()`、
+  `delete_announcement()`——邏輯跟配送部那一版幾乎一樣，只是資料源換成
+  平台層的 `announcements_ref()`。
+- `portal_routes.py`：`portal_home()` 多傳 `announcements`
+  （`list_active_announcements()` 查來的清單，附加 `created_at_display`
+  顯示用日期）；新增公告管理路由 `GET /announcements`（限全平台管理員）、
+  `POST /announcements/new`、`POST /announcements/{id}/active`、
+  `POST /announcements/{id}/delete`，都掛在根 app（沒有 `/delivery`
+  之類的前綴，跟 `/accounts`／`/departments`／`/companies`／`/vendors`
+  同一層級）。
+- 樣板：`templates/portal_home.html`（根目錄，不是 `delivery/templates/`
+  底下那份）標題上方新增公告卡片區塊；`templates/base.html`（根目錄）
+  導覽列 `user.is_platform_admin` 那塊多一個「公告管理」連結；新增
+  `templates/announcements.html`（根目錄）管理頁面，樣式/欄位跟配送部
+  那版幾乎一樣（新增表單：標題、說明、幾天後自動下架；清單顯示發布/
+  下架日期、狀態徽章「顯示中／已過期／已下架」、提前下架/恢復顯示/
+  刪除）。**`delivery/static/style.css` 的 `.announcement-list`／
+  `.announcement-card` 樣式沿用不動**——根目錄的樣板本來就是直接引用
+  `/delivery/static/style.css` 這份共用 CSS（見 `templates/base.html`），
+  不用另外複製一份樣式。
+
+### 測試
+
+新增 `tests/test_platform_announcements.py`：CRUD 函式的各種情境（排除
+已過期、排除已手動下架、新到舊排序、舊資料沒有 active 欄位時預設當作
+啟用中、含過期的並標記 `expired`、預設 7 天後過期、自訂天數等）。
+`tests/test_portal.py` 新增 `AnnouncementRoutingSmokeTests`（未登入時
+導向 `/portal`）、`PortalHomeAnnouncementTests`（`portal_home()` 傳給
+樣板的公告清單含顯示用日期）、`AnnouncementAdminRoutesTests`（新增/
+切換啟用/刪除路由呼叫 `platform_announcements` 的各種情境，含標題空白
+不建立、天數 0 或負數退回預設 7 天的防呆）。刪除
+`tests/test_delivery_announcements.py`（配送部那版已經整個撤掉）。全部
+測試（`python3 -m unittest discover -s tests -p "test_*.py"`）1522 個
+全數通過。
+
+### 使用者需要知道的事
+
+**不需要任何手動部署步驟**，合併後就直接生效。用你（老闆）的帳號登入
+`/portal`，導覽列會看到「公告管理」連結，點進去可以新增公告——標題、
+說明、幾天後自動下架（預設 7 天，可以改）。公告會馬上出現在 `/portal`
+入口頁最上方，**所有登入的帳號都看得到同一份**，不分部門/權限；過期
+後系統自動不再顯示，不用你手動處理，也可以隨時「提前下架」。
+
+之後配送部（或其他部門）系統有新功能上線，我會同步在這裡發公告——
+**唯一的例外是「少凱業務開發專區」**，那邊的異動不會公告，因為那是
+少凱個人的業務開發專區，跟其他同仁無關。
+
+## /portal 卡片新增「使用說明」按鈕，各模組自己的操作說明網頁（2026-09-18）
+
+使用者原本收到一份配送部系統使用說明 PPT，後來要求做成系統裡的網頁，
+且要跟著每次功能異動同步更新——討論後確認設計：`/portal` 每張模組卡片
+上加一個「使用說明」小按鈕，點進去是**該模組自己的**說明頁（不是全部
+模組共用一頁），且沿用該模組原本的權限判斷，沒有這個模組權限的同仁
+連卡片都看不到，自然也看不到按鈕、也進不去說明頁本身。**PPT 版本之後
+不再維護**，改以這個網頁版為準。
+
+### 設計
+
+- **內容是我自己維護的靜態頁面，不是 Firestore 動態資料**——跟公告不同，
+  這裡不需要非技術同仁自己編輯內容，維護責任本來就在我身上：之後配送
+  部系統每上線一個新功能，我會同步更新這個頁面，跟維護 HANDOFF.md 是
+  同一個習慣，不需要另外做管理介面。
+- **權限**：每個模組的說明頁掛在該模組自己的子系統底下、走該模組自己
+  既有的 `login_required`（例如配送部就是 `delivery/auth.py` 的
+  `login_required`），這組判斷跟 `/portal` 卡片顯不顯示是同一組——不會
+  有「按鈕沒有但網址還是看得到內容」的落差，不用另外寫一套權限邏輯。
+- **`portal_routes.py` 的 `_MODULE_CARD_INFO`** 每個模組多一個
+  `help_href` 欄位：有值就是這個模組已經寫好說明頁，卡片上會多顯示
+  「使用說明」按鈕；沒有值（`""`）的模組（目前除了配送部，其他都還
+  沒寫）卡片上就不會顯示這個按鈕，之後每寫好一個模組的說明頁，補上
+  對應的 URL 即可。
+- `templates/portal_home.html` 的模組卡片**改版面結構**：原本整張卡片
+  是一個 `<a>`（點卡片任何地方都能進系統），改成外層 `<div>`、裡面用
+  兩個獨立按鈕（「前往」進系統／「使用說明」進說明頁，後者只在有
+  `help_href` 時才顯示）——因為 HTML 不能巢狀 `<a>` 包 `<a>`，這是唯一
+  乾淨的做法。`/me`、「職缺維護系統」那兩張卡沒有說明頁需求，維持原本
+  整張卡片可點擊的樣式不變。
+
+### 程式碼異動
+
+- `portal_routes.py`：`_MODULE_CARD_INFO["delivery"]` 新增
+  `"help_href": "/delivery/help"`；`portal_home()` 組 `cards` 時多帶
+  `help_href`（沒設定的模組給空字串）。
+- `delivery/routes/home_routes.py`：新增 `GET /delivery/help`，跟 `home()`
+  一樣用 `login_required`，渲染新的 `help.html`。
+- `delivery/templates/help.html`（新檔案）：配送部系統完整使用說明，
+  依模組分段（系統總覽／登入與權限／人員管理／合作方式管理／應徵
+  名單／補款假別登記／車輛管理／意外事件回報／裝備借還管理／查詢
+  匯入），頁首有錨點導覽列可以快速跳到對應段落。內容涵蓋目前所有
+  已上線功能，包含這次改版才新增的合作方式管理、車輛服務區域管理、
+  騎手身份欄位、退保連動提醒等。
+- `delivery/static/style.css`：新增 `.help-nav`／`.help-section` 樣式
+  （每段一張卡片式區塊，配合錨點導覽）。
+
+### 測試
+
+`tests/test_delivery_home_routes.py`（新檔案）：`help_page()` 正確渲染
+`help.html` 並傳入使用者資料。`tests/test_delivery_routes.py` 新增
+`/delivery/help` 未登入時導去登入頁的煙霧測試。`tests/test_portal.py`
+新增 `PortalHomeHelpLinkTests`：配送部卡片帶 `help_href`、還沒寫說明頁
+的模組（例如管理部）`help_href` 是空字串。全部測試（`python3 -m
+unittest discover -s tests -p "test_*.py"`）1526 個全數通過。
+
+### 使用者需要知道的事
+
+**不需要任何手動部署步驟**，合併後就直接生效。登入 `/portal` 後，
+「新北所(配送組)系統」卡片上會多一個「使用說明」按鈕，點進去就是完整
+的操作說明。**其他模組（管理部、人資…）目前還沒有說明頁**，卡片上
+不會顯示這個按鈕——之後如果要幫其他模組也做一份，跟我說一聲即可，
+做法是同一套。PPT 版本之後不會再更新，有需要的話請改看這個網頁版。
+
+## 其餘 8 個模組的使用說明頁全部補齊（2026-09-18）
+
+使用者要求把 /portal 剩下沒有使用說明的卡片全部補齊，之後每次更新功能
+也要同步更新說明——延續上一節的設計（每個模組自己的說明頁、沿用該模組
+自己的權限判斷）。為了避免憑空編內容，先分別對 8 個模組（management、
+hr、salesdev、job_listings、project_contracts、chicken_points、
+dispatch_contracts、client_contracts）各派一個 subagent 讀過對應的
+routes/templates/repository/service 檔案，確認實際行為後才動筆寫說明，
+避免說明頁寫出跟系統實際行為對不起來的內容。
+
+### 各模組說明頁掛的位置
+
+- `management`（子系統，掛 /management）：`management/routes/home_routes.py`
+  新增 `GET /management/help`，跟 `home()` 一樣用 `login_required`，樣板
+  `management/templates/help.html`。7 個段落：系統總覽、公告事項、會議
+  記錄、規章/SOP 文件庫、業績報表庫、客戶拜訪紀錄、員工名冊/組織圖、
+  資產/設備管理。
+- `hr`（子系統，掛 /hr）：`hr/routes/home_routes.py` 新增 `GET /hr/help`，
+  同樣用 `login_required`，樣板 `hr/templates/help.html`。5 個段落：
+  系統總覽、意外通報、員工體檢報告、員工關懷彙整、公司證照彙整、教育
+  訓練彙整。
+- 其餘 6 個模組都是直接掛在根 app（沒有獨立子系統/登入頁），各自在自己
+  的 route 檔案裡新增 `GET /{路徑}/help`，沿用各自檔案裡原本就有的
+  `_require_access` 依賴（跟該模組本來就有的其他路由同一套權限判斷），
+  樣板放在根目錄 `templates/`：
+  - `salesdev_routes.py` → `GET /salesdev/help` → `templates/salesdev_help.html`
+  - `job_listing_routes.py` → `GET /job-listings/help` → `templates/job_listing_help.html`
+  - `project_contract_routes.py` → `GET /project-contracts/help` → `templates/project_contract_help.html`
+  - `chicken_points_routes.py` → `GET /chicken-points/help` → `templates/chicken_points_help.html`
+  - `dispatch_contract_routes.py` → `GET /dispatch-contracts/help` → `templates/dispatch_contract_help.html`
+  - `client_contract_routes.py` → `GET /client-contracts/help` → `templates/client_contract_help.html`
+
+`portal_routes.py` 的 `_MODULE_CARD_INFO` 每個模組都補上對應的
+`help_href`，現在全部 9 個模組（含配送部）的卡片都會顯示「使用說明」
+按鈕。
+
+### 內容重點（供之後維護參考，不是完整內容，完整內容看各說明頁本身）
+
+- **management**：除了「資產狀態更新」，內容一律不能編輯，只能刪除
+  重新建立；客戶拜訪紀錄的可見範圍是「自己的紀錄」（老闆例外看得到
+  全部），跟公告/會議記錄「全部門共享」邏輯不同；門號資產有自動繳費
+  提醒（每週一推播 LINE）。
+- **hr**：意外通報沒有網頁新增表單，完全靠 LINE 群組訊息觸發建檔；
+  公司證照到期前會自動推播提醒；其餘 3 項（體檢報告、關懷彙整、教育
+  訓練）都是純手動登記，沒有自動化。
+- **salesdev**：唯讀彙整一份 Google 試算表，只有「查看資料」跟「勾選
+  待反查」兩個功能，沒有主管/專員的角色差異。
+- **job_listings**：分「新增全新職缺」／「維護既有職缺」兩種模式；
+  送出後走主管 LINE 核准，核准後自動同步職缺資料庫、官網、招募機器人；
+  故意不提舊版 Netlify 職缺系統，避免使用者搞混登入方式。
+- **project_contracts**：沒有審核流程，送出即完成；可以從「合約產生器」
+  帶入已存在的合約資料省去重複輸入；沒有查詢/編輯自己送出紀錄的功能。
+- **chicken_points**：這是第一個「專員/主管」角色真的影響功能的模組——
+  一般同仁只看得到自己的申請，會計（主管角色）才看得到全部並能刪除；
+  只需要本人簽名，沒有審核關卡。
+- **dispatch_contracts**：可見範圍收斂成「自己送出的／自己主管的部屬
+  送出的／全平台管理員」，服務部門主管額外開放下載/預覽（但不能刪除）；
+  班別薪資表格可勾選要用哪些欄位。
+- **client_contracts**：5 種合約版本會動態顯示/隱藏對應欄位；甲方公司
+  資料可以自動查政府登記資料庫帶入；「複製」功能方便續簽下一年度合約
+  （日期不會自動加一年，需要自己改）；可另外上傳廠商指定格式的合約
+  檔案，跟系統產生的標準版並存。
+
+### 「每次更新功能同步更新說明」的落實方式
+
+跟配送部那份說明頁一樣，這是**我的工作流程**，不是額外的程式功能——
+之後不管哪個模組上線新功能或調整既有行為，我會同步更新對應那份說明頁
+的內容，寫程式碼改動的同一次 PR 就會一併改說明頁，不會事後補。
+
+### 測試
+
+`tests/test_management_routes.py`／`tests/test_hr_routes.py` 各新增一個
+`/help` 未登入導向登入頁的煙霧測試；`tests/test_salesdev_routes.py`／
+`tests/test_job_listing_routes.py`／`tests/test_project_contract_routes.py`
+／`tests/test_chicken_points_routes.py`／`tests/test_dispatch_contract_routes.py`
+／`tests/test_client_contract_routes.py` 也各自新增一個 `/help` 導向
+`/login?next=/...` 的煙霧測試，驗證跟該模組其他路由共用同一個
+`_require_access`。`tests/test_portal.py` 的 `PortalHomeHelpLinkTests`
+擴大成驗證全部 9 個模組卡片都帶正確的 `help_href`。全部測試（`python3
+-m unittest discover -s tests -p "test_*.py"`）1533 個全數通過。
+
+### 使用者需要知道的事
+
+**不需要任何手動部署步驟**，合併後就直接生效。登入 `/portal` 後，
+9 張模組卡片（配送部、管理部、人資、少凱業務開發、職缺維護、專案合約
+維護、小雞點數自費申請、派遣契約產生器、合約產生器）都會看到「使用
+說明」按鈕，點進去就是各自完整的操作說明。之後這些系統如果有功能調整，
+我會同步更新對應的說明頁，不用你特別提醒。

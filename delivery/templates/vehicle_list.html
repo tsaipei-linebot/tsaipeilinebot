@@ -5,6 +5,9 @@
     <h1 class="page-title">車輛管理</h1>
     <div>
         <a class="btn" href="/delivery/vehicles/status-report">📊 一鍵整理車輛狀況</a>
+        {% if user.role == "admin" %}
+        <a class="btn" href="/delivery/vehicles/service-areas">服務區域管理</a>
+        {% endif %}
         <a class="btn btn-primary" href="/delivery/vehicles/new">新增車輛</a>
     </div>
 </div>
@@ -32,11 +35,17 @@
     <select name="service_area">
         <option value="">全部服務區域</option>
         {% for a in service_areas %}
-        <option value="{{ a.code }}" {% if filter_service_area == a.code %}selected{% endif %}>{{ a.name }}</option>
+        <option value="{{ a.id }}" {% if filter_service_area == a.id %}selected{% endif %}>{{ a.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="cooperation_type">
+        <option value="">全部騎手身份</option>
+        {% for c in cooperation_types %}
+        <option value="{{ c.id }}" {% if filter_cooperation_type == c.id %}selected{% endif %}>{{ c.name }}</option>
         {% endfor %}
     </select>
     <button type="submit" class="btn">搜尋</button>
-    {% if filter_vehicle_no or filter_vendor or filter_status or filter_wheel_type or filter_service_area %}
+    {% if filter_vehicle_no or filter_vendor or filter_status or filter_wheel_type or filter_service_area or filter_cooperation_type %}
     <a class="btn" href="/delivery/vehicles">清除篩選</a>
     {% endif %}
 </form>
@@ -70,7 +79,12 @@
                 </span>
             </td>
             <td>{{ v.current_holder or "-" }}</td>
-            <td>{{ v.current_holder_phone or "-" }}</td>
+            <td>
+                {{ v.current_holder_phone or "-" }}
+                {% if v.rider_cooperation_type %}
+                <span class="badge">{{ v.rider_cooperation_type.name }}</span>
+                {% endif %}
+            </td>
             <td>{{ v.current_location or "-" }}</td>
             <td>{{ v.current_note or "-" }}</td>
             <td><a href="/delivery/vehicles/{{ v.vehicle_no }}">查看詳細</a></td>

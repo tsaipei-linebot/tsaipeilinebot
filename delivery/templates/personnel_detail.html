@@ -38,17 +38,15 @@
                 {% endfor %}
             </select>
         </label>
-        {% if show_cooperation_type %}
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
             合作方式
             <select name="cooperation_type">
                 <option value="" {% if not person.cooperation_type %}selected{% endif %}>尚未決定</option>
                 {% for c in cooperation_types %}
-                <option value="{{ c.code }}" {% if person.cooperation_type == c.code %}selected{% endif %}>{{ c.name }}</option>
+                <option value="{{ c.id }}" {% if person.cooperation_type == c.id %}selected{% endif %}>{{ c.name }}</option>
                 {% endfor %}
             </select>
         </label>
-        {% endif %}
         {% if show_client %}
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
             負責客戶

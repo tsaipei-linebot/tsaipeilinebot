@@ -167,6 +167,16 @@ def dispatch_contract_home(request: Request, generated: str = "", redirect=Depen
     )
 
 
+@router.get("/dispatch-contracts/help")
+def dispatch_contract_help(request: Request, redirect=Depends(_require_access)):
+    """派遣契約產生器使用說明（2026-09-18 新增）。跟 dispatch_contract_home()
+    一樣用 _require_access，跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組
+    權限判斷（見 portal_routes.py 的說明）。"""
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(request, "dispatch_contract_help.html", {"user": platform_accounts.current_account(request)})
+
+
 @router.get("/dispatch-contracts/new")
 def dispatch_contract_new_form(request: Request, redirect=Depends(_require_access)):
     if redirect:

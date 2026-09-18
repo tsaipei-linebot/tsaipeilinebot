@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}公告管理 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">公告管理</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<p class="hint">
+    公告會顯示在 /portal 入口頁最上方，任何登入的帳號都看得到，預設
+    {{ default_days }} 天後自動下架（不用手動處理），也可以隨時提前下架或刪除。
+</p>
+
+<h2 class="section-title">新增公告</h2>
+<form method="post" action="/announcements/new" class="form-stack form-narrow">
+    <label>標題
+        <input type="text" name="title" required placeholder="例如：9/20 系統維護通知">
+    </label>
+    <label>說明
+        <textarea name="content" rows="4" placeholder="可以多行說明細節"></textarea>
+    </label>
+    <label>幾天後自動下架
+        <input type="number" name="days" min="1" value="{{ default_days }}">
+    </label>
+    <button type="submit" class="btn btn-primary">發佈公告</button>
+</form>
+
+<h2 class="section-title">公告清單</h2>
+{% if announcements %}
+<table class="data-table">
+    <thead>
+        <tr><th>標題</th><th>說明</th><th>發布日期</th><th>下架日期</th><th>狀態</th><th>修改</th><th></th></tr>
+    </thead>
+    <tbody>
+        {% for a in announcements %}
+        <tr>
+            <td>{{ a.title }}</td>
+            <td>{{ a.content or "-" }}</td>
+            <td>{{ a.created_at_display }}</td>
+            <td>{{ a.expires_at_display }}</td>
+            <td>
+                {% if not a.active %}
+                <span class="badge badge-resigned">已下架</span>
+                {% elif a.expired %}
+                <span class="badge badge-pending">已過期</span>
+                {% else %}
+                <span class="badge badge-ok">顯示中</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if a.active %}
+                <form method="post" action="/announcements/{{ a.id }}/active" style="display:inline">
+                    <input type="hidden" name="active" value="0">
+                    <button type="submit" class="btn btn-small">提前下架</button>
+                </form>
+                {% else %}
+                <form method="post" action="/announcements/{{ a.id }}/active" style="display:inline">
+                    <input type="hidden" name="active" value="1">
+                    <button type="submit" class="btn btn-small">恢復顯示</button>
+                </form>
+                {% endif %}
+            </td>
+            <td>
+                <form method="post" action="/announcements/{{ a.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除「{{ a.title }}」這則公告嗎？刪除後無法復原。');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有發過任何公告。</p>
+{% endif %}
+
+<p class="back-link"><a href="/portal">&larr; 回入口頁</a></p>
+{% endblock %}

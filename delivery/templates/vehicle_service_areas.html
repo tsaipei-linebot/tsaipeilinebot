@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}服務區域管理 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block content %}
+<h1 class="page-title">服務區域管理</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<h2 class="section-title">新增服務區域</h2>
+<form method="post" action="/delivery/vehicles/service-areas/new" class="form-stack form-narrow">
+    <label>服務區域名稱
+        <input type="text" name="name" required placeholder="例如：台北、新北">
+    </label>
+    <button type="submit" class="btn btn-primary">新增</button>
+</form>
+
+<h2 class="section-title">服務區域清單</h2>
+{% if areas %}
+<table class="data-table">
+    <thead>
+        <tr><th>名稱</th><th>狀態</th><th>修改</th><th></th></tr>
+    </thead>
+    <tbody>
+        {% for area in areas %}
+        <tr>
+            <td>{{ area.name }}</td>
+            <td><span class="badge {{ 'badge-ok' if area.active else 'badge-resigned' }}">{{ "啟用中" if area.active else "已停用" }}</span></td>
+            <td>
+                <form method="post" action="/delivery/vehicles/service-areas/{{ area.id }}/active" style="display:inline">
+                    <input type="hidden" name="active" value="{{ '0' if area.active else '1' }}">
+                    <button type="submit" class="btn btn-small">{{ "停用" if area.active else "啟用" }}</button>
+                </form>
+            </td>
+            <td>
+                {% if not area.has_history %}
+                <form method="post" action="/delivery/vehicles/service-areas/{{ area.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('確定要刪除「{{ area.name }}」這個服務區域嗎？刪除後無法復原。');">
+                    <button type="submit" class="btn btn-danger btn-small">刪除</button>
+                </form>
+                {% else %}
+                <span class="hint">已有車輛使用這個服務區域，只能停用不能刪除</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有任何服務區域。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/vehicles">&larr; 回車輛管理</a></p>
+{% endblock %}

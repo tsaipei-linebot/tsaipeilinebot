@@ -217,6 +217,16 @@ def client_contract_new_form(request: Request, duplicate_from: str = "", redirec
     return templates.TemplateResponse(request, "client_contract_form.html", _form_context(user=account, form=form_values))
 
 
+@router.get("/client-contracts/help")
+def client_contract_help(request: Request, redirect=Depends(_require_access)):
+    """合約產生器使用說明（2026-09-18 新增）。跟 client_contract_home() 一樣
+    用 _require_access，跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組
+    權限判斷（見 portal_routes.py 的說明）。"""
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(request, "client_contract_help.html", {"user": platform_accounts.current_account(request)})
+
+
 @router.get("/client-contracts/company-lookup")
 def client_contract_company_lookup(q: str, request: Request):
     """給表單甲方欄位「輸入公司名稱或統一編號自動查詢」用的 AJAX 端點——

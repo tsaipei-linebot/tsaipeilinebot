@@ -41,9 +41,10 @@ class PersonnelDetailEquipmentDebtTests(unittest.TestCase):
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
             with mock.patch.object(vendor_routes.repository, "list_equipment_debt", return_value=debt) as mock_debt:
                 with mock.patch.object(vendor_routes.repository, "list_equipment_items", return_value=items):
-                    with mock.patch.object(vendor_routes.repository, "all_document_statuses", return_value=[]):
-                        with mock.patch.object(vendor_routes, "templates") as mock_templates:
-                            vendor_routes.personnel_detail("p1", _FakeRequest(_staff_account()), redirect=None)
+                    with mock.patch.object(vendor_routes.repository, "list_cooperation_types", return_value=[]):
+                        with mock.patch.object(vendor_routes.repository, "all_document_statuses", return_value=[]):
+                            with mock.patch.object(vendor_routes, "templates") as mock_templates:
+                                vendor_routes.personnel_detail("p1", _FakeRequest(_staff_account()), redirect=None)
         mock_debt.assert_called_once_with(personnel_id="p1")
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertEqual(context["equipment_debt"][0]["item_name"], "橘衣")
@@ -52,9 +53,10 @@ class PersonnelDetailEquipmentDebtTests(unittest.TestCase):
     def test_no_outstanding_debt_is_empty_list(self):
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
             with mock.patch.object(vendor_routes.repository, "list_equipment_debt", return_value=[]):
-                with mock.patch.object(vendor_routes.repository, "all_document_statuses", return_value=[]):
-                    with mock.patch.object(vendor_routes, "templates") as mock_templates:
-                        vendor_routes.personnel_detail("p1", _FakeRequest(_staff_account()), redirect=None)
+                with mock.patch.object(vendor_routes.repository, "list_cooperation_types", return_value=[]):
+                    with mock.patch.object(vendor_routes.repository, "all_document_statuses", return_value=[]):
+                        with mock.patch.object(vendor_routes, "templates") as mock_templates:
+                            vendor_routes.personnel_detail("p1", _FakeRequest(_staff_account()), redirect=None)
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertEqual(context["equipment_debt"], [])
 
@@ -63,9 +65,10 @@ class PersonnelDetailEquipmentDebtTests(unittest.TestCase):
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
             with mock.patch.object(vendor_routes.repository, "list_equipment_debt", return_value=debt):
                 with mock.patch.object(vendor_routes.repository, "list_equipment_items", return_value=[]):
-                    with mock.patch.object(vendor_routes.repository, "all_document_statuses", return_value=[]):
-                        with mock.patch.object(vendor_routes, "templates") as mock_templates:
-                            vendor_routes.personnel_detail("p1", _FakeRequest(_staff_account()), redirect=None)
+                    with mock.patch.object(vendor_routes.repository, "list_cooperation_types", return_value=[]):
+                        with mock.patch.object(vendor_routes.repository, "all_document_statuses", return_value=[]):
+                            with mock.patch.object(vendor_routes, "templates") as mock_templates:
+                                vendor_routes.personnel_detail("p1", _FakeRequest(_staff_account()), redirect=None)
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertEqual(context["equipment_debt"][0]["item_name"], "（已刪除品項）")
 

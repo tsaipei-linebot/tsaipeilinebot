@@ -29,6 +29,13 @@ class ChickenPointsRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/chicken-points")
 
+    def test_help_page_redirects_to_login_when_not_authenticated(self):
+        """使用說明頁（2026-09-18 新增）跟 /chicken-points 共用同一個
+        _require_access。"""
+        resp = self.client.get("/chicken-points/help", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/chicken-points")
+
     def test_new_form_redirects_to_login_when_not_authenticated(self):
         resp = self.client.get("/chicken-points/new", follow_redirects=False)
         self.assertEqual(resp.status_code, 303)

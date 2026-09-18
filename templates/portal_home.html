@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}內部系統入口 - 材霈有限公司{% endblock %}
 {% block content %}
+{% if announcements %}
+<div class="announcement-list" style="max-width: 720px; margin: 0 auto 24px;">
+    {% for a in announcements %}
+    <div class="announcement-card">
+        <p class="announcement-title">📢 {{ a.title }}</p>
+        {% if a.content %}<p class="announcement-content">{{ a.content }}</p>{% endif %}
+        <p class="announcement-date">{{ a.created_at_display }}</p>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
 <div style="text-align: center; margin: 24px 0 32px;">
     <h1 class="page-title" style="margin-bottom: 8px;">內部系統入口</h1>
     <p class="hint" style="margin: 0;">{{ user.name }}，請選擇要進入的系統</p>
@@ -23,7 +34,7 @@
     </a>
 
     {% for c in cards %}
-    <a class="home-panel" href="{{ c.href }}" style="text-decoration: none; display: block;">
+    <div class="home-panel">
         <span class="home-panel-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 7.5L12 3l9 4.5v9L12 21l-9-4.5v-9z"/>
@@ -33,11 +44,16 @@
         </span>
         <h2>{{ c.name }}</h2>
         <p class="hint">{{ c.description }}</p>
-        <span style="color: var(--brand-dark); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
-            前往
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        </span>
-    </a>
+        <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+            <a href="{{ c.href }}" style="text-decoration: none; color: var(--brand-dark); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                前往
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </a>
+            {% if c.help_href %}
+            <a href="{{ c.help_href }}" class="btn btn-small" style="text-decoration: none;">使用說明</a>
+            {% endif %}
+        </div>
+    </div>
     {% endfor %}
 
     <a class="home-panel" href="/portal/job-system-login" style="text-decoration: none; display: block;">
