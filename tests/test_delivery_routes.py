@@ -31,6 +31,13 @@ class DeliveryRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertTrue(resp.headers["location"].endswith("/delivery/login"))
 
+    def test_help_page_redirects_to_login_when_not_authenticated(self):
+        """使用說明頁（2026-09-18 新增）走跟主頁同一組 login_required，
+        跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組權限判斷。"""
+        resp = self.client.get("/delivery/help", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/delivery/login"))
+
     def test_login_page_renders(self):
         resp = self.client.get("/delivery/login")
         self.assertEqual(resp.status_code, 200)

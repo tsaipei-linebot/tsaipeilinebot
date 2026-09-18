@@ -29,9 +29,18 @@ router = APIRouter()
 # platform_accounts.MODULES 多一筆之外，這裡也要補一筆對應的顯示內容，
 # 不然新模組雖然有權限但卡片會找不到說明文字（見 portal_home() 的
 # fallback：找不到就用空字串，不會噴錯，只是畫面比較陽春）。
+#
+# help_href（2026-09-18 新增）：這個模組有沒有寫好「使用說明」頁面。
+# 卡片上會多顯示一個「使用說明」按鈕，連去該模組自己的說明頁（不是共用
+# 一頁，因為每個模組的操作內容差很多）；說明頁本身也是掛在該模組自己的
+# 子系統底下、走該模組自己的 login_required，跟這裡卡片顯示不顯示是
+# 同一組權限判斷，不會有「按鈕沒有但網址還是進得去」的落差。沒有
+# help_href 的模組（還沒寫說明頁）卡片上就不會顯示這個按鈕——之後每寫好
+# 一個模組的說明頁，這裡補上對應的 URL 即可。
 _MODULE_CARD_INFO = {
     "delivery": {
         "description": "廠商人員管理、應徵名單、補款假別、車輛與意外事件回報",
+        "help_href": "/delivery/help",
     },
     "management": {
         "description": "公告事項、會議記錄、規章/SOP 文件庫、業績報表、客戶拜訪、員工名冊、資產設備",
@@ -108,6 +117,7 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
                 "name": module["name"],
                 "description": info.get("description", ""),
                 "href": info.get("href", f"/{module['code']}/login"),
+                "help_href": info.get("help_href", ""),
             }
         )
     return templates.TemplateResponse(

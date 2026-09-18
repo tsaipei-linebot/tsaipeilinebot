@@ -175,6 +175,28 @@ class PortalHomeAnnouncementTests(unittest.TestCase):
         self.assertIn("created_at_display", context["announcements"][0])
 
 
+class PortalHomeHelpLinkTests(unittest.TestCase):
+    """/portal 卡片的「使用說明」按鈕（2026-09-18 新增）：只有寫好說明頁的
+    模組（目前只有配送部）卡片才會帶 help_href，其他模組還沒寫，卡片上
+    就不會顯示這個按鈕。"""
+
+    def test_delivery_card_has_help_href(self):
+        with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=[]):
+            with mock.patch.object(portal_routes, "templates") as mock_templates:
+                portal_routes.portal_home(_FakeRequest(_admin_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        delivery_card = next(c for c in context["cards"] if c["name"] == "新北所(配送組)系統")
+        self.assertEqual(delivery_card["help_href"], "/delivery/help")
+
+    def test_module_without_help_page_has_blank_help_href(self):
+        with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=[]):
+            with mock.patch.object(portal_routes, "templates") as mock_templates:
+                portal_routes.portal_home(_FakeRequest(_admin_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        management_card = next(c for c in context["cards"] if c["name"] == "管理部")
+        self.assertEqual(management_card["help_href"], "")
+
+
 class AnnouncementAdminRoutesTests(unittest.TestCase):
     """公告管理路由（限全平台管理員）：直接呼叫路由函式，跳過
     require_platform_admin 依賴（redirect=None 等同已通過檢查），
