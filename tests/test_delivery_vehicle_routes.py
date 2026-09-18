@@ -523,5 +523,79 @@ class DeleteVehicleEventTests(unittest.TestCase):
         mock_delete.assert_not_called()
 
 
+class VehicleListRiderCooperationTypeTests(unittest.TestCase):
+    """騎手身份欄位/篩選（2026-09-18 新增）：車輛清單頁每一列都要反查一次
+    目前使用人的合作方式（見 repository.resolve_vehicle_rider_cooperation_type()
+    的說明），篩選是靠反查出來的結果比對，不是車輛主檔本身的欄位。"""
+
+    def _vehicle(self, vehicle_no="ERV-1", **overrides):
+        base = {"vehicle_no": vehicle_no, "vendor": "shopee", "current_holder": "小明"}
+        base.update(overrides)
+        return base
+
+    def test_attaches_resolved_cooperation_type_to_each_vehicle(self):
+        vehicles = [self._vehicle()]
+        coop = {"id": "two_wheel_contract", "name": "二輪承攬"}
+        with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=coop
+            ):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_list(_FakeRequest(_staff_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["vehicles"][0]["rider_cooperation_type"], coop)
+
+    def test_cooperation_type_filter_keeps_only_matching_vehicles(self):
+        vehicles = [self._vehicle("ERV-1"), self._vehicle("ERV-2")]
+        coop_a = {"id": "two_wheel_contract", "name": "二輪承攬"}
+        coop_b = {"id": "two_wheel_employed", "name": "二輪雇傭"}
+
+        def fake_resolve(v):
+            return coop_a if v["vehicle_no"] == "ERV-1" else coop_b
+
+        with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", side_effect=fake_resolve
+            ):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_list(
+                                _FakeRequest(_staff_account()), cooperation_type="two_wheel_contract", redirect=None
+                            )
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual([v["vehicle_no"] for v in context["vehicles"]], ["ERV-1"])
+
+    def test_vehicles_with_no_match_are_excluded_when_filtering(self):
+        vehicles = [self._vehicle("ERV-1")]
+        with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=None
+            ):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_list(
+                                _FakeRequest(_staff_account()), cooperation_type="two_wheel_contract", redirect=None
+                            )
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["vehicles"], [])
+
+    def test_no_filter_keeps_vehicles_without_a_match(self):
+        vehicles = [self._vehicle("ERV-1")]
+        with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=None
+            ):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_list(_FakeRequest(_staff_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual([v["vehicle_no"] for v in context["vehicles"]], ["ERV-1"])
+
+
 if __name__ == "__main__":
     unittest.main()

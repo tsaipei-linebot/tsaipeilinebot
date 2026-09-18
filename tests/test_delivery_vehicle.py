@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -8,7 +9,13 @@ from tests import _env  # noqa: F401
 from tests import _stub_gcp
 _stub_gcp.install()
 
-from delivery.repository import _normalize_vehicle_no, vehicle_event_error, vehicle_matches_filters
+from delivery import repository
+from delivery.repository import (
+    _normalize_vehicle_no,
+    resolve_vehicle_rider_cooperation_type,
+    vehicle_event_error,
+    vehicle_matches_filters,
+)
 from delivery.vehicle_report import handle_vehicle_report, parse_vehicle_report
 
 
@@ -352,6 +359,69 @@ class ParseErrorMessagesIncludeExampleTests(unittest.TestCase):
         )
         reply = handle_vehicle_report(text)
         self.assertIn("正確範例", reply)
+
+
+class ResolveVehicleRiderCooperationTypeTests(unittest.TestCase):
+    """騎手身份（2026-09-18 新增）：車輛主檔的 current_holder 是自由輸入
+    文字，反查對應人員資料優先用姓名+電話比對，車輛沒填電話時才退而用
+    姓名+廠商比對；找不到人、或人員沒設合作方式都回傳 None。"""
+
+    def test_no_current_holder_returns_none_without_any_lookup(self):
+        with mock.patch.object(repository, "find_active_personnel_by_name_and_phone") as mock_phone:
+            with mock.patch.object(repository, "find_personnel_by_name_vendor") as mock_vendor:
+                result = resolve_vehicle_rider_cooperation_type({"vendor": "shopee", "current_holder": ""})
+        self.assertIsNone(result)
+        mock_phone.assert_not_called()
+        mock_vendor.assert_not_called()
+
+    def test_uses_name_and_phone_match_when_phone_present(self):
+        vehicle = {"vendor": "shopee", "current_holder": "小明", "current_holder_phone": "0912345678"}
+        person = {"id": "p1", "cooperation_type": "two_wheel_contract"}
+        coop = {"id": "two_wheel_contract", "name": "二輪承攬"}
+        with mock.patch.object(repository, "find_active_personnel_by_name_and_phone", return_value=person) as mock_phone:
+            with mock.patch.object(repository, "find_personnel_by_name_vendor") as mock_vendor:
+                with mock.patch.object(repository, "get_cooperation_type", return_value=coop):
+                    result = resolve_vehicle_rider_cooperation_type(vehicle)
+        mock_phone.assert_called_once_with("小明", "0912345678")
+        mock_vendor.assert_not_called()
+        self.assertEqual(result, coop)
+
+    def test_falls_back_to_name_and_vendor_when_no_phone(self):
+        vehicle = {"vendor": "shopee", "current_holder": "小明"}
+        person = {"id": "p1", "cooperation_type": "two_wheel_employed"}
+        coop = {"id": "two_wheel_employed", "name": "二輪雇傭"}
+        with mock.patch.object(repository, "find_active_personnel_by_name_and_phone") as mock_phone:
+            with mock.patch.object(repository, "find_personnel_by_name_vendor", return_value=person) as mock_vendor:
+                with mock.patch.object(repository, "get_cooperation_type", return_value=coop):
+                    result = resolve_vehicle_rider_cooperation_type(vehicle)
+        mock_phone.assert_not_called()
+        mock_vendor.assert_called_once_with("shopee", "小明")
+        self.assertEqual(result, coop)
+
+    def test_phone_match_miss_does_not_fall_back_to_vendor_match(self):
+        """車輛主檔有填電話，但比對不到人員時，不會再退而用姓名+廠商比對
+        （避免同名同姓比對錯人）——只有「完全沒填電話」才會走這個備援。"""
+        vehicle = {"vendor": "shopee", "current_holder": "小明", "current_holder_phone": "0912345678"}
+        with mock.patch.object(repository, "find_active_personnel_by_name_and_phone", return_value=None):
+            with mock.patch.object(repository, "find_personnel_by_name_vendor") as mock_vendor:
+                result = resolve_vehicle_rider_cooperation_type(vehicle)
+        mock_vendor.assert_not_called()
+        self.assertIsNone(result)
+
+    def test_no_matching_person_returns_none(self):
+        vehicle = {"vendor": "shopee", "current_holder": "小明"}
+        with mock.patch.object(repository, "find_personnel_by_name_vendor", return_value=None):
+            result = resolve_vehicle_rider_cooperation_type(vehicle)
+        self.assertIsNone(result)
+
+    def test_matched_person_without_cooperation_type_returns_none(self):
+        vehicle = {"vendor": "shopee", "current_holder": "小明"}
+        person = {"id": "p1", "cooperation_type": ""}
+        with mock.patch.object(repository, "find_personnel_by_name_vendor", return_value=person):
+            with mock.patch.object(repository, "get_cooperation_type", return_value=None) as mock_get:
+                result = resolve_vehicle_rider_cooperation_type(vehicle)
+        mock_get.assert_called_once_with("")
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

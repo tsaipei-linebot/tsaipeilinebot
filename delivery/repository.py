@@ -1299,6 +1299,35 @@ def list_vehicles(
     return result
 
 
+def resolve_vehicle_rider_cooperation_type(vehicle: dict):
+    """車輛管理清單頁「騎手身份」欄位用（2026-09-18 新增）：車輛主檔的
+    current_holder 是自由輸入的文字欄位，沒有連到人員資料的 personnel_id，
+    要顯示這台車目前使用人的合作方式，只能靠姓名反查對應的人員資料。
+
+    優先用「姓名+電話」比對（find_active_personnel_by_name_and_phone），
+    比對到的人員是唯一的，不會有同名同姓混淆的問題；車輛主檔沒有填
+    current_holder_phone 時，才退而用「姓名+廠商」比對
+    （find_personnel_by_name_vendor）——這個比對方式如果剛好同廠商有
+    同名同姓的人員，可能會抓到錯的人，這是自由輸入文字欄位先天的限制，
+    不是這次新增功能造成的（假別登記反查人員資料也有一樣的限制，見
+    find_personnel_by_name_vendor() 的說明）。
+
+    找不到對應的人員、或對應的人員沒有設定合作方式時，回傳 None（畫面上
+    顯示成沒有騎手身份資料，不是查詢錯誤）。"""
+    name = (vehicle.get("current_holder") or "").strip()
+    if not name:
+        return None
+    phone = (vehicle.get("current_holder_phone") or "").strip()
+    if phone:
+        person = find_active_personnel_by_name_and_phone(name, phone)
+    else:
+        vendor = vehicle.get("vendor") or ""
+        person = find_personnel_by_name_vendor(vendor, name) if vendor else None
+    if not person:
+        return None
+    return get_cooperation_type(person.get("cooperation_type") or "")
+
+
 def list_vehicle_events(vehicle_no: str) -> list:
     vehicle_no = _normalize_vehicle_no(vehicle_no)
     result = []

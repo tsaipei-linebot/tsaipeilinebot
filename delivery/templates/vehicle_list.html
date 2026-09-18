@@ -38,8 +38,14 @@
         <option value="{{ a.id }}" {% if filter_service_area == a.id %}selected{% endif %}>{{ a.name }}</option>
         {% endfor %}
     </select>
+    <select name="cooperation_type">
+        <option value="">全部騎手身份</option>
+        {% for c in cooperation_types %}
+        <option value="{{ c.id }}" {% if filter_cooperation_type == c.id %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+    </select>
     <button type="submit" class="btn">搜尋</button>
-    {% if filter_vehicle_no or filter_vendor or filter_status or filter_wheel_type or filter_service_area %}
+    {% if filter_vehicle_no or filter_vendor or filter_status or filter_wheel_type or filter_service_area or filter_cooperation_type %}
     <a class="btn" href="/delivery/vehicles">清除篩選</a>
     {% endif %}
 </form>
@@ -73,7 +79,12 @@
                 </span>
             </td>
             <td>{{ v.current_holder or "-" }}</td>
-            <td>{{ v.current_holder_phone or "-" }}</td>
+            <td>
+                {{ v.current_holder_phone or "-" }}
+                {% if v.rider_cooperation_type %}
+                <span class="badge">{{ v.rider_cooperation_type.name }}</span>
+                {% endif %}
+            </td>
             <td>{{ v.current_location or "-" }}</td>
             <td>{{ v.current_note or "-" }}</td>
             <td><a href="/delivery/vehicles/{{ v.vehicle_no }}">查看詳細</a></td>
