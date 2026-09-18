@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}編輯歷史紀錄：{{ vehicle.vehicle_no }} - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">編輯歷史紀錄：{{ vehicle.vehicle_no }}</h1>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
@@ -12,23 +13,24 @@
         </select>
     </label>
     <label>廠商
-        <select name="vendor" required>
+        <select name="vendor" id="manual-event-vendor" required>
             {% for v in vendors %}
             <option value="{{ v.code }}" {% if event.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
             {% endfor %}
         </select>
     </label>
     <label>姓名
-        <input type="text" name="personnel_name" value="{{ event.personnel_name }}" required>
+        <input type="text" name="personnel_name" id="manual-event-name" value="{{ event.personnel_name }}" required>
     </label>
+    <span class="hint" id="manual-event-lookup-status" style="margin:0;"></span>
     <label>日期
         <input type="date" name="event_date" value="{{ event.event_date }}" required>
     </label>
     <label>地點
         <input type="text" name="location" value="{{ event.location }}" required>
     </label>
-    <label>電話（選填）
-        <input type="text" name="phone" value="{{ event.phone or '' }}">
+    <label>電話（選填，系統查得到人員資料時會自動帶入，仍可手動修改）
+        <input type="text" name="phone" id="manual-event-phone" value="{{ event.phone or '' }}">
     </label>
     <label>待維修
         <select name="needs_maintenance">
@@ -45,4 +47,40 @@
 <p class="hint">如果這筆是目前這台車最新的一筆紀錄，儲存後「目前使用人／地點／狀態」也會一併更新；但如果車輛目前已經是「待維修」狀態，這裡的修改不會反過來改變車輛目前狀態，要撤銷待維修請到車輛詳細頁按「解除待維修」。</p>
 
 <p class="back-link"><a href="/delivery/vehicles/{{ vehicle.vehicle_no }}">&larr; 回車輛詳細</a></p>
+
+<script>
+(function () {
+    // 跟車輛詳細頁「手動補登事件」表單同一套自動帶入邏輯，見那邊的
+    // 註解說明（2026-09-19 新增）。
+    var vendorSelect = document.getElementById('manual-event-vendor');
+    var nameInput = document.getElementById('manual-event-name');
+    var phoneInput = document.getElementById('manual-event-phone');
+    var status = document.getElementById('manual-event-lookup-status');
+
+    function runLookup() {
+        var name = nameInput.value.trim();
+        var vendor = vendorSelect.value;
+        if (!name || !vendor) { return; }
+        status.textContent = '查詢中...';
+        fetch('/delivery/vehicles/personnel-lookup?vendor=' + encodeURIComponent(vendor) + '&name=' + encodeURIComponent(name))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (!data.found) {
+                    status.textContent = '系統查無此人員資料，請自行手動填寫電話。';
+                    return;
+                }
+                if (data.phone) {
+                    phoneInput.value = data.phone;
+                }
+                status.textContent = '已自動帶入電話' + (data.cooperation_type_name ? '（合作方式：' + data.cooperation_type_name + '）' : '') + '，仍可手動修改。';
+            })
+            .catch(function () { status.textContent = ''; });
+    }
+
+    nameInput.addEventListener('blur', runLookup);
+    vendorSelect.addEventListener('change', function () {
+        if (nameInput.value.trim()) { runLookup(); }
+    });
+})();
+</script>
 {% endblock %}

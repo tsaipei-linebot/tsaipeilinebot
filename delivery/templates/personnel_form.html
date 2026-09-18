@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}新增人員 - {{ vendor_name }}{% endblock %}
+{% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">新增人員 - {{ vendor_name }}</h1>
 <form method="post" action="/delivery/vendor/{{ vendor_code }}/new" class="form-stack form-narrow">
