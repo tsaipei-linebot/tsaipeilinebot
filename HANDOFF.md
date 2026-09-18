@@ -6035,6 +6035,45 @@ discover -s tests -p "test_*.py"`）1432 個全數通過。
 離職狀態、裝備還沒追回，頁面上方也會有常駐的警告文字，直到裝備歸還
 或核銷/買斷結案才會消失。
 
+## 修正各產生器「送出時間」顯示成 UTC 時間（2026-09-17）
+
+使用者回報合約產生器的送出時間不對，要求改成台灣時間。
+
+### 根本原因
+
+`services/client_contract_service.py`／`dispatch_contract_service.py`／
+`chicken_points_service.py` 送出合約/契約/雞排點數申請時，都是用
+`datetime.now(timezone.utc)` 存 `created_at`（存 UTC 時間本身沒問題，
+資料庫本來就該存不受時區影響的絕對時間），但對應的樣板（`client_
+contract_home.html`／`dispatch_contract_home.html`／`chicken_points_
+home.html`／`project_contract_form.html`）都是直接把這個 datetime
+物件印出來，**沒有轉換成台灣時間再顯示**，導致畫面上看到的送出時間
+比實際時間晚了 8 小時（例如晚上 9 點送出的合約，畫面顯示下午 1 點）。
+這是四個模組共用的同一個 bug，不是只有合約產生器一處。
+
+### 修正方式
+
+在共用的 `platform_templating.py`（`fastapi.templating.Jinja2Templates`
+的實例，所有這些模組的路由都從這裡 import `templates`）新增一個
+Jinja 篩選器 `taipei_time`，用既有的 `config.TAIPEI_TZ`
+（`pytz.timezone("Asia/Taipei")`，`handlers/message_handler.py`／
+`services/daily_report_service.py` 本來就在用同一個常數）把時間轉成
+台灣時間再格式化成 `YYYY-MM-DD HH:MM`。四個模板的 `{{ record.created_
+at }}` 都改成 `{{ record.created_at | taipei_time }}`。這個篩選器是
+共用元件，之後其他模組如果也需要顯示時間戳，直接套用同一個篩選器
+即可，不用各自重新處理時區轉換。
+
+新增 `tests/test_platform_templating.py`（6 個測試：UTC 轉台灣時間、
+沒有 tzinfo 的 datetime 當 UTC 處理、跨日情況、`None`、非 datetime
+值原樣返回、自訂格式）。全部測試（`python3 -m unittest discover -s
+tests -p "test_*.py"`）1441 個全數通過。
+
+### 使用者需要知道的事
+
+這次改動**不需要任何手動部署步驟**，合併後就直接生效，之後在合約
+產生器、派遣契約產生器、專案合約維護、雞排點數這幾個地方看到的
+「送出時間」都會是台灣時間，不用再自己心算加 8 小時。
+
 ## 配送部系統：車輛管理的服務區域改成主管可自行新增/停用（2026-09-18）
 
 使用者要求：車輛管理的服務區域需要能自行增減，不要再像原本那樣寫死在

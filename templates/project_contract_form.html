@@ -33,7 +33,7 @@
                 <option value="">不使用，我要自己手動填寫</option>
                 {% for opt in client_contract_options %}
                 <option value="{{ opt.id }}" data-party-a-name="{{ opt.party_a_name }}" data-project-contract-mode="{{ opt.project_contract_mode }}" data-coop-category="{{ opt.project_contract_coop_category }}">
-                    {{ opt.party_a_name }}（{{ opt.created_at }}）
+                    {{ opt.party_a_name }}（{{ opt.created_at | taipei_time }}）
                 </option>
                 {% endfor %}
             </select>
