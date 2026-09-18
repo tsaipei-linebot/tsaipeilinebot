@@ -351,6 +351,12 @@
     - **一般地點聚合分支沒有去除重複值**：`format_clean_location()` 建立 `dist_list` 時改用 `dict.fromkeys` 去重複（`target_location`／`same_county_scope` 兩個分支原本就有做，只有這個一般分支漏掉），避免同仁複製貼上「行政區」欄位不小心貼出重複值時，行政區數量被灌水誤觸發「≥5 個行政區改用概括描述」規則，或顯示文字重複列出同一個行政區。
     - **新增測試**：`tests/test_matcher_service.py` 的 `FindBenefitMatchedJobsTests` 新增否定語氣、短關鍵字兩個情境；`tests/test_monitoring_service.py` 新增 `test_internal_failure_does_not_propagate_to_caller`；`tests/test_message_handler.py` 新增 `ShowAllNegationTests`；`tests/test_flex_service.py` 新增 `FormatCleanLocationTaiVariantNormalizationTests`、`FormatCleanLocationDedupTests`。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 624 個測試，OK。
+54. **修正：蝦皮外送職缺的履歷連結被錯發成蝦皮門市專屬版**：使用者實測回報「蝦皮外送給的履歷連結好像給成蝦皮門市專用版了」。
+    - **根本原因**：`services/flex_service.py` 的 `resolve_apply_url_key_by_industry()` 原本只要職缺文字裡出現「蝦皮」兩個字，就直接歸類成 `Spx`（蝦皮門市專屬履歷連結）。蝦皮外送職缺的職缺名稱/職務類別文字裡同時會出現「蝦皮」跟「外送」，一律被「蝦皮」這個過寬的關鍵字搶先攔截，導致外送職缺誤拿到門市版的履歷連結。
+    - **權威依據**：在 Notion 找到同仁自己維護、confirm 過的權威對照表「小雞上工客服自動化／職缺分類與履歷連結對照表」，白紙黑字寫明「蝦皮門市專屬」分類不含「蝦皮外送」，「外送一律歸類服務業」；也列出製造業分類額外涵蓋「電商物流、蝦皮物流、momo理貨、pchome理貨」這幾個原本程式碼沒有的關鍵字。
+    - **修正方式**：改成三層判斷、刻意把「外送」相關判斷排在最前面（一律先歸類服務業，不管有沒有同時出現「蝦皮」）；「蝦皮門市專屬」改成只認「蝦皮門市／智取店／店到店／蝦皮店到店／門市理貨」這幾個明確組合字，不再用單獨「蝦皮」兩個字判斷；服務業關鍵字維持既有覆蓋範圍（服務、餐飲、服飾、門市、專櫃、店員、廚助），另外補上對照表新增的「客服」「櫃姐」「櫃哥」「內外場」「門市服務」；都沒命中時維持預設「製造業」（對照表的製造業關鍵字本來就不會被前面兩組誤判命中，不需要另外寫一次判斷）。
+    - **新增測試**：`tests/test_flex_service.py` 新增 `ResolveApplyUrlKeyByIndustryTests`（7 個：蝦皮外送→服務業、蝦皮店到店／智取店→蝦皮門市專屬、蝦皮物流→製造業不誤判成蝦皮門市專屬、非蝦皮門市／外送職缺仍正確歸類服務業、一般製造業職缺）。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 631 個測試，OK。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 565 個測試，OK。
 
 ## 目前所有檔案的狀態
