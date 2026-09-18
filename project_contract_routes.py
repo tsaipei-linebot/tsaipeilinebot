@@ -127,6 +127,16 @@ def project_contract_form(request: Request, submitted: str = "", submit_unknown:
     return templates.TemplateResponse(request, "project_contract_form.html", context)
 
 
+@router.get("/project-contracts/help")
+def project_contract_help(request: Request, redirect=Depends(_require_access)):
+    """專案合約維護使用說明（2026-09-18 新增）。跟 project_contract_form()
+    一樣用 _require_access，跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組
+    權限判斷（見 portal_routes.py 的說明）。"""
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(request, "project_contract_help.html", {"user": platform_accounts.current_account(request)})
+
+
 @router.post("/project-contracts")
 async def project_contract_submit(
     request: Request,

@@ -6517,3 +6517,92 @@ unittest discover -s tests -p "test_*.py"`）1526 個全數通過。
 的操作說明。**其他模組（管理部、人資…）目前還沒有說明頁**，卡片上
 不會顯示這個按鈕——之後如果要幫其他模組也做一份，跟我說一聲即可，
 做法是同一套。PPT 版本之後不會再更新，有需要的話請改看這個網頁版。
+
+## 其餘 8 個模組的使用說明頁全部補齊（2026-09-18）
+
+使用者要求把 /portal 剩下沒有使用說明的卡片全部補齊，之後每次更新功能
+也要同步更新說明——延續上一節的設計（每個模組自己的說明頁、沿用該模組
+自己的權限判斷）。為了避免憑空編內容，先分別對 8 個模組（management、
+hr、salesdev、job_listings、project_contracts、chicken_points、
+dispatch_contracts、client_contracts）各派一個 subagent 讀過對應的
+routes/templates/repository/service 檔案，確認實際行為後才動筆寫說明，
+避免說明頁寫出跟系統實際行為對不起來的內容。
+
+### 各模組說明頁掛的位置
+
+- `management`（子系統，掛 /management）：`management/routes/home_routes.py`
+  新增 `GET /management/help`，跟 `home()` 一樣用 `login_required`，樣板
+  `management/templates/help.html`。7 個段落：系統總覽、公告事項、會議
+  記錄、規章/SOP 文件庫、業績報表庫、客戶拜訪紀錄、員工名冊/組織圖、
+  資產/設備管理。
+- `hr`（子系統，掛 /hr）：`hr/routes/home_routes.py` 新增 `GET /hr/help`，
+  同樣用 `login_required`，樣板 `hr/templates/help.html`。5 個段落：
+  系統總覽、意外通報、員工體檢報告、員工關懷彙整、公司證照彙整、教育
+  訓練彙整。
+- 其餘 6 個模組都是直接掛在根 app（沒有獨立子系統/登入頁），各自在自己
+  的 route 檔案裡新增 `GET /{路徑}/help`，沿用各自檔案裡原本就有的
+  `_require_access` 依賴（跟該模組本來就有的其他路由同一套權限判斷），
+  樣板放在根目錄 `templates/`：
+  - `salesdev_routes.py` → `GET /salesdev/help` → `templates/salesdev_help.html`
+  - `job_listing_routes.py` → `GET /job-listings/help` → `templates/job_listing_help.html`
+  - `project_contract_routes.py` → `GET /project-contracts/help` → `templates/project_contract_help.html`
+  - `chicken_points_routes.py` → `GET /chicken-points/help` → `templates/chicken_points_help.html`
+  - `dispatch_contract_routes.py` → `GET /dispatch-contracts/help` → `templates/dispatch_contract_help.html`
+  - `client_contract_routes.py` → `GET /client-contracts/help` → `templates/client_contract_help.html`
+
+`portal_routes.py` 的 `_MODULE_CARD_INFO` 每個模組都補上對應的
+`help_href`，現在全部 9 個模組（含配送部）的卡片都會顯示「使用說明」
+按鈕。
+
+### 內容重點（供之後維護參考，不是完整內容，完整內容看各說明頁本身）
+
+- **management**：除了「資產狀態更新」，內容一律不能編輯，只能刪除
+  重新建立；客戶拜訪紀錄的可見範圍是「自己的紀錄」（老闆例外看得到
+  全部），跟公告/會議記錄「全部門共享」邏輯不同；門號資產有自動繳費
+  提醒（每週一推播 LINE）。
+- **hr**：意外通報沒有網頁新增表單，完全靠 LINE 群組訊息觸發建檔；
+  公司證照到期前會自動推播提醒；其餘 3 項（體檢報告、關懷彙整、教育
+  訓練）都是純手動登記，沒有自動化。
+- **salesdev**：唯讀彙整一份 Google 試算表，只有「查看資料」跟「勾選
+  待反查」兩個功能，沒有主管/專員的角色差異。
+- **job_listings**：分「新增全新職缺」／「維護既有職缺」兩種模式；
+  送出後走主管 LINE 核准，核准後自動同步職缺資料庫、官網、招募機器人；
+  故意不提舊版 Netlify 職缺系統，避免使用者搞混登入方式。
+- **project_contracts**：沒有審核流程，送出即完成；可以從「合約產生器」
+  帶入已存在的合約資料省去重複輸入；沒有查詢/編輯自己送出紀錄的功能。
+- **chicken_points**：這是第一個「專員/主管」角色真的影響功能的模組——
+  一般同仁只看得到自己的申請，會計（主管角色）才看得到全部並能刪除；
+  只需要本人簽名，沒有審核關卡。
+- **dispatch_contracts**：可見範圍收斂成「自己送出的／自己主管的部屬
+  送出的／全平台管理員」，服務部門主管額外開放下載/預覽（但不能刪除）；
+  班別薪資表格可勾選要用哪些欄位。
+- **client_contracts**：5 種合約版本會動態顯示/隱藏對應欄位；甲方公司
+  資料可以自動查政府登記資料庫帶入；「複製」功能方便續簽下一年度合約
+  （日期不會自動加一年，需要自己改）；可另外上傳廠商指定格式的合約
+  檔案，跟系統產生的標準版並存。
+
+### 「每次更新功能同步更新說明」的落實方式
+
+跟配送部那份說明頁一樣，這是**我的工作流程**，不是額外的程式功能——
+之後不管哪個模組上線新功能或調整既有行為，我會同步更新對應那份說明頁
+的內容，寫程式碼改動的同一次 PR 就會一併改說明頁，不會事後補。
+
+### 測試
+
+`tests/test_management_routes.py`／`tests/test_hr_routes.py` 各新增一個
+`/help` 未登入導向登入頁的煙霧測試；`tests/test_salesdev_routes.py`／
+`tests/test_job_listing_routes.py`／`tests/test_project_contract_routes.py`
+／`tests/test_chicken_points_routes.py`／`tests/test_dispatch_contract_routes.py`
+／`tests/test_client_contract_routes.py` 也各自新增一個 `/help` 導向
+`/login?next=/...` 的煙霧測試，驗證跟該模組其他路由共用同一個
+`_require_access`。`tests/test_portal.py` 的 `PortalHomeHelpLinkTests`
+擴大成驗證全部 9 個模組卡片都帶正確的 `help_href`。全部測試（`python3
+-m unittest discover -s tests -p "test_*.py"`）1533 個全數通過。
+
+### 使用者需要知道的事
+
+**不需要任何手動部署步驟**，合併後就直接生效。登入 `/portal` 後，
+9 張模組卡片（配送部、管理部、人資、少凱業務開發、職缺維護、專案合約
+維護、小雞點數自費申請、派遣契約產生器、合約產生器）都會看到「使用
+說明」按鈕，點進去就是各自完整的操作說明。之後這些系統如果有功能調整，
+我會同步更新對應的說明頁，不用你特別提醒。

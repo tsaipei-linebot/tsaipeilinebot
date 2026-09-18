@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}使用說明 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">使用說明</h1>
+<p class="hint">
+    這裡整理派遣契約產生器目前所有功能的操作方式。系統每次上線新功能或調整既有功能，
+    這頁都會同步更新，不用擔心看到過時的說明。
+</p>
+
+<div class="help-nav">
+    <a class="btn btn-small" href="#dispatch-contract-overview">系統總覽</a>
+    <a class="btn btn-small" href="#dispatch-contract-form-fields">怎麼填表單</a>
+    <a class="btn btn-small" href="#dispatch-contract-history">歷史紀錄、預覽與刪除</a>
+</div>
+
+<section id="dispatch-contract-overview" class="help-section">
+    <h2>系統總覽</h2>
+    <p class="hint">填寫這次客戶的工作條件，系統會自動套進固定範本產生派遣契約 Word 檔，並幫你存檔方便之後重新下載。</p>
+    <ul>
+        <li>填客戶名稱、工作地址、工作內容等欄位，送出後立刻產生 Word 檔案下載</li>
+        <li>契約裡跟員工簽署相關的欄位（姓名、身分證字號等）是另一套系統自動帶入，這裡不用填</li>
+        <li>送出同時會自動存檔，之後可以到「歷史紀錄」重新下載，不用重新填一次</li>
+        <li>誰能用這個功能、看得到哪些紀錄，由帳號管理設定決定——一般只看得到自己送出的和自己部屬送出的紀錄</li>
+    </ul>
+</section>
+
+<section id="dispatch-contract-form-fields" class="help-section">
+    <h2>怎麼填表單</h2>
+    <p class="hint">表單分成三個區塊，大部分欄位都有預設文字可以直接沿用。</p>
+    <ul>
+        <li>「選擇對應的合約」：如果客戶已經先產生過合約，選了之後客戶名稱會自動帶出，不用再打一次</li>
+        <li>客戶名稱、工作地址、工作內容是必填欄位</li>
+        <li>班別薪資表格可以勾選這次要用哪些欄位（職稱／工時／時薪／獎金／加班），可以新增多列，適合同一客戶有好幾種班別的情況；沒勾的欄位會在契約上顯示「－」</li>
+        <li>條文段落（休假、加班津貼、服裝押金、福利、到職須知）都已經有標準文字，可以直接用，也可以依這次客戶需求修改</li>
+    </ul>
+</section>
+
+<section id="dispatch-contract-history" class="help-section">
+    <h2>歷史紀錄、預覽與刪除</h2>
+    <p class="hint">所有產生過的契約都會存檔在歷史紀錄頁面，方便之後重新下載或作廢。</p>
+    <ul>
+        <li>列表可以用客戶名稱搜尋</li>
+        <li>有「預覽」連結的紀錄可以直接在瀏覽器看排版，不用下載；如果沒有預覽連結，通常是轉檔失敗，但 Word 檔案不受影響，仍可正常下載</li>
+        <li>刪除是永久刪除，沒有復原功能，按刪除前系統會再跳出確認</li>
+        <li>只能看到自己送出的、或自己部屬送出的紀錄（主管視角），全公司系統管理員可以看到全部</li>
+    </ul>
+</section>
+
+<p class="hint">
+    操作上有疑問，或發現系統跟實際狀況對不起來，請聯絡系統管理窗口。
+</p>
+
+<p class="back-link"><a href="/dispatch-contracts">&larr; 回主頁</a></p>
+{% endblock %}

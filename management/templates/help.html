@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}使用說明 - 材霈有限公司-管理部{% endblock %}
+{% block content %}
+<h1 class="page-title">使用說明</h1>
+<p class="hint">
+    這裡整理管理部系統目前所有功能的操作方式。系統每次上線新功能或調整既有功能，
+    這頁都會同步更新，不用擔心看到過時的說明。
+</p>
+
+<div class="help-nav">
+    <a class="btn btn-small" href="#overview">系統總覽</a>
+    <a class="btn btn-small" href="#announcements">公告事項</a>
+    <a class="btn btn-small" href="#meetings">會議記錄</a>
+    <a class="btn btn-small" href="#documents">規章／SOP 文件庫</a>
+    <a class="btn btn-small" href="#kpi-reports">業績報表庫</a>
+    <a class="btn btn-small" href="#client-visits">客戶拜訪紀錄</a>
+    <a class="btn btn-small" href="#staff-directory">員工名冊／組織圖</a>
+    <a class="btn btn-small" href="#assets">資產／設備管理</a>
+</div>
+
+<section id="overview" class="help-section">
+    <h2>系統總覽</h2>
+    <p class="hint">登入後從主頁點選任一功能即可使用；跟其他系統（配送部、人資…）共用同一組帳號密碼，登入一次即可切換使用。</p>
+    <ul>
+        <li>有些操作（新增、刪除）只有主管層級的帳號看得到，一般同仁是唯讀權限——這是依帳號的公司職級自動判斷，不用另外設定</li>
+        <li>除了「資產狀態更新」以外，這裡的內容都**不能編輯**，只能刪除重新建立，打錯字要重打一則，不是找地方修改</li>
+        <li>如果要開通管理部系統的權限，或調整帳號的主管權限，要透過「帳號權限管理」頁面（右上角連結，僅老闆本人看得到），不是在這個系統裡設定</li>
+    </ul>
+</section>
+
+<section id="announcements" class="help-section">
+    <h2>公告事項</h2>
+    <p class="hint">主頁點選「公告事項」查看清單，點進單則可看完整內容。</p>
+    <ul>
+        <li>任何有管理部權限的同仁都能看到列表與內容</li>
+        <li>只有主管層級帳號會看到「新增公告」跟「刪除」按鈕</li>
+        <li>新增時標題、內容都必填</li>
+        <li>公告發布後不能編輯，內容打錯字只能刪除後重新發一則</li>
+        <li>列表依發布時間新到舊排序</li>
+    </ul>
+</section>
+
+<section id="meetings" class="help-section">
+    <h2>會議記錄</h2>
+    <p class="hint">主頁點選「會議記錄」，可依部門搜尋，每筆可附加一個檔案下載。</p>
+    <ul>
+        <li>任何有權限的同仁都能查看與依部門篩選（需要打完整的部門名稱才篩得到）</li>
+        <li>只有主管能新增／刪除；新增時標題、日期、部門、內容都必填</li>
+        <li>附件為選填，上限 20MB，只接受 PDF／PPT／Word／Excel／圖片格式</li>
+        <li>若系統儲存空間還沒設定好，附件會被略過（記錄仍會建立，只是沒有附件）</li>
+        <li>列表依會議日期（不是建立時間）新到舊排序</li>
+    </ul>
+</section>
+
+<section id="documents" class="help-section">
+    <h2>規章／SOP 文件庫</h2>
+    <p class="hint">主頁點選「規章/SOP 文件庫」，可依分類篩選後下載檔案。</p>
+    <ul>
+        <li>分類有規章制度、SOP流程、教育訓練、範本文件、其他，純粹方便篩選，跟權限無關</li>
+        <li>任何有權限的同仁都能瀏覽並下載</li>
+        <li>只有主管能上傳新文件／刪除；上傳時標題、檔案必填，說明選填，檔案上限 20MB（PDF／Word／Excel／圖片）</li>
+        <li>刪除文件會一併把雲端上的檔案清掉，無法復原</li>
+    </ul>
+</section>
+
+<section id="kpi-reports" class="help-section">
+    <h2>業績報表庫</h2>
+    <p class="hint">主頁點選「業績報表庫」，供上傳/下載業績或 KPI 相關檔案。</p>
+    <ul>
+        <li>目前只是單純的檔案上傳下載庫，不會自動計算達成率或做成報表儀表板</li>
+        <li>任何有權限的同仁都能瀏覽並下載</li>
+        <li>只有主管能上傳／刪除；標題、檔案必填，說明選填，檔案上限 20MB（Excel／PDF／PPT／圖片）</li>
+    </ul>
+</section>
+
+<section id="client-visits" class="help-section">
+    <h2>客戶拜訪紀錄</h2>
+    <p class="hint">主頁點選「客戶拜訪紀錄」，記錄業務同仁自己的拜訪內容。</p>
+    <ul>
+        <li>任何有管理部權限的同仁（不限主管）都能新增自己的拜訪紀錄</li>
+        <li><strong>可見範圍是私人的</strong>：一般同仁只看得到自己建立的紀錄，只有老闆能看到所有人的紀錄——這跟公告、會議記錄「全部門共享」的邏輯不一樣</li>
+        <li>建立與刪除都不需要主管權限，只要是自己的紀錄就能刪</li>
+        <li>必填欄位：客戶名稱、拜訪日期、約訪人員、拜訪人員、跟進狀態（自由文字，例如「待跟進」「已成交」）</li>
+        <li>列表依拜訪日期新到舊排序</li>
+    </ul>
+</section>
+
+<section id="staff-directory" class="help-section">
+    <h2>員工名冊／組織圖</h2>
+    <p class="hint">主頁點選「員工名冊/組織圖」，查看全公司同仁與部門結構。</p>
+    <ul>
+        <li>跟配送部系統的「人員管理」是不同東西：這裡是公司內部同仁，不是配送人員／廠商</li>
+        <li>欄位精簡：只有部門、姓名、職稱</li>
+        <li>任何有權限的同仁都能瀏覽名冊與組織圖</li>
+        <li>只有主管能新增／刪除人員</li>
+        <li>「組織圖」只是把名冊依部門分組呈現，資料來源跟名冊是同一份</li>
+    </ul>
+</section>
+
+<section id="assets" class="help-section">
+    <h2>資產／設備管理</h2>
+    <p class="hint">主頁點選「資產/設備管理」，管理公務車、公務手機、門號、電腦，並可查詢/篩選。</p>
+    <ul>
+        <li>分類：公務車、公務手機、門號、電腦（跟配送部的車輛管理是完全不同的東西，這裡是公司內部行政財產）</li>
+        <li>狀態：使用中、閒置、維修中、報廢</li>
+        <li>任何有權限同仁可瀏覽並用名稱／分類／狀態篩選；只有主管能新增資產、更新狀態、刪除</li>
+        <li>每次更新狀態／保管人都會留一筆歷史紀錄，不會覆蓋掉之前的紀錄，可在資產詳細頁看到完整異動歷史</li>
+        <li>狀態改成「報廢」時，那次更新填的日期會自動存成報廢日期，之後改回其他狀態也不會清掉，要修正請找系統管理員</li>
+        <li><strong>門號自動繳費提醒</strong>：分類是「門號」的資產可以設定「每月繳費日」，系統每週一早上會自動檢查一週內要到的繳費日，推播到管理部的 LINE 群組，不需要人工觸發</li>
+    </ul>
+</section>
+
+<p class="hint">
+    操作上有疑問，或發現系統跟實際狀況對不起來，請聯絡系統管理窗口。
+</p>
+
+<p class="back-link"><a href="/management/">&larr; 回主頁</a></p>
+{% endblock %}

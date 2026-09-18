@@ -119,6 +119,16 @@ def job_listing_form(
     return templates.TemplateResponse(request, "job_listing_form.html", context)
 
 
+@router.get("/job-listings/help")
+def job_listing_help(request: Request, redirect=Depends(_require_access)):
+    """職缺維護使用說明（2026-09-18 新增）。跟 job_listing_form() 一樣用
+    _require_access，跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組
+    權限判斷（見 portal_routes.py 的說明）。"""
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(request, "job_listing_help.html", {"user": platform_accounts.current_account(request)})
+
+
 @router.get("/job-listings/api/jobs")
 def job_listing_search_api(request: Request, redirect=Depends(_require_access)):
     """給表單頁面的 JS 呼叫，回傳這個帳號可以維護的既有職缺清單（JSON），

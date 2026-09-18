@@ -26,6 +26,12 @@ class ManagementRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertTrue(resp.headers["location"].endswith("/management/login"))
 
+    def test_help_page_redirects_to_login_when_not_authenticated(self):
+        """使用說明頁（2026-09-18 新增）走跟主頁同一組 login_required。"""
+        resp = self.client.get("/management/help", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/management/login"))
+
     def test_announcements_page_redirects_to_login_when_not_authenticated(self):
         resp = self.client.get("/management/announcements", follow_redirects=False)
         self.assertEqual(resp.status_code, 303)

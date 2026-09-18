@@ -29,6 +29,10 @@ class HrRoutingSmokeTests(unittest.TestCase):
     def test_home_page_redirects_to_login_when_not_authenticated(self):
         self._assert_redirects_to_login("/hr/")
 
+    def test_help_page_redirects_to_login_when_not_authenticated(self):
+        """使用說明頁（2026-09-18 新增）走跟主頁同一組 login_required。"""
+        self._assert_redirects_to_login("/hr/help")
+
     def test_incidents_page_redirects_to_login_when_not_authenticated(self):
         self._assert_redirects_to_login("/hr/incidents")
 

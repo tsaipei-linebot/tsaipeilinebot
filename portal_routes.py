@@ -44,9 +44,11 @@ _MODULE_CARD_INFO = {
     },
     "management": {
         "description": "公告事項、會議記錄、規章/SOP 文件庫、業績報表、客戶拜訪、員工名冊、資產設備",
+        "help_href": "/management/help",
     },
     "hr": {
         "description": "意外通報、體檢報告、員工關懷、公司證照、教育訓練彙整",
+        "help_href": "/hr/help",
     },
     "salesdev": {
         "description": "派遣客戶開發名單、新登記工廠監控彙整",
@@ -54,36 +56,42 @@ _MODULE_CARD_INFO = {
         # 這個模組直接掛在根 app 上（見 salesdev_routes.py），沒有獨立的
         # 登入頁，卡片直接連過去即可。
         "href": "/salesdev",
+        "help_href": "/salesdev/help",
     },
     "job_listings": {
         "description": "新增/維護職缺，送審後同步 Notion 職缺資料庫、官網與招募機器人",
         # 跟 salesdev 一樣直接掛在根 app（見 job_listing_routes.py），
         # 沒有獨立的登入頁。
         "href": "/job-listings",
+        "help_href": "/job-listings/help",
     },
     "project_contracts": {
         "description": "提報新的專案合作廠商資訊，上傳合約檔案後自動寄送人資與財務單位",
         # 跟 job_listings 一樣直接掛在根 app（見 project_contract_routes.py），
         # 沒有獨立的登入頁。
         "href": "/project-contracts",
+        "help_href": "/project-contracts/help",
     },
     "chicken_points": {
         "description": "同仁自費購買小雞點數，線上填單、手指簽名送出，會計登入查看紀錄",
         # 跟 job_listings 一樣直接掛在根 app（見 chicken_points_routes.py），
         # 沒有獨立的登入頁。
         "href": "/chicken-points",
+        "help_href": "/chicken-points/help",
     },
     "dispatch_contracts": {
         "description": "填入客戶的班別/薪資/工作條件，自動套版產生派遣契約 Word 檔並存檔",
         # 跟 job_listings 一樣直接掛在根 app（見 dispatch_contract_routes.py），
         # 沒有獨立的登入頁。
         "href": "/dispatch-contracts",
+        "help_href": "/dispatch-contracts/help",
     },
     "client_contracts": {
         "description": "填入客戶公司資料、合約期間與費率，自動套版產生企業服務合約 Word 檔並存檔",
         # 跟 job_listings 一樣直接掛在根 app（見 client_contract_routes.py），
         # 沒有獨立的登入頁。
         "href": "/client-contracts",
+        "help_href": "/client-contracts/help",
     },
 }
 
