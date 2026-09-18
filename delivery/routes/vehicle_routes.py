@@ -27,6 +27,7 @@ def vehicle_list(
     status: str = "",
     wheel_type: str = "",
     service_area: str = "",
+    cooperation_type: str = "",
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -38,6 +39,18 @@ def vehicle_list(
         wheel_type_filter=wheel_type,
         service_area_filter=service_area,
     )
+    # 騎手身份（2026-09-18 新增）：車輛主檔沒有直接存合作方式，每台車都要
+    # 反查一次目前使用人的人員資料才能顯示（見
+    # repository.resolve_vehicle_rider_cooperation_type() 的說明）；篩選
+    # 也是靠這個反查出來的結果比對，不是車輛主檔本身的欄位，所以要先把
+    # 全部（套用其他篩選條件後）的車輛都反查完，才能套用騎手身份篩選。
+    for v in vehicles:
+        v["rider_cooperation_type"] = repository.resolve_vehicle_rider_cooperation_type(v)
+    if cooperation_type:
+        vehicles = [
+            v for v in vehicles
+            if v["rider_cooperation_type"] and v["rider_cooperation_type"]["id"] == cooperation_type
+        ]
     service_area_map = {a["id"]: a["name"] for a in repository.list_vehicle_service_areas(include_inactive=True)}
     return templates.TemplateResponse(
         request,
@@ -52,12 +65,14 @@ def vehicle_list(
             "wheel_type_map": WHEEL_TYPE_MAP,
             "service_areas": repository.list_vehicle_service_areas(),
             "service_area_map": service_area_map,
+            "cooperation_types": repository.list_cooperation_types(),
             "vehicles": vehicles,
             "filter_vehicle_no": vehicle_no,
             "filter_vendor": vendor,
             "filter_status": status,
             "filter_wheel_type": wheel_type,
             "filter_service_area": service_area,
+            "filter_cooperation_type": cooperation_type,
         },
     )
 
