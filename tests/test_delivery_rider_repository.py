@@ -1,6 +1,8 @@
 import os
 import sys
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -9,6 +11,20 @@ from tests import _stub_gcp
 _stub_gcp.install()
 
 from delivery import rider_repository
+
+
+def _fake_doc_snapshot(exists: bool, data: dict = None):
+    snapshot = mock.Mock(exists=exists)
+    snapshot.to_dict.return_value = data or {}
+    return snapshot
+
+
+def _fake_collection(snapshot):
+    fake_doc_ref = mock.Mock()
+    fake_doc_ref.get.return_value = snapshot
+    fake_collection = mock.Mock()
+    fake_collection.document.return_value = fake_doc_ref
+    return fake_collection, fake_doc_ref
 
 
 class HaversineDistanceTests(unittest.TestCase):
@@ -84,6 +100,73 @@ class EvaluateRegistrationTests(unittest.TestCase):
         ok, message = rider_repository._evaluate_registration(self._shift(status="closed"), [], "r1")
         self.assertFalse(ok)
         self.assertIn("已經關閉", message)
+
+
+class HasPendingClaimTests(unittest.TestCase):
+    """2026-09-19 新增：只檢查、不清掉暫存狀態，給 rider_events.py 判斷
+    一則純數字文字看起來是不是真的在回覆承接件數用。"""
+
+    def test_no_binding_returns_false(self):
+        with mock.patch.object(rider_repository, "get_rider_binding", return_value=None):
+            self.assertFalse(rider_repository.has_pending_claim("U1"))
+
+    def test_no_pending_claim_returns_false(self):
+        with mock.patch.object(rider_repository, "get_rider_binding", return_value={"user_id": "U1"}):
+            self.assertFalse(rider_repository.has_pending_claim("U1"))
+
+    def test_fresh_pending_claim_returns_true(self):
+        binding = {"user_id": "U1", "pending_claim": {"store_id": "store1", "set_at": time.time()}}
+        with mock.patch.object(rider_repository, "get_rider_binding", return_value=binding):
+            self.assertTrue(rider_repository.has_pending_claim("U1"))
+
+    def test_expired_pending_claim_returns_false(self):
+        binding = {
+            "user_id": "U1",
+            "pending_claim": {"store_id": "store1", "set_at": time.time() - rider_repository.RIDER_PENDING_CLAIM_TTL_SECONDS - 1},
+        }
+        with mock.patch.object(rider_repository, "get_rider_binding", return_value=binding):
+            self.assertFalse(rider_repository.has_pending_claim("U1"))
+
+
+class AwaitingLocationTests(unittest.TestCase):
+    """2026-09-19 新增：跟 pending_claim 同一種暫存機制，但給「查詢附近單
+    →分享位置」這條流程用。"""
+
+    def test_set_awaiting_location_updates_binding(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True))
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            rider_repository.set_awaiting_location("U1")
+        payload = fake_doc_ref.update.call_args.args[0]
+        self.assertIn("set_at", payload["awaiting_location"])
+
+    def test_pop_returns_false_when_no_binding(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(False))
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            self.assertFalse(rider_repository.pop_awaiting_location("U1"))
+        fake_doc_ref.update.assert_not_called()
+
+    def test_pop_returns_false_when_nothing_pending(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True, {}))
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            self.assertFalse(rider_repository.pop_awaiting_location("U1"))
+        fake_doc_ref.update.assert_not_called()
+
+    def test_pop_returns_true_and_clears_when_fresh(self):
+        snapshot = _fake_doc_snapshot(True, {"awaiting_location": {"set_at": time.time()}})
+        fake_collection, fake_doc_ref = _fake_collection(snapshot)
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            result = rider_repository.pop_awaiting_location("U1")
+        self.assertTrue(result)
+        fake_doc_ref.update.assert_called_once_with({"awaiting_location": None})
+
+    def test_pop_returns_false_but_still_clears_when_expired(self):
+        set_at = time.time() - rider_repository.RIDER_PENDING_CLAIM_TTL_SECONDS - 1
+        snapshot = _fake_doc_snapshot(True, {"awaiting_location": {"set_at": set_at}})
+        fake_collection, fake_doc_ref = _fake_collection(snapshot)
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            result = rider_repository.pop_awaiting_location("U1")
+        self.assertFalse(result)
+        fake_doc_ref.update.assert_called_once_with({"awaiting_location": None})
 
 
 if __name__ == "__main__":

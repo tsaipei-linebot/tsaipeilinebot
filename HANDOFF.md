@@ -7119,3 +7119,36 @@ unittest discover -s tests -p "test_*.py"`）1608 個全數通過。
 （`tests/test_delivery_rider_events.py`），確認不相關文字連
 `get_rider_binding()` 都不會呼叫。全部測試（`python3 -m unittest
 discover -s tests -p "test_*.py"`）1625 個全數通過。
+
+### 追加：位置訊息／純數字文字改成要有前置動作才算相關（2026-09-19）
+
+使用者反映上一次修正後，「傳送位置資訊」跟「純數字文字」這兩種觸發方式
+還是太容易誤觸發——任何一次位置分享、任何一句剛好是數字的訊息，都會
+被當成跟接單/報班相關而查綁定狀態、產生回覆，即使使用者根本不是在跟
+這兩個功能互動。
+
+**修正**：這兩種情況額外要求「使用者剛做過對應的前置動作」才算相關：
+- 位置訊息：只有騎士剛私訊過「查詢附近單」類關鍵字（10 分鐘內、
+  `RIDER_PENDING_CLAIM_TTL_SECONDS`）才算相關，改用新的
+  `rider_repository.set_awaiting_location()` / `pop_awaiting_location()`
+  （跟 `pending_claim` 同一種暫存機制，存在 `delivery_rider_bindings`
+  文件的 `awaiting_location` 欄位）。
+- 純數字文字：只有真的有暫存中的承接操作（`has_pending_claim()`
+  為 True，只檢查不清除）才算相關，清除交給真的處理這則訊息時的
+  `pop_pending_claim()` 做，避免尚未確認相關就先把暫存清掉。
+
+不影響「查詢附近單」「瀏覽報班」等關鍵字文字、Postback 按鈕這兩種
+明確的觸發方式，這兩種還是無條件視為相關。
+
+**這是使用者主動要求收斂的取捨**，代價是：如果騎士沒有先打關鍵字就
+直接分享位置，或者暫存操作真的過期後才回覆數字，系統會完全不回應
+（不會再顯示「逾時失效，請重新查詢附近單一次」這種提示）——比起可能
+被任意訊息誤觸發，使用者判斷這個代價比較能接受。
+
+**這次不需要任何額外的手動設定步驟**，合併後自動部署即可生效。
+
+新增測試：`tests/test_delivery_rider_repository.py` 的
+`HasPendingClaimTests`／`AwaitingLocationTests`（新函式的邊界情況），
+`tests/test_delivery_rider_events.py` 更新位置/數字文字相關測試,
+新增「沒有前置動作就安靜略過」的測試案例。全部測試（`python3 -m
+unittest discover -s tests -p "test_*.py"`）1636 個全數通過。

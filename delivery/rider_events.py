@@ -40,13 +40,25 @@ def handle_rider_event(body: dict) -> list:
     # 一定要先判斷這則事件看起來是不是真的在跟這兩個功能互動，才去查
     # 綁定狀態——不然任何人（不管有沒有綁定過）傳一句不相干的閒聊，都會
     # 收到「尚未完成綁定」這種文不對題的回覆，比完全不回覆更糟。
-    is_relevant = (
-        event_type == "postback"
-        or message_type == "location"
-        or text in _NEARBY_ORDER_KEYWORDS
-        or text in _SHIFT_LIST_KEYWORDS
-        or text.isdigit()
-    )
+    #
+    # 位置訊息、純數字文字這兩種情況刻意額外要求「使用者剛做過對應的
+    # 前置動作」才算相關（2026-09-19 使用者反映任何位置分享/任何數字
+    # 文字都會觸發回覆，太容易誤觸發）：分享位置一定要先問過「查詢附近
+    # 單」，純數字一定要先點過「承接」按鈕，兩者都有 10 分鐘的有效期限
+    # （RIDER_PENDING_CLAIM_TTL_SECONDS）。這裡用 pop_awaiting_location()
+    # 而不是單純檢查有沒有暫存，是因為判斷完相關與否後就不需要再保留這個
+    # 一次性的暫存狀態；has_pending_claim() 則只是檢查、不清除，清除交給
+    # 真的處理這則訊息時的 pop_pending_claim() 做。
+    if event_type == "postback":
+        is_relevant = True
+    elif text in _NEARBY_ORDER_KEYWORDS or text in _SHIFT_LIST_KEYWORDS:
+        is_relevant = True
+    elif message_type == "location":
+        is_relevant = rider_repository.pop_awaiting_location(user_id)
+    elif text.isdigit():
+        is_relevant = rider_repository.has_pending_claim(user_id)
+    else:
+        is_relevant = False
     if not is_relevant:
         return []
 
@@ -106,6 +118,7 @@ _SHIFT_LIST_KEYWORDS = {"瀏覽報班", "報班媒合", "報班"}
 
 def _handle_text(user_id: str, binding: dict, text: str) -> list:
     if text in _NEARBY_ORDER_KEYWORDS:
+        rider_repository.set_awaiting_location(user_id)
         return [rider_messages.prompt_share_location_message()]
 
     if text in _SHIFT_LIST_KEYWORDS:
