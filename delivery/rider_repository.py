@@ -20,7 +20,8 @@ from delivery.db import (
     get_db,
     rider_bindings_ref,
     rider_claims_ref,
-    rider_locations_ref,
+    rider_order_locations_ref,
+    rider_shift_locations_ref,
     rider_shift_postings_ref,
     rider_shift_registrations_ref,
     rider_store_deliveries_ref,
@@ -168,15 +169,20 @@ def pop_awaiting_location(user_id: str) -> bool:
 
 
 # ==========================================
-# 地點主檔（2026-09-19 新增）
+# 地點主檔（2026-09-19 新增；2026-09-19 拆成即時接單／報班媒合兩份獨立清單）
 # 門市當日量、報班時段這兩個表單原本都要同仁自己輸入經緯度／地點名稱，
 # 手動查經緯度很不方便。改成主管先在「地點管理」把常用地點（含經緯度）
-# 登記一次，之後這兩個表單都改用帶搜尋功能的下拉選單選現成的地點，選了
-# 之後經緯度自動帶出，不用再手動輸入。跟服務區域管理／裝備品項管理同一種
+# 登記一次，之後表單都改用帶搜尋功能的下拉選單選現成的地點，選了之後
+# 經緯度自動帶出，不用再手動輸入。跟服務區域管理／裝備品項管理同一種
 # 「主管自行維護清單」模式，只是這裡多一組經緯度欄位。
+#
+# 即時接單（門市取貨地點）跟報班媒合（報班工作地點）原本共用同一份清單，
+# 但實際上根本是兩組不同的地方，使用者反映「必須分開」——現在改成兩個
+# 完全獨立的集合／CRUD 函式／後台頁面，互不影響，也不會共用同一份下拉
+# 選單選項。
 # ==========================================
-def create_location(name: str, lat: float, lng: float, created_by: str) -> str:
-    ref = rider_locations_ref().document()
+def create_order_location(name: str, lat: float, lng: float, created_by: str) -> str:
+    ref = rider_order_locations_ref().document()
     ref.set(
         {
             "name": name,
@@ -190,9 +196,9 @@ def create_location(name: str, lat: float, lng: float, created_by: str) -> str:
     return ref.id
 
 
-def list_locations(include_inactive: bool = False) -> list:
+def list_order_locations(include_inactive: bool = False) -> list:
     result = []
-    for snapshot in rider_locations_ref().stream():
+    for snapshot in rider_order_locations_ref().stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
         data.setdefault("active", True)
@@ -202,10 +208,10 @@ def list_locations(include_inactive: bool = False) -> list:
     return result
 
 
-def get_location(location_id: str):
+def get_order_location(location_id: str):
     if not location_id:
         return None
-    snapshot = rider_locations_ref().document(location_id).get()
+    snapshot = rider_order_locations_ref().document(location_id).get()
     if not snapshot.exists:
         return None
     data = snapshot.to_dict() or {}
@@ -213,8 +219,54 @@ def get_location(location_id: str):
     return data
 
 
-def set_location_active(location_id: str, active: bool) -> bool:
-    ref = rider_locations_ref().document(location_id)
+def set_order_location_active(location_id: str, active: bool) -> bool:
+    ref = rider_order_locations_ref().document(location_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"active": active})
+    return True
+
+
+def create_shift_location(name: str, lat: float, lng: float, created_by: str) -> str:
+    ref = rider_shift_locations_ref().document()
+    ref.set(
+        {
+            "name": name,
+            "lat": lat,
+            "lng": lng,
+            "active": True,
+            "created_by": created_by,
+            "created_at": time.time(),
+        }
+    )
+    return ref.id
+
+
+def list_shift_locations(include_inactive: bool = False) -> list:
+    result = []
+    for snapshot in rider_shift_locations_ref().stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        data.setdefault("active", True)
+        if include_inactive or data["active"]:
+            result.append(data)
+    result.sort(key=lambda loc: loc.get("name", ""))
+    return result
+
+
+def get_shift_location(location_id: str):
+    if not location_id:
+        return None
+    snapshot = rider_shift_locations_ref().document(location_id).get()
+    if not snapshot.exists:
+        return None
+    data = snapshot.to_dict() or {}
+    data["id"] = snapshot.id
+    return data
+
+
+def set_shift_location_active(location_id: str, active: bool) -> bool:
+    ref = rider_shift_locations_ref().document(location_id)
     if not ref.get().exists:
         return False
     ref.update({"active": active})

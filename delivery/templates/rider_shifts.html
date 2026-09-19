@@ -3,15 +3,15 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">報班時段管理</h1>
-<p class="hint"><a href="/delivery/rider/locations">管理地點清單</a></p>
+<p class="hint"><a href="/delivery/rider/shift-locations">管理地點清單</a></p>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
 <h2 class="section-title">新增報班時段</h2>
 {% if not locations %}
-<p class="hint">目前還沒有登記任何地點，請先到<a href="/delivery/rider/locations">地點管理</a>新增地點。</p>
+<p class="hint">目前還沒有登記任何地點，請先到<a href="/delivery/rider/shift-locations">報班地點管理</a>新增地點。</p>
 {% else %}
 <form method="post" action="/delivery/rider/shifts/new" class="form-stack form-narrow" id="shift-form">
-    <label>地點
+    <label>地點（報班地點清單）
         <input type="text" list="rider-location-list" id="shift_location_name_input" required placeholder="輸入地點名稱搜尋" autocomplete="off">
         <datalist id="rider-location-list">
             {% for loc in locations %}

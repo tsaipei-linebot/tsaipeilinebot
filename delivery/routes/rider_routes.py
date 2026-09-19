@@ -24,13 +24,13 @@ def _today_str() -> str:
 
 
 # ==========================================
-# 地點主檔
+# 地點主檔（即時接單、報班媒合各自獨立一份，不共用）
 # ==========================================
 @router.get("/rider/locations")
 def rider_locations_page(request: Request, redirect=Depends(login_required)):
     if redirect:
         return redirect
-    locations = rider_repository.list_locations(include_inactive=True)
+    locations = rider_repository.list_order_locations(include_inactive=True)
     return templates.TemplateResponse(
         request, "rider_locations.html", {"user": current_user(request), "locations": locations}
     )
@@ -47,7 +47,7 @@ def create_rider_location(
         lat_value, lng_value = float(lat), float(lng)
         if name:
             account = current_user(request)
-            rider_repository.create_location(name, lat_value, lng_value, account["username"])
+            rider_repository.create_order_location(name, lat_value, lng_value, account["username"])
     except ValueError:
         pass
     return RedirectResponse(url="/delivery/rider/locations", status_code=303)
@@ -57,8 +57,43 @@ def create_rider_location(
 def update_rider_location_active(location_id: str, active: str = Form(...), redirect=Depends(login_required)):
     if redirect:
         return redirect
-    rider_repository.set_location_active(location_id, active == "1")
+    rider_repository.set_order_location_active(location_id, active == "1")
     return RedirectResponse(url="/delivery/rider/locations", status_code=303)
+
+
+@router.get("/rider/shift-locations")
+def rider_shift_locations_page(request: Request, redirect=Depends(login_required)):
+    if redirect:
+        return redirect
+    locations = rider_repository.list_shift_locations(include_inactive=True)
+    return templates.TemplateResponse(
+        request, "rider_shift_locations.html", {"user": current_user(request), "locations": locations}
+    )
+
+
+@router.post("/rider/shift-locations/new")
+def create_rider_shift_location(
+    request: Request, name: str = Form(...), lat: str = Form(...), lng: str = Form(...), redirect=Depends(login_required)
+):
+    if redirect:
+        return redirect
+    name = name.strip()
+    try:
+        lat_value, lng_value = float(lat), float(lng)
+        if name:
+            account = current_user(request)
+            rider_repository.create_shift_location(name, lat_value, lng_value, account["username"])
+    except ValueError:
+        pass
+    return RedirectResponse(url="/delivery/rider/shift-locations", status_code=303)
+
+
+@router.post("/rider/shift-locations/{location_id}/active")
+def update_rider_shift_location_active(location_id: str, active: str = Form(...), redirect=Depends(login_required)):
+    if redirect:
+        return redirect
+    rider_repository.set_shift_location_active(location_id, active == "1")
+    return RedirectResponse(url="/delivery/rider/shift-locations", status_code=303)
 
 
 # ==========================================
@@ -78,7 +113,7 @@ def rider_store_deliveries_page(request: Request, date: str = "", error: str = "
             "items": items,
             "filter_date": date_filter,
             "today": _today_str(),
-            "locations": rider_repository.list_locations(),
+            "locations": rider_repository.list_order_locations(),
             "error": error,
         },
     )
@@ -94,7 +129,7 @@ def create_rider_store_delivery(
 ):
     if redirect:
         return redirect
-    location = rider_repository.get_location(location_id)
+    location = rider_repository.get_order_location(location_id)
     if not location or not location.get("active", True):
         return RedirectResponse(
             url=f"/delivery/rider/store-deliveries?date={date}&error=請從清單選擇一個地點，找不到您輸入的地點",
@@ -174,7 +209,7 @@ def rider_shifts_page(request: Request, error: str = "", redirect=Depends(login_
     return templates.TemplateResponse(
         request,
         "rider_shifts.html",
-        {"user": current_user(request), "items": items, "locations": rider_repository.list_locations(), "error": error},
+        {"user": current_user(request), "items": items, "locations": rider_repository.list_shift_locations(), "error": error},
     )
 
 
@@ -189,7 +224,7 @@ def create_rider_shift(
 ):
     if redirect:
         return redirect
-    location = rider_repository.get_location(location_id)
+    location = rider_repository.get_shift_location(location_id)
     if not location or not location.get("active", True):
         return RedirectResponse(url="/delivery/rider/shifts?error=請從清單選擇一個地點，找不到您輸入的地點", status_code=303)
     try:

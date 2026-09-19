@@ -38,7 +38,11 @@ RIDER_STORE_DELIVERIES_COLLECTION = "delivery_rider_store_deliveries"
 RIDER_CLAIMS_COLLECTION = "delivery_rider_claims"
 RIDER_SHIFT_POSTINGS_COLLECTION = "delivery_rider_shift_postings"
 RIDER_SHIFT_REGISTRATIONS_COLLECTION = "delivery_rider_shift_registrations"
-RIDER_LOCATIONS_COLLECTION = "delivery_rider_locations"
+# 即時接單（門市當日量）跟報班媒合（報班時段）用的地點主檔刻意分成兩個獨立
+# 集合（2026-09-19 拆分）：門市取貨地點跟報班工作地點根本是兩組不同的地方，
+# 一開始共用同一份清單會讓管理跟選單都混在一起，選錯地點也不容易發現。
+RIDER_ORDER_LOCATIONS_COLLECTION = "delivery_rider_locations"
+RIDER_SHIFT_LOCATIONS_COLLECTION = "delivery_rider_shift_locations"
 
 
 def personnel_ref():
@@ -117,5 +121,9 @@ def rider_shift_registrations_ref():
     return get_db().collection(RIDER_SHIFT_REGISTRATIONS_COLLECTION)
 
 
-def rider_locations_ref():
-    return get_db().collection(RIDER_LOCATIONS_COLLECTION)
+def rider_order_locations_ref():
+    return get_db().collection(RIDER_ORDER_LOCATIONS_COLLECTION)
+
+
+def rider_shift_locations_ref():
+    return get_db().collection(RIDER_SHIFT_LOCATIONS_COLLECTION)

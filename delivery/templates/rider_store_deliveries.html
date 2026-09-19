@@ -11,7 +11,7 @@
 <p class="hint">目前還沒有登記任何地點，請先到<a href="/delivery/rider/locations">地點管理</a>新增門市地點。</p>
 {% else %}
 <form method="post" action="/delivery/rider/store-deliveries/new" class="form-stack form-narrow" id="store-delivery-form">
-    <label>門市地點
+    <label>門市地點（即時接單地點清單）
         <input type="text" list="rider-location-list" id="store_location_name_input" required placeholder="輸入地點名稱搜尋" autocomplete="off">
         <datalist id="rider-location-list">
             {% for loc in locations %}
