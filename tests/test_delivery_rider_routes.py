@@ -27,6 +27,11 @@ class RiderRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertTrue(resp.headers["location"].endswith("/delivery/login"))
 
+    def test_locations_page_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/delivery/rider/locations", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(resp.headers["location"].endswith("/delivery/login"))
+
     def test_shifts_page_redirects_to_login_when_not_authenticated(self):
         resp = self.client.get("/delivery/rider/shifts", follow_redirects=False)
         self.assertEqual(resp.status_code, 303)
