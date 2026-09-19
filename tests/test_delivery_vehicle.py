@@ -13,6 +13,7 @@ from delivery import repository
 from delivery.repository import (
     _normalize_vehicle_no,
     resolve_vehicle_rider_cooperation_type,
+    resolve_vehicle_rider_info,
     vehicle_event_error,
     vehicle_matches_filters,
 )
@@ -422,6 +423,54 @@ class ResolveVehicleRiderCooperationTypeTests(unittest.TestCase):
                 result = resolve_vehicle_rider_cooperation_type(vehicle)
         mock_get.assert_called_once_with("")
         self.assertIsNone(result)
+
+
+class ResolveVehicleRiderInfoTests(unittest.TestCase):
+    """手機號碼備援顯示（2026-09-19 新增）：車輛主檔的手機號碼有些歷史
+    資料是空的（例如透過 LINE 群組回報時沒附電話），這種情況畫面上要能
+    顯示反查到的人員資料裡的電話。跟騎手身份共用同一次反查結果，一台車
+    只查一次 Firestore（見 resolve_vehicle_rider_info() 的說明）。"""
+
+    def test_no_current_holder_returns_blank_info_without_any_lookup(self):
+        with mock.patch.object(repository, "find_active_personnel_by_name_and_phone") as mock_phone:
+            with mock.patch.object(repository, "find_personnel_by_name_vendor") as mock_vendor:
+                result = resolve_vehicle_rider_info({"vendor": "shopee", "current_holder": ""})
+        self.assertEqual(result, {"cooperation_type": None, "phone": ""})
+        mock_phone.assert_not_called()
+        mock_vendor.assert_not_called()
+
+    def test_returns_both_cooperation_type_and_phone_from_matched_person(self):
+        vehicle = {"vendor": "shopee", "current_holder": "小明"}
+        person = {"id": "p1", "cooperation_type": "two_wheel_employed", "phone": "0987654321"}
+        coop = {"id": "two_wheel_employed", "name": "二輪雇傭"}
+        with mock.patch.object(repository, "find_personnel_by_name_vendor", return_value=person):
+            with mock.patch.object(repository, "get_cooperation_type", return_value=coop):
+                result = resolve_vehicle_rider_info(vehicle)
+        self.assertEqual(result, {"cooperation_type": coop, "phone": "0987654321"})
+
+    def test_only_looks_up_once_for_both_fields(self):
+        # 這是這次改動的重點：不能為了拿電話又為了拿騎手身份，各自反查
+        # 一次人員資料，同一台車應該只查一次 Firestore。
+        vehicle = {"vendor": "shopee", "current_holder": "小明"}
+        person = {"id": "p1", "cooperation_type": "", "phone": "0987654321"}
+        with mock.patch.object(repository, "find_personnel_by_name_vendor", return_value=person) as mock_vendor:
+            with mock.patch.object(repository, "get_cooperation_type", return_value=None):
+                resolve_vehicle_rider_info(vehicle)
+        mock_vendor.assert_called_once()
+
+    def test_matched_person_without_phone_returns_blank_phone(self):
+        vehicle = {"vendor": "shopee", "current_holder": "小明"}
+        person = {"id": "p1", "cooperation_type": "", "phone": ""}
+        with mock.patch.object(repository, "find_personnel_by_name_vendor", return_value=person):
+            with mock.patch.object(repository, "get_cooperation_type", return_value=None):
+                result = resolve_vehicle_rider_info(vehicle)
+        self.assertEqual(result["phone"], "")
+
+    def test_no_matching_person_returns_blank_info(self):
+        vehicle = {"vendor": "shopee", "current_holder": "小明"}
+        with mock.patch.object(repository, "find_personnel_by_name_vendor", return_value=None):
+            result = resolve_vehicle_rider_info(vehicle)
+        self.assertEqual(result, {"cooperation_type": None, "phone": ""})
 
 
 if __name__ == "__main__":

@@ -62,6 +62,7 @@
             <th>狀態</th>
             <th>目前使用人</th>
             <th>手機號碼</th>
+            <th>騎手身份</th>
             <th>目前地點</th>
             <th>備註</th>
             <th></th>
@@ -81,9 +82,17 @@
             </td>
             <td>{{ v.current_holder or "-" }}</td>
             <td>
-                {{ v.current_holder_phone or "-" }}
+                {% if v.rider_phone and not v.current_holder_phone %}
+                <span title="車輛主檔沒有填電話，這是依人員資料反查到的號碼">{{ v.rider_phone }}</span>
+                {% else %}
+                {{ v.rider_phone or "-" }}
+                {% endif %}
+            </td>
+            <td>
                 {% if v.rider_cooperation_type %}
                 <span class="badge">{{ v.rider_cooperation_type.name }}</span>
+                {% else %}
+                -
                 {% endif %}
             </td>
             <td>{{ v.current_location or "-" }}</td>
