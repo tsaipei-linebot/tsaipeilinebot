@@ -22,12 +22,31 @@
 **內容原則（不是程式邏輯，是給發佈公告的人參考）**：「少凱業務開發專區」
 （salesdev 模組）的任何事項/功能異動，不列入這裡的公告——那個卡片是
 少凱個人的業務開發專區，跟其他人無關，不用全公司廣播。
+
+**系統更新自動公告（2026-09-19 新增）**：使用者要求系統只要有功能更新
+就自動加入公告，不用每次都手動打字發佈（少凱業務開發專區的異動維持
+上面那條「不列入」的原則）。做法是 `.github/workflows/deploy.yml` 部署
+成功後多一個步驟：比對這次 push 到 main 改了哪些檔案，如果全部都是
+`salesdev` 相關檔案（含 `HANDOFF.md`，因為每次改動都會更新這份文件，
+不能因為它也改了就誤判成「不是純 salesdev 改動」），就跳過不發公告；
+否則就用這次合併的 commit 訊息（就是 PR 標題＋內文，已經是給人看的
+中文說明）呼叫 `POST /internal/announcements/auto-publish` 這個端點
+（見下面 `AUTO_ANNOUNCE_SECRET` 的說明）自動建立一則公告。這個端點
+不需要登入，用共用密鑰驗證，做法比照 `job_portal_sso.py` 的
+`SYNC_TRIGGER_SECRET`（GitHub Actions 呼叫、不是瀏覽器呼叫，沒有登入
+session 可以用）。
 """
+import os
 import time
 
 from platform_db import announcements_ref
 
 ANNOUNCEMENT_DEFAULT_DAYS = 7
+
+# GitHub Actions 部署成功後呼叫 /internal/announcements/auto-publish 自動
+# 建立公告時要帶對的共用密鑰，沒設定的話這支端點一律回傳 403，等同不存在
+# （跟 job_portal_sso.py 的 SYNC_TRIGGER_SECRET 同一套做法）。
+AUTO_ANNOUNCE_SECRET = os.getenv("AUTO_ANNOUNCE_SECRET", "")
 
 
 def list_active_announcements() -> list:

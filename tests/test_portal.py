@@ -116,6 +116,65 @@ class SyncJobSystemIdentitiesEndpointTests(unittest.TestCase):
             job_portal_sso.SYNC_TRIGGER_SECRET = original
 
 
+class AutoPublishAnnouncementEndpointTests(unittest.TestCase):
+    """/internal/announcements/auto-publish（2026-09-19 新增）：部署後由
+    GitHub Actions 呼叫，密鑰保護作法比照 /internal/sync-job-system-
+    identities，沒帶對 header 一律 403，不會真的去打 Firestore。"""
+
+    def setUp(self):
+        self.client = TestClient(main.app)
+
+    def test_forbidden_without_secret_configured(self):
+        resp = self.client.post(
+            "/internal/announcements/auto-publish", data={"title": "x", "content": "y"}
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_forbidden_with_wrong_secret(self):
+        original = portal_routes.platform_announcements.AUTO_ANNOUNCE_SECRET
+        portal_routes.platform_announcements.AUTO_ANNOUNCE_SECRET = "correct-secret"
+        try:
+            resp = self.client.post(
+                "/internal/announcements/auto-publish",
+                data={"title": "x", "content": "y"},
+                headers={"X-Auto-Announce-Secret": "wrong-secret"},
+            )
+            self.assertEqual(resp.status_code, 403)
+        finally:
+            portal_routes.platform_announcements.AUTO_ANNOUNCE_SECRET = original
+
+    def test_missing_title_is_rejected(self):
+        original = portal_routes.platform_announcements.AUTO_ANNOUNCE_SECRET
+        portal_routes.platform_announcements.AUTO_ANNOUNCE_SECRET = "correct-secret"
+        try:
+            resp = self.client.post(
+                "/internal/announcements/auto-publish",
+                data={"title": "  ", "content": "y"},
+                headers={"X-Auto-Announce-Secret": "correct-secret"},
+            )
+            self.assertEqual(resp.status_code, 400)
+        finally:
+            portal_routes.platform_announcements.AUTO_ANNOUNCE_SECRET = original
+
+    def test_correct_secret_creates_announcement(self):
+        original = portal_routes.platform_announcements.AUTO_ANNOUNCE_SECRET
+        portal_routes.platform_announcements.AUTO_ANNOUNCE_SECRET = "correct-secret"
+        try:
+            with mock.patch.object(
+                portal_routes.platform_announcements, "create_announcement", return_value="ann1"
+            ) as mock_create:
+                resp = self.client.post(
+                    "/internal/announcements/auto-publish",
+                    data={"title": "系統更新：測試功能", "content": "測試內容"},
+                    headers={"X-Auto-Announce-Secret": "correct-secret"},
+                )
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json(), {"id": "ann1"})
+            mock_create.assert_called_once_with("系統更新：測試功能", "測試內容", created_by="system")
+        finally:
+            portal_routes.platform_announcements.AUTO_ANNOUNCE_SECRET = original
+
+
 class RequireLoginDependencyTests(unittest.TestCase):
     """portal_routes._require_login() 是 /portal 系列路由共用的登入檢查，
     直接單元測試回傳值，不用真的透過 TestClient 跑一次 HTTP。"""

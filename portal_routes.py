@@ -246,3 +246,28 @@ def sync_job_system_identities(request: Request):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     count = job_portal_sso.sync_identities_from_sheet()
     return {"synced": count}
+
+
+@router.post("/internal/announcements/auto-publish")
+async def auto_publish_announcement(request: Request):
+    """系統更新自動公告（2026-09-19 新增，見 platform_announcements.py
+    開頭的說明）：`.github/workflows/deploy.yml` 部署成功後呼叫，用這次
+    合併的 commit 訊息自動建立一則公告，不用每次都手動打字發佈。安全
+    機制比照 /internal/sync-job-system-identities：帶對
+    X-Auto-Announce-Secret header 才受理，沒設定密鑰的話這支端點一律
+    回傳 403，等同不存在——GitHub Actions 呼叫這支端點沒有登入 session
+    可以用，只能靠共用密鑰驗證。少凱業務開發專區的異動要不要發公告是
+    在 CI 那邊（判斷這次改了哪些檔案）先擋掉，不會呼叫到這支端點，這裡
+    不重複做這個判斷。"""
+    secret = request.headers.get("X-Auto-Announce-Secret", "")
+    if not platform_announcements.AUTO_ANNOUNCE_SECRET or not secret or not hmac.compare_digest(
+        secret, platform_announcements.AUTO_ANNOUNCE_SECRET
+    ):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    form = await request.form()
+    title = (form.get("title") or "").strip()
+    content = (form.get("content") or "").strip()
+    if not title:
+        return JSONResponse({"error": "missing_title"}, status_code=400)
+    announcement_id = platform_announcements.create_announcement(title, content, created_by="system")
+    return {"id": announcement_id}
