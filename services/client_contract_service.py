@@ -109,6 +109,22 @@ routes.py` 改成先呼叫同步、拿到 ID 後才呼叫 `save_submission()`，
 限定廠商，任何一筆合約都可以選擇性上傳——多數客戶用我們自己的版本就好
 ，用不到這個欄位，見 `client_contract_routes.py` 的
 `client_contract_upload_vendor_file()`。
+
+**附件二：轉正費用（2026-09-19 新增，選填）**：除了「白領代招」「台籍
+代招」這兩個代招版本以外，其餘版本（`CONTRACT_VERSIONS[版本代碼]
+["supports_exhibit_two"]` 是 True 的那些）表單上多一個選填的勾選項，
+勾選才會在附件一後面多產生一頁附件二（轉正費用計算表：任職未滿門檻
+月數內每人收固定金額、超過門檻則不收費），沒勾就跟原本一樣完全沒有
+這一段。「任職月數門檻」「金額」這兩個數字（`exhibit_two_months`／
+`exhibit_two_amount`）每次都要同仁自己填，不是寫死的固定值——這點
+跟同一批版本附件一的固定說明文字（例如傳統一口價那 3 條備註）不同，
+使用者明確要求「每次都要填」。範本裡的條件式區塊用 docxtpl 的
+`{% if include_exhibit_two %}`／`{% endif %}` 包住整段（含表格），
+`render_contract_docx()` 沒收到 `include_exhibit_two=True` 就完全不會
+產生這段內容。代招版本的 master template 完全沒有加這個區塊（不是
+加了但關閉），因為代招合約書本來就不該有這個附件，`client_contract_
+routes.py` 的表單驗證也只在 `supports_exhibit_two` 為 True 的版本才
+會收這兩個欄位、擋「勾了卻沒填」的情況。
 """
 import io
 import os
@@ -143,6 +159,7 @@ CONTRACT_VERSIONS = {
         "template_path": os.path.join(_ASSETS_DIR, "master_template_hourly_flat_rate.docx"),
         "requires_sign_date": True,
         "requires_severance_clause": True,
+        "supports_exhibit_two": True,
     },
     "actual_paid": {
         "label": "實支實付",
@@ -151,6 +168,7 @@ CONTRACT_VERSIONS = {
         "template_path": os.path.join(_ASSETS_DIR, "master_template_actual_paid.docx"),
         "requires_sign_date": True,
         "requires_severance_clause": True,
+        "supports_exhibit_two": True,
     },
     "traditional_flat_rate": {
         "label": "傳統一口價",
@@ -159,6 +177,7 @@ CONTRACT_VERSIONS = {
         "template_path": os.path.join(_ASSETS_DIR, "master_template_traditional_flat_rate.docx"),
         "requires_sign_date": True,
         "requires_severance_clause": True,
+        "supports_exhibit_two": True,
     },
     "white_collar_referral": {
         "label": "白領代招",
@@ -167,6 +186,7 @@ CONTRACT_VERSIONS = {
         "template_path": os.path.join(_ASSETS_DIR, "master_template_white_collar_referral.docx"),
         "requires_sign_date": False,
         "requires_severance_clause": False,
+        "supports_exhibit_two": False,
     },
     "taiwanese_referral": {
         "label": "台籍代招",
@@ -175,6 +195,7 @@ CONTRACT_VERSIONS = {
         "template_path": os.path.join(_ASSETS_DIR, "master_template_taiwanese_referral.docx"),
         "requires_sign_date": False,
         "requires_severance_clause": False,
+        "supports_exhibit_two": False,
     },
 }
 # 傳統一口價（traditional_flat_rate）附件一的 9 個費率欄位，照表格順序排
@@ -236,6 +257,9 @@ def render_contract_docx(
     referral_fee_percentage: str = "",
     referral_service_months: str = "",
     traditional_rates: dict = None,
+    include_exhibit_two: bool = False,
+    exhibit_two_months: str = "",
+    exhibit_two_amount: str = "",
 ) -> bytes:
     """套版產生 Word 檔內容（bytes）。party_a／party_b 都是
     ``{"name", "representative", "address", "tax_id", "phone"}`` 這個形狀
@@ -251,7 +275,16 @@ def render_contract_docx(
     照表單實際欄位傳就好，不用自己篩選）。``sign_date`` 只有
     `CONTRACT_VERSIONS[contract_version]["requires_sign_date"]` 是 True
     的版本才會用到，不需要的版本傳 None 即可（模板裡不會引用
-    `sign_date_roc` 這個變數，傳了也不影響套版結果）。"""
+    `sign_date_roc` 這個變數，傳了也不影響套版結果）。
+
+    ``include_exhibit_two``（附件二：轉正費用，2026-09-19 新增，選填）
+    只有 `CONTRACT_VERSIONS[contract_version]["supports_exhibit_two"]`
+    是 True 的版本（時薪一口價／實支實付／傳統一口價，代招版本沒有）
+    的 master template 裡才有對應的 docxtpl 條件式區塊（`{% if
+    include_exhibit_two %}`）；沒有這個區塊的版本（代招）傳 True 也不會
+    出錯，只是套版時不會被引用，不影響輸出。勾選時 `exhibit_two_months`／
+    `exhibit_two_amount` 才會實際用到（例如「三」「3000」會套進「任職
+    三個月內／每人3000元」跟「任職三個月以上／0元」兩列）。"""
     context = {
         "party_a_name": party_a["name"],
         "party_a_representative": party_a["representative"],
@@ -276,6 +309,9 @@ def render_contract_docx(
         "service_months": service_months,
         "referral_fee_percentage": referral_fee_percentage,
         "referral_service_months": referral_service_months,
+        "include_exhibit_two": include_exhibit_two,
+        "exhibit_two_months": exhibit_two_months,
+        "exhibit_two_amount": exhibit_two_amount,
     }
     traditional_rates = traditional_rates or {}
     for field in TRADITIONAL_RATE_FIELDS:
@@ -314,6 +350,9 @@ def save_submission(
     referral_fee_percentage: str = "",
     referral_service_months: str = "",
     traditional_rates: dict = None,
+    include_exhibit_two: bool = False,
+    exhibit_two_months: str = "",
+    exhibit_two_amount: str = "",
     pdf_blob_path: str = "",
     vendor_id: str = "",
 ) -> dict:
@@ -345,6 +384,9 @@ def save_submission(
         "service_months": service_months,
         "referral_fee_percentage": referral_fee_percentage,
         "referral_service_months": referral_service_months,
+        "include_exhibit_two": include_exhibit_two,
+        "exhibit_two_months": exhibit_two_months if include_exhibit_two else "",
+        "exhibit_two_amount": exhibit_two_amount if include_exhibit_two else "",
         "blob_path": blob_path,
         "pdf_blob_path": pdf_blob_path,
         "sent_to_project_contracts_at": None,

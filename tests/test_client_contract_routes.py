@@ -387,6 +387,86 @@ class SubmitValidationTests(unittest.TestCase):
         # 不是送出當下的年份）。
         self.assertIn("2026", result.headers["content-disposition"])
 
+    def test_missing_exhibit_two_fields_blocks_submit_when_checked(self):
+        form = self._multidict(self._full_valid_pairs(include_exhibit_two="1", exhibit_two_months="", exhibit_two_amount=""))
+        with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                        return_value=self._fake_company()):
+                    with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+                        asyncio.run(client_contract_routes.client_contract_submit(
+                            self._FakeRequest(self._account(), form), redirect=None,
+                        ))
+        mock_save.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIn("附件二", context["error"])
+
+    def test_exhibit_two_fields_pass_through_when_checked(self):
+        form = self._multidict(self._full_valid_pairs(
+            include_exhibit_two="1", exhibit_two_months="三", exhibit_two_amount="3000",
+        ))
+        fake_bytes = b"FAKE-DOCX-BYTES"
+        with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract"):
+                    with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                            return_value=self._fake_company()):
+                        with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                            asyncio.run(client_contract_routes.client_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
+        render_kwargs = mock_render.call_args.kwargs
+        self.assertTrue(render_kwargs["include_exhibit_two"])
+        self.assertEqual(render_kwargs["exhibit_two_months"], "三")
+        self.assertEqual(render_kwargs["exhibit_two_amount"], "3000")
+        save_kwargs = mock_save.call_args.kwargs
+        self.assertTrue(save_kwargs["include_exhibit_two"])
+        self.assertEqual(save_kwargs["exhibit_two_months"], "三")
+        self.assertEqual(save_kwargs["exhibit_two_amount"], "3000")
+
+    def test_exhibit_two_not_checked_defaults_to_false_and_blanks_fields(self):
+        # 沒勾選就當作沒填，就算欄位裡殘留舊值也不會被送進 Word 檔或存檔。
+        form = self._multidict(self._full_valid_pairs(exhibit_two_months="三", exhibit_two_amount="3000"))
+        fake_bytes = b"FAKE-DOCX-BYTES"
+        with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract"):
+                    with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                            return_value=self._fake_company()):
+                        with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                            asyncio.run(client_contract_routes.client_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
+        render_kwargs = mock_render.call_args.kwargs
+        self.assertFalse(render_kwargs["include_exhibit_two"])
+        self.assertEqual(render_kwargs["exhibit_two_months"], "")
+        self.assertEqual(render_kwargs["exhibit_two_amount"], "")
+
+    def test_exhibit_two_checkbox_ignored_for_referral_version_even_if_sent(self):
+        # 代招版本表單上根本沒有附件二勾選項，就算被竄改送出
+        # include_exhibit_two=1 也要被後端忽略，不會誤套進代招合約書，
+        # 也不會因為附件二欄位空白而擋下送出。
+        form = self._multidict(self._full_valid_pairs(
+            contract_version="white_collar_referral",
+            sign_date="", replace_notice_days="", severance_payer="",
+            hourly_wage="", management_fee="",
+            fee_amount="二千五百元整", service_months="12",
+            include_exhibit_two="1", exhibit_two_months="", exhibit_two_amount="",
+        ))
+        fake_bytes = b"FAKE-DOCX-BYTES"
+        with mock.patch.object(client_contract_routes, "render_contract_docx", return_value=fake_bytes) as mock_render:
+            with mock.patch.object(client_contract_routes, "save_submission") as mock_save:
+                with mock.patch.object(client_contract_routes, "sync_vendor_from_client_contract"):
+                    with mock.patch.object(client_contract_routes.platform_companies, "get_company",
+                                            return_value=self._fake_company()):
+                        with mock.patch.object(client_contract_routes.client_contract_storage, "is_configured", return_value=False):
+                            asyncio.run(client_contract_routes.client_contract_submit(
+                                self._FakeRequest(self._account(), form), redirect=None,
+                            ))
+        mock_save.assert_called_once()
+        render_kwargs = mock_render.call_args.kwargs
+        self.assertFalse(render_kwargs["include_exhibit_two"])
+
     def test_white_collar_referral_does_not_require_sign_date_or_severance_fields(self):
         # 白領代招版本沒有簽約日期／撤換條款這幾個欄位，即使表單完全沒帶
         # 這些值，只要報價欄位（fee_amount/service_months）跟其他共用
@@ -513,6 +593,24 @@ class DuplicateFromTests(unittest.TestCase):
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertEqual(context["form"]["party_a_name"], "測試客戶股份有限公司")
         self.assertEqual(context["form"]["hourly_wage"], "200")
+
+    def test_exhibit_two_fields_carry_over_when_present(self):
+        record = {
+            "id": "x", "submitted_by": "bob", "party_a_name": "測試客戶股份有限公司",
+            "party_b_company_id": "weizheng", "contract_start_date": "2026-01-01",
+            "hourly_wage": "200", "management_fee": "65", "contract_version": "hourly_flat_rate",
+            "include_exhibit_two": True, "exhibit_two_months": "三", "exhibit_two_amount": "3000",
+        }
+        with mock.patch.object(client_contract_routes, "get_submission", return_value=record):
+            with mock.patch.object(client_contract_routes.platform_companies, "list_companies", return_value=[]):
+                with mock.patch.object(client_contract_routes, "templates") as mock_templates:
+                    client_contract_routes.client_contract_new_form(
+                        self._FakeRequest(self._account()), duplicate_from="x", redirect=None,
+                    )
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertTrue(context["form"]["include_exhibit_two"])
+        self.assertEqual(context["form"]["exhibit_two_months"], "三")
+        self.assertEqual(context["form"]["exhibit_two_amount"], "3000")
 
     def test_invisible_record_is_ignored(self):
         record = {"id": "x", "submitted_by": "alice", "party_a_name": "別人的客戶"}

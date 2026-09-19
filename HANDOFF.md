@@ -6709,3 +6709,61 @@ routes/templates/repository/service 檔案，確認實際行為後才動筆寫�
 頁「手動補登事件」跟歷史紀錄「編輯」這兩個表單，打完姓名（或改廠商）
 離開欄位時，如果系統找得到對應的在職人員資料，電話會自動幫你填好，
 仍然可以手動改；找不到的話會提示你自己手動填，不會卡住無法送出。
+
+## 合約產生器：新增選填的「附件二：轉正費用」（2026-09-19）
+
+使用者提供一張截圖，要求合約產生器（`/client-contracts`）除了代招版本
+以外，其餘版本要多一個選填的附件二——轉正費用計算表（任職未滿門檻
+月數內每人收固定金額、超過門檻不收費），沒勾選就跟原本一樣完全沒有
+這一段。討論過程確認：「任職月數門檻」「金額」這兩個數字每次都要
+同仁自己填、不是寫死的固定值，而且月數門檻要同時套進「任職＿個月內」
+跟「任職＿個月以上」兩列（維持邏輯一致），其餘文字全部固定不變。
+
+### 做法
+
+- `CONTRACT_VERSIONS` 每個版本新增 `supports_exhibit_two` 旗標：時薪
+  一口價／實支實付／傳統一口價這三個共用主文的家族是 True，白領代招／
+  台籍代招是 False。
+- 只在這三個版本各自的 master template docx 最後（附件一之後、
+  `sectPr` 之前）加上 docxtpl 的條件式區塊
+  `{% if include_exhibit_two %}` ... `{% endif %}`，包住「附件二：」
+  「轉正費用計算如下：」兩段固定文字跟一個 3 欄 3 列的表格（表頭＋
+  「轉正費」合併儲存格橫跨兩個資料列）。代招版本的 master template
+  完全沒有加這個區塊——不是加了但關閉，是根本沒有，所以就算表單被
+  竄改送出 `include_exhibit_two=1`，套版也不會出錯、也不會憑空冒出
+  附件二內容（`RenderWhiteCollarReferralContractDocxTests.test_
+  include_exhibit_two_flag_is_harmless_for_referral_version` 驗證
+  這件事）。
+- `render_contract_docx()`／`save_submission()` 都新增
+  `include_exhibit_two`／`exhibit_two_months`／`exhibit_two_amount`
+  三個參數（預設 False／空字串），`save_submission()` 存檔時如果
+  `include_exhibit_two` 是 False，月數／金額一律存空字串，不會殘留
+  沒勾選時欄位裡打過的舊值。
+- `client_contract_routes.py`：只有 `supports_exhibit_two` 為 True 的
+  版本才會實際收 `include_exhibit_two` 勾選狀態，其餘版本一律當作
+  False（即使表單被竄改送出勾選也一樣，等於在後端也擋一次，不是只靠
+  前端不顯示這個勾選項）；勾選了才會擋「月數或金額沒填」，沒勾選就
+  不檢查這兩個欄位。
+- `templates/client_contract_form.html`：新增第六段「附件二（選填）：
+  轉正費用」，勾選項＋兩個文字輸入框（不勾就隱藏，套用既有的
+  `data-requires` 版本切換機制，跟簽約日期／撤換條款用同一套 JS）。
+
+### 測試
+
+`tests/test_client_contract_service.py` 新增附件二有勾/沒勾兩種情況的
+套版結果驗證、月數門檻同時套進兩列的驗證、代招版本收到這個旗標也
+不會冒出附件二內容的驗證，以及 `supports_exhibit_two` 旗標本身的
+設定驗證。`tests/test_client_contract_routes.py` 新增勾選但沒填會
+擋下送出、有勾選時欄位正確傳給套版/存檔、沒勾選時欄位一律清空、
+代招版本即使表單被竄改送出勾選也會被忽略、複製功能會正確帶入既有
+紀錄的附件二欄位這幾個測試。全部測試（`python3 -m unittest discover
+-s tests -p "test_*.py"`）1557 個全數通過。
+
+### 使用者需要知道的事
+
+**不需要任何手動部署步驟**，合併後就直接生效。操作上：產生時薪一口價
+／實支實付／傳統一口價這三種版本的合約時，表單最下面會多一個「附件二
+（選填）：轉正費用」的勾選項，勾選後才會出現「任職月數門檻」「轉正費
+金額」這兩個必填欄位，每次都要自己填；不勾就跟以前一樣，Word 檔不會
+有附件二。白領代招／台籍代招這兩個版本沒有這個選項（畫面上完全看
+不到），跟你原本的需求一致。

@@ -180,6 +180,23 @@
         </div>
     </div>
 
+    <div class="repayment-section" data-requires="exhibit_two">
+        <div class="repayment-section-title">六、附件二（選填）：轉正費用</div>
+        <label>
+            <input type="checkbox" name="include_exhibit_two" id="include_exhibit_two" value="1" {% if form.include_exhibit_two %}checked{% endif %}>
+            這份合約需要附件二（轉正費用計算表）
+        </label>
+        <div class="repayment-basic-grid" id="exhibit-two-fields" hidden>
+            <label><span class="field-caption">任職月數門檻 *</span>
+                <input type="text" name="exhibit_two_months" id="exhibit_two_months" value="{{ form.exhibit_two_months or '' }}" placeholder="如：三">
+            </label>
+            <label><span class="field-caption">轉正費金額（元）*</span>
+                <input type="text" name="exhibit_two_amount" id="exhibit_two_amount" value="{{ form.exhibit_two_amount or '' }}" placeholder="如：3000">
+            </label>
+        </div>
+        <p class="hint">勾選才會在附件一後面多產生一頁附件二；「任職月數門檻」會同時套進「任職＿個月內」跟「任職＿個月以上」兩列，請直接填中文數字（例如「三」），會跟合約書其他地方的用字一致。</p>
+    </div>
+
     <button type="submit" class="btn btn-primary btn-block" id="client-contract-submit-btn">產生 Word 合約並下載</button>
 </form>
 <p class="back-link"><a href="/client-contracts">&larr; 回合約產生器歷史紀錄</a></p>
@@ -197,7 +214,8 @@
         {% for code, version in contract_versions.items() %}
         "{{ code }}": {
             sign_date: {{ version.requires_sign_date | tojson }},
-            severance_clause: {{ version.requires_severance_clause | tojson }}
+            severance_clause: {{ version.requires_severance_clause | tojson }},
+            exhibit_two: {{ version.supports_exhibit_two | tojson }}
         }{% if not loop.last %},{% endif %}
         {% endfor %}
     };
@@ -207,7 +225,7 @@
         document.querySelectorAll('[data-pricing-for]').forEach(function (section) {
             section.hidden = section.dataset.pricingFor !== current;
         });
-        var requirements = VERSION_REQUIREMENTS[current] || { sign_date: true, severance_clause: true };
+        var requirements = VERSION_REQUIREMENTS[current] || { sign_date: true, severance_clause: true, exhibit_two: false };
         document.querySelectorAll('[data-requires="sign_date"]').forEach(function (el) {
             el.hidden = !requirements.sign_date;
         });
@@ -217,11 +235,28 @@
         document.querySelectorAll('[data-requires="severance_clause"]').forEach(function (el) {
             el.hidden = !requirements.severance_clause;
         });
+        document.querySelectorAll('[data-requires="exhibit_two"]').forEach(function (el) {
+            el.hidden = !requirements.exhibit_two;
+        });
     }
     if (versionSelect) {
         versionSelect.addEventListener('change', applyPricingVisibility);
     }
     applyPricingVisibility();
+
+    // 附件二：勾選才顯示任職月數門檻／金額這兩個必填欄位（後端驗證也是
+    // 「有勾才擋沒填」，見 client_contract_routes.py）。
+    var exhibitTwoCheckbox = document.getElementById('include_exhibit_two');
+    var exhibitTwoFields = document.getElementById('exhibit-two-fields');
+    function applyExhibitTwoVisibility() {
+        if (exhibitTwoCheckbox && exhibitTwoFields) {
+            exhibitTwoFields.hidden = !exhibitTwoCheckbox.checked;
+        }
+    }
+    if (exhibitTwoCheckbox) {
+        exhibitTwoCheckbox.addEventListener('change', applyExhibitTwoVisibility);
+        applyExhibitTwoVisibility();
+    }
 
     var lookupBtn = document.getElementById('party-a-lookup-btn');
     var lookupInput = document.getElementById('party-a-lookup-query');

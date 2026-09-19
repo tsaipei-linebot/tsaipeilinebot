@@ -39,6 +39,15 @@ services/client_contract_service.py 開頭的版本說明。這兩個版本彼�
 換成 9 個時段各自獨立的費率欄位（見 `TRADITIONAL_RATE_FIELDS`），這裡
 的 `_PRICING_FIELDS_BY_VERSION["traditional_flat_rate"]` 直接引用那份
 清單，9 個欄位都要填才算完整，不是只挑其中幾個。
+
+**附件二：轉正費用（2026-09-19 新增，選填）**：非代招版本（`CONTRACT_
+VERSIONS[版本代碼]["supports_exhibit_two"]` 為 True）表單上多一個選填
+勾選項 `include_exhibit_two`，勾了才收 `exhibit_two_months`／
+`exhibit_two_amount` 這兩個必填欄位（沒勾就當作沒填，欄位裡殘留的舊值
+也會被忽略，不會誤送進 Word 檔或存檔）。代招版本沒有這個勾選項，就算
+表單被竄改送出 `include_exhibit_two=1` 也會在後端被 `supports_exhibit_
+two` 擋掉，不會誤套進代招合約書——詳見
+`services/client_contract_service.py` 開頭的說明。
 """
 from datetime import date, datetime
 from urllib.parse import quote
@@ -155,6 +164,9 @@ def _duplicate_form_values(record: dict) -> dict:
         "service_months": record.get("service_months", ""),
         "referral_fee_percentage": record.get("referral_fee_percentage", ""),
         "referral_service_months": record.get("referral_service_months", ""),
+        "include_exhibit_two": record.get("include_exhibit_two", False),
+        "exhibit_two_months": record.get("exhibit_two_months", ""),
+        "exhibit_two_amount": record.get("exhibit_two_amount", ""),
         "contract_version": record.get("contract_version", DEFAULT_CONTRACT_VERSION),
     }
     for field in TRADITIONAL_RATE_FIELDS:
@@ -275,6 +287,17 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
     version_config = CONTRACT_VERSIONS.get(contract_version, {})
     requires_sign_date = version_config.get("requires_sign_date", True)
     requires_severance_clause = version_config.get("requires_severance_clause", True)
+    supports_exhibit_two = version_config.get("supports_exhibit_two", False)
+    exhibit_two_months_raw = (form.get("exhibit_two_months") or "").strip()
+    exhibit_two_amount_raw = (form.get("exhibit_two_amount") or "").strip()
+    # 附件二只有 supports_exhibit_two 的版本才收——代招版本表單上根本沒有
+    # 這個勾選項，就算瀏覽器端被竄改送出 include_exhibit_two=1 也直接忽略，
+    # 不會誤套進代招的合約書（代招 master template 也沒有對應的區塊）。有勾
+    # 才會實際用到月數／金額，沒勾就當作沒填，即使欄位本身還殘留舊值
+    # （例如勾了填完又取消勾選）也不會被送進 Word 檔或存檔。
+    include_exhibit_two = supports_exhibit_two and (form.get("include_exhibit_two") == "1")
+    exhibit_two_months = exhibit_two_months_raw if include_exhibit_two else ""
+    exhibit_two_amount = exhibit_two_amount_raw if include_exhibit_two else ""
 
     pricing_values = {
         "hourly_wage": hourly_wage,
@@ -297,6 +320,9 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         "severance_payer": severance_payer,
         "remit_day": remit_day,
         "contract_version": contract_version,
+        "include_exhibit_two": include_exhibit_two,
+        "exhibit_two_months": exhibit_two_months_raw,
+        "exhibit_two_amount": exhibit_two_amount_raw,
         **pricing_values,
     }
 
@@ -324,6 +350,8 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         error = "合約版本代碼不合法，請重新整理頁面再試一次。"
     elif any(not pricing_values[field] for field in required_pricing_fields):
         error = "請填寫報價欄位。"
+    elif include_exhibit_two and not (exhibit_two_months and exhibit_two_amount):
+        error = "已勾選附件二，請填寫任職月數門檻跟金額。"
 
     if error:
         context = _form_context(user=account, error=error, form=form_values)
@@ -355,6 +383,9 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         referral_fee_percentage=referral_fee_percentage,
         referral_service_months=referral_service_months,
         traditional_rates=traditional_rates,
+        include_exhibit_two=include_exhibit_two,
+        exhibit_two_months=exhibit_two_months,
+        exhibit_two_amount=exhibit_two_amount,
     )
 
     filename = _build_filename(party_a["name"], contract_start_date.year, "docx")
@@ -398,6 +429,9 @@ async def client_contract_submit(request: Request, redirect=Depends(_require_acc
         referral_fee_percentage=referral_fee_percentage,
         referral_service_months=referral_service_months,
         traditional_rates=traditional_rates,
+        include_exhibit_two=include_exhibit_two,
+        exhibit_two_months=exhibit_two_months,
+        exhibit_two_amount=exhibit_two_amount,
         blob_path=blob_path,
         pdf_blob_path=pdf_blob_path,
         vendor_id=vendor_id,

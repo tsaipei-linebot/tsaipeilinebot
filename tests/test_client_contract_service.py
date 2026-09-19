@@ -127,6 +127,32 @@ class RenderContractDocxTests(unittest.TestCase):
         self.assertEqual(row.cells[1].text, "180")
         self.assertEqual(row.cells[3].text, "55")
 
+    def test_exhibit_two_not_included_by_default(self):
+        # include_exhibit_two 預設 False，套版結果不該有附件二那段內容。
+        doc = self._render()
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertNotIn("附件二", full_text)
+        self.assertEqual(len(doc.tables), 2)
+
+    def test_exhibit_two_table_substituted_when_included(self):
+        doc = self._render(include_exhibit_two=True, exhibit_two_months="三", exhibit_two_amount="3000")
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("附件二", full_text)
+        self.assertEqual(len(doc.tables), 3)
+        table = doc.tables[2]
+        self.assertEqual(table.rows[1].cells[1].text.strip(), "任職三個月內")
+        self.assertEqual(table.rows[1].cells[2].text.strip(), "每人3000元")
+        self.assertEqual(table.rows[2].cells[1].text.strip(), "任職三個月以上")
+        self.assertEqual(table.rows[2].cells[2].text.strip(), "0元")
+
+    def test_exhibit_two_month_threshold_applies_to_both_rows(self):
+        # 使用者明確要求：任職月數門檻要同時套進「＿個月內」跟「＿個月
+        # 以上」兩列，不是只有第一列會變。
+        doc = self._render(include_exhibit_two=True, exhibit_two_months="六", exhibit_two_amount="5000")
+        table = doc.tables[2]
+        self.assertIn("六", table.rows[1].cells[1].text)
+        self.assertIn("六", table.rows[2].cells[1].text)
+
 
 class RenderActualPaidContractDocxTests(unittest.TestCase):
     """actual_paid（實支實付）版本：跟 hourly_flat_rate 共用同一套甲乙雙方/
@@ -245,6 +271,16 @@ class RenderWhiteCollarReferralContractDocxTests(unittest.TestCase):
         doc = self._render()
         full_text = "\n".join(p.text for p in doc.paragraphs)
         self.assertNotIn("附件二", full_text)
+
+    def test_include_exhibit_two_flag_is_harmless_for_referral_version(self):
+        # 代招版本的 master template 完全沒有附件二（轉正費用）這個
+        # docxtpl 條件式區塊——就算呼叫端傳了 include_exhibit_two=True，
+        # 套版也不會出錯、也不會憑空冒出附件二段落（見
+        # services/client_contract_service.py 開頭「附件二」那段說明）。
+        doc = self._render(include_exhibit_two=True, exhibit_two_months="三", exhibit_two_amount="3000")
+        full_text = "\n".join(p.text for p in doc.paragraphs)
+        self.assertNotIn("附件二", full_text)
+        self.assertNotIn("轉正費", full_text)
 
     def test_fee_amount_and_service_months_substituted_in_table(self):
         doc = self._render(fee_amount="三千元整", service_months="6")
@@ -469,6 +505,14 @@ class ContractVersionConfigTests(unittest.TestCase):
             self.assertTrue(version["requires_sign_date"], code)
             self.assertTrue(version["requires_severance_clause"], code)
             self.assertEqual(version["project_contract_coop_category"], "派遣", code)
+
+    def test_non_referral_versions_support_exhibit_two(self):
+        for code in ("hourly_flat_rate", "actual_paid", "traditional_flat_rate"):
+            self.assertTrue(CONTRACT_VERSIONS[code]["supports_exhibit_two"], code)
+
+    def test_referral_versions_do_not_support_exhibit_two(self):
+        for code in ("white_collar_referral", "taiwanese_referral"):
+            self.assertFalse(CONTRACT_VERSIONS[code]["supports_exhibit_two"], code)
 
 
 class CanViewSubmissionTests(unittest.TestCase):
