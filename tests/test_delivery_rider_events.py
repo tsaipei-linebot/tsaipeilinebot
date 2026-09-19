@@ -13,8 +13,9 @@ from delivery import rider_events, rider_repository
 
 
 class NotBoundOrBlockedTests(unittest.TestCase):
-    """未綁定/已停用的騎士，不管傳什麼事件都只回一句擋下訊息，不會走到任何
-    業務邏輯（不會查資料庫的門市/時段）。"""
+    """未綁定/已停用的騎士，傳跟這兩個功能相關的事件（關鍵字/位置/Postback/
+    數字）只回一句擋下訊息，不會走到任何業務邏輯（不會查資料庫的門市/
+    時段）。"""
 
     def test_unbound_user_gets_not_bound_message(self):
         with mock.patch.object(rider_repository, "get_rider_binding", return_value=None):
@@ -31,6 +32,19 @@ class NotBoundOrBlockedTests(unittest.TestCase):
 
     def test_missing_user_id_returns_no_messages(self):
         self.assertEqual(rider_events.handle_rider_event({"type": "message"}), [])
+
+    def test_unrelated_text_from_unbound_user_stays_silent(self):
+        """2026-09-19 修正的迴歸測試：GAS 那邊除了「綁定+工號+姓名」跟
+        「接受本日發包任務」，其餘私訊文字一律轉發過來，如果不先判斷這
+        則事件是不是真的在跟接單/報班互動就查綁定狀態，會變成任何人傳
+        任何一句不相干的閒聊都收到「尚未完成綁定」，比完全不回覆更糟。
+        這裡確認不相干文字連 Firestore 都不會查，直接安靜略過。"""
+        with mock.patch.object(rider_repository, "get_rider_binding") as mock_get_binding:
+            messages = rider_events.handle_rider_event(
+                {"userId": "U1", "type": "message", "message_type": "text", "text": "今天天氣真好"}
+            )
+        self.assertEqual(messages, [])
+        mock_get_binding.assert_not_called()
 
 
 class _ActiveBindingMixin:
