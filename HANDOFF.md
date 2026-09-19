@@ -6901,3 +6901,144 @@ RiderCooperationTypeTests`／`VehicleDetailRiderCooperationTypeTests`
 不用再手動發布。如果之後想暫停這個自動公告功能，把 Cloud Run 上的
 `AUTO_ANNOUNCE_SECRET` 環境變數刪掉（或改成跟 GitHub 那邊不一樣的
 值）即可，不用改程式碼。
+
+## 外送員接單媒合：即時接單／報班媒合第一階段（2026-09-19 新增）
+
+外送部 CHANNEL1 LINE 官方帳號（`delivery-gas-project` 那個 repo 處理的、
+跟這支招募機器人不同的官方帳號）新增兩個讓已登記合作騎士自助操作的
+功能：**即時接單**（查詢附近門市當日還有多少宅配貨量可以承接、自行輸入
+承接件數）、**報班媒合**（瀏覽並報名店家/物流商發布的人力需求時段）。
+跟現有排班「發包」機制（專員主動推播、騎士被動接受）是相反方向的操作
+（pull vs. push），資料表、程式邏輯完全分開，不會動到發包機制。
+
+這是使用者（少凱）先寫好完整技術規格再交給 Claude 實作的功能，實作前
+先跟使用者確認了 3 個規格書列為待確認事項的產品面決定：
+1. **使用資格**：僅限已登記合作的騎士（透過 LINE「綁定+工號+姓名」私訊
+   完成綁定），並且要有後台功能能讓管理員停用不合規的騎士——這是使用者
+   在確認過程中額外提出、規格書原本沒有的需求。
+2. **後台表單使用者**：內部配送部/管理部同仁（沿用既有 `/accounts` 帳號
+   權限），不是門市/物流商自己登入填寫，所以不用另開帳號類型。
+3. **每日截止自動關閉**：第一階段不做，人工手動關閉即可。
+
+另外實作過程中發現一個能簡化架構、順便解掉規格書「replyToken 時效」
+風險的地方：`delivery-gas-project` 現有的車輛回報/意外事件回報，其實是
+「GAS 同步呼叫這個系統、等回應、GAS 自己用它手上的 CHANNEL1 Token 呼叫
+LINE Reply API 回覆」這個模式——這支系統完全不用持有一份 CHANNEL1 的
+Channel Access Token，也不用自己呼叫 LINE API。這次新功能比照同一套
+機制（只是把 GAS 回覆的內容從純文字擴充成能傳 Flex 卡片），所以**沒有**
+採用規格書原本設想的「新增 `CHANNEL1_CHANNEL_ACCESS_TOKEN` 環境變數」
+做法——少一把要另外管理的密鑰，而且是複用已經穩定跑在正式環境的機制。
+
+**架構**：權限沿用配送部模組本身（使用者確認新模組歸在現有「新北所
+(配送組)系統」卡片底下，不需要獨立 `/portal` 卡片、不需要改
+`platform_accounts.py` 的 `MODULES` 清單），所以沒有蓋成一個獨立模組
+（自己的 config.py/db.py/獨立登入），而是直接併進現有 `delivery/`
+package，新增這幾支檔案：
+
+| 檔案 | 用途 |
+|---|---|
+| `delivery/rider_repository.py` | Firestore 資料層＋交易邏輯：騎士綁定/啟用停用、門市當日量 CRUD、承接 transaction、報班時段 CRUD、報名 transaction |
+| `delivery/rider_messages.py` | 組出要回覆給騎士的 LINE 訊息 JSON（純文字／Flex Carousel），刻意不用 `linebot.models`——這些訊息最終是 GAS 轉發出去，不是這裡直接呼叫 LINE API |
+| `delivery/rider_events.py` | 解析 GAS 轉發過來的騎士事件（文字／位置訊息／Postback），決定要回覆什麼，webhook 路由本身保持很薄 |
+| `delivery/routes/rider_routes.py` | 後台管理頁面：門市當日量管理／報班時段管理（`login_required`）、騎士名單管理啟用/停用（`admin_required`，性質上更接近服務區域管理這種限主管操作） |
+| `delivery/templates/rider_*.html` | 對應的後台管理樣板 |
+
+`delivery/routes/webhook_routes.py` 新增兩支端點（沿用既有共用密鑰驗證
+模式，跟 `/api/vehicle-report` 同一種做法）：
+- `POST /delivery/api/rider-events`：接收 GAS 轉發的騎士事件，回傳
+  `{"messages": [...]}` 一份 LINE 訊息物件陣列。
+- `POST /delivery/api/rider-binding-sync`：GAS 那邊「綁定+工號+姓名」
+  成功後同步呼叫，把 LINE UserId↔工號/姓名寫進 `delivery_rider_bindings`
+  ——刻意保留既有 `status` 欄位不覆蓋，已經被停用的騎士重新綁定/改名
+  不會自動解除停用。
+
+**Firestore 資料模型**（跟規格書原本設想的「真的用 Firestore 子集合」不
+同，這裡改成扁平集合＋外鍵欄位，例如 `delivery_rider_claims` 用
+`store_delivery_id` 欄位指回它屬於哪一筆 `delivery_rider_store_
+deliveries`——整個 repo 目前沒有任何地方用到真的子集合，保持這個唯一的
+做法）：`delivery_rider_bindings`、`delivery_rider_store_deliveries`、
+`delivery_rider_claims`、`delivery_rider_shift_postings`、
+`delivery_rider_shift_registrations`。
+
+**承接／報名的併發保護**：`claim_store_delivery()`／`register_shift()`
+都是 `@firestore.transactional` 包起來的「讀一次目前資料→純函式
+（`_evaluate_claim()`／`_evaluate_registration()`）決定接不接受→接受
+才寫回去」，確保兩位騎士幾乎同時操作同一筆資料不會一起超放/超收——
+跟 `services/session_service.py` 修過的並發遺失更新問題是同一種寫法。
+這兩個純函式刻意不摸 Firestore，方便直接單元測試邊界情況（剛好用完／
+超過／已關閉／重複報名），不需要真的連 Firestore 或搭配 emulator。
+
+**查詢附近門市怎麼排序**：Firestore 沒有「依距離排序」的原生查詢能力，
+是先撈出當日 `status==open` 的候選門市，程式碼自己用 Haversine 公式算
+距離再排序（`rider_repository._haversine_km()`）——門市數量不多的話
+完全沒問題，這不是漏做，是刻意的技術選擇，已經先讓使用者知道。
+
+**騎士輸入承接件數的暫存狀態**：騎士點「承接」後還沒輸入件數，用
+騎士綁定資料上的 `pending_claim` 欄位暫存「正要承接哪一筆」，下一則純
+數字文字訊息就當作件數處理；暫存超過 `RIDER_PENDING_CLAIM_TTL_SECONDS`
+（10 分鐘，`delivery/config.py`）就視為過期，避免騎士點了「承接」放著
+不理，很久之後才傳一則不相干的數字訊息被誤當成件數輸入。
+
+**LINE 互動觸發方式**：私訊關鍵字（「查詢附近單」「瀏覽報班」等，見
+`rider_events.py` 的 `_NEARBY_ORDER_KEYWORDS`／`_SHIFT_LIST_KEYWORDS`），
+不是 LINE 圖文選單（Rich Menu）——那需要另外呼叫 LINE Rich Menu API
+設定，一階段用文字關鍵字就能達到一樣的效果，之後真的需要圖文選單
+再另外規劃。
+
+**分階段推出**：這次只做規格書的第一階段——門市當日量由後台人工登記
+（`source` 欄位固定 `"manual"`），刻意不做「回報送達」跟逾時自動掃描
+（規格書原本也說第一階段不需要，等真正接回試算表同步、有重複計算風險
+時才需要）。資料模型已經預留擴充空間，第二階段要接回試算表同步時不需要
+重新設計資料結構。
+
+### 使用者需要知道的事——這次需要手動設定，且橫跨兩個 repo
+
+1. **這個 repo（`tsaipeilinebot`）只需要一個新的 Cloud Run 環境變數**
+   （在 Cloud Shell 執行，`recruitment-bot` 是配送部系統跟招募機器人
+   共用的同一個 Cloud Run 服務）：
+   ```bash
+   gcloud run services update recruitment-bot \
+     --region asia-east1 \
+     --update-env-vars DELIVERY_RIDER_WEBHOOK_SECRET="自己想一組隨機字串"
+   ```
+   跑完看到 `Service [recruitment-bot] revision ... has been deployed`
+   就代表設定成功。
+
+2. **`delivery-gas-project` 那個 repo 要另外設定三個「指令碼屬性」**
+   （這不是 Cloud Run 環境變數，是 Google Apps Script 專案自己的設定，
+   要打開 https://script.google.com 進到那個專案的編輯器，左側選單
+   「專案設定」→「指令碼屬性」新增）：
+   - `RIDER_EVENTS_WEBHOOK_URL`：填
+     `https://<Cloud Run 服務網址>/delivery/api/rider-events`
+     （Cloud Run 服務網址可以在 GCP Console 的 Cloud Run 頁面看到，
+     或執行 `gcloud run services describe recruitment-bot --region
+     asia-east1 --format="value(status.url)"` 查詢）
+   - `RIDER_BINDING_SYNC_URL`：填
+     `https://<Cloud Run 服務網址>/delivery/api/rider-binding-sync`
+   - `RIDER_WEBHOOK_SECRET`：填**跟步驟 1 一模一樣**的那組字串
+   三個都設定好之後不需要重新部署 Apps Script，指令碼屬性即時生效。
+
+3. **`delivery-gas-project` 這次的程式碼變更，合併到 `main` 後會由
+   現有 CI/CD（`clasp-push.yml`）自動 `clasp push` + `clasp deploy`
+   上線，不需要手動跑 `git pull && clasp push`**——這點跟這個 repo
+   的 CLAUDE.md 目前寫的「需要主動提醒使用者手動 clasp push」不一樣，
+   是因為 CLAUDE.md 那段說明是自動部署上線之前寫的，已經過時，這裡
+   一併記錄更新後的實際狀況，避免下次又誤以為需要提醒手動部署。
+
+4. **兩個 repo 都設定好之後，還需要騎士先私訊「綁定+工號+姓名」完成
+   綁定**（這個既有功能不用改），系統才會知道這是已登記的合作騎士；
+   接著到配送部系統的「門市當日量管理」（主頁 → 外送員接單媒合）登記
+   幾筆門市當日量，就可以請騎士實際測試「查詢附近單」「瀏覽報班」這
+   兩個功能了。
+
+### 測試
+
+新增 `tests/test_delivery_rider_repository.py`（`_evaluate_claim()`／
+`_evaluate_registration()`／`_haversine_km()` 純函式邊界情況）、
+`tests/test_delivery_rider_events.py`（未綁定/已停用擋下、關鍵字觸發、
+Postback 分派、承接件數暫存狀態）、`tests/test_delivery_rider_routes.py`
+（後台頁面未登入導向、webhook 密鑰驗證）。全部測試（`python3 -m
+unittest discover -s tests -p "test_*.py"`）1608 個全數通過。
+
+`delivery/templates/help.html` 新增「外送員接單媒合」章節，維持每次
+新功能都同步更新使用說明的紀律。

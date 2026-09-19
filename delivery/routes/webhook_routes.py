@@ -9,15 +9,17 @@ import hmac
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from delivery import repository
+from delivery import repository, rider_repository
 from delivery.config import (
     FORM_WEBHOOK_SECRET,
     INCIDENT_REPORT_WEBHOOK_SECRET,
+    RIDER_WEBHOOK_SECRET,
     VEHICLE_REPORT_WEBHOOK_SECRET,
     VENDOR_MAP,
 )
 from delivery.form_webhook import extract_answer
 from delivery.incident_report import format_weekly_reminder, handle_incident_report
+from delivery.rider_events import handle_rider_event
 from delivery.vehicle_report import handle_vehicle_report
 
 router = APIRouter()
@@ -115,3 +117,40 @@ def incident_weekly_reminder_text(x_delivery_incident_secret: str = Header(None)
 
     items = repository.list_open_incident_events()
     return {"text": format_weekly_reminder(items)}
+
+
+@router.post("/api/rider-events")
+async def rider_events_webhook(request: Request, x_delivery_rider_secret: str = Header(None)):
+    """外送員接單媒合（2026-09-19 新增）：接收 delivery-gas-project 轉發的
+    騎士 1 對 1 私訊事件（文字／位置訊息／Postback），回傳一份 LINE 訊息
+    物件的 JSON 陣列。跟車輛/意外事件回報同一種做法——GAS 那邊收到回應後
+    自己用它手上的 CHANNEL1 Token 呼叫 LINE Reply API 轉發出去，這裡完全
+    不摸 LINE API、也不需要另外持有一份 Token（見 delivery/config.py 開頭
+    RIDER_WEBHOOK_SECRET 旁的說明）。"""
+    if not RIDER_WEBHOOK_SECRET or not x_delivery_rider_secret or not hmac.compare_digest(
+        x_delivery_rider_secret, RIDER_WEBHOOK_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    body = await _parse_json_body(request)
+    messages = handle_rider_event(body)
+    return {"messages": messages}
+
+
+@router.post("/api/rider-binding-sync")
+async def rider_binding_sync_webhook(request: Request, x_delivery_rider_secret: str = Header(None)):
+    """外送員接單媒合（2026-09-19 新增）：騎士在 GAS 那邊完成/更新「綁定+
+    工號+姓名」私訊後同步呼叫，把 LINE UserId↔工號/姓名 寫進這裡的
+    delivery_rider_bindings，即時接單/報班媒合才知道誰是已登記的合作騎士。
+    共用同一把 RIDER_WEBHOOK_SECRET，不需要另外設定密鑰。"""
+    if not RIDER_WEBHOOK_SECRET or not x_delivery_rider_secret or not hmac.compare_digest(
+        x_delivery_rider_secret, RIDER_WEBHOOK_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    body = await _parse_json_body(request)
+    user_id = (body.get("userId") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=400, detail="userId 欄位不可為空")
+    rider_repository.upsert_rider_binding(user_id, body.get("employeeId") or "", body.get("name") or "")
+    return {"status": "ok"}

@@ -27,6 +27,18 @@ EQUIPMENT_STOCK_COLLECTION = "delivery_equipment_stock"
 EQUIPMENT_DEBT_COLLECTION = "delivery_equipment_debt"
 EQUIPMENT_TRANSACTIONS_COLLECTION = "delivery_equipment_transactions"
 
+# 外送員接單媒合（即時接單／報班媒合，2026-09-19 新增）：跟裝備借還一樣，
+# 刻意用「扁平集合 + 外鍵欄位」而不是真的 Firestore 子集合（例如
+# delivery_rider_claims 用 store_delivery_id 欄位指回它屬於哪一筆
+# delivery_rider_store_deliveries，不是 store_deliveries/{id}/claims 這種
+# 巢狀路徑）——整個 repo 目前沒有任何地方用到真的子集合，保持這個唯一的
+# 做法，查詢/測試方式都能沿用既有其他功能的寫法。
+RIDER_BINDINGS_COLLECTION = "delivery_rider_bindings"
+RIDER_STORE_DELIVERIES_COLLECTION = "delivery_rider_store_deliveries"
+RIDER_CLAIMS_COLLECTION = "delivery_rider_claims"
+RIDER_SHIFT_POSTINGS_COLLECTION = "delivery_rider_shift_postings"
+RIDER_SHIFT_REGISTRATIONS_COLLECTION = "delivery_rider_shift_registrations"
+
 
 def personnel_ref():
     return get_db().collection(PERSONNEL_COLLECTION)
@@ -82,3 +94,23 @@ def equipment_debt_ref():
 
 def equipment_transactions_ref():
     return get_db().collection(EQUIPMENT_TRANSACTIONS_COLLECTION)
+
+
+def rider_bindings_ref():
+    return get_db().collection(RIDER_BINDINGS_COLLECTION)
+
+
+def rider_store_deliveries_ref():
+    return get_db().collection(RIDER_STORE_DELIVERIES_COLLECTION)
+
+
+def rider_claims_ref():
+    return get_db().collection(RIDER_CLAIMS_COLLECTION)
+
+
+def rider_shift_postings_ref():
+    return get_db().collection(RIDER_SHIFT_POSTINGS_COLLECTION)
+
+
+def rider_shift_registrations_ref():
+    return get_db().collection(RIDER_SHIFT_REGISTRATIONS_COLLECTION)

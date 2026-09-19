@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}騎士名單管理 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+{% block content %}
+<h1 class="page-title">騎士名單管理</h1>
+<p class="hint">停用後，這位騎士的 LINE 帳號即時接單／報班媒合這兩個功能都會被擋下，並收到「目前無法使用這項功能」的回覆。名單來自 LINE「綁定+工號+姓名」私訊自動同步，不能在這裡新增。</p>
+
+{% if riders %}
+<table class="data-table">
+    <thead>
+        <tr><th>工號</th><th>姓名</th><th>狀態</th><th>修改</th></tr>
+    </thead>
+    <tbody>
+        {% for rider in riders %}
+        <tr>
+            <td>{{ rider.employee_id }}</td>
+            <td>{{ rider.name }}</td>
+            <td><span class="badge {{ 'badge-ok' if rider.status == 'active' else 'badge-resigned' }}">{{ "啟用" if rider.status == "active" else "停用" }}</span></td>
+            <td>
+                <form method="post" action="/delivery/rider/riders/{{ rider.user_id }}/status" style="display:inline">
+                    <input type="hidden" name="status" value="{{ 'blocked' if rider.status == 'active' else 'active' }}">
+                    <button type="submit" class="btn btn-small {{ 'btn-danger' if rider.status == 'active' else '' }}">{{ "停用" if rider.status == "active" else "啟用" }}</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有任何騎士完成綁定。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}承接紀錄 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ store.store_name if store else "找不到這筆門市當日量" }} - 承接紀錄</h1>
+{% if store %}
+<p class="hint">日期：{{ store.date }}｜總量：{{ store.total_quantity }}｜已承接：{{ store.claimed_quantity }}｜剩餘：{{ store.remaining_quantity }}</p>
+{% endif %}
+
+{% if claims %}
+<table class="data-table">
+    <thead>
+        <tr><th>騎士姓名</th><th>承接件數</th><th>承接時間</th></tr>
+    </thead>
+    <tbody>
+        {% for claim in claims %}
+        <tr>
+            <td>{{ claim.rider_name }}</td>
+            <td>{{ claim.quantity }}</td>
+            <td>{{ claim.claimed_at_display }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有騎士承接這筆門市當日量。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/rider/store-deliveries?date={{ store.date if store else '' }}">&larr; 回門市當日量管理</a></p>
+{% endblock %}

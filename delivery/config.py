@@ -456,3 +456,29 @@ EQUIPMENT_ADMIN_ONLY_TRANSACTION_TYPES = {"writeoff"}
 # 只有「在職」的人員才能借裝備——跟人員缺件清單預設隱藏離職/放棄報到的人
 # 是同一個道理，不應該讓已經離職的人還掛在借用名單裡。
 EQUIPMENT_ELIGIBLE_PERSONNEL_STATUS = "employed"
+
+# ==========================================
+# 外送員接單媒合（即時接單／報班媒合，2026-09-19 新增）
+# 跟車輛/意外事件回報同一個 delivery-gas-project 專案、同一個 CHANNEL1 LINE
+# 官方帳號，但轉發到這裡的是騎士的 1 對 1 私訊（Postback／文字／位置訊息），
+# 不是群組訊息。沿用同一種「共用密鑰驗證」做法：GAS 那邊呼叫
+# /delivery/api/rider-events（LINE 事件轉發）跟
+# /delivery/api/rider-binding-sync（工號/姓名綁定表同步）這兩支 webhook 都
+# 帶同一把密鑰（X-Delivery-Rider-Secret），未設定時兩支端點一律回傳 403。
+#
+# 刻意不像規格書原本設想的那樣，另外讓這裡持有一份 CHANNEL1 的 Channel
+# Access Token 自己呼叫 LINE Reply API——沿用車輛/意外事件回報現有的做法：
+# GAS 同步呼叫這裡、等回應、GAS 自己用它手上已經有的 Token 回覆
+# LINE（見 delivery-gas-project 的 replyLineRawMessages_()），這裡只需要
+# 回傳一份 LINE 訊息物件的 JSON 陣列（{"messages": [...]}），不需要另外管理
+# 一把新的 LINE 憑證，也不用擔心 replyToken 時效——跟現有兩個功能是同一條
+# 已經穩定運作的路徑。
+RIDER_WEBHOOK_SECRET = os.getenv("DELIVERY_RIDER_WEBHOOK_SECRET", "")
+
+# 騎士點「承接」後，系統會提示他輸入件數，這時候他還沒真的輸入數字——這裡
+# 用騎士綁定資料上的 pending_claim 欄位暫存「他正要承接哪一筆門市當日量」，
+# 下一則文字訊息如果是純數字就當作件數處理。避免騎士點了「承接」卻放著不
+# 理，隔了很久才傳一則不相干的數字訊息也被誤當成件數輸入，暫存狀態超過
+# 這個秒數就視為過期、不再採用。
+RIDER_PENDING_CLAIM_TTL_SECONDS = 600
+

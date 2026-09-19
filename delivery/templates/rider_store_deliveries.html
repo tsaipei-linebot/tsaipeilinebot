@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}門市當日量管理 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+{% block content %}
+<h1 class="page-title">門市當日量管理</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<h2 class="section-title">新增門市當日可承接量</h2>
+<form method="post" action="/delivery/rider/store-deliveries/new" class="form-stack form-narrow">
+    <label>門市名稱
+        <input type="text" name="store_name" required placeholder="例如：蝦皮三輪 新北中和門市">
+    </label>
+    <label>門市緯度
+        <input type="text" name="lat" required placeholder="例如：24.9998（可從 Google 地圖右鍵複製）">
+    </label>
+    <label>門市經度
+        <input type="text" name="lng" required placeholder="例如：121.4996">
+    </label>
+    <label>日期
+        <input type="date" name="date" value="{{ filter_date }}" required>
+    </label>
+    <label>當日可承接總量（件）
+        <input type="number" name="total_quantity" min="1" required>
+    </label>
+    <button type="submit" class="btn btn-primary">新增</button>
+</form>
+
+<h2 class="section-title">查詢日期</h2>
+<form method="get" action="/delivery/rider/store-deliveries" class="inline-form">
+    <input type="date" name="date" value="{{ filter_date }}">
+    <button type="submit" class="btn">查詢</button>
+    <a class="btn" href="/delivery/rider/store-deliveries?date={{ today }}">回今天</a>
+</form>
+
+<h2 class="section-title">{{ filter_date }} 門市當日量清單</h2>
+{% if items %}
+<table class="data-table">
+    <thead>
+        <tr><th>門市名稱</th><th>總量</th><th>已承接</th><th>剩餘</th><th>狀態</th><th>修改</th><th>對帳</th></tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        <tr>
+            <td>{{ item.store_name }}</td>
+            <td>{{ item.total_quantity }}</td>
+            <td>{{ item.claimed_quantity }}</td>
+            <td>{{ item.remaining_quantity }}</td>
+            <td><span class="badge {{ 'badge-ok' if item.status == 'open' else 'badge-resigned' }}">{{ "開放中" if item.status == "open" else "已關閉" }}</span></td>
+            <td>
+                <form method="post" action="/delivery/rider/store-deliveries/{{ item.id }}/quantity" style="display:inline">
+                    <input type="hidden" name="date" value="{{ filter_date }}">
+                    <input type="number" name="total_quantity" min="1" value="{{ item.total_quantity }}" style="width:80px;">
+                    <button type="submit" class="btn btn-small">更新總量</button>
+                </form>
+                <form method="post" action="/delivery/rider/store-deliveries/{{ item.id }}/status" style="display:inline">
+                    <input type="hidden" name="date" value="{{ filter_date }}">
+                    <input type="hidden" name="status" value="{{ 'closed' if item.status == 'open' else 'open' }}">
+                    <button type="submit" class="btn btn-small">{{ "關閉" if item.status == "open" else "重新開放" }}</button>
+                </form>
+            </td>
+            <td><a class="btn btn-small" href="/delivery/rider/store-deliveries/{{ item.id }}/claims">查看承接紀錄</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">這天還沒有任何門市當日量。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}
