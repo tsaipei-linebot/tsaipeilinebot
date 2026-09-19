@@ -57,7 +57,9 @@ class _ActiveBindingMixin:
 
 class TextKeywordDispatchTests(_ActiveBindingMixin, unittest.TestCase):
     def test_nearby_order_keyword_prompts_location_share(self):
-        messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "查詢附近單"})
+        with mock.patch.object(rider_repository, "set_awaiting_location") as mock_set:
+            messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "查詢附近單"})
+        mock_set.assert_called_once_with("U1")
         self.assertEqual(len(messages), 1)
         self.assertIn("位置資訊", messages[0]["text"])
 
@@ -78,46 +80,78 @@ class TextKeywordDispatchTests(_ActiveBindingMixin, unittest.TestCase):
 
 
 class QuantityInputDispatchTests(_ActiveBindingMixin, unittest.TestCase):
-    def test_digit_text_without_pending_claim_gets_expired_message(self):
-        with mock.patch.object(rider_repository, "pop_pending_claim", return_value=""):
-            messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "5"})
-        self.assertIn("逾時失效", messages[0]["text"])
+    """2026-09-19 使用者反映任何數字文字都被當成相關事件太容易誤觸發，
+    改成只有真的有暫存中的承接操作（has_pending_claim() 為 True）才算
+    相關，不然連 pop_pending_claim() 都不會呼叫、安靜略過。"""
+
+    def test_digit_text_without_pending_claim_stays_silent(self):
+        with mock.patch.object(rider_repository, "has_pending_claim", return_value=False):
+            with mock.patch.object(rider_repository, "pop_pending_claim") as mock_pop:
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "5"})
+        self.assertEqual(messages, [])
+        mock_pop.assert_not_called()
 
     def test_digit_text_with_pending_claim_calls_claim_store_delivery(self):
-        with mock.patch.object(rider_repository, "pop_pending_claim", return_value="store1"):
-            with mock.patch.object(rider_repository, "claim_store_delivery", return_value=(True, "承接成功！")) as mock_claim:
-                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "5"})
+        with mock.patch.object(rider_repository, "has_pending_claim", return_value=True):
+            with mock.patch.object(rider_repository, "pop_pending_claim", return_value="store1"):
+                with mock.patch.object(rider_repository, "claim_store_delivery", return_value=(True, "承接成功！")) as mock_claim:
+                    messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "5"})
         mock_claim.assert_called_once_with("store1", "U1", "小明", 5)
         self.assertIn("承接成功", messages[0]["text"])
 
     def test_zero_quantity_re_prompts_without_clearing_pending_claim(self):
-        with mock.patch.object(rider_repository, "pop_pending_claim", return_value="store1"):
-            with mock.patch.object(rider_repository, "set_pending_claim") as mock_set:
-                with mock.patch.object(rider_repository, "claim_store_delivery") as mock_claim:
-                    messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "0"})
+        with mock.patch.object(rider_repository, "has_pending_claim", return_value=True):
+            with mock.patch.object(rider_repository, "pop_pending_claim", return_value="store1"):
+                with mock.patch.object(rider_repository, "set_pending_claim") as mock_set:
+                    with mock.patch.object(rider_repository, "claim_store_delivery") as mock_claim:
+                        messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "0"})
         mock_claim.assert_not_called()
         mock_set.assert_called_once_with("U1", "store1")
         self.assertIn("大於 0", messages[0]["text"])
 
+    def test_pending_claim_expired_between_peek_and_pop_gets_expired_message(self):
+        """防禦性邊界：has_pending_claim() 檢查通過後，pop_pending_claim()
+        才發現其實已經過期/被清掉——理論上極少發生，但保留這條路徑的行為。"""
+        with mock.patch.object(rider_repository, "has_pending_claim", return_value=True):
+            with mock.patch.object(rider_repository, "pop_pending_claim", return_value=""):
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "5"})
+        self.assertIn("逾時失效", messages[0]["text"])
+
 
 class LocationDispatchTests(_ActiveBindingMixin, unittest.TestCase):
+    """2026-09-19 使用者反映任何位置分享都被當成相關事件太容易誤觸發，
+    改成只有先問過「查詢附近單」（pop_awaiting_location() 為 True）才算
+    相關。"""
+
+    def test_location_without_prior_nearby_order_request_stays_silent(self):
+        with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=False):
+            with mock.patch.object(rider_repository, "list_nearby_open_stores") as mock_list:
+                messages = rider_events.handle_rider_event(
+                    {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
+                )
+        self.assertEqual(messages, [])
+        mock_list.assert_not_called()
+
     def test_location_message_with_no_nearby_stores(self):
-        with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=[]):
-            messages = rider_events.handle_rider_event(
-                {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
-            )
+        with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=True):
+            with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=[]):
+                messages = rider_events.handle_rider_event(
+                    {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
+                )
         self.assertIn("沒有開放中", messages[0]["text"])
 
     def test_location_message_with_nearby_stores_returns_carousel(self):
         stores = [{"id": "s1", "store_name": "中和門市", "remaining_quantity": 5, "distance_km": 1.2}]
-        with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=stores):
-            messages = rider_events.handle_rider_event(
-                {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
-            )
+        with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=True):
+            with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=stores):
+                messages = rider_events.handle_rider_event(
+                    {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
+                )
         self.assertEqual(messages[0]["type"], "flex")
 
     def test_location_missing_coordinates_returns_no_messages(self):
-        messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "location"})
+        with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=True):
+            messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "location"})
         self.assertEqual(messages, [])
 
 

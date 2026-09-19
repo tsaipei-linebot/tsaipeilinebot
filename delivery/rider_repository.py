@@ -128,6 +128,45 @@ def pop_pending_claim(user_id: str) -> str:
     return store_id
 
 
+def has_pending_claim(user_id: str) -> bool:
+    """只檢查有沒有暫存中的承接操作，不清掉暫存狀態（真的處理這則訊息時
+    才由 pop_pending_claim() 清掉）。給 rider_events.py 判斷「這則純數字
+    訊息看起來是不是真的在回覆承接件數」用——2026-09-19 使用者反映任何
+    數字文字都會被當成相關事件太容易誤觸發，改成只有真的點過「承接」
+    按鈕、還在有效期限內，才算數。"""
+    binding = get_rider_binding(user_id)
+    if not binding:
+        return False
+    pending = binding.get("pending_claim") or {}
+    store_id = pending.get("store_id") or ""
+    set_at = pending.get("set_at") or 0
+    return bool(store_id) and (time.time() - set_at) <= RIDER_PENDING_CLAIM_TTL_SECONDS
+
+
+def set_awaiting_location(user_id: str) -> None:
+    """騎士私訊「查詢附近單」關鍵字後，暫存「正在等他分享位置」。"""
+    rider_bindings_ref().document(user_id).update(
+        {"awaiting_location": {"set_at": time.time()}}
+    )
+
+
+def pop_awaiting_location(user_id: str) -> bool:
+    """取出並清掉「正在等待分享位置」的暫存狀態，回傳是否真的有暫存中且
+    未過期。給 rider_events.py 判斷「這則位置訊息看起來是不是真的在回覆
+    查詢附近單」用——2026-09-19 使用者反映任何位置分享都會被當成相關事件
+    太容易誤觸發，改成只有先問過「查詢附近單」、還在有效期限內，才算數。"""
+    ref = rider_bindings_ref().document(user_id)
+    snapshot = ref.get()
+    if not snapshot.exists:
+        return False
+    pending = (snapshot.to_dict() or {}).get("awaiting_location") or {}
+    set_at = pending.get("set_at") or 0
+    if not set_at:
+        return False
+    ref.update({"awaiting_location": None})
+    return (time.time() - set_at) <= RIDER_PENDING_CLAIM_TTL_SECONDS
+
+
 # ==========================================
 # 地點主檔（2026-09-19 新增）
 # 門市當日量、報班時段這兩個表單原本都要同仁自己輸入經緯度／地點名稱，
