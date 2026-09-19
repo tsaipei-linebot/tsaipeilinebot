@@ -39,13 +39,17 @@ def vehicle_list(
         wheel_type_filter=wheel_type,
         service_area_filter=service_area,
     )
-    # 騎手身份（2026-09-18 新增）：車輛主檔沒有直接存合作方式，每台車都要
-    # 反查一次目前使用人的人員資料才能顯示（見
-    # repository.resolve_vehicle_rider_cooperation_type() 的說明）；篩選
-    # 也是靠這個反查出來的結果比對，不是車輛主檔本身的欄位，所以要先把
-    # 全部（套用其他篩選條件後）的車輛都反查完，才能套用騎手身份篩選。
+    # 騎手身份／手機號碼備援（2026-09-18／2026-09-19 新增）：車輛主檔沒有
+    # 直接存合作方式，每台車都要反查一次目前使用人的人員資料才能顯示（見
+    # repository.resolve_vehicle_rider_info() 的說明）；篩選也是靠這個
+    # 反查出來的結果比對，不是車輛主檔本身的欄位，所以要先把全部（套用
+    # 其他篩選條件後）的車輛都反查完，才能套用騎手身份篩選。手機號碼
+    # 只有車輛主檔自己的 current_holder_phone 是空的時候才會用反查結果
+    # 當備援顯示值，不會覆蓋車輛主檔本來就有填的電話。
     for v in vehicles:
-        v["rider_cooperation_type"] = repository.resolve_vehicle_rider_cooperation_type(v)
+        rider_info = repository.resolve_vehicle_rider_info(v)
+        v["rider_cooperation_type"] = rider_info["cooperation_type"]
+        v["rider_phone"] = v.get("current_holder_phone") or rider_info["phone"]
     if cooperation_type:
         vehicles = [
             v for v in vehicles
@@ -235,16 +239,21 @@ def vehicle_detail(vehicle_no: str, request: Request, error: str = "", redirect=
     if not vehicle:
         return RedirectResponse(url="/delivery/vehicles", status_code=303)
     service_area_map = {a["id"]: a["name"] for a in repository.list_vehicle_service_areas(include_inactive=True)}
-    # 騎手身份（2026-09-19 補上）：清單頁 2026-09-18 就有這個反查邏輯，
-    # 詳細頁一直沒有補上，這裡套用同一個既有函式，不重新設計。
-    rider_cooperation_type = repository.resolve_vehicle_rider_cooperation_type(vehicle)
+    # 騎手身份／手機號碼備援（2026-09-19）：清單頁 2026-09-18 就有騎手
+    # 身份的反查邏輯，詳細頁一直沒有補上；同一次反查順便把手機號碼也
+    # 拿出來，車輛主檔自己的 current_holder_phone 是空的時候當備援顯示
+    # 值（不覆蓋車輛主檔本身的欄位，見 repository.resolve_vehicle_rider_
+    # info() 的說明）。
+    rider_info = repository.resolve_vehicle_rider_info(vehicle)
+    rider_phone = vehicle.get("current_holder_phone") or rider_info["phone"]
     return templates.TemplateResponse(
         request,
         "vehicle_detail.html",
         {
             "user": current_user(request),
             "vehicle": vehicle,
-            "rider_cooperation_type": rider_cooperation_type,
+            "rider_cooperation_type": rider_info["cooperation_type"],
+            "rider_phone": rider_phone,
             "vendor_name": VENDOR_MAP.get(vehicle.get("vendor"), vehicle.get("vendor")),
             "vehicle_status_map": VEHICLE_STATUS_MAP,
             "vendors": VENDORS,

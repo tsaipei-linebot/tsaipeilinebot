@@ -525,8 +525,8 @@ class DeleteVehicleEventTests(unittest.TestCase):
 
 class VehicleListRiderCooperationTypeTests(unittest.TestCase):
     """騎手身份欄位/篩選（2026-09-18 新增）：車輛清單頁每一列都要反查一次
-    目前使用人的合作方式（見 repository.resolve_vehicle_rider_cooperation_type()
-    的說明），篩選是靠反查出來的結果比對，不是車輛主檔本身的欄位。"""
+    目前使用人的合作方式（見 repository.resolve_vehicle_rider_info() 的
+    說明），篩選是靠反查出來的結果比對，不是車輛主檔本身的欄位。"""
 
     def _vehicle(self, vehicle_no="ERV-1", **overrides):
         base = {"vehicle_no": vehicle_no, "vendor": "shopee", "current_holder": "小明"}
@@ -538,7 +538,8 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         coop = {"id": "two_wheel_contract", "name": "二輪承攬"}
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=coop
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": coop, "phone": ""},
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -553,11 +554,12 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         coop_b = {"id": "two_wheel_employed", "name": "二輪雇傭"}
 
         def fake_resolve(v):
-            return coop_a if v["vehicle_no"] == "ERV-1" else coop_b
+            coop = coop_a if v["vehicle_no"] == "ERV-1" else coop_b
+            return {"cooperation_type": coop, "phone": ""}
 
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", side_effect=fake_resolve
+                vehicle_routes.repository, "resolve_vehicle_rider_info", side_effect=fake_resolve
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -572,7 +574,8 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         vehicles = [self._vehicle("ERV-1")]
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=None
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": None, "phone": ""},
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -587,7 +590,8 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         vehicles = [self._vehicle("ERV-1")]
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=None
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": None, "phone": ""},
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -595,6 +599,34 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
                             vehicle_routes.vehicle_list(_FakeRequest(_staff_account()), redirect=None)
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertEqual([v["vehicle_no"] for v in context["vehicles"]], ["ERV-1"])
+
+    def test_uses_resolved_phone_when_vehicle_has_no_phone_on_file(self):
+        vehicles = [self._vehicle("ERV-1", current_holder_phone="")]
+        with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": None, "phone": "0987654321"},
+            ):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_list(_FakeRequest(_staff_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["vehicles"][0]["rider_phone"], "0987654321")
+
+    def test_does_not_override_phone_already_on_vehicle_record(self):
+        vehicles = [self._vehicle("ERV-1", current_holder_phone="0912345678")]
+        with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": None, "phone": "0987654321"},
+            ):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_list(_FakeRequest(_staff_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["vehicles"][0]["rider_phone"], "0912345678")
 
 
 class VehicleDetailRiderCooperationTypeTests(unittest.TestCase):
@@ -605,7 +637,10 @@ class VehicleDetailRiderCooperationTypeTests(unittest.TestCase):
         vehicle = {"vehicle_no": "ERV-1", "vendor": "ud", "current_holder": "小明", "current_holder_phone": "0912345678"}
         coop = {"id": "coop1", "name": "晴天名店合作"}
         with mock.patch.object(vehicle_routes.repository, "get_vehicle", return_value=vehicle):
-            with mock.patch.object(vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=coop) as mock_resolve:
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": coop, "phone": "0912345678"},
+            ) as mock_resolve:
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_vehicle_events", return_value=[]):
                         with mock.patch.object(vehicle_routes, "templates") as mock_templates:
@@ -617,13 +652,44 @@ class VehicleDetailRiderCooperationTypeTests(unittest.TestCase):
     def test_no_match_passes_none(self):
         vehicle = {"vehicle_no": "ERV-1", "vendor": "ud", "current_holder": "", "current_holder_phone": ""}
         with mock.patch.object(vehicle_routes.repository, "get_vehicle", return_value=vehicle):
-            with mock.patch.object(vehicle_routes.repository, "resolve_vehicle_rider_cooperation_type", return_value=None):
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": None, "phone": ""},
+            ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_vehicle_events", return_value=[]):
                         with mock.patch.object(vehicle_routes, "templates") as mock_templates:
                             vehicle_routes.vehicle_detail("ERV-1", _FakeRequest(_staff_account()), redirect=None)
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertIsNone(context["rider_cooperation_type"])
+
+    def test_uses_resolved_phone_when_vehicle_has_no_phone_on_file(self):
+        vehicle = {"vehicle_no": "ERV-1", "vendor": "ud", "current_holder": "小明", "current_holder_phone": ""}
+        with mock.patch.object(vehicle_routes.repository, "get_vehicle", return_value=vehicle):
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": None, "phone": "0987654321"},
+            ):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_vehicle_events", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_detail("ERV-1", _FakeRequest(_staff_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["rider_phone"], "0987654321")
+
+    def test_does_not_override_phone_already_on_vehicle_record(self):
+        vehicle = {"vehicle_no": "ERV-1", "vendor": "ud", "current_holder": "小明", "current_holder_phone": "0912345678"}
+        with mock.patch.object(vehicle_routes.repository, "get_vehicle", return_value=vehicle):
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": None, "phone": "0987654321"},
+            ):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_vehicle_events", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_detail("ERV-1", _FakeRequest(_staff_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["rider_phone"], "0912345678")
 
 
 class VehiclePersonnelLookupTests(unittest.TestCase):

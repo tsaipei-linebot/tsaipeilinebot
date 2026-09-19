@@ -1299,10 +1299,12 @@ def list_vehicles(
     return result
 
 
-def resolve_vehicle_rider_cooperation_type(vehicle: dict):
-    """車輛管理清單頁「騎手身份」欄位用（2026-09-18 新增）：車輛主檔的
-    current_holder 是自由輸入的文字欄位，沒有連到人員資料的 personnel_id，
-    要顯示這台車目前使用人的合作方式，只能靠姓名反查對應的人員資料。
+def _find_vehicle_rider_personnel(vehicle: dict):
+    """車輛主檔的 current_holder 是自由輸入的文字欄位，沒有連到人員資料的
+    personnel_id，要反查這台車目前使用人對應的人員資料，只能靠姓名比對
+    （見 resolve_vehicle_rider_cooperation_type()／resolve_vehicle_rider_
+    info() 的說明）。這裡是共用的比對邏輯，兩個函式都呼叫這裡，避免同一台
+    車重複查兩次 Firestore。
 
     優先用「姓名+電話」比對（find_active_personnel_by_name_and_phone），
     比對到的人員是唯一的，不會有同名同姓混淆的問題；車輛主檔沒有填
@@ -1310,22 +1312,49 @@ def resolve_vehicle_rider_cooperation_type(vehicle: dict):
     （find_personnel_by_name_vendor）——這個比對方式如果剛好同廠商有
     同名同姓的人員，可能會抓到錯的人，這是自由輸入文字欄位先天的限制，
     不是這次新增功能造成的（假別登記反查人員資料也有一樣的限制，見
-    find_personnel_by_name_vendor() 的說明）。
-
-    找不到對應的人員、或對應的人員沒有設定合作方式時，回傳 None（畫面上
-    顯示成沒有騎手身份資料，不是查詢錯誤）。"""
+    find_personnel_by_name_vendor() 的說明）。找不到對應的人員時回傳
+    None。"""
     name = (vehicle.get("current_holder") or "").strip()
     if not name:
         return None
     phone = (vehicle.get("current_holder_phone") or "").strip()
     if phone:
-        person = find_active_personnel_by_name_and_phone(name, phone)
-    else:
-        vendor = vehicle.get("vendor") or ""
-        person = find_personnel_by_name_vendor(vendor, name) if vendor else None
+        return find_active_personnel_by_name_and_phone(name, phone)
+    vendor = vehicle.get("vendor") or ""
+    return find_personnel_by_name_vendor(vendor, name) if vendor else None
+
+
+def resolve_vehicle_rider_info(vehicle: dict) -> dict:
+    """車輛管理清單頁／詳細頁「手機號碼」「騎手身份」這兩個欄位共用的反查
+    結果（2026-09-19 新增，取代原本各自反查一次的做法，一台車只查一次
+    Firestore，見 _find_vehicle_rider_personnel() 的比對邏輯）。回傳
+    ``{"cooperation_type": ..., "phone": ...}``：
+    - ``cooperation_type``：找不到對應人員、或人員沒設定合作方式時是
+      None（畫面上顯示成沒有騎手身份資料，不是查詢錯誤）。
+    - ``phone``：找不到對應人員、或人員資料沒有電話時是空字串。**這是
+      反查到的人員資料裡的電話，車輛主檔自己的 current_holder_phone
+      是空的（例如透過 LINE 群組回報沒附電話）時，畫面上才會拿這個
+      當備援顯示值——呼叫端要自己判斷車輛主檔有沒有填，沒填才用這個
+      （`vehicle.current_holder_phone or info["phone"]`），這裡不重複
+      做這個判斷，也不會回寫覆蓋車輛主檔本身的欄位。**"""
+    person = _find_vehicle_rider_personnel(vehicle)
     if not person:
-        return None
-    return get_cooperation_type(person.get("cooperation_type") or "")
+        return {"cooperation_type": None, "phone": ""}
+    return {
+        "cooperation_type": get_cooperation_type(person.get("cooperation_type") or ""),
+        "phone": person.get("phone") or "",
+    }
+
+
+def resolve_vehicle_rider_cooperation_type(vehicle: dict):
+    """車輛管理清單頁／詳細頁「騎手身份」欄位用（2026-09-18 新增）：反查
+    這台車目前使用人的合作方式，找不到對應的人員、或對應的人員沒有設定
+    合作方式時，回傳 None（畫面上顯示成沒有騎手身份資料，不是查詢
+    錯誤）。內部呼叫 resolve_vehicle_rider_info()，跟「手機號碼」共用
+    同一次反查結果的呼叫端（routes）應該直接呼叫 resolve_vehicle_rider_
+    info() 一次拿兩個欄位，不要兩個函式各自呼叫一次（會重複查 Firestore）
+    ——這個函式單獨保留是給只需要騎手身份、不需要電話的情境用。"""
+    return resolve_vehicle_rider_info(vehicle)["cooperation_type"]
 
 
 def list_vehicle_events(vehicle_no: str) -> list:
