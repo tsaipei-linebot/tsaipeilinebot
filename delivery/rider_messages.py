@@ -30,7 +30,19 @@ def blocked_message() -> dict:
 
 
 def prompt_share_location_message() -> dict:
-    return text_message("請點選左下角「+」→「位置資訊」，傳送您目前的位置，系統會幫您找出附近還有貨量可以承接的門市。")
+    """請騎士分享目前位置——訊息本身附上一顆 LINE 的 Quick Reply「位置」
+    按鈕（點一下直接跳出 LINE 內建的位置選擇畫面），不用像純文字說明那樣
+    自己去點左下角「+」再選「位置資訊」，省一道操作步驟。這個按鈕只是
+    LINE 訊息 JSON 裡多一個 quickReply 欄位，delivery-gas-project 那邊的
+    replyLineRawMessages_() 本來就是原封不動轉發整包訊息物件，不需要另外
+    修改 GAS 那邊的程式碼。"""
+    message = text_message("請分享您目前的位置，系統會幫您找出附近還有貨量可以承接的門市（點下面的「分享目前位置」按鈕最快）。")
+    message["quickReply"] = {
+        "items": [
+            {"type": "action", "action": {"type": "location", "label": "分享目前位置"}},
+        ]
+    }
+    return message
 
 
 def no_nearby_stores_message() -> dict:

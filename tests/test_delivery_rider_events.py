@@ -57,11 +57,14 @@ class _ActiveBindingMixin:
 
 class TextKeywordDispatchTests(_ActiveBindingMixin, unittest.TestCase):
     def test_nearby_order_keyword_prompts_location_share(self):
+        """2026-09-19 改成附上 Quick Reply「位置」按鈕，一鍵分享位置，不用
+        自己點左下角「+」→「位置資訊」（見 rider_messages.py）。"""
         with mock.patch.object(rider_repository, "set_awaiting_location") as mock_set:
             messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "查詢附近單"})
         mock_set.assert_called_once_with("U1")
         self.assertEqual(len(messages), 1)
-        self.assertIn("位置資訊", messages[0]["text"])
+        self.assertIn("分享", messages[0]["text"])
+        self.assertEqual(messages[0]["quickReply"]["items"][0]["action"]["type"], "location")
 
     def test_shift_list_keyword_with_no_open_shifts(self):
         with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=[]):

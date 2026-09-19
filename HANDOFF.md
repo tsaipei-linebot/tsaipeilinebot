@@ -7200,3 +7200,34 @@ unittest discover -s tests -p "test_*.py"`）1636 個全數通過。
 新增 `tests/test_delivery_rider_routes.py` 的 `/rider/shift-locations`
 登入導向測試。全部測試（`python3 -m unittest discover -s tests -p
 "test_*.py"`）1647 個全數通過。
+
+### 追加：即時接單「分享位置」改用 Quick Reply 一鍵按鈕（2026-09-19）
+
+使用者反映騎士要自己點左下角「+」再選「位置資訊」才能分享位置，操作
+起來不方便，問有沒有更簡單的方式。
+
+**做法**：`rider_messages.prompt_share_location_message()` 這則提示訊息
+改成附上 LINE 的 **Quick Reply**（對話框上方會多跳出一排按鈕，這裡只放
+一顆「分享目前位置」）、action 型別是 `location`——騎士點一下這顆按鈕，
+LINE 會直接跳出內建的位置選擇畫面，不用再自己去翻「+」選單找「位置
+資訊」，省一道操作步驟。
+
+這個改動完全只在 `tsaipeilinebot` 這邊，**delivery-gas-project 那支 GAS
+專案完全不用改、也不用重新部署**：`replyLineRawMessages_()` 本來就是把
+Python 這邊回傳的訊息物件（`{"messages": [...]}`）原封不動塞進 LINE
+Reply API 轉發，`quickReply`只是這個訊息物件裡多一個欄位，GAS 那邊
+不需要認得這個欄位是什麼、也不會因為多了這個欄位而出錯。
+
+Quick Reply 按鈕是「這一則訊息附帶的」，只會在騎士回覆這則提示訊息時
+出現一次，不會變成常駐選單（跟圖文選單/Rich Menu 是不同機制，也不會
+互相衝突）——如果之後使用者自己在 LINE 官方帳號後台設定的圖文選單上
+也想加一顆「查詢附近單」按鈕，兩者可以並存，圖文選單按鈕觸發之後一樣
+會先跳出這則帶 Quick Reply 按鈕的提示訊息。
+
+**這次不需要任何額外的手動設定步驟**，合併後自動部署即可生效。
+
+新增 `tests/test_delivery_rider_messages.py`（`prompt_share_location_
+message()` 附帶 `location` 型別 Quick Reply 按鈕的邊界情況），更新
+`tests/test_delivery_rider_events.py` 對應的斷言文字。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1649 個
+全數通過。
