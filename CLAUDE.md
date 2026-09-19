@@ -33,9 +33,11 @@ git repo 裡**：
   「意外事件回報」「群組推播」這些配送部 LINE 群組相關的行為異常，要往這個
   repo 找，不是只看 `delivery/` 底下的 Python 程式碼。可以用
   `add_repo`（或 GitHub 搜尋 `tsaipei-linebot` 底下的 repo）把它加進當前
-  session。**改完程式碼只是 git push，真正要生效還需要使用者（或有 `clasp`
-  登入權限的人）額外執行 `git pull && clasp push`，這件事一定要主動提醒，
-  不要漏掉。**
+  session。**2026-09-19 起這個 repo 合併到 `main` 後，會由 CI/CD
+  （`.github/workflows/clasp-push.yml`）自動 `clasp push` + `clasp deploy`
+  上線，不用再手動提醒使用者跑 `git pull && clasp push`**——這點過去
+  有一段時間需要手動處理，現在已經自動化，詳見這個 GAS repo 自己的
+  `HANDOFF.md`「外送員接單媒合」那節。
 - **職缺維護系統**：獨立在 Netlify + Google Apps Script 的專案，跟這個 repo
   之間透過 `job_portal_sso.py` 做免登入銜接（詳見 `HANDOFF.md`）。這個專案
   的原始碼目前是靠使用者手動貼給 Claude 看，沒有對應的 git repo。
