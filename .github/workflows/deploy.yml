@@ -29,6 +29,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 下面「判斷這次改了哪些檔案」那一步要跟前一個 commit 比對
+          # （git diff HEAD~1 HEAD），預設的淺層 clone（depth 1）沒有
+          # 前一個 commit 可以比，要多抓一層歷史紀錄。
+          fetch-depth: 2
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -46,3 +51,52 @@ jobs:
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --quiet
+
+      # 系統更新自動公告（2026-09-19 新增，見 platform_announcements.py
+      # 開頭的說明）：部署成功後，用這次合併的 commit 訊息（就是 PR
+      # 標題＋內文，已經是給人看的中文說明）自動在 /portal 發一則公告，
+      # 不用每次都手動打字。「少凱業務開發專區」（salesdev）相關的異動
+      # 不列入公告——先看這次改了哪些檔案，如果全部都是 salesdev 相關
+      # 檔案（含 HANDOFF.md，因為每次改動都會更新這份文件，不能因為它
+      # 也改了就誤判成「不是純 salesdev 改動」），就跳過不發公告。這一步
+      # 失敗不影響部署本身有沒有成功（部署那一步已經跑完了），只是不會
+      # 有公告而已。
+      - name: Auto-publish announcement (skip salesdev-only changes)
+        if: success()
+        continue-on-error: true
+        env:
+          AUTO_ANNOUNCE_SECRET: ${{ secrets.AUTO_ANNOUNCE_SECRET }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$AUTO_ANNOUNCE_SECRET" ]; then
+            echo "沒有設定 AUTO_ANNOUNCE_SECRET 這個 GitHub Actions 密鑰，跳過自動公告。"
+            exit 0
+          fi
+
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD || true)
+          SALESDEV_ONLY=true
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            if [ "$f" = "HANDOFF.md" ]; then
+              continue
+            fi
+            case "$f" in
+              *salesdev*) continue ;;
+              *) SALESDEV_ONLY=false ;;
+            esac
+          done <<< "$CHANGED_FILES"
+
+          if [ "$SALESDEV_ONLY" = "true" ]; then
+            echo "這次改動只跟少凱業務開發專區有關，跳過自動公告。"
+            exit 0
+          fi
+
+          TITLE=$(printf '%s\n' "$COMMIT_MSG" | head -1 | sed -E 's/ \(#[0-9]+\)$//')
+          CONTENT=$(printf '%s\n' "$COMMIT_MSG" | tail -n +2 | grep -v '^Claude-Session:' | grep -v '^Co-authored-by:' | sed -e '/./,$!d')
+
+          curl -sS -X POST \
+            "https://recruitment-bot-412901869672.asia-east1.run.app/internal/announcements/auto-publish" \
+            -H "X-Auto-Announce-Secret: $AUTO_ANNOUNCE_SECRET" \
+            --data-urlencode "title=$TITLE" \
+            --data-urlencode "content=$CONTENT" \
+            || echo "自動公告發送失敗，不影響剛才的部署結果。"

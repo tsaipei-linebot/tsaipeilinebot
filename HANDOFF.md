@@ -6823,3 +6823,81 @@ RiderCooperationTypeTests`／`VehicleDetailRiderCooperationTypeTests`
 資料，電話欄位就會顯示反查到的號碼（滑鼠移上去會提示這是反查來
 的，不是車輛主檔本來記錄的）；清單頁「騎手身份」也有自己獨立的
 欄位標題了，不會再跟手機號碼擠在一起看不出來是什麼欄位。
+
+## 系統更新自動加入公告（2026-09-19）
+
+使用者要求：系統只要有功能更新就自動列入 `/portal` 公告，不用每次都
+手動打字發佈；「少凱業務開發專區」（salesdev 模組）的異動維持既有
+原則（見 `platform_announcements.py` 開頭），不列入。
+
+### 做法
+
+- **新端點 `POST /internal/announcements/auto-publish`**
+  （`portal_routes.py`）：不需要登入，用共用密鑰
+  `AUTO_ANNOUNCE_SECRET`（帶在 `X-Auto-Announce-Secret` header）驗證，
+  安全機制完全比照既有的 `/internal/sync-job-system-identities`（沒
+  設定密鑰、密鑰不對都回傳 403，等同端點不存在）。收到 `title`／
+  `content` 就呼叫 `platform_announcements.create_announcement()`
+  建立一則公告，`created_by` 固定存 `"system"`，方便之後在公告管理頁
+  分辨哪些是自動發的、哪些是老闆自己手動發的。
+- **`.github/workflows/deploy.yml` 部署成功後多一個步驟**：
+  1. 用 `git diff --name-only HEAD~1 HEAD` 比對這次 push 到 main 改了
+     哪些檔案（`actions/checkout` 補上 `fetch-depth: 2`，不然預設的
+     淺層 clone 沒有前一個 commit 可以比）。
+  2. 如果全部都是 `salesdev` 相關檔案（含 `HANDOFF.md`，因為每次
+     改動都會更新這份文件，不能因為它也改了就誤判成「不是純
+     salesdev 改動」），就跳過，不發公告。
+  3. 否則就用這次合併的 commit 訊息（squash merge 後就是 PR 標題＋
+     內文，已經是給人看的中文說明，不用另外處理）當標題/內容，剝掉
+     標題結尾的 `(#123)` PR 編號、剝掉內文尾端的 `Claude-Session:`／
+     `Co-authored-by:` 這兩行 attribution，呼叫上面那支新端點。
+  4. 這一步失敗（例如密鑰沒設定、網路問題）**不會讓整個部署工作流程
+     顯示失敗**（`continue-on-error: true`）——部署本身在這步之前就
+     已經跑完了，公告發不出去只是少一則公告，不影響系統正常運作。
+  5. commit 訊息是直接放進 `env:` 再用 `$COMMIT_MSG` 引用，**不是**
+     直接字串內插進 `run:` 腳本——避免惡意 commit 訊息內容被當成
+     shell 指令執行（GitHub Actions 已知的 script injection 風險，
+     `github.event.head_commit.message` 是不可信輸入）。
+
+### 測試
+
+`tests/test_portal.py` 新增 `AutoPublishAnnouncementEndpointTests`
+（沒設定密鑰／密鑰錯誤都回傳 403、標題空白回傳 400、密鑰正確時正確
+呼叫 `create_announcement()`）。GitHub Actions 那段 bash 邏輯（比對
+改動檔案、剝離標題/內文）另外手動跑過幾組情境確認行為正確，沒有寫
+自動化測試（CI YAML 裡的 shell script 不在這個 repo 的 Python 測試
+框架涵蓋範圍內）。全部測試（`python3 -m unittest discover -s tests
+-p "test_*.py"`）1570 個全數通過。
+
+### 使用者需要知道的事——這次需要手動設定兩個地方
+
+跟之前不一樣，**這次需要你手動做兩個設定，不做的話自動公告不會生效**
+（但也不會影響系統其他功能，只是暫時沒有自動公告而已）：
+
+1. **想一組密鑰**（隨便一串英數字，例如用密碼產生器產生一串 32 碼的
+   亂數字串，不需要好記，只是給機器對機器驗證用）。
+
+2. **把這組密鑰設定成 Cloud Run 的環境變數**（在 Cloud Shell 執行）：
+   ```bash
+   gcloud run services update recruitment-bot \
+     --region asia-east1 \
+     --update-env-vars AUTO_ANNOUNCE_SECRET="你剛才想的那組密鑰"
+   ```
+   跑完看到 `Service [recruitment-bot] revision ... has been deployed`
+   就代表設定成功。
+
+3. **把「同一組」密鑰也設定成 GitHub 這個 repo 的 Actions 密鑰**：
+   - 到 `https://github.com/tsaipei-linebot/tsaipeilinebot/settings/secrets/actions`
+   - 按「New repository secret」
+   - Name 填 `AUTO_ANNOUNCE_SECRET`
+   - Secret 填「跟步驟 2 一模一樣」的那組密鑰
+   - 按「Add secret」
+
+兩邊的密鑰**一定要完全一樣**，不然驗證會失敗（會安靜地跳過不發公告，
+不會噴錯訊息卡住部署，但也不會有公告）。
+
+設定好之後，之後只要合併一個不是純「少凱業務開發專區」的 PR、部署
+成功，`/portal` 就會自動多一則公告，內容就是那次 PR 的標題跟說明，
+不用再手動發布。如果之後想暫停這個自動公告功能，把 Cloud Run 上的
+`AUTO_ANNOUNCE_SECRET` 環境變數刪掉（或改成跟 GitHub 那邊不一樣的
+值）即可，不用改程式碼。
