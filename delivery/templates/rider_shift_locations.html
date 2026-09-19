@@ -1,18 +1,18 @@
 {% extends "base.html" %}
-{% block title %}即時接單地點管理 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block title %}報班地點管理 - 材霈有限公司-新北所(配送組)系統{% endblock %}
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
-<h1 class="page-title">即時接單地點管理</h1>
+<h1 class="page-title">報班地點管理</h1>
 <p class="hint">
-    這份地點清單只給「門市當日量管理」（即時接單）用，跟「報班媒合」用的地點清單是分開
-    獨立的兩份，不會互相顯示。先在這裡登記好常用門市/取貨地點跟經緯度，之後「門市當日量
-    管理」的表單就能直接從清單搜尋選用，不用每次手動查經緯度。經緯度可以打開 Google 地圖，
-    在地點上按右鍵選最上面那排數字（例如 25.0339, 121.5645）直接複製貼上。報班媒合要用的
-    地點請到<a href="/delivery/rider/shift-locations">報班地點管理</a>登記。
+    這份地點清單只給「報班時段管理」（報班媒合）用，跟「即時接單」用的地點清單是分開
+    獨立的兩份，不會互相顯示。先在這裡登記好報班會用到的工作地點跟經緯度，之後「報班
+    時段管理」的表單就能直接從清單搜尋選用，不用每次手動查經緯度。經緯度可以打開 Google
+    地圖，在地點上按右鍵選最上面那排數字（例如 25.0339, 121.5645）直接複製貼上。即時接單
+    要用的地點請到<a href="/delivery/rider/locations">即時接單地點管理</a>登記。
 </p>
 
 <h2 class="section-title">新增地點</h2>
-<form method="post" action="/delivery/rider/locations/new" class="form-stack form-narrow">
+<form method="post" action="/delivery/rider/shift-locations/new" class="form-stack form-narrow">
     <label>地點名稱
         <input type="text" name="name" required placeholder="例如：蝦皮三輪 新北中和門市">
     </label>
@@ -39,7 +39,7 @@
             <td>{{ loc.lng }}</td>
             <td><span class="badge {{ 'badge-ok' if loc.active else 'badge-resigned' }}">{{ "啟用中" if loc.active else "已停用" }}</span></td>
             <td>
-                <form method="post" action="/delivery/rider/locations/{{ loc.id }}/active" style="display:inline">
+                <form method="post" action="/delivery/rider/shift-locations/{{ loc.id }}/active" style="display:inline">
                     <input type="hidden" name="active" value="{{ '0' if loc.active else '1' }}">
                     <button type="submit" class="btn btn-small">{{ "停用" if loc.active else "啟用" }}</button>
                 </form>

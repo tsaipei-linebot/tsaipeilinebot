@@ -7152,3 +7152,51 @@ discover -s tests -p "test_*.py"`）1625 個全數通過。
 `tests/test_delivery_rider_events.py` 更新位置/數字文字相關測試,
 新增「沒有前置動作就安靜略過」的測試案例。全部測試（`python3 -m
 unittest discover -s tests -p "test_*.py"`）1636 個全數通過。
+
+### 追加：即時接單／報班媒合的地點清單拆成兩份獨立清單（2026-09-19）
+
+使用者反映：即時接單（門市當日量）用到的地點，跟報班媒合用到的地點，
+根本是兩組不同的地方，「必須分開」——但上一版的地點主檔（見前面「地點
+主檔＋搜尋式下拉選單」那節）是兩個功能共用同一份清單，選單選項會混在
+一起。
+
+**修正**：把地點主檔拆成完全獨立的兩份，互不共用、互不顯示：
+
+- 新增 Firestore 集合 `delivery_rider_shift_locations`（報班媒合專用）；
+  原本的 `delivery_rider_locations` 集合維持不變，改成只給即時接單
+  （門市當日量）用——**既有的地點資料不會遺失，也不需要搬移**，因為
+  這份清單原本本來就是給即時接單的門市/取貨地點用的。
+- `delivery/rider_repository.py` 原本的通用函式改成兩組各自獨立的
+  函式：即時接單用 `create_order_location`／`list_order_locations`／
+  `get_order_location`／`set_order_location_active`；報班媒合用新增的
+  `create_shift_location`／`list_shift_locations`／`get_shift_location`／
+  `set_shift_location_active`。兩組函式各自對應各自的 Firestore 集合，
+  完全獨立，不會互相查到對方的資料。
+- 後台新增一個獨立頁面「**報班地點管理**」（`/delivery/rider/shift-
+  locations`），跟原本的「**即時接單地點管理**」（原本的
+  `/delivery/rider/locations`，網址不變，只是頁面標題跟說明文字改成
+  明確標示「這份清單只給即時接單用」）並列，操作方式一模一樣（登記
+  名稱＋經緯度、可停用不能刪除）。
+- 「新增報班時段」表單的搜尋式下拉選單改吃報班地點清單
+  （`rider_repository.list_shift_locations()`），「新增門市當日量」
+  表單維持吃即時接單地點清單（`rider_repository.list_order_locations()`）
+  ——這兩個表單原本就已經各自送出獨立的 `location_id`，這次只是後端
+  查詢/驗證的來源改成各自對應的集合，前端下拉選單本身的搜尋邏輯完全
+  沒變。
+- `delivery/templates/home.html`、`help.html` 都拆成两个各自獨立的
+  連結/說明段落，避免使用者誤以為兩個功能共用同一份地點清單。
+
+**使用者需要手動處理的部分**：因為報班媒合原本掛在即時接單那份地點
+清單底下，這次拆分之後，**報班媒合會用到的地點目前是空的清單**，需要
+主管自己到「報班地點管理」（`/delivery/rider/shift-locations`）把
+報班會用到的地點（連同經緯度）重新登記一次——即使名稱剛好跟即時接單
+清單裡的地點一樣，也要另外登記，因為兩份清單完全獨立、不會互相帶用。
+除此之外**不需要其他手動設定步驟**，合併後自動部署即可生效，不影響
+既有的門市當日量資料跟已經建立好的報班時段（這些紀錄本身各自存了自己
+的地點名稱/經緯度快照，不受這次拆分影響）。
+
+`tests/test_delivery_rider_locations.py` 改寫成涵蓋兩組獨立函式跟
+路由（含一筆「建立報班時段不會誤用即時接單地點清單」的防呆測試），
+新增 `tests/test_delivery_rider_routes.py` 的 `/rider/shift-locations`
+登入導向測試。全部測試（`python3 -m unittest discover -s tests -p
+"test_*.py"`）1647 個全數通過。
