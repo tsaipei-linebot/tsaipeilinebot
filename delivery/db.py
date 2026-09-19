@@ -38,6 +38,7 @@ RIDER_STORE_DELIVERIES_COLLECTION = "delivery_rider_store_deliveries"
 RIDER_CLAIMS_COLLECTION = "delivery_rider_claims"
 RIDER_SHIFT_POSTINGS_COLLECTION = "delivery_rider_shift_postings"
 RIDER_SHIFT_REGISTRATIONS_COLLECTION = "delivery_rider_shift_registrations"
+RIDER_LOCATIONS_COLLECTION = "delivery_rider_locations"
 
 
 def personnel_ref():
@@ -114,3 +115,7 @@ def rider_shift_postings_ref():
 
 def rider_shift_registrations_ref():
     return get_db().collection(RIDER_SHIFT_REGISTRATIONS_COLLECTION)
+
+
+def rider_locations_ref():
+    return get_db().collection(RIDER_LOCATIONS_COLLECTION)

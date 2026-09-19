@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}地點管理 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+{% block content %}
+<h1 class="page-title">地點管理</h1>
+<p class="hint">
+    先在這裡登記好常用地點（門市、倉庫等）跟經緯度，之後「門市當日量管理」「報班時段管理」
+    的表單就能直接從清單搜尋選用，不用每次手動查經緯度。經緯度可以打開 Google 地圖，在
+    地點上按右鍵選最上面那排數字（例如 25.0339, 121.5645）直接複製貼上。
+</p>
+
+<h2 class="section-title">新增地點</h2>
+<form method="post" action="/delivery/rider/locations/new" class="form-stack form-narrow">
+    <label>地點名稱
+        <input type="text" name="name" required placeholder="例如：蝦皮三輪 新北中和門市">
+    </label>
+    <label>緯度
+        <input type="text" name="lat" required placeholder="例如：24.9998">
+    </label>
+    <label>經度
+        <input type="text" name="lng" required placeholder="例如：121.4996">
+    </label>
+    <button type="submit" class="btn btn-primary">新增</button>
+</form>
+
+<h2 class="section-title">地點清單</h2>
+{% if locations %}
+<table class="data-table">
+    <thead>
+        <tr><th>名稱</th><th>緯度</th><th>經度</th><th>狀態</th><th>修改</th></tr>
+    </thead>
+    <tbody>
+        {% for loc in locations %}
+        <tr>
+            <td>{{ loc.name }}</td>
+            <td>{{ loc.lat }}</td>
+            <td>{{ loc.lng }}</td>
+            <td><span class="badge {{ 'badge-ok' if loc.active else 'badge-resigned' }}">{{ "啟用中" if loc.active else "已停用" }}</span></td>
+            <td>
+                <form method="post" action="/delivery/rider/locations/{{ loc.id }}/active" style="display:inline">
+                    <input type="hidden" name="active" value="{{ '0' if loc.active else '1' }}">
+                    <button type="submit" class="btn btn-small">{{ "停用" if loc.active else "啟用" }}</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有任何地點，請先在上面新增。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+{% endblock %}

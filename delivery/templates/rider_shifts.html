@@ -3,12 +3,22 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">報班時段管理</h1>
+<p class="hint"><a href="/delivery/rider/locations">管理地點清單</a></p>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
 <h2 class="section-title">新增報班時段</h2>
-<form method="post" action="/delivery/rider/shifts/new" class="form-stack form-narrow">
+{% if not locations %}
+<p class="hint">目前還沒有登記任何地點，請先到<a href="/delivery/rider/locations">地點管理</a>新增地點。</p>
+{% else %}
+<form method="post" action="/delivery/rider/shifts/new" class="form-stack form-narrow" id="shift-form">
     <label>地點
-        <input type="text" name="location" required placeholder="例如：新北中和門市">
+        <input type="text" list="rider-location-list" id="shift_location_name_input" required placeholder="輸入地點名稱搜尋" autocomplete="off">
+        <datalist id="rider-location-list">
+            {% for loc in locations %}
+            <option value="{{ loc.name }}"></option>
+            {% endfor %}
+        </datalist>
+        <input type="hidden" name="location_id" id="shift_location_id_input">
     </label>
     <label>開始時間
         <input type="datetime-local" name="start_time" required>
@@ -21,6 +31,25 @@
     </label>
     <button type="submit" class="btn btn-primary">新增</button>
 </form>
+<script>
+(function () {
+    var LOCATIONS = {{ locations | tojson }};
+    var nameToId = {};
+    LOCATIONS.forEach(function (loc) { nameToId[loc.name] = loc.id; });
+    var nameInput = document.getElementById('shift_location_name_input');
+    var idInput = document.getElementById('shift_location_id_input');
+    nameInput.addEventListener('input', function () {
+        idInput.value = nameToId.hasOwnProperty(nameInput.value) ? nameToId[nameInput.value] : '';
+    });
+    document.getElementById('shift-form').addEventListener('submit', function (e) {
+        if (!idInput.value) {
+            e.preventDefault();
+            alert('請從清單選擇一個地點，找不到您輸入的地點名稱');
+        }
+    });
+})();
+</script>
+{% endif %}
 
 <h2 class="section-title">報班時段清單</h2>
 {% if items %}

@@ -3,18 +3,22 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">門市當日量管理</h1>
+<p class="hint"><a href="/delivery/rider/locations">管理地點清單</a></p>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
 <h2 class="section-title">新增門市當日可承接量</h2>
-<form method="post" action="/delivery/rider/store-deliveries/new" class="form-stack form-narrow">
-    <label>門市名稱
-        <input type="text" name="store_name" required placeholder="例如：蝦皮三輪 新北中和門市">
-    </label>
-    <label>門市緯度
-        <input type="text" name="lat" required placeholder="例如：24.9998（可從 Google 地圖右鍵複製）">
-    </label>
-    <label>門市經度
-        <input type="text" name="lng" required placeholder="例如：121.4996">
+{% if not locations %}
+<p class="hint">目前還沒有登記任何地點，請先到<a href="/delivery/rider/locations">地點管理</a>新增門市地點。</p>
+{% else %}
+<form method="post" action="/delivery/rider/store-deliveries/new" class="form-stack form-narrow" id="store-delivery-form">
+    <label>門市地點
+        <input type="text" list="rider-location-list" id="store_location_name_input" required placeholder="輸入地點名稱搜尋" autocomplete="off">
+        <datalist id="rider-location-list">
+            {% for loc in locations %}
+            <option value="{{ loc.name }}"></option>
+            {% endfor %}
+        </datalist>
+        <input type="hidden" name="location_id" id="store_location_id_input">
     </label>
     <label>日期
         <input type="date" name="date" value="{{ filter_date }}" required>
@@ -24,6 +28,25 @@
     </label>
     <button type="submit" class="btn btn-primary">新增</button>
 </form>
+<script>
+(function () {
+    var LOCATIONS = {{ locations | tojson }};
+    var nameToId = {};
+    LOCATIONS.forEach(function (loc) { nameToId[loc.name] = loc.id; });
+    var nameInput = document.getElementById('store_location_name_input');
+    var idInput = document.getElementById('store_location_id_input');
+    nameInput.addEventListener('input', function () {
+        idInput.value = nameToId.hasOwnProperty(nameInput.value) ? nameToId[nameInput.value] : '';
+    });
+    document.getElementById('store-delivery-form').addEventListener('submit', function (e) {
+        if (!idInput.value) {
+            e.preventDefault();
+            alert('請從清單選擇一個地點，找不到您輸入的地點名稱');
+        }
+    });
+})();
+</script>
+{% endif %}
 
 <h2 class="section-title">查詢日期</h2>
 <form method="get" action="/delivery/rider/store-deliveries" class="inline-form">

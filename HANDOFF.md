@@ -7042,3 +7042,46 @@ unittest discover -s tests -p "test_*.py"`）1608 個全數通過。
 
 `delivery/templates/help.html` 新增「外送員接單媒合」章節，維持每次
 新功能都同步更新使用說明的紀律。
+
+### 追加：地點主檔＋搜尋式下拉選單，取代手動輸入經緯度（2026-09-19）
+
+上線後使用者反映「門市當日量管理」新增表單要手動輸入經緯度很不方便。
+改成新增「**地點管理**」頁面（`/delivery/rider/locations`），主管先把
+常用地點（門市、倉庫等）連同經緯度登記一次，之後「門市當日量管理」
+「報班時段管理」的新增表單都改用**帶搜尋功能的下拉選單**（HTML5
+`<input list> + <datalist>`，不需要額外的 JS 套件或 Google Maps API
+金鑰）選現成的地點，選了之後經緯度自動帶出，不用再手動輸入數字。
+
+- `delivery/rider_repository.py` 新增地點主檔 CRUD：`create_location`／
+  `list_locations`／`get_location`／`set_location_active`，跟服務區域
+  管理／裝備品項管理同一套「主管自行維護清單、只能停用不能刪除」模式。
+  新集合 `delivery_rider_locations`。
+- 「新增門市當日量」「新增報班時段」表單改送 `location_id`（不再是
+  `store_name`/`lat`/`lng` 或自由輸入的 `location` 文字），後端一律用
+  `rider_repository.get_location()` 查地點主檔的名稱/經緯度，不相信表單
+  直接送來的數字——比原本讓同仁自己輸入更不容易打錯或存進不合理的座標。
+  門市當日量、報班時段的紀錄本身還是各自存一份自己的 `store_name`／
+  `location`（在建立當下從地點主檔複製過去），之後就算地點主檔改名或
+  停用，既有紀錄的顯示內容也不會跟著變動。
+- 前端這組「輸入文字即時比對地點清單、選到後把對應 ID 寫進隱藏欄位」
+  的邏輯是純 vanilla JS（見 `rider_store_deliveries.html`／
+  `rider_shifts.html` 內嵌的 `<script>`），用 Jinja2 內建的 `tojson`
+  filter（Starlette 的 `Jinja2Templates` 有內建，這個 repo 的
+  `applicants_list.html` 已經用過）把地點清單傳給前端，沒有新增任何
+  npm 套件或第三方地圖服務依賴。
+- 這次沒有採用另外兩個討論過的方案：①嵌入互動地圖讓同仁點選位置
+  （需要额外的地圖套件或 Google Maps API 金鑰，考慮到只是內部少量地點
+  登記，投入產出比不划算）、②貼 Google 地圖分享連結自動解析經緯度
+  （同仁要人在門市現場才拿得到分享連結，對「先建好清單、事後隨時登記
+  當日量」的使用情境不合適）。地點主檔＋搜尋下拉選單是使用者確認後
+  選定的方向，之後如果同仁反映經緯度還是不好查，可以再補上①當作
+  「地點管理」新增表單本身的輔助工具（不影響已經做好的下拉選單機制）。
+
+**這次不需要任何額外的手動設定步驟**，合併後自動部署即可生效；地點
+資料需要主管自己先到「地點管理」登記，程式碼無法代勞。
+
+新增 `tests/test_delivery_rider_locations.py`：地點主檔 CRUD、
+`/rider/locations` 管理路由、以及門市當日量／報班時段建立路由改用
+`location_id` 解析後的行為（找不到地點／地點已停用／正常解析出名稱
+與經緯度）。全部測試（`python3 -m unittest discover -s tests -p
+"test_*.py"`）1624 個全數通過。
