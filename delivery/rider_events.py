@@ -31,21 +31,37 @@ def handle_rider_event(body: dict) -> list:
     if not user_id:
         return []
 
+    event_type = body.get("type") or ""
+    message_type = body.get("message_type") or ""
+    text = (body.get("text") or "").strip() if message_type == "text" else ""
+
+    # GAS 那邊除了「綁定+工號+姓名」「接受本日發包任務」這兩種固定格式，
+    # 其餘私訊文字一律轉發過來（見 Project8_RiderMatching.js），所以這裡
+    # 一定要先判斷這則事件看起來是不是真的在跟這兩個功能互動，才去查
+    # 綁定狀態——不然任何人（不管有沒有綁定過）傳一句不相干的閒聊，都會
+    # 收到「尚未完成綁定」這種文不對題的回覆，比完全不回覆更糟。
+    is_relevant = (
+        event_type == "postback"
+        or message_type == "location"
+        or text in _NEARBY_ORDER_KEYWORDS
+        or text in _SHIFT_LIST_KEYWORDS
+        or text.isdigit()
+    )
+    if not is_relevant:
+        return []
+
     binding = rider_repository.get_rider_binding(user_id)
     if not binding:
         return [rider_messages.not_bound_message()]
     if binding.get("status") != rider_repository.RIDER_STATUS_ACTIVE:
         return [rider_messages.blocked_message()]
 
-    event_type = body.get("type") or ""
     if event_type == "postback":
         return _handle_postback(user_id, binding, body.get("postback_data") or "")
-    if event_type == "message":
-        message_type = body.get("message_type") or ""
-        if message_type == "location":
-            return _handle_location(body.get("latitude"), body.get("longitude"))
-        if message_type == "text":
-            return _handle_text(user_id, binding, (body.get("text") or "").strip())
+    if message_type == "location":
+        return _handle_location(body.get("latitude"), body.get("longitude"))
+    if message_type == "text":
+        return _handle_text(user_id, binding, text)
     return []
 
 
