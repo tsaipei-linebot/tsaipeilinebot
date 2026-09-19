@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}報名名單 - 材霈有限公司-新北所(配送組)系統{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ shift.location if shift else "找不到這個報班時段" }} - 報名名單</h1>
+{% if shift %}
+<p class="hint">需求人數：{{ shift.capacity }}｜目前報名：{{ registrations|length }}</p>
+{% endif %}
+
+{% if registrations %}
+<table class="data-table">
+    <thead>
+        <tr><th>騎士姓名</th><th>報名時間</th></tr>
+    </thead>
+    <tbody>
+        {% for registration in registrations %}
+        <tr>
+            <td>{{ registration.rider_name }}</td>
+            <td>{{ registration.registered_at_display }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有騎士報名這個時段。</p>
+{% endif %}
+
+<p class="back-link"><a href="/delivery/rider/shifts">&larr; 回報班時段管理</a></p>
+{% endblock %}

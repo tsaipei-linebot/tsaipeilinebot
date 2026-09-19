@@ -110,5 +110,26 @@
         <p class="hint">籃子、橘衣等裝備的借用/歸還/轉倉/採購/買斷登記，網頁填表單即可，不走 LINE 群組回報格式</p>
         <a class="btn btn-block" href="/delivery/equipment">查看裝備借還管理</a>
     </section>
+
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="18" cy="5" r="3"/>
+                <circle cx="6" cy="12" r="3"/>
+                <circle cx="18" cy="19" r="3"/>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+            </svg>
+        </span>
+        <h2>外送員接單媒合</h2>
+        <p class="hint">已登記合作的騎士在 LINE 私訊查詢附近門市貨量、自行承接，或瀏覽/報名報班時段，這裡管理門市當日可承接量、報班時段跟騎士名單</p>
+        <div class="btn-list">
+            <a class="btn btn-block" href="/delivery/rider/store-deliveries">門市當日量管理</a>
+            <a class="btn btn-block" href="/delivery/rider/shifts">報班時段管理</a>
+            {% if user.role == "admin" %}
+            <a class="btn btn-block" href="/delivery/rider/riders">騎士名單管理</a>
+            {% endif %}
+        </div>
+    </section>
 </div>
 {% endblock %}

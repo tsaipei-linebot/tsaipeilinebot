@@ -15,6 +15,7 @@ from delivery.routes import (
     incident_routes,
     reminder_routes,
     repayment_routes,
+    rider_routes,
     search_routes,
     sick_leave_routes,
     vehicle_routes,
@@ -53,3 +54,4 @@ delivery_app.include_router(reminder_routes.router)
 delivery_app.include_router(vehicle_routes.router)
 delivery_app.include_router(incident_routes.router)
 delivery_app.include_router(equipment_routes.router)
+delivery_app.include_router(rider_routes.router)
