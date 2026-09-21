@@ -73,8 +73,16 @@ jobs:
             exit 0
           fi
 
+          # 【修正】原本用 SALESDEV_ONLY（預設 true，找到非排除檔案才設成
+          # false）判斷要不要跳過，訊息卻寫死「只跟少凱業務開發專區有關」——
+          # 如果這次唯一改到的檔案是 HANDOFF.md（例如純文件補充，像這次
+          # 這個 PR 本身），迴圈整輪都不會把它設成 false，會被印成「只跟
+          # 業務開發專區有關」，但其實根本沒有業務開發專區的異動，訊息
+          # 誤導。改用 HAS_ANNOUNCEABLE_CHANGE（預設 false，找到非排除
+          # 檔案才設成 true）名符其實地描述「有沒有找到值得公告的異動」，
+          # 跳過的條件本身不變。
           CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD || true)
-          SALESDEV_ONLY=true
+          HAS_ANNOUNCEABLE_CHANGE=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
             if [ "$f" = "HANDOFF.md" ]; then
@@ -82,12 +90,12 @@ jobs:
             fi
             case "$f" in
               *salesdev*) continue ;;
-              *) SALESDEV_ONLY=false ;;
+              *) HAS_ANNOUNCEABLE_CHANGE=true ;;
             esac
           done <<< "$CHANGED_FILES"
 
-          if [ "$SALESDEV_ONLY" = "true" ]; then
-            echo "這次改動只跟少凱業務開發專區有關，跳過自動公告。"
+          if [ "$HAS_ANNOUNCEABLE_CHANGE" != "true" ]; then
+            echo "這次改動只有 HANDOFF.md 跟／或少凱業務開發專區相關檔案，沒有其他需要公告的異動，跳過自動公告。"
             exit 0
           fi
 
