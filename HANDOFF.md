@@ -6902,6 +6902,14 @@ RiderCooperationTypeTests`／`VehicleDetailRiderCooperationTypeTests`
 `AUTO_ANNOUNCE_SECRET` 環境變數刪掉（或改成跟 GitHub 那邊不一樣的
 值）即可，不用改程式碼。
 
+**2026-09-21 補充**：使用者反映這個功能上線後其實一直沒有生效——回頭
+查最近幾次部署（PR #163 等）的 GitHub Actions log，「Auto-publish
+announcement」那個步驟每次都印出「沒有設定 AUTO_ANNOUNCE_SECRET 這個
+GitHub Actions 密鑰，跳過自動公告」，代表上面兩個手動設定步驟當初其實
+沒有真的做完（或做完後其中一邊的值後來被改掉、對不起來）。這次已經
+重新照上面的步驟設定好兩邊的密鑰，之後可以觀察下一次合併部署時
+`/portal` 有沒有正確自動出現新公告來確認生效。
+
 ## 外送員接單媒合：即時接單／報班媒合第一階段（2026-09-19 新增）
 
 外送部 CHANNEL1 LINE 官方帳號（`delivery-gas-project` 那個 repo 處理的、
