@@ -18,7 +18,7 @@ from datetime import datetime
 from config import TAIPEI_TZ
 from services import taoyuan_dispatch_service as service
 
-_BIND_PATTERN = re.compile(r"^綁定[\s　]+(\S+)[\s　]+(\S+)$")
+_BIND_PATTERN = re.compile(r"^綁定[+＋]([^+＋\s]+)[+＋]([^+＋\s]+)$")
 _BIND_PREFIX = "綁定"
 _LIST_KEYWORDS = {"需求列表", "需求", "查看需求", "查詢需求"}
 _REGISTER_PATTERN = re.compile(r"^報名[\s　]+(\S+)$")
@@ -33,15 +33,15 @@ CMD_HELP = "help"
 
 _HELP_TEXT = (
     "桃園所派遣小幫手，可以用的指令：\n"
-    "「綁定 姓名 電話」：第一次使用要先綁定身分，例如「綁定 王小明 0912345678」\n"
+    "「綁定+姓名+電話」：第一次使用要先綁定身分，例如「綁定+王小明+0912345678」\n"
     "「需求列表」：查看目前開放報名、符合您人員資格的需求\n"
     "「報名 代碼」：報名需求列表裡的某一筆，例如「報名 A1B2C3」\n"
     "「我的報名」：查詢自己報名紀錄的審核狀態"
 )
 
-_BIND_INVALID_TEXT = "綁定格式不對，請用「綁定 姓名 電話」，中間用空白隔開，例如「綁定 王小明 0912345678」。"
+_BIND_INVALID_TEXT = "綁定格式不對，請用「綁定+姓名+電話」，中間用「+」隔開，例如「綁定+王小明+0912345678」。"
 
-_NOT_BOUND_TEXT = "請先完成身分綁定：傳送「綁定 姓名 電話」，例如「綁定 王小明 0912345678」。"
+_NOT_BOUND_TEXT = "請先完成身分綁定：傳送「綁定+姓名+電話」，例如「綁定+王小明+0912345678」。"
 
 _REGISTRATION_STATUS_LABELS = {
     service.REGISTRATION_STATUS_PENDING: "審核中",

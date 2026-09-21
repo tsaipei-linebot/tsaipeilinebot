@@ -18,15 +18,19 @@ class ParseCommandTests(unittest.TestCase):
     的 parse_incident_report() 同一種拆法，方便單元測試。"""
 
     def test_bind_command(self):
-        result = bot.parse_command("綁定 王小明 0912345678")
+        result = bot.parse_command("綁定+王小明+0912345678")
         self.assertEqual(result, {"type": bot.CMD_BIND, "name": "王小明", "phone": "0912345678"})
 
-    def test_bind_command_full_width_space(self):
-        result = bot.parse_command("綁定　王小明　0912345678")
+    def test_bind_command_full_width_plus(self):
+        result = bot.parse_command("綁定＋王小明＋0912345678")
         self.assertEqual(result["type"], bot.CMD_BIND)
 
     def test_bind_missing_phone_is_invalid(self):
-        result = bot.parse_command("綁定 王小明")
+        result = bot.parse_command("綁定+王小明")
+        self.assertEqual(result, {"type": bot.CMD_BIND_INVALID})
+
+    def test_bind_space_separated_is_invalid(self):
+        result = bot.parse_command("綁定 王小明 0912345678")
         self.assertEqual(result, {"type": bot.CMD_BIND_INVALID})
 
     def test_list_postings_keywords(self):
@@ -53,25 +57,25 @@ class HandleMessageBindTests(unittest.TestCase):
         personnel = {"id": "p1", "name": "王小明", "active": True}
         with mock.patch.object(service, "find_personnel_by_name_and_phone", return_value=personnel):
             with mock.patch.object(service, "bind_line_user") as mock_bind:
-                reply = bot.handle_message("U1", "綁定 王小明 0912345678")
+                reply = bot.handle_message("U1", "綁定+王小明+0912345678")
         mock_bind.assert_called_once_with("U1", "p1", "王小明")
         self.assertIn("綁定成功", reply)
 
     def test_bind_no_match_found(self):
         with mock.patch.object(service, "find_personnel_by_name_and_phone", return_value=None):
-            reply = bot.handle_message("U1", "綁定 王小明 0912345678")
+            reply = bot.handle_message("U1", "綁定+王小明+0912345678")
         self.assertIn("查無符合", reply)
 
     def test_bind_inactive_personnel_rejected(self):
         personnel = {"id": "p1", "name": "王小明", "active": False}
         with mock.patch.object(service, "find_personnel_by_name_and_phone", return_value=personnel):
             with mock.patch.object(service, "bind_line_user") as mock_bind:
-                reply = bot.handle_message("U1", "綁定 王小明 0912345678")
+                reply = bot.handle_message("U1", "綁定+王小明+0912345678")
         mock_bind.assert_not_called()
         self.assertIn("停用", reply)
 
     def test_bind_invalid_format(self):
-        reply = bot.handle_message("U1", "綁定 王小明")
+        reply = bot.handle_message("U1", "綁定+王小明")
         self.assertEqual(reply, bot._BIND_INVALID_TEXT)
 
 
