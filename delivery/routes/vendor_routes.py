@@ -8,6 +8,8 @@ from delivery.config import (
     CLIENT_MAP,
     CLIENT_VENDORS,
     CLIENTS,
+    COOPERATION_CATEGORIES,
+    COOPERATION_CATEGORY_MAP,
     MAX_UPLOAD_BYTES,
     PERSONNEL_STATUS_BADGE_CLASS,
     PERSONNEL_STATUS_MAP,
@@ -109,6 +111,7 @@ def create_personnel_submit(
     phone: str = Form(""),
     cooperation_type: str = Form(""),
     client: str = Form(""),
+    employee_no: str = Form(""),
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -122,7 +125,14 @@ def create_personnel_submit(
         client = ""
     user = current_user(request)
     personnel_id = repository.create_personnel(
-        name, id_number, phone, vendor_code, user["username"], cooperation_type=cooperation_type, client=client
+        name,
+        id_number,
+        phone,
+        vendor_code,
+        user["username"],
+        cooperation_type=cooperation_type,
+        client=client,
+        employee_no=employee_no.strip(),
     )
     return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
 
@@ -236,6 +246,9 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
     if "hire_date" in form:
         repository.update_personnel_hire_date(personnel_id, (form.get("hire_date") or "").strip())
 
+    if "employee_no" in form:
+        repository.update_personnel_employee_no(personnel_id, (form.get("employee_no") or "").strip())
+
     doc_types = repository.applicable_doc_types(
         person.get("vendor"), person.get("cooperation_type"), person.get("client")
     )
@@ -302,7 +315,14 @@ def cooperation_types_page(request: Request, redirect=Depends(admin_required)):
     return templates.TemplateResponse(
         request,
         "cooperation_types.html",
-        {"user": current_user(request), "cooperation_types": types, "vendors": VENDORS, "error": ""},
+        {
+            "user": current_user(request),
+            "cooperation_types": types,
+            "vendors": VENDORS,
+            "categories": COOPERATION_CATEGORIES,
+            "category_map": COOPERATION_CATEGORY_MAP,
+            "error": "",
+        },
     )
 
 
@@ -313,8 +333,11 @@ async def create_cooperation_type_submit(request: Request, redirect=Depends(admi
     form = await request.form()
     name = (form.get("name") or "").strip()
     vendors = [v for v in form.getlist("vendors") if v in VENDOR_MAP]
+    category = form.get("category") or ""
+    if category not in COOPERATION_CATEGORY_MAP:
+        category = ""
     if name:
-        repository.create_cooperation_type(name, vendors, created_by=current_user(request)["username"])
+        repository.create_cooperation_type(name, vendors, category=category, created_by=current_user(request)["username"])
     return RedirectResponse(url="/delivery/cooperation-types", status_code=303)
 
 
@@ -325,8 +348,11 @@ async def edit_cooperation_type_submit(type_id: str, request: Request, redirect=
     form = await request.form()
     name = (form.get("name") or "").strip()
     vendors = [v for v in form.getlist("vendors") if v in VENDOR_MAP]
+    category = form.get("category") or ""
+    if category not in COOPERATION_CATEGORY_MAP:
+        category = ""
     if name:
-        repository.update_cooperation_type(type_id, name, vendors)
+        repository.update_cooperation_type(type_id, name, vendors, category=category)
     return RedirectResponse(url="/delivery/cooperation-types", status_code=303)
 
 

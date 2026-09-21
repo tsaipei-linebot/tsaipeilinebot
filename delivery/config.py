@@ -83,6 +83,32 @@ for _v in VENDORS:
     VENDOR_LOOKUP[_v["code"].lower()] = _v["code"]
     VENDOR_LOOKUP[_v["name"].lower()] = _v["code"]
 
+# 合作方式的「屬於承攬還是雇傭」分類（2026-09-21 新增）：外送員接單媒合
+# （見 delivery/rider_repository.py）的即時接單／報班媒合這兩個功能，資格
+# 是照騎士在人員名冊裡目前的合作方式屬於承攬還是雇傭來判斷（承攬只能用
+# 即時接單、雇傭只能用報班媒合），而不是像 EQUIPMENT_ELIGIBLE_PERSONNEL_
+# STATUS 那樣寫死比對特定的合作方式文件 ID 字串——主管在「合作方式管理」
+# 頁面新增的每一個選項，不管取什麼中文名稱，都要明確勾選屬於這兩類的哪一
+# 類，資格判斷邏輯才不用跟著每次新增的選項一直修改。
+COOPERATION_CATEGORY_CONTRACT = "contract"
+COOPERATION_CATEGORY_EMPLOYED = "employed"
+COOPERATION_CATEGORIES = [
+    {"code": COOPERATION_CATEGORY_CONTRACT, "name": "承攬"},
+    {"code": COOPERATION_CATEGORY_EMPLOYED, "name": "雇傭"},
+]
+COOPERATION_CATEGORY_MAP = {c["code"]: c["name"] for c in COOPERATION_CATEGORIES}
+
+# 外送員接單媒合的「工號搬移」只認這幾個蝦皮系列的廠商代碼（2026-09-21
+# 新增，見 scripts 目錄外、webhook_routes.py 的 /api/personnel-employee-no-
+# sync）——使用者確認目前只有蝦皮相關的人員名冊資料才有工號可以比對。
+SHOPEE_VENDOR_CODES = [
+    "shopee",
+    "shopee_company_car",
+    "shopee_employed_own_car",
+    "shopee_contract",
+    "shopee_speed_warehouse",
+]
+
 # 合作方式：決定這個人除了基本項目之外還要備哪些保險/證明文件。2026-09-18
 # 起改成主管可自行在「合作方式管理」頁面維護的動態清單（存 Firestore，見
 # repository.py「合作方式管理」那節），不再是這裡的固定清單——使用者要求

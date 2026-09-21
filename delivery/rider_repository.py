@@ -15,7 +15,12 @@ import time
 
 from google.cloud import firestore
 
-from delivery.config import RIDER_PENDING_CLAIM_TTL_SECONDS
+from delivery import repository
+from delivery.config import (
+    COOPERATION_CATEGORY_CONTRACT,
+    COOPERATION_CATEGORY_EMPLOYED,
+    RIDER_PENDING_CLAIM_TTL_SECONDS,
+)
 from delivery.db import (
     get_db,
     rider_bindings_ref,
@@ -47,21 +52,47 @@ SHIFT_STATUS_CLOSED = "closed"
 def upsert_rider_binding(user_id: str, employee_id: str, name: str) -> None:
     """GAS 那邊騎士完成/更新「綁定+工號+姓名」後同步呼叫。刻意保留既有的
     status——已經被管理員停用的騎士，重新綁定或改名不會自動解除停用，只有
-    全新綁定才預設 active。"""
+    全新綁定才預設 active。
+
+    2026-09-21 新增 personnel_id：拿騎士自己輸入的工號去人員名冊
+    （delivery_personnel）核對，核對到才存這個關聯欄位——即時接單/報班
+    媒合能不能用，是照這個人在人員名冊裡「目前」的合作方式即時判斷（見
+    rider_feature_category()），不是綁定當下就寫死，所以這裡每次同步都
+    重新查一次，不是只在第一次綁定時查。工號核對不到（打錯、或這個人
+    還沒建到人員名冊）時 personnel_id 存空字串，等同兩個功能都不能用。"""
     ref = rider_bindings_ref().document(user_id)
     snapshot = ref.get()
     status = RIDER_STATUS_ACTIVE
     if snapshot.exists:
         status = (snapshot.to_dict() or {}).get("status") or RIDER_STATUS_ACTIVE
+    personnel = repository.find_personnel_by_employee_no(employee_id) if employee_id else None
     ref.set(
         {
             "employee_id": employee_id,
             "name": name,
             "status": status,
+            "personnel_id": personnel["id"] if personnel else "",
             "updated_at": time.time(),
         },
         merge=True,
     )
+
+
+def rider_feature_category(binding: dict) -> str:
+    """回傳這位騎士目前對應到人員名冊的合作方式分類（COOPERATION_CATEGORY_
+    CONTRACT／COOPERATION_CATEGORY_EMPLOYED）。查不到人員資料、查無合作
+    方式、或合作方式沒有設定分類，一律回傳空字串，呼叫端視同兩個功能都
+    不能用——即時接單只給承攬、報班媒合只給雇傭（見 rider_events.py）。"""
+    personnel_id = (binding or {}).get("personnel_id") or ""
+    if not personnel_id:
+        return ""
+    personnel = repository.get_personnel(personnel_id)
+    if not personnel:
+        return ""
+    coop = repository.get_cooperation_type(personnel.get("cooperation_type") or "")
+    if not coop:
+        return ""
+    return coop.get("category") or ""
 
 
 def get_rider_binding(user_id: str):
