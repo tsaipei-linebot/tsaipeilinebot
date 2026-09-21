@@ -7517,3 +7517,27 @@ python -m scripts.fill_personnel_cooperation_type
 （`PlanFillTests`，涵蓋唯一對應/已填過/沒廠商/多選項/零選項五種情境）。
 全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）
 1722 個全數通過。
+
+### 追加：騎士名單管理加上編輯工號/姓名的功能（2026-09-21）
+
+使用者需求：騎士名單管理原本只能啟用/停用，沒有地方能修正工號/姓名。
+
+**原本的限制**：騎士的工號/姓名只能靠 LINE「綁定+工號+姓名」私訊帶進來
+（`rider_repository.upsert_rider_binding()`），打錯字（尤其工號，直接
+影響能不能對應到人員名冊、進而影響合作身份判斷）沒有地方能直接修正，
+只能請騎士重新私訊一次，對管理員跟騎士都麻煩。
+
+**做法**：新增 `POST /delivery/rider/riders/{user_id}/edit`
+（`update_rider_info`，限管理員），直接呼叫跟 GAS 綁定同步**同一支**
+`rider_repository.upsert_rider_binding()`——刻意不另外寫一套更新邏輯，
+這樣後台編輯的行為（保留既有啟用/停用狀態、重新核對工號對應的人員
+名冊）保證跟騎士自己重新私訊綁定一次完全一致，不會有兩套邏輯不同步
+的風險。騎士名單管理頁面（`/rider/riders`）的「工號」「姓名」欄位合併
+成一組可以直接編輯的輸入框＋「儲存」按鈕，跟既有的「啟用/停用」按鈕
+並排。
+
+**這次不需要任何手動設定步驟**，合併部署後直接生效。
+
+更新測試：`tests/test_delivery_rider_routes.py`
+（`UpdateRiderInfoTests`）。全部測試（`python3 -m unittest discover -s
+tests -p "test_*.py"`）1724 個全數通過。

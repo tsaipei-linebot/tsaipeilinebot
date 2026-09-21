@@ -323,3 +323,19 @@ def update_rider_status(user_id: str, status: str = Form(...), redirect=Depends(
         return redirect
     rider_repository.set_rider_status(user_id, status)
     return RedirectResponse(url="/delivery/rider/riders", status_code=303)
+
+
+@router.post("/rider/riders/{user_id}/edit")
+def update_rider_info(
+    user_id: str, employee_id: str = Form(""), name: str = Form(""), redirect=Depends(admin_required)
+):
+    """2026-09-21 新增：騎士的工號/姓名原本只能靠 LINE「綁定+工號+姓名」
+    私訊帶進來，打錯字（尤其工號）沒有地方能直接修正，只能請騎士重新
+    私訊一次。改成後台也能直接編輯，直接呼叫跟 GAS 綁定同步同一支
+    upsert_rider_binding()——沿用同一套規則（保留既有 status、每次都
+    重新核對工號對到的人員名冊資料），不需要另外寫一套邏輯，行為完全
+    跟騎士自己重新綁定一次一致。"""
+    if redirect:
+        return redirect
+    rider_repository.upsert_rider_binding(user_id, employee_id.strip(), name.strip())
+    return RedirectResponse(url="/delivery/rider/riders", status_code=303)
