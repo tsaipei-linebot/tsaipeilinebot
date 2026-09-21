@@ -77,6 +77,24 @@ class RiderRidersPageFeatureCategoryTests(unittest.TestCase):
         self.assertEqual(context["riders"][0]["feature_category"], "contract")
 
 
+class UpdateRiderInfoTests(unittest.TestCase):
+    """2026-09-21 新增：騎士名單管理加上編輯工號/姓名的功能——原本只能靠
+    LINE「綁定+工號+姓名」私訊帶進來，打錯字沒地方能直接修正。直接沿用
+    跟 GAS 綁定同步同一支 upsert_rider_binding()，行為要完全跟騎士自己
+    重新私訊綁定一次一致（保留既有 status、重新核對工號對應的人員名冊）。"""
+
+    def test_calls_upsert_rider_binding_with_stripped_values(self):
+        with mock.patch.object(rider_routes.rider_repository, "upsert_rider_binding") as mock_upsert:
+            rider_routes.update_rider_info("U1", employee_id="  E002  ", name="  小華  ", redirect=None)
+        mock_upsert.assert_called_once_with("U1", "E002", "小華")
+
+    def test_redirects_to_riders_page(self):
+        with mock.patch.object(rider_routes.rider_repository, "upsert_rider_binding"):
+            result = rider_routes.update_rider_info("U1", employee_id="E002", name="小華", redirect=None)
+        self.assertEqual(result.status_code, 303)
+        self.assertTrue(result.headers["location"].endswith("/delivery/rider/riders"))
+
+
 class RiderEventsWebhookSecretTests(unittest.TestCase):
     """/delivery/api/rider-events、/delivery/api/rider-binding-sync 都是
     GAS 伺服器對伺服器呼叫，不經過登入 session，改用共用密鑰驗證——跟

@@ -3,18 +3,23 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">騎士名單管理</h1>
-<p class="hint">停用後，這位騎士的 LINE 帳號即時接單／報班媒合這兩個功能都會被擋下，並收到「目前無法使用這項功能」的回覆。名單來自 LINE「綁定+工號+姓名」私訊自動同步，不能在這裡新增。「合作身份」是即時查人員名冊算出來的，承攬才能用即時接單、雇傭才能用報班媒合；顯示「未對應」代表工號在人員名冊裡找不到，或合作方式還沒設定承攬/雇傭分類，請到<a href="/delivery/vendor/shopee">人員名冊</a>核對工號、或到<a href="/delivery/cooperation-types">合作方式管理</a>補上分類。</p>
+<p class="hint">停用後，這位騎士的 LINE 帳號即時接單／報班媒合這兩個功能都會被擋下，並收到「目前無法使用這項功能」的回覆。名單來自 LINE「綁定+工號+姓名」私訊自動同步，不能在這裡新增；工號/姓名打錯字可以直接在下面編輯後按「儲存」，效果跟騎士自己重新私訊綁定一次完全一樣，不用請騎士重傳。「合作身份」是即時查人員名冊算出來的，承攬才能用即時接單、雇傭才能用報班媒合；顯示「未對應」代表工號在人員名冊裡找不到，或合作方式還沒設定承攬/雇傭分類，請到<a href="/delivery/vendor/shopee">人員名冊</a>核對工號、或到<a href="/delivery/cooperation-types">合作方式管理</a>補上分類。</p>
 
 {% if riders %}
 <table class="data-table">
     <thead>
-        <tr><th>工號</th><th>姓名</th><th>合作身份</th><th>狀態</th><th>修改</th></tr>
+        <tr><th>工號 / 姓名</th><th>合作身份</th><th>狀態</th><th>修改</th></tr>
     </thead>
     <tbody>
         {% for rider in riders %}
         <tr>
-            <td>{{ rider.employee_id }}</td>
-            <td>{{ rider.name }}</td>
+            <td>
+                <form method="post" action="/delivery/rider/riders/{{ rider.user_id }}/edit" style="display:flex; gap:6px; align-items:center;">
+                    <input type="text" name="employee_id" value="{{ rider.employee_id }}" placeholder="工號" style="width:90px;">
+                    <input type="text" name="name" value="{{ rider.name }}" placeholder="姓名" style="width:90px;">
+                    <button type="submit" class="btn btn-small">儲存</button>
+                </form>
+            </td>
             <td>
                 {% if rider.feature_category == "contract" %}<span class="badge">承攬（可用即時接單）</span>
                 {% elif rider.feature_category == "employed" %}<span class="badge">雇傭（可用報班媒合）</span>
