@@ -193,6 +193,33 @@ def shifts_carousel(shifts: list) -> dict:
     return {"type": "flex", "altText": f"目前有 {len(bubbles)} 個開放中的報班時段", "contents": {"type": "carousel", "contents": bubbles}}
 
 
+_REGISTRATION_STATUS_LABELS = {
+    "pending": "待審核",
+    "approved": "已核准（報名成功）",
+    "rejected": "已駁回（額滿，請改報其他時段）",
+}
+
+
+def shift_registration_status_message(registrations: list) -> dict:
+    """「查詢報名狀態」的回覆——2026-09-21 新增，報班改成人工審核制，
+    報名當下不會立刻知道成不成功，騎士要自己傳關鍵字查詢最近幾筆報名的
+    審核結果。刻意用純文字（不是 Carousel），筆數少、只是查狀態，純文字
+    比較簡單清楚。"""
+    if not registrations:
+        return text_message("您目前沒有任何報班紀錄。")
+    lines = ["您最近的報班紀錄："]
+    for r in registrations:
+        time_range = format_shift_time_range(
+            {"start_time": r.get("shift_start_time"), "end_time": r.get("shift_end_time")}
+        )
+        location_line = r.get("shift_location", "")
+        if time_range:
+            location_line += f"（{time_range}）"
+        status_label = _REGISTRATION_STATUS_LABELS.get(r.get("status"), r.get("status", ""))
+        lines.append(f"・{location_line}：{status_label}")
+    return text_message("\n".join(lines))
+
+
 def format_shift_time_range(shift: dict) -> str:
     start_time = shift.get("start_time")
     end_time = shift.get("end_time")

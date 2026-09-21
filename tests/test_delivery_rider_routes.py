@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -93,6 +94,92 @@ class UpdateRiderInfoTests(unittest.TestCase):
             result = rider_routes.update_rider_info("U1", employee_id="E002", name="小華", redirect=None)
         self.assertEqual(result.status_code, 303)
         self.assertTrue(result.headers["location"].endswith("/delivery/rider/riders"))
+
+
+class RiderShiftsPageFilterTests(unittest.TestCase):
+    """2026-09-21 新增：報班時段清單要能依地點/日期篩選。"""
+
+    def test_passes_filters_through_to_repository_and_context(self):
+        with mock.patch.object(rider_routes.rider_repository, "list_shift_postings", return_value=[]) as mock_list:
+            with mock.patch.object(rider_routes.rider_repository, "list_shift_locations", return_value=[]):
+                with mock.patch.object(rider_routes, "templates") as mock_templates:
+                    rider_routes.rider_shifts_page(
+                        _FakeRequest(_admin_account()), location="台北車站", date="2025-01-01", redirect=None
+                    )
+        mock_list.assert_called_once_with(location="台北車站", date_str="2025-01-01")
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["filter_location"], "台北車站")
+        self.assertEqual(context["filter_date"], "2025-01-01")
+
+    def test_no_filters_defaults_to_blank(self):
+        with mock.patch.object(rider_routes.rider_repository, "list_shift_postings", return_value=[]) as mock_list:
+            with mock.patch.object(rider_routes.rider_repository, "list_shift_locations", return_value=[]):
+                with mock.patch.object(rider_routes, "templates"):
+                    rider_routes.rider_shifts_page(_FakeRequest(_admin_account()), redirect=None)
+        mock_list.assert_called_once_with(location="", date_str="")
+
+
+class UpdateRiderShiftRegistrationStatusTests(unittest.TestCase):
+    """2026-09-21 新增：報班改成人工審核制，管理員在報名名單頁面核准/
+    駁回單一筆報名。"""
+
+    def test_calls_update_registration_status_and_redirects(self):
+        with mock.patch.object(rider_routes.rider_repository, "update_registration_status") as mock_update:
+            result = rider_routes.update_rider_shift_registration_status(
+                "shift1", "reg1", status="approved", redirect=None
+            )
+        mock_update.assert_called_once_with("reg1", "approved")
+        self.assertEqual(result.status_code, 303)
+        self.assertTrue(result.headers["location"].endswith("/delivery/rider/shifts/shift1/registrations"))
+
+
+class _FakeUploadFile:
+    def __init__(self, content: bytes):
+        self._content = content
+
+    async def read(self):
+        return self._content
+
+
+class RiderShiftsImportSubmitTests(unittest.TestCase):
+    """2026-09-21 新增：報班時段管理需要批次匯入的功能。"""
+
+    def test_creates_postings_for_valid_rows_and_collects_failures(self):
+        csv_content = (
+            "地點,開始時間,結束時間,需求人數\n"
+            "台北車站,2024-01-31 09:00,2024-01-31 18:00,3\n"
+            "查無地點,2024-01-31 09:00,2024-01-31 18:00,3\n"
+        ).encode("utf-8")
+        locations = [{"id": "l1", "name": "台北車站", "lat": 25.0478, "lng": 121.5170}]
+        with mock.patch.object(rider_routes.rider_repository, "list_shift_locations", return_value=locations):
+            with mock.patch.object(rider_routes.rider_repository, "list_shift_postings", return_value=[]):
+                with mock.patch.object(rider_routes.rider_repository, "create_shift_posting") as mock_create:
+                    with mock.patch.object(rider_routes, "templates") as mock_templates:
+                        asyncio.run(
+                            rider_routes.rider_shifts_import_submit(
+                                _FakeRequest(_admin_account()), file=_FakeUploadFile(csv_content), redirect=None
+                            )
+                        )
+        mock_create.assert_called_once()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(len(context["import_result"]["created"]), 1)
+        self.assertEqual(len(context["import_result"]["failed"]), 1)
+        self.assertIn("找不到", context["import_result"]["failed"][0]["error"])
+
+    def test_header_error_is_reported_without_creating_anything(self):
+        csv_content = "不是正確的表頭\n1,2\n".encode("utf-8")
+        with mock.patch.object(rider_routes.rider_repository, "list_shift_locations", return_value=[]):
+            with mock.patch.object(rider_routes.rider_repository, "list_shift_postings", return_value=[]):
+                with mock.patch.object(rider_routes.rider_repository, "create_shift_posting") as mock_create:
+                    with mock.patch.object(rider_routes, "templates") as mock_templates:
+                        asyncio.run(
+                            rider_routes.rider_shifts_import_submit(
+                                _FakeRequest(_admin_account()), file=_FakeUploadFile(csv_content), redirect=None
+                            )
+                        )
+        mock_create.assert_not_called()
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertIsNotNone(context["import_result"]["header_error"])
 
 
 class RiderEventsWebhookSecretTests(unittest.TestCase):

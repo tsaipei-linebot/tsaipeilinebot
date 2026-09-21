@@ -12,9 +12,11 @@ repository.py 缺件判斷、services/session_service.py 的 _run_in_transaction
 """
 import math
 import time
+from datetime import datetime
 
 from google.cloud import firestore
 
+from config import TAIPEI_TZ
 from delivery import repository
 from delivery.config import (
     COOPERATION_CATEGORY_CONTRACT,
@@ -45,6 +47,23 @@ STORE_DELIVERY_STATUS_CLOSED = "closed"
 
 SHIFT_STATUS_OPEN = "open"
 SHIFT_STATUS_CLOSED = "closed"
+
+# 報班名額改成需要管理員人工審核（2026-09-21 新增）：騎士報名不再由系統
+# 即時比對名額決定成不成功，一律先存成「待審核」，管理員在報名名單頁面
+# 手動按核准／駁回，才會變成「已核准」（報名成功）或「已駁回」（額滿，
+# 請騎士改報其他時段）。核准/駁回不會主動推播 LINE 訊息給騎士——騎士要
+# 自己傳「查詢報名狀態」查詢結果（見 rider_events.py），刻意不做「系統
+# 主動推播」是因為那需要讓配送部系統（Python）反過來呼叫 GAS 才能推播
+# LINE 訊息，牽動 GAS 那邊所有 LINE 機器人共用的核心轉發程式，風險比較
+# 高，使用者確認「騎士自己查詢」這個更簡單的做法就夠用。
+REGISTRATION_STATUS_PENDING = "pending"
+REGISTRATION_STATUS_APPROVED = "approved"
+REGISTRATION_STATUS_REJECTED = "rejected"
+REGISTRATION_STATUSES = [
+    {"code": REGISTRATION_STATUS_PENDING, "name": "待審核"},
+    {"code": REGISTRATION_STATUS_APPROVED, "name": "已核准"},
+    {"code": REGISTRATION_STATUS_REJECTED, "name": "已駁回（額滿）"},
+]
 
 
 # ==========================================
@@ -562,13 +581,27 @@ def get_shift_posting(shift_id: str):
     return data
 
 
-def list_shift_postings() -> list:
-    """後台管理用：列出全部報班時段，不管開放/關閉。"""
+def list_shift_postings(location: str = "", date_str: str = "") -> list:
+    """後台管理用：列出全部報班時段（可選依地點/日期篩選），不管開放/
+    關閉。地點/日期規模都不大，這裡用「抓全部後在程式端篩選」，跟
+    repository.search_personnel() 同一種做法，不用為此另外建 Firestore
+    複合索引。「已核准」「待審核」分開算給管理員看，方便核對誰還在排隊
+    等審核——2026-09-21 起報名不再由系統自動比對名額決定成不成功，一律
+    先存成待審核，管理員在報名名單頁面手動核准/駁回（見
+    update_registration_status()）。"""
     items = []
     for snapshot in rider_shift_postings_ref().stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
-        data["registered_count"] = count_registrations(snapshot.id)
+        if location and data.get("location") != location:
+            continue
+        if date_str:
+            start_time = data.get("start_time")
+            posting_date = datetime.fromtimestamp(start_time, TAIPEI_TZ).strftime("%Y-%m-%d") if start_time else ""
+            if posting_date != date_str:
+                continue
+        data["registered_count"] = count_registrations(snapshot.id, status=REGISTRATION_STATUS_APPROVED)
+        data["pending_count"] = count_registrations(snapshot.id, status=REGISTRATION_STATUS_PENDING)
         items.append(data)
     items.sort(key=lambda d: d.get("start_time") or 0, reverse=True)
     return items
@@ -591,7 +624,7 @@ def list_open_shift_postings(lat: float = None, lng: float = None, limit: int = 
     for snapshot in rider_shift_postings_ref().where("status", "==", SHIFT_STATUS_OPEN).stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
-        data["registered_count"] = count_registrations(snapshot.id)
+        data["registered_count"] = count_registrations(snapshot.id, status=REGISTRATION_STATUS_APPROVED)
         items.append(data)
 
     if lat is None or lng is None:
@@ -623,8 +656,17 @@ def set_shift_posting_status(shift_id: str, status: str) -> bool:
     return True
 
 
-def count_registrations(shift_id: str) -> int:
-    return sum(1 for _ in rider_shift_registrations_ref().where("shift_id", "==", shift_id).stream())
+def count_registrations(shift_id: str, status: str = None) -> int:
+    """status 留空回傳這個時段全部報名紀錄的筆數（不分狀態）；有給的話
+    只算符合這個狀態的（例如 REGISTRATION_STATUS_APPROVED）。"""
+    query = rider_shift_registrations_ref().where("shift_id", "==", shift_id)
+    count = 0
+    for snapshot in query.stream():
+        data = snapshot.to_dict() or {}
+        if status and data.get("status", REGISTRATION_STATUS_APPROVED) != status:
+            continue
+        count += 1
+    return count
 
 
 def list_registrations(shift_id: str) -> list:
@@ -632,29 +674,68 @@ def list_registrations(shift_id: str) -> list:
     for snapshot in rider_shift_registrations_ref().where("shift_id", "==", shift_id).stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
+        # 2026-09-21 前建立的報名紀錄沒有 status 欄位（當時是系統即時比對
+        # 名額決定成不成功，能寫進 Firestore 的都代表已經確定報名成功），
+        # 補上預設值時比照那個時候的語意視為「已核准」，不會讓舊資料在
+        # 畫面上突然顯示成「待審核」。
+        data.setdefault("status", REGISTRATION_STATUS_APPROVED)
         items.append(data)
     items.sort(key=lambda d: d.get("registered_at") or 0)
     return items
 
 
+def list_registrations_by_rider(rider_id: str, limit: int = 5) -> list:
+    """「查詢報名狀態」用：這位騎士最近的報名紀錄，附上對應時段的地點/
+    時間，依報名時間新到舊排序，最多回傳 limit 筆。"""
+    items = []
+    for snapshot in rider_shift_registrations_ref().where("rider_id", "==", rider_id).stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        data.setdefault("status", REGISTRATION_STATUS_APPROVED)
+        items.append(data)
+    items.sort(key=lambda d: d.get("registered_at") or 0, reverse=True)
+    items = items[:limit]
+    for item in items:
+        shift = get_shift_posting(item.get("shift_id", ""))
+        item["shift_location"] = shift.get("location") if shift else "（時段已刪除）"
+        item["shift_start_time"] = shift.get("start_time") if shift else None
+        item["shift_end_time"] = shift.get("end_time") if shift else None
+    return items
+
+
+def update_registration_status(registration_id: str, status: str) -> bool:
+    """管理員在報名名單頁面手動核准/駁回——這裡只負責更新狀態，不會主動
+    推播 LINE 訊息給騎士，騎士要自己傳「查詢報名狀態」查詢結果（見
+    rider_events.py 開頭的說明）。"""
+    if status not in (REGISTRATION_STATUS_PENDING, REGISTRATION_STATUS_APPROVED, REGISTRATION_STATUS_REJECTED):
+        return False
+    ref = rider_shift_registrations_ref().document(registration_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"status": status, "decided_at": time.time()})
+    return True
+
+
 def _evaluate_registration(shift_data: dict, existing_rider_ids: list, rider_id: str):
     """純邏輯：這個時段目前的資料 + 已報名的騎士清單 + 這次要報名的騎士，
-    決定接不接受。回傳 (是否接受, 給騎士的訊息)。"""
+    決定接不接受這次報名請求。回傳 (是否接受, 給騎士的訊息)。
+
+    2026-09-21 起改成人工審核制：這裡的「接受」只代表「這次報名請求有效、
+    存成待審核」，不是報名成功——是否成功由管理員在報名名單頁面手動核准/
+    駁回決定（見 update_registration_status()），所以不再檢查名額是否已滿
+    （額滿與否交由管理員自己判斷，核准超過需求人數也可以，系統不擋）。"""
     if shift_data.get("status") != SHIFT_STATUS_OPEN:
         return False, "這個報班時段已經關閉，無法報名。"
     if rider_id in existing_rider_ids:
-        return False, "您已經報名過這個時段了。"
-    capacity = shift_data.get("capacity") or 0
-    if len(existing_rider_ids) >= capacity:
-        return False, "這個時段名額已滿。"
-    return True, "報名成功！"
+        return False, "您已經報名過這個時段了，可以傳「查詢報名狀態」查詢目前結果。"
+    return True, "已收到您的報名！需等管理人員確認後才算報名成功，可以傳「查詢報名狀態」查詢目前結果。"
 
 
 def register_shift(shift_id: str, rider_id: str, rider_name: str):
-    """在單一 transaction 內完成「讀取時段 + 目前報名人數 → 用
-    _evaluate_registration() 決定接不接受 → 接受的話才寫入報名紀錄」，確保
-    兩位騎士幾乎同時報名同一個時段時不會一起超收。目前人數用實際報名紀錄
-    筆數計算（不另存一個 counter 欄位），避免計數跟實際報名紀錄對不上。"""
+    """在單一 transaction 內完成「讀取時段 + 目前已報名的騎士清單 → 用
+    _evaluate_registration() 決定接不接受這次報名請求 → 接受的話才寫入
+    待審核的報名紀錄」，確保兩位騎士幾乎同時重複報名同一個時段時不會
+    各自被 _evaluate_registration() 誤判成「還沒報名過」而各寫入一筆。"""
     shift_ref = rider_shift_postings_ref().document(shift_id)
     registration_ref = rider_shift_registrations_ref().document()
     transaction = get_db().transaction()
@@ -678,6 +759,7 @@ def register_shift(shift_id: str, rider_id: str, rider_name: str):
                 "rider_id": rider_id,
                 "rider_name": rider_name,
                 "registered_at": time.time(),
+                "status": REGISTRATION_STATUS_PENDING,
             },
         )
         return True, message

@@ -54,11 +54,62 @@
 </script>
 {% endif %}
 
+<h2 class="section-title">批次匯入報班時段</h2>
+<p class="hint">
+    上傳 CSV 檔案（UTF-8 或 Big5 皆可），欄位需包含「地點」「開始時間」「結束時間」「需求人數」（服務半徑為選填，留空預設
+    {{ default_radius_km }} 公里）。「地點」欄位要跟<a href="/delivery/rider/shift-locations">報班地點清單</a>裡已經登記、
+    啟用中的地點名稱完全一樣，不會自動建立新地點。開始/結束時間請用 2024-01-31 09:00 這種格式。
+</p>
+<p><a href="/delivery/rider/shifts/import/template.csv">下載範例 CSV 範本</a></p>
+<form method="post" action="/delivery/rider/shifts/import" enctype="multipart/form-data" class="inline-form">
+    <input type="file" name="file" accept=".csv,text/csv" required>
+    <button type="submit" class="btn btn-primary">上傳並匯入</button>
+</form>
+
+{% if import_result %}
+    {% if import_result.header_error %}
+    <p class="error">檔案格式錯誤：{{ import_result.header_error }}</p>
+    {% else %}
+    <p class="meta">
+        成功建立 {{ import_result.created|length }} 筆，
+        失敗 {{ import_result.failed|length }} 筆。
+    </p>
+    {% if import_result.failed %}
+    <table class="data-table">
+        <thead><tr><th>列</th><th>地點</th><th>失敗原因</th></tr></thead>
+        <tbody>
+            {% for r in import_result.failed %}
+            <tr><td>{{ r.row }}</td><td>{{ r.location_name }}</td><td>{{ r.error }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+{% endif %}
+
 <h2 class="section-title">報班時段清單</h2>
+<form method="get" action="/delivery/rider/shifts" class="filter-bar">
+    <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+        地點
+        <select name="location">
+            <option value="">全部地點</option>
+            {% for loc in locations %}
+            <option value="{{ loc.name }}" {% if filter_location == loc.name %}selected{% endif %}>{{ loc.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+        日期
+        <input type="date" name="date" value="{{ filter_date }}">
+    </label>
+    <button type="submit" class="btn btn-small">篩選</button>
+    {% if filter_location or filter_date %}<a class="btn btn-small" href="/delivery/rider/shifts">清除篩選</a>{% endif %}
+</form>
+
 {% if items %}
 <table class="data-table">
     <thead>
-        <tr><th>地點</th><th>時間</th><th>需求人數</th><th>已報名</th><th>服務半徑</th><th>狀態</th><th>修改</th><th>報名名單</th></tr>
+        <tr><th>地點</th><th>時間</th><th>需求人數</th><th>已核准</th><th>待審核</th><th>服務半徑</th><th>狀態</th><th>修改</th><th>報名名單</th></tr>
     </thead>
     <tbody>
         {% for item in items %}
@@ -67,6 +118,7 @@
             <td>{{ item.start_time_display }} - {{ item.end_time_display }}</td>
             <td>{{ item.capacity }}</td>
             <td>{{ item.registered_count }}</td>
+            <td>{{ item.pending_count }}</td>
             <td>{{ item.radius_km or default_radius_km }} 公里</td>
             <td><span class="badge {{ 'badge-ok' if item.status == 'open' else 'badge-resigned' }}">{{ "開放中" if item.status == "open" else "已關閉" }}</span></td>
             <td>

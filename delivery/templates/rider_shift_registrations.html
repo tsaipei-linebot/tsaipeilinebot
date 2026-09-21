@@ -5,18 +5,38 @@
 <h1 class="page-title">{{ shift.location if shift else "找不到這個報班時段" }} - 報名名單</h1>
 {% if shift %}
 <p class="hint">需求人數：{{ shift.capacity }}｜目前報名：{{ registrations|length }}</p>
+<p class="hint">
+    核准／駁回不會主動推播 LINE 訊息通知騎士，騎士要自己傳「查詢報名狀態」查詢結果——核准＝報名成功，
+    駁回＝額滿，系統會請騎士改報其他時段。
+</p>
 {% endif %}
 
 {% if registrations %}
 <table class="data-table">
     <thead>
-        <tr><th>騎士姓名</th><th>報名時間</th></tr>
+        <tr><th>騎士姓名</th><th>報名時間</th><th>狀態</th><th>修改</th></tr>
     </thead>
     <tbody>
         {% for registration in registrations %}
         <tr>
             <td>{{ registration.rider_name }}</td>
             <td>{{ registration.registered_at_display }}</td>
+            <td>
+                {% if registration.status == "approved" %}<span class="badge badge-ok">已核准</span>
+                {% elif registration.status == "rejected" %}<span class="badge badge-resigned">已駁回（額滿）</span>
+                {% else %}<span class="badge">待審核</span>
+                {% endif %}
+            </td>
+            <td>
+                <form method="post" action="/delivery/rider/shifts/{{ shift.id }}/registrations/{{ registration.id }}/status" style="display:inline">
+                    <input type="hidden" name="status" value="approved">
+                    <button type="submit" class="btn btn-small" {% if registration.status == "approved" %}disabled{% endif %}>核准</button>
+                </form>
+                <form method="post" action="/delivery/rider/shifts/{{ shift.id }}/registrations/{{ registration.id }}/status" style="display:inline">
+                    <input type="hidden" name="status" value="rejected">
+                    <button type="submit" class="btn btn-small btn-danger" {% if registration.status == "rejected" %}disabled{% endif %}>駁回（額滿）</button>
+                </form>
+            </td>
         </tr>
         {% endfor %}
     </tbody>

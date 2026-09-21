@@ -83,6 +83,21 @@ class TextKeywordDispatchTests(_ActiveBindingMixin, unittest.TestCase):
         self.assertIn("分享", messages[0]["text"])
         self.assertEqual(messages[0]["quickReply"]["items"][0]["action"]["type"], "location")
 
+    def test_shift_status_query_keyword_returns_registration_status_message(self):
+        """2026-09-21 新增：報班改成人工審核制，騎士傳「查詢報名狀態」
+        查詢最近幾筆報名的審核結果。"""
+        registrations = [{"shift_location": "台北車站", "status": "pending"}]
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="employed"):
+            with mock.patch.object(
+                rider_repository, "list_registrations_by_rider", return_value=registrations
+            ) as mock_list:
+                messages = rider_events.handle_rider_event(
+                    {"userId": "U1", "type": "message", "message_type": "text", "text": "查詢報名狀態"}
+                )
+        mock_list.assert_called_once_with("U1")
+        self.assertEqual(len(messages), 1)
+        self.assertIn("台北車站", messages[0]["text"])
+
     def test_unrecognized_text_returns_no_messages(self):
         messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "今天天氣真好"})
         self.assertEqual(messages, [])
@@ -135,6 +150,15 @@ class EligibilityGatingTests(_ActiveBindingMixin, unittest.TestCase):
                     {"userId": "U1", "type": "postback", "postback_data": "action=REGISTER_SHIFT&shiftId=shift1"}
                 )
         mock_register.assert_not_called()
+        self.assertIn("報班媒合僅限雇傭", messages[0]["text"])
+
+    def test_shift_status_query_keyword_blocked_for_contract_category(self):
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="contract"):
+            with mock.patch.object(rider_repository, "list_registrations_by_rider") as mock_list:
+                messages = rider_events.handle_rider_event(
+                    {"userId": "U1", "type": "message", "message_type": "text", "text": "查詢報名狀態"}
+                )
+        mock_list.assert_not_called()
         self.assertIn("報班媒合僅限雇傭", messages[0]["text"])
 
 

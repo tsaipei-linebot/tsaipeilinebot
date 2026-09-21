@@ -8,13 +8,14 @@
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.responses import PlainTextResponse, RedirectResponse
 
 from config import TAIPEI_TZ
 from delivery import rider_repository
 from delivery.auth import admin_required, current_user, login_required
-from delivery.config import RIDER_DEFAULT_SEARCH_RADIUS_KM
+from delivery.config import MAX_UPLOAD_BYTES, RIDER_DEFAULT_SEARCH_RADIUS_KM
+from delivery.rider_csv_import import parse_shift_posting_csv
 from delivery.templating import templates
 
 router = APIRouter()
@@ -222,10 +223,12 @@ def rider_store_delivery_claims_page(store_id: str, request: Request, redirect=D
 # 報班媒合時段
 # ==========================================
 @router.get("/rider/shifts")
-def rider_shifts_page(request: Request, error: str = "", redirect=Depends(login_required)):
+def rider_shifts_page(
+    request: Request, location: str = "", date: str = "", error: str = "", redirect=Depends(login_required)
+):
     if redirect:
         return redirect
-    items = rider_repository.list_shift_postings()
+    items = rider_repository.list_shift_postings(location=location, date_str=date)
     for item in items:
         item["start_time_display"] = datetime.fromtimestamp(item["start_time"]).strftime("%Y-%m-%d %H:%M") if item.get("start_time") else "-"
         item["end_time_display"] = datetime.fromtimestamp(item["end_time"]).strftime("%H:%M") if item.get("end_time") else "-"
@@ -237,6 +240,8 @@ def rider_shifts_page(request: Request, error: str = "", redirect=Depends(login_
             "items": items,
             "locations": rider_repository.list_shift_locations(),
             "default_radius_km": RIDER_DEFAULT_SEARCH_RADIUS_KM,
+            "filter_location": location,
+            "filter_date": date,
             "error": error,
         },
     )
@@ -277,6 +282,74 @@ def create_rider_shift(
     return RedirectResponse(url="/delivery/rider/shifts", status_code=303)
 
 
+_SHIFT_IMPORT_TEMPLATE_CSV = (
+    "地點,開始時間,結束時間,需求人數,服務半徑\n"
+    "新北中和門市,2024-01-31 09:00,2024-01-31 18:00,3,10\n"
+)
+
+
+@router.get("/rider/shifts/import/template.csv")
+def rider_shifts_import_template(redirect=Depends(login_required)):
+    if redirect:
+        return redirect
+    return PlainTextResponse(
+        _SHIFT_IMPORT_TEMPLATE_CSV.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=shift_postings_template.csv"},
+    )
+
+
+@router.post("/rider/shifts/import")
+async def rider_shifts_import_submit(request: Request, file: UploadFile = File(...), redirect=Depends(login_required)):
+    if redirect:
+        return redirect
+    account = current_user(request)
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        import_result = {"header_error": "檔案超過 10MB 上限", "created": [], "failed": []}
+    else:
+        locations = rider_repository.list_shift_locations()
+        locations_by_name = {loc["name"]: loc for loc in locations}
+        rows, header_error = parse_shift_posting_csv(content, locations_by_name)
+        import_result = {"header_error": header_error, "created": [], "failed": []}
+        if not header_error:
+            for row in rows:
+                if not row["ok"]:
+                    import_result["failed"].append(row)
+                    continue
+                rider_repository.create_shift_posting(
+                    account["username"],
+                    row["location_name"],
+                    row["lat"],
+                    row["lng"],
+                    row["start_at"],
+                    row["end_at"],
+                    row["capacity"],
+                    radius_km=row["radius_km"],
+                )
+                import_result["created"].append(row)
+
+    items = rider_repository.list_shift_postings()
+    for item in items:
+        item["start_time_display"] = datetime.fromtimestamp(item["start_time"]).strftime("%Y-%m-%d %H:%M") if item.get("start_time") else "-"
+        item["end_time_display"] = datetime.fromtimestamp(item["end_time"]).strftime("%H:%M") if item.get("end_time") else "-"
+    return templates.TemplateResponse(
+        request,
+        "rider_shifts.html",
+        {
+            "user": account,
+            "items": items,
+            "locations": rider_repository.list_shift_locations(),
+            "default_radius_km": RIDER_DEFAULT_SEARCH_RADIUS_KM,
+            "filter_location": "",
+            "filter_date": "",
+            "error": "",
+            "import_result": import_result,
+        },
+    )
+
+
 @router.post("/rider/shifts/{shift_id}/status")
 def update_rider_shift_status(shift_id: str, status: str = Form(...), redirect=Depends(login_required)):
     if redirect:
@@ -302,6 +375,20 @@ def rider_shift_registrations_page(shift_id: str, request: Request, redirect=Dep
         "rider_shift_registrations.html",
         {"user": current_user(request), "shift": shift, "registrations": registrations},
     )
+
+
+@router.post("/rider/shifts/{shift_id}/registrations/{registration_id}/status")
+def update_rider_shift_registration_status(
+    shift_id: str, registration_id: str, status: str = Form(...), redirect=Depends(login_required)
+):
+    """2026-09-21 新增：報班改成人工審核制，管理員在這裡核准/駁回單一筆
+    報名——核准＝報名成功，駁回＝額滿（見 rider_repository.py 開頭的
+    說明）。刻意不主動推播 LINE 訊息通知騎士，騎士要自己傳「查詢報名
+    狀態」查詢結果。"""
+    if redirect:
+        return redirect
+    rider_repository.update_registration_status(registration_id, status)
+    return RedirectResponse(url=f"/delivery/rider/shifts/{shift_id}/registrations", status_code=303)
 
 
 # ==========================================

@@ -59,7 +59,7 @@ def handle_rider_event(body: dict) -> list:
     awaiting_shift_location = False
     if event_type == "postback":
         is_relevant = True
-    elif text in _NEARBY_ORDER_KEYWORDS or text in _SHIFT_LIST_KEYWORDS:
+    elif text in _NEARBY_ORDER_KEYWORDS or text in _SHIFT_LIST_KEYWORDS or text in _SHIFT_STATUS_QUERY_KEYWORDS:
         is_relevant = True
     elif message_type == "location":
         awaiting_order_location = rider_repository.pop_awaiting_location(user_id)
@@ -137,6 +137,10 @@ def _handle_location(lat, lng, awaiting_order_location: bool, awaiting_shift_loc
 # 增加不必要的複雜度，一階段用文字關鍵字就能達到一樣的效果。
 _NEARBY_ORDER_KEYWORDS = {"查詢附近單", "即時接單", "附近單"}
 _SHIFT_LIST_KEYWORDS = {"瀏覽報班", "報班媒合", "報班"}
+# 2026-09-21 新增：報班改成人工審核制，報名當下不會立刻知道成不成功
+# （見 rider_repository.py 開頭的說明），騎士要自己傳這幾種說法查詢目前
+# 的審核結果。
+_SHIFT_STATUS_QUERY_KEYWORDS = {"查詢報名狀態", "報名狀態", "查詢報班狀態"}
 
 
 def _is_eligible_for_order(binding: dict) -> bool:
@@ -165,6 +169,12 @@ def _handle_text(user_id: str, binding: dict, text: str) -> list:
             return [rider_messages.not_eligible_for_shift_message()]
         rider_repository.set_awaiting_shift_location(user_id)
         return [rider_messages.prompt_share_location_for_shift_message()]
+
+    if text in _SHIFT_STATUS_QUERY_KEYWORDS:
+        if not _is_eligible_for_shift(binding):
+            return [rider_messages.not_eligible_for_shift_message()]
+        registrations = rider_repository.list_registrations_by_rider(user_id)
+        return [rider_messages.shift_registration_status_message(registrations)]
 
     if text.isdigit():
         store_id = rider_repository.pop_pending_claim(user_id)

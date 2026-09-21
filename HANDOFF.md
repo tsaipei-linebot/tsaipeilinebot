@@ -7541,3 +7541,85 @@ python -m scripts.fill_personnel_cooperation_type
 更新測試：`tests/test_delivery_rider_routes.py`
 （`UpdateRiderInfoTests`）。全部測試（`python3 -m unittest discover -s
 tests -p "test_*.py"`）1724 個全數通過。
+
+## 報班媒合：批次匯入時段、名額改人工審核制、時段清單篩選（2026-09-21）
+
+使用者一次提出三個報班媒合的需求：
+1. 報班時段管理需要批次匯入。
+2. 騎士報名後不再由系統即時判斷成不成功，改成後台人工核准/駁回，核准＝
+   報名成功，駁回＝額滿請改報其他時段。
+3. 報班時段清單要能依地點/日期篩選。
+
+**第 2 項原本規劃**要「管理員按核准/駁回時系統主動推播 LINE 訊息通知
+騎士」，但這需要讓配送部系統（Python）反過來呼叫 GAS 才能觸發推播，會
+動到 GAS 那邊**所有 LINE 機器人共用的核心轉發程式**（車輛回報、意外
+事件回報、排班發包都靠它），風險比較高。跟使用者討論後，改成**騎士
+自己傳「查詢報名狀態」主動查詢**，不用碰 GAS 那支共用程式，風險小很多
+——這次完全沒有動到 delivery-gas-project 那個 repo。
+
+### 報班名額改成人工審核制
+
+- `rider_repository.py` 新增 `REGISTRATION_STATUS_PENDING` /
+  `_APPROVED` / `_REJECTED` 三種狀態。`register_shift()` 寫入報名紀錄時
+  一律先存成 `pending`；`_evaluate_registration()` 拿掉原本的「名額是否
+  已滿」檢查（只保留「時段是否關閉」「是否重複報名」），因為額滿與否
+  改成管理員的人工判斷，系統不再自動擋。
+- 新增 `update_registration_status(registration_id, status)`：管理員在
+  「報名名單」頁面（`/rider/shifts/{id}/registrations`）按「核准」／
+  「駁回（額滿）」呼叫，**不會主動推播任何訊息**。
+- `count_registrations()` 新增可選的 `status` 參數；`list_shift_postings()`
+  跟 `list_open_shift_postings()` 顯示/計算的「剩餘名額」都改成只算
+  `approved` 狀態的報名數（待審核的不算進佔用名額），管理員後台清單
+  另外顯示「待審核」數量方便核對。`list_registrations()` 對舊資料（這次
+  改動之前建立、沒有 `status` 欄位的報名紀錄）一律視為 `approved`，維持
+  舊資料原本「能寫進 Firestore 就代表報名成功」的語意，不會讓舊紀錄
+  在畫面上突然變成待審核。
+- 新增 `list_registrations_by_rider(rider_id, limit=5)`：「查詢報名狀態」
+  用，附上對應時段的地點/時間，依報名時間新到舊排序。
+- `rider_events.py` 新增關鍵字「查詢報名狀態」「報名狀態」「查詢報班
+  狀態」（跟「瀏覽報班」一樣限雇傭身份），回覆
+  `rider_messages.shift_registration_status_message()` 組出的純文字
+  清單。
+- 報名成功的回覆文案改成「已收到您的報名！需等管理人員確認後才算報名
+  成功，可以傳「查詢報名狀態」查詢目前結果。」。
+- 報名名單頁面（`rider_shift_registrations.html`）每一筆報名加上狀態
+  badge 跟「核准」／「駁回（額滿）」兩個按鈕，按鈕本身對應的狀態會停用
+  （已經是核准狀態就不能再按一次核准），避免誤觸重複送出。
+
+### 批次匯入報班時段
+
+- 新增 `delivery/rider_csv_import.py`（`parse_shift_posting_csv()`），
+  跟 `delivery/csv_import.py`（人員批次匯入）同一種「純函式解析、呼叫端
+  決定寫不寫入」的分工。CSV 欄位：地點、開始時間、結束時間、需求人數
+  （服務半徑選填，留空用預設值）。**「地點」要跟報班地點清單裡已經
+  登記、啟用中的地點名稱完全一樣**，不會自動建立新地點，找不到就整列
+  失敗、列出原因，不會用猜的建錯地點。開始/結束時間格式是
+  `2024-01-31 09:00`（也接受 `T` 分隔）。
+- 報班時段管理頁面（`rider_shifts.html`）新增上傳表單＋範本 CSV 下載
+  連結（`/rider/shifts/import/template.csv`），匯入結果（成功/失敗筆數、
+  失敗原因）直接顯示在同一頁。
+
+### 報班時段清單篩選
+
+- `list_shift_postings(location="", date_str="")` 新增這兩個可選篩選
+  條件——地點/日期規模都不大，用「抓全部後在程式端篩選」，跟
+  `repository.search_personnel()` 同一種做法，不用為此另外建 Firestore
+  複合索引。日期篩選是比對時段開始時間換算成台北時區日期字串是否相符。
+- 報班時段管理頁面新增地點下拉選單（來自報班地點清單）＋日期選擇器的
+  篩選表單，網址帶 `?location=...&date=...` 查詢參數。
+
+**這次不需要任何手動設定步驟**，合併部署後直接生效，也沒有動到
+delivery-gas-project 那個 repo。
+
+新增/更新測試：`tests/test_delivery_rider_repository.py`
+（`EvaluateRegistrationTests` 改成不再測名額已滿、新增
+`ListShiftPostingsFilterTests`／`RegistrationStatusTests`／
+`ListRegistrationsByRiderTests`）、`tests/test_delivery_rider_events.py`
+（新增查詢報名狀態關鍵字的資格判斷與內容測試）、
+`tests/test_delivery_rider_messages.py`
+（`ShiftRegistrationStatusMessageTests`）、`tests/test_delivery_rider_routes.py`
+（`RiderShiftsPageFilterTests`／`UpdateRiderShiftRegistrationStatusTests`／
+`RiderShiftsImportSubmitTests`）、新增
+`tests/test_delivery_rider_csv_import.py`（`ParseShiftPostingCsvTests`）。
+全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）
+1758 個全數通過。

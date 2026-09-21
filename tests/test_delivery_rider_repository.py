@@ -76,20 +76,24 @@ class EvaluateClaimTests(unittest.TestCase):
 
 
 class EvaluateRegistrationTests(unittest.TestCase):
-    """_evaluate_registration() 同樣是報名 transaction 的核心決策，測名額
-    已滿／重複報名／已關閉三種邊界情況。"""
+    """_evaluate_registration() 同樣是報名 transaction 的核心決策，2026-09-21
+    改成人工審核制後測重複報名／已關閉兩種邊界情況——名額滿不滿不再由
+    這裡的邏輯判斷，改成管理員在報名名單頁面人工核准/駁回時自己決定，
+    這裡「接受」只代表「報名請求有效、存成待審核」。"""
 
     def _shift(self, capacity=3, status="open"):
         return {"capacity": capacity, "status": status}
 
-    def test_accepts_when_capacity_available(self):
+    def test_accepts_when_shift_open_and_not_duplicate(self):
         ok, message = rider_repository._evaluate_registration(self._shift(capacity=3), ["r1", "r2"], "r3")
         self.assertTrue(ok)
+        self.assertIn("需等管理人員確認", message)
 
-    def test_rejects_when_capacity_full(self):
+    def test_accepts_even_when_capacity_already_reached(self):
+        # 名額已滿不再自動擋下——系統一律先收進待審核，額滿與否交由管理員
+        # 在報名名單頁面手動駁回決定。
         ok, message = rider_repository._evaluate_registration(self._shift(capacity=2), ["r1", "r2"], "r3")
-        self.assertFalse(ok)
-        self.assertIn("名額已滿", message)
+        self.assertTrue(ok)
 
     def test_rejects_duplicate_registration(self):
         ok, message = rider_repository._evaluate_registration(self._shift(capacity=3), ["r1", "r2"], "r1")
@@ -382,6 +386,202 @@ class ListOpenShiftPostingsRadiusTests(unittest.TestCase):
                 results = rider_repository.list_open_shift_postings(24.9998, 121.4996)
         self.assertEqual(len(results), 1)
         self.assertIsNone(results[0]["distance_km"])
+
+
+class ListShiftPostingsFilterTests(unittest.TestCase):
+    """2026-09-21 新增：報班時段管理清單要能依地點/日期篩選。地點/日期
+    規模都不大，用「抓全部後在程式端篩選」，這裡直接餵一批固定資料驗證
+    篩選結果，不用真的連 Firestore。"""
+
+    def _snapshot(self, doc_id, data):
+        snapshot = mock.Mock()
+        snapshot.id = doc_id
+        snapshot.to_dict.return_value = data
+        return snapshot
+
+    def _fake_collection(self, snapshots):
+        fake_collection = mock.Mock()
+        fake_collection.stream.return_value = snapshots
+        return fake_collection
+
+    def test_no_filter_returns_everything(self):
+        snapshots = [
+            self._snapshot("a", {"location": "台北車站", "start_time": 1735689600}),
+            self._snapshot("b", {"location": "新北中和門市", "start_time": 1735776000}),
+        ]
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=self._fake_collection(snapshots)):
+            with mock.patch.object(rider_repository, "count_registrations", return_value=0):
+                results = rider_repository.list_shift_postings()
+        self.assertEqual({r["id"] for r in results}, {"a", "b"})
+
+    def test_filters_by_location(self):
+        snapshots = [
+            self._snapshot("a", {"location": "台北車站", "start_time": 1735689600}),
+            self._snapshot("b", {"location": "新北中和門市", "start_time": 1735776000}),
+        ]
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=self._fake_collection(snapshots)):
+            with mock.patch.object(rider_repository, "count_registrations", return_value=0):
+                results = rider_repository.list_shift_postings(location="台北車站")
+        self.assertEqual([r["id"] for r in results], ["a"])
+
+    def test_filters_by_date(self):
+        # 2025-01-01 09:00 台北時間跟 2025-01-02 09:00 台北時間的 timestamp。
+        jan1 = rider_repository.TAIPEI_TZ.localize(rider_repository.datetime(2025, 1, 1, 9, 0)).timestamp()
+        jan2 = rider_repository.TAIPEI_TZ.localize(rider_repository.datetime(2025, 1, 2, 9, 0)).timestamp()
+        snapshots = [
+            self._snapshot("a", {"location": "台北車站", "start_time": jan1}),
+            self._snapshot("b", {"location": "台北車站", "start_time": jan2}),
+        ]
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=self._fake_collection(snapshots)):
+            with mock.patch.object(rider_repository, "count_registrations", return_value=0):
+                results = rider_repository.list_shift_postings(date_str="2025-01-01")
+        self.assertEqual([r["id"] for r in results], ["a"])
+
+    def test_reports_approved_and_pending_counts_separately(self):
+        snapshots = [self._snapshot("a", {"location": "台北車站", "start_time": 100})]
+
+        def fake_count(shift_id, status=None):
+            return {rider_repository.REGISTRATION_STATUS_APPROVED: 2, rider_repository.REGISTRATION_STATUS_PENDING: 5}.get(
+                status, 7
+            )
+
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=self._fake_collection(snapshots)):
+            with mock.patch.object(rider_repository, "count_registrations", side_effect=fake_count):
+                results = rider_repository.list_shift_postings()
+        self.assertEqual(results[0]["registered_count"], 2)
+        self.assertEqual(results[0]["pending_count"], 5)
+
+
+class RegistrationStatusTests(unittest.TestCase):
+    """2026-09-21 新增：報班改成人工審核制——報名一律先存成待審核，管理員
+    在報名名單頁面手動核准/駁回，count_registrations()／list_registrations()
+    都要照狀態分開算/顯示，且舊資料（沒有 status 欄位）要視為已核准，不能
+    讓既有紀錄畫面上突然變成待審核。"""
+
+    def _snapshot(self, doc_id, data):
+        snapshot = mock.Mock()
+        snapshot.id = doc_id
+        snapshot.to_dict.return_value = data
+        return snapshot
+
+    def _fake_query(self, snapshots):
+        fake_query = mock.Mock()
+        fake_query.stream.return_value = snapshots
+        fake_collection = mock.Mock()
+        fake_collection.where.return_value = fake_query
+        return fake_collection
+
+    def test_count_registrations_without_status_counts_all(self):
+        snapshots = [
+            self._snapshot("r1", {"status": "pending"}),
+            self._snapshot("r2", {"status": "approved"}),
+            self._snapshot("r3", {"status": "rejected"}),
+        ]
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=self._fake_query(snapshots)):
+            self.assertEqual(rider_repository.count_registrations("s1"), 3)
+
+    def test_count_registrations_filters_by_status(self):
+        snapshots = [
+            self._snapshot("r1", {"status": "pending"}),
+            self._snapshot("r2", {"status": "approved"}),
+        ]
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=self._fake_query(snapshots)):
+            self.assertEqual(
+                rider_repository.count_registrations("s1", status=rider_repository.REGISTRATION_STATUS_APPROVED), 1
+            )
+
+    def test_count_registrations_legacy_record_without_status_counts_as_approved(self):
+        snapshots = [self._snapshot("r1", {})]
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=self._fake_query(snapshots)):
+            self.assertEqual(
+                rider_repository.count_registrations("s1", status=rider_repository.REGISTRATION_STATUS_APPROVED), 1
+            )
+            self.assertEqual(
+                rider_repository.count_registrations("s1", status=rider_repository.REGISTRATION_STATUS_PENDING), 0
+            )
+
+    def test_list_registrations_legacy_record_defaults_to_approved(self):
+        snapshots = [self._snapshot("r1", {"registered_at": 1})]
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=self._fake_query(snapshots)):
+            results = rider_repository.list_registrations("s1")
+        self.assertEqual(results[0]["status"], rider_repository.REGISTRATION_STATUS_APPROVED)
+
+    def test_update_registration_status_rejects_unknown_status(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True))
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=fake_collection):
+            self.assertFalse(rider_repository.update_registration_status("r1", "not-a-real-status"))
+        fake_doc_ref.update.assert_not_called()
+
+    def test_update_registration_status_returns_false_when_missing(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(False))
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=fake_collection):
+            self.assertFalse(
+                rider_repository.update_registration_status("r1", rider_repository.REGISTRATION_STATUS_APPROVED)
+            )
+
+    def test_update_registration_status_updates_existing(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True))
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=fake_collection):
+            self.assertTrue(
+                rider_repository.update_registration_status("r1", rider_repository.REGISTRATION_STATUS_REJECTED)
+            )
+        payload = fake_doc_ref.update.call_args.args[0]
+        self.assertEqual(payload["status"], rider_repository.REGISTRATION_STATUS_REJECTED)
+
+class ListRegistrationsByRiderTests(unittest.TestCase):
+    """2026-09-21 新增：「查詢報名狀態」用——附上對應時段的地點/時間，
+    依報名時間新到舊排序，最多回傳 limit 筆。"""
+
+    def _snapshot(self, doc_id, data):
+        snapshot = mock.Mock()
+        snapshot.id = doc_id
+        snapshot.to_dict.return_value = data
+        return snapshot
+
+    def test_sorted_newest_first_and_joined_with_shift_info(self):
+        snapshots = [
+            self._snapshot("r1", {"shift_id": "s1", "registered_at": 100, "status": "pending"}),
+            self._snapshot("r2", {"shift_id": "s2", "registered_at": 200, "status": "approved"}),
+        ]
+        fake_query = mock.Mock()
+        fake_query.stream.return_value = snapshots
+        fake_collection = mock.Mock()
+        fake_collection.where.return_value = fake_query
+
+        def fake_get_shift(shift_id):
+            return {"s1": {"location": "台北車站", "start_time": 1, "end_time": 2}, "s2": {"location": "新北中和門市"}}.get(
+                shift_id
+            )
+
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=fake_collection):
+            with mock.patch.object(rider_repository, "get_shift_posting", side_effect=fake_get_shift):
+                results = rider_repository.list_registrations_by_rider("rider1")
+        self.assertEqual([r["id"] for r in results], ["r2", "r1"])
+        self.assertEqual(results[1]["shift_location"], "台北車站")
+
+    def test_deleted_shift_shows_placeholder_location(self):
+        snapshots = [self._snapshot("r1", {"shift_id": "gone", "registered_at": 100, "status": "approved"})]
+        fake_query = mock.Mock()
+        fake_query.stream.return_value = snapshots
+        fake_collection = mock.Mock()
+        fake_collection.where.return_value = fake_query
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=fake_collection):
+            with mock.patch.object(rider_repository, "get_shift_posting", return_value=None):
+                results = rider_repository.list_registrations_by_rider("rider1")
+        self.assertEqual(results[0]["shift_location"], "（時段已刪除）")
+
+    def test_limit_caps_number_of_results(self):
+        snapshots = [
+            self._snapshot(f"r{i}", {"shift_id": "s1", "registered_at": i, "status": "approved"}) for i in range(10)
+        ]
+        fake_query = mock.Mock()
+        fake_query.stream.return_value = snapshots
+        fake_collection = mock.Mock()
+        fake_collection.where.return_value = fake_query
+        with mock.patch.object(rider_repository, "rider_shift_registrations_ref", return_value=fake_collection):
+            with mock.patch.object(rider_repository, "get_shift_posting", return_value={"location": "X"}):
+                results = rider_repository.list_registrations_by_rider("rider1", limit=3)
+        self.assertEqual(len(results), 3)
 
 
 class UpsertRiderBindingPersonnelLinkTests(unittest.TestCase):
