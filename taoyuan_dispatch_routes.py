@@ -1,28 +1,41 @@
-"""桃園所派遣媒合後台頁面（/taoyuan-dispatch）：人員管理、地點管理。詳細
-背景、權限模型、下一階段規劃都寫在 services/taoyuan_dispatch_service.py
-開頭的說明，這裡只負責頁面路由本身。
+"""桃園所派遣媒合後台頁面（/taoyuan-dispatch）：人員管理、地點管理、需求
+時段管理（開需求/報名審核）。詳細背景、權限模型都寫在
+services/taoyuan_dispatch_service.py 開頭的說明，這裡只負責頁面路由本身。
 """
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import PlainTextResponse, RedirectResponse
 
 import platform_accounts
+from config import TAIPEI_TZ
 from platform_templating import templates
 from services.taoyuan_dispatch_service import (
     QUALIFICATION_MAP,
     QUALIFICATIONS,
+    REGISTRATION_STATUS_APPROVED,
+    REGISTRATION_STATUS_REJECTED,
     create_location,
     create_personnel,
+    create_posting,
     find_personnel_by_name_and_phone,
+    get_posting,
+    get_registration,
     has_taoyuan_access,
     list_locations,
     list_personnel,
+    list_postings,
+    list_registrations,
     parse_location_csv,
     parse_personnel_csv,
     set_location_active,
     set_personnel_active,
+    set_posting_status,
     update_personnel_info,
     update_personnel_qualifications,
+    update_registration_status,
 )
+from taoyuan_dispatch_line import push_message
 
 router = APIRouter()
 
@@ -236,3 +249,148 @@ async def taoyuan_dispatch_locations_import_submit(
         "taoyuan_dispatch_locations.html",
         {"user": account, "locations": list_locations(), "error": "", "import_result": import_result},
     )
+
+
+# ==========================================
+# 需求時段管理（Phase 2，2026-09-21 新增）：開需求（地點/時段/人數/需要
+# 的人員資格）、審核人員報名。人員在 LINE 上查詢需求／報名（見
+# taoyuan_dispatch_bot.py），核准/駁回時這裡會直接推播 LINE 訊息通知
+# 人員（見 taoyuan_dispatch_line.py），不用像配送部報班那樣要人員自己
+# 傳「查詢報名狀態」才知道結果——因為這組帳號自己有 Channel Token，
+# 主動推播比配送部那套 GAS 轉發機制單純很多。
+# ==========================================
+def _posting_time_display(posting: dict) -> dict:
+    posting["start_time_display"] = (
+        datetime.fromtimestamp(posting["start_time"], TAIPEI_TZ).strftime("%Y-%m-%d %H:%M")
+        if posting.get("start_time")
+        else "-"
+    )
+    posting["end_time_display"] = (
+        datetime.fromtimestamp(posting["end_time"], TAIPEI_TZ).strftime("%H:%M") if posting.get("end_time") else "-"
+    )
+    return posting
+
+
+@router.get("/taoyuan-dispatch/postings")
+def taoyuan_dispatch_postings_page(
+    request: Request, location: str = "", date: str = "", error: str = "", redirect=Depends(_require_access)
+):
+    if redirect:
+        return redirect
+    items = [_posting_time_display(p) for p in list_postings(location_name=location, date_str=date)]
+    return templates.TemplateResponse(
+        request,
+        "taoyuan_dispatch_postings.html",
+        {
+            "user": platform_accounts.current_account(request),
+            "postings": items,
+            "locations": list_locations(include_inactive=False),
+            "qualifications": QUALIFICATIONS,
+            "qualification_map": QUALIFICATION_MAP,
+            "filter_location": location,
+            "filter_date": date,
+            "error": error,
+        },
+    )
+
+
+@router.post("/taoyuan-dispatch/postings/new")
+async def create_taoyuan_dispatch_posting(request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    form = await request.form()
+    location_name = (form.get("location_name") or "").strip()
+    start_time_raw = (form.get("start_time") or "").strip()
+    end_time_raw = (form.get("end_time") or "").strip()
+    headcount_raw = (form.get("headcount") or "").strip()
+    required_qualifications = form.getlist("required_qualifications")
+
+    if not location_name:
+        return RedirectResponse(url="/taoyuan-dispatch/postings?error=請從清單選擇一個地點", status_code=303)
+    if not required_qualifications:
+        return RedirectResponse(url="/taoyuan-dispatch/postings?error=請至少勾選一項人員資格", status_code=303)
+    try:
+        start_at = TAIPEI_TZ.localize(datetime.strptime(start_time_raw, "%Y-%m-%dT%H:%M")).timestamp()
+        end_at = TAIPEI_TZ.localize(datetime.strptime(end_time_raw, "%Y-%m-%dT%H:%M")).timestamp()
+        headcount = int(headcount_raw)
+    except ValueError:
+        return RedirectResponse(
+            url="/taoyuan-dispatch/postings?error=請確認時間格式跟需求人數都正確", status_code=303
+        )
+
+    account = platform_accounts.current_account(request)
+    create_posting(
+        location_name,
+        start_at,
+        end_at,
+        headcount,
+        required_qualifications,
+        created_by=account["username"] if account else "",
+    )
+    return RedirectResponse(url="/taoyuan-dispatch/postings", status_code=303)
+
+
+@router.post("/taoyuan-dispatch/postings/{posting_id}/status")
+def update_taoyuan_dispatch_posting_status(
+    posting_id: str, status: str = Form(...), redirect=Depends(_require_access)
+):
+    if redirect:
+        return redirect
+    set_posting_status(posting_id, status)
+    return RedirectResponse(url="/taoyuan-dispatch/postings", status_code=303)
+
+
+@router.get("/taoyuan-dispatch/postings/{posting_id}/registrations")
+def taoyuan_dispatch_posting_registrations_page(
+    posting_id: str, request: Request, redirect=Depends(_require_access)
+):
+    if redirect:
+        return redirect
+    posting = get_posting(posting_id)
+    if posting:
+        _posting_time_display(posting)
+    registrations = list_registrations(posting_id)
+    for r in registrations:
+        r["registered_at_display"] = (
+            datetime.fromtimestamp(r["registered_at"], TAIPEI_TZ).strftime("%Y-%m-%d %H:%M")
+            if r.get("registered_at")
+            else "-"
+        )
+    return templates.TemplateResponse(
+        request,
+        "taoyuan_dispatch_posting_registrations.html",
+        {"user": platform_accounts.current_account(request), "posting": posting, "registrations": registrations},
+    )
+
+
+@router.post("/taoyuan-dispatch/postings/{posting_id}/registrations/{registration_id}/status")
+def update_taoyuan_dispatch_registration_status(
+    posting_id: str, registration_id: str, status: str = Form(...), redirect=Depends(_require_access)
+):
+    if redirect:
+        return redirect
+    before = get_registration(registration_id)
+    changed = update_registration_status(registration_id, status)
+    if (
+        changed
+        and before
+        and before["status"] != status
+        and before.get("line_user_id")
+        and status in (REGISTRATION_STATUS_APPROVED, REGISTRATION_STATUS_REJECTED)
+    ):
+        posting = get_posting(posting_id)
+        if posting:
+            start_display = (
+                datetime.fromtimestamp(posting["start_time"], TAIPEI_TZ).strftime("%m/%d %H:%M")
+                if posting.get("start_time")
+                else ""
+            )
+            if status == REGISTRATION_STATUS_APPROVED:
+                text = f"您報名的需求已核准！\n{posting['location_name']}　{start_display}\n請準時報到，謝謝。"
+            else:
+                text = (
+                    f"您報名的需求很抱歉未能核准（額滿或不符資格）。\n{posting['location_name']}　{start_display}\n"
+                    "可以傳「需求列表」查看其他開放中的需求。"
+                )
+            push_message(before["line_user_id"], text)
+    return RedirectResponse(url=f"/taoyuan-dispatch/postings/{posting_id}/registrations", status_code=303)

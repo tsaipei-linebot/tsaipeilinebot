@@ -26,6 +26,7 @@ import me_routes
 import portal_routes
 import salesdev_routes
 import taoyuan_dispatch_routes
+import taoyuan_dispatch_webhook_routes
 import vendors_routes
 from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
@@ -105,11 +106,14 @@ app.include_router(client_contract_routes.router)
 # 借用上面這兩個模組既有的角色判斷（見 contract_summary_routes.py 開頭
 # 說明），直接掛在根 app。
 app.include_router(contract_summary_routes.router)
-# /taoyuan-dispatch：桃園所專區（2026-09-21 新增，Phase 1：人員/地點管理），
-# 沒有自己的模組代碼，能不能看到照「部門」判斷（見
-# services/taoyuan_dispatch_service.py 開頭說明），跟 /contract-summary
-# 一樣直接掛在根 app。
+# /taoyuan-dispatch：桃園所專區（2026-09-21 新增），沒有自己的模組代碼，
+# 能不能看到照「部門」判斷（見 services/taoyuan_dispatch_service.py 開頭
+# 說明），跟 /contract-summary 一樣直接掛在根 app。
 app.include_router(taoyuan_dispatch_routes.router)
+# /taoyuan-dispatch/line/callback：桃園所派遣專屬 LINE 官方帳號的
+# webhook（2026-09-21 新增，Phase 2），第四組獨立的 LINE Channel（跟招募
+# 機器人、管理部各自獨立），見 taoyuan_dispatch_line.py 開頭說明。
+app.include_router(taoyuan_dispatch_webhook_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，

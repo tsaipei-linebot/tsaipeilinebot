@@ -7677,3 +7677,119 @@ Channel Token/Secret 設成 Cloud Run 環境變數。
 （`PortalHomeTaoyuanDispatchCardTests`，卡片依部門顯示/隱藏）。全部測試
 （`python3 -m unittest discover -s tests -p "test_*.py"`）1790 個全數
 通過。
+
+## 桃園所專區：Phase 2（LINE 官方帳號綁定+需求時段+報名審核+推播，2026-09-21）
+
+延續 Phase 1，把「LINE 官方帳號綁定、需求時段開單、人員報名、主管審核、
+核准/駁回推播通知」補齊。
+
+**新增檔案**：
+
+- `taoyuan_dispatch_line.py`：桃園所派遣專屬的第四組 LINE Messaging API
+  Channel 客戶端（跟招募機器人、配送部、管理部各自獨立），比照
+  `management/line_bot.py` 的做法——只做「實例化 LineBotApi/WebhookHandler、
+  提供 `push_message()`」這一件事。
+- `taoyuan_dispatch_bot.py`：解析人員在 LINE 上傳來的固定指令（綁定/需求
+  列表/報名/我的報名），串接 `services/taoyuan_dispatch_service.py` 讀寫
+  資料庫、回傳要回覆的文字。`parse_command()` 是純函式（不碰 Firestore），
+  `handle_message()` 才會真的讀寫——跟 `hr/incident_report.py` 的拆法一樣，
+  方便單元測試。**完全沒有 AI 對話邏輯**，指令看不懂就回覆固定的操作
+  說明。
+- `taoyuan_dispatch_webhook_routes.py`：`POST /taoyuan-dispatch/line/callback`
+  收到訊息事件時驗證簽章、交給 `taoyuan_dispatch_bot.handle_message()`
+  處理、回覆——比照 `management/routes/line_webhook_routes.py` 的拆法（
+  webhook 路由只管簽章驗證跟轉交，訊息處理邏輯都在另一個檔案）。
+- `services/taoyuan_dispatch_service.py` 新增：LINE 綁定（`bind_line_user()`
+  /`get_binding()`/`get_bound_personnel()`——`get_bound_personnel()` 即時
+  查目前的人員資格，不吃綁定當下的快照，因為資格之後可能被管理員修改）、
+  需求時段（`create_posting()`/`list_postings()`/`set_posting_status()`/
+  `list_open_postings_for_personnel()`——只回傳「人員資格符合、還沒報名
+  過」的開放需求）、報名（`register_for_posting()` 用 Firestore
+  transaction 包住查重複+寫入，`_evaluate_registration()` 抽成純函式方便
+  測試，`update_registration_status()`）。
+- `templates/taoyuan_dispatch_postings.html`、
+  `templates/taoyuan_dispatch_posting_registrations.html`：需求時段管理跟
+  報名審核頁面，UI 沿用 `delivery/templates/rider_shifts.html`／
+  `rider_shift_registrations.html`（報班媒合）的版面（篩選列/資料表/核准
+  駁回按鈕），只是多了「所需人員資格」複選欄位跟顯示。
+
+**LINE 上的操作指令**（人員直接傳文字訊息給桃園所派遣這組官方帳號）：
+
+| 指令 | 說明 |
+|---|---|
+| `綁定 姓名 電話` | 第一次使用要先綁定身分，例如「綁定 王小明 0912345678」，用姓名+電話比對既有人員資料 |
+| `需求列表` | 查看目前開放報名、符合自己人員資格、還沒報名過的需求 |
+| `報名 代碼` | 報名需求列表裡的某一筆（代碼是需求時段 Firestore 文件 ID 最後 6 碼，管理後台跟 LINE 訊息裡都會顯示） |
+| `我的報名` | 查詢自己報名紀錄的審核狀態 |
+
+管理員在 `/taoyuan-dispatch/postings` 開需求（地點/時段/人數/需要的人員
+資格，資格至少要勾一項），在報名名單頁面按「核准」或「駁回」——按下去
+的當下會直接推播 LINE 訊息通知該名人員審核結果（`push_message()` 送失敗
+不會擋住審核狀態的寫入，只是這則通知沒送到，審核結果本身還是有效）。
+
+**跟報班媒合（delivery 模組）的差異**：報班媒合核准/駁回不會主動推播，
+人員要自己傳「查詢報名狀態」查——因為那組帳號的 LINE Token 目前是透過
+`delivery-gas-project`（GAS）中轉，Python 這邊沒有直接握有 Token。桃園所
+派遣是全新帳號，Python 直接握有 Token，所以能做到主動推播，不需要人員
+自己查詢（不過「我的報名」指令還是留著，方便人員自己確認）。
+
+**使用者需要手動處理的步驟**（這次跟之前申請管理部 LINE 帳號時的流程
+一樣，材霈已經有經驗）：
+
+1. **申請/準備一個新的 LINE Official Account + Messaging API Channel**
+   （如果人資/業務團隊已經有一個要用在桃園所派遣的 LINE 官方帳號，直接
+   用那個帳號啟用 Messaging API 就好，不用申請新的）：
+   - 到 [LINE Developers Console](https://developers.line.biz/console/)
+     登入，選擇一個 Provider（沒有的話先建立一個），在底下建立一個新的
+     Messaging API Channel（或選擇既有的桃園所派遣官方帳號對應的
+     Channel）。
+   - 進到這個 Channel 的設定頁，「Messaging API」分頁：
+     - 找到 **Channel access token**，按「Issue」產生一組長效 token，
+       複製下來（這組等一下要貼到 Cloud Run 環境變數）。
+     - 回到「Basic settings」分頁，找到 **Channel secret**，複製下來
+       （同樣等一下要貼到 Cloud Run 環境變數）。
+     - 「Messaging API」分頁裡把 **Webhook 的開關（Use webhook）打開**。
+       **Auto-reply messages（自動回應訊息）、Greeting messages（加入
+       好友的歡迎訊息）建議都關閉**——不關閉的話 LINE 官方帳號預設的
+       罐頭回覆會跟我們自己的機器人搶著回覆，人員會同時收到兩則不一樣
+       的訊息。
+2. **打開材霈的 Google Cloud Shell**（跟之前部署流程一樣的操作方式），
+   確認目前在專案 `tsaipei-505807`：
+   ```bash
+   gcloud config set project tsaipei-505807
+   ```
+3. **把上面複製的兩組值設成 Cloud Run 環境變數**（下面指令裡
+   `貼上你的CHANNEL_ACCESS_TOKEN`、`貼上你的CHANNEL_SECRET` 要換成剛剛
+   複製的實際內容，整段貼上執行）：
+   ```bash
+   gcloud run services update recruitment-bot \
+     --region asia-east1 \
+     --update-env-vars TAOYUAN_DISPATCH_LINE_CHANNEL_ACCESS_TOKEN="貼上你的CHANNEL_ACCESS_TOKEN",TAOYUAN_DISPATCH_LINE_CHANNEL_SECRET="貼上你的CHANNEL_SECRET"
+   ```
+   這一步在做什麼：把這組 LINE 帳號的金鑰交給 Cloud Run 上跑的服務，
+   讓它可以代表這個官方帳號收發訊息。指令執行完會自動觸發一次新的
+   部署（跟平常 `git push` 觸發的部署是同一件事，只是這次是手動觸發），
+   跑完最後一行會顯示 `URL:` 開頭的服務網址，代表部署成功。
+4. **回到 LINE Developers Console，把 Webhook URL 設定成**：
+   ```
+   https://recruitment-bot-412901869672.asia-east1.run.app/taoyuan-dispatch/line/callback
+   ```
+   貼上後按「Verify」按鈕測試，應該會顯示成功（綠勾勾）——這一步在做
+   什麼：告訴 LINE，以後這個官方帳號收到的每一則訊息都要轉發到我們這支
+   網址。**如果 Verify 失敗，先確認上一步的環境變數指令有沒有跑完、有
+   沒有打錯字**，之後我可以幫忙一起排查。
+5. **確認整條流程有接通**：拿一支手機加這個桃園所派遣官方帳號好友，先
+   到 `/taoyuan-dispatch/personnel` 建一筆測試用的人員資料（姓名+電話），
+   再用那支手機傳「綁定 測試姓名 測試電話」，應該會收到「綁定成功」的
+   回覆。如果沒有回覆，先看 Cloud Run 的 Logs（`gcloud run services logs
+   read recruitment-bot --region asia-east1 --limit 50`）找
+   `[桃園所專區]` 開頭的錯誤訊息。
+
+新增測試：`tests/test_taoyuan_dispatch_bot.py`（指令解析
+`parse_command()`、`handle_message()` 綁定/需求列表/報名/我的報名各種
+情境）、`tests/test_taoyuan_dispatch_webhook_routes.py`（未設定 Channel
+Secret 回 503、缺簽章 header 回 400，跟管理部 webhook 測試同一種寫法）、
+`tests/test_taoyuan_dispatch_service.py`（新增綁定/需求時段/報名相關
+測試類別）、`tests/test_taoyuan_dispatch_routes.py`（新增開需求路由、
+核准/駁回推播路由測試）。全部測試（`python3 -m unittest discover -s
+tests -p "test_*.py"`）1848 個全數通過。
