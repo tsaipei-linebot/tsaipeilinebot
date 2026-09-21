@@ -7623,3 +7623,57 @@ delivery-gas-project 那個 repo。
 `tests/test_delivery_rider_csv_import.py`（`ParseShiftPostingCsvTests`）。
 全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）
 1758 個全數通過。
+
+## 桃園所專區：Phase 1（人員/地點管理，2026-09-21）
+
+桃園所有自己獨立的派遣業務（不是配送部的外送騎士）跟獨立的官方帳號，跟
+使用者討論過後確認的整體規劃：
+
+1. **入口權限**：不掛 `platform_accounts.MODULES` 那套模組權限勾選，改成
+   照「部門」卡權限——帳號的 `department` 是「桃園所」、或全平台管理員，
+   才看得到 `/portal` 上的「桃園所專區」卡片、進得去頁面。跟
+   `/contract-summary`（`contract_summary_routes.py` 的
+   `viewer_has_any_department_access()`）是同一種做法。
+2. **LINE 官方帳號**：下一階段會直接在 Cloud Run／Python 這邊處理（比照
+   招募主帳號 `main.py` 的 `/callback` 做法——這個系統本來就已經用這種
+   方式跑兩個 LINE 帳號了，不是新技術），不會像配送部那樣透過
+   delivery-gas-project 的 GAS 轉發——桃園所是全新帳號，沒有沿用 GAS
+   既有機制的包袱，直接做在 Python 這邊更單純，之後核准/駁回也能直接
+   主動推播通知人員（Python 直接握有這支帳號的 LINE Token）。
+3. **運作方式**：跟報班媒合一樣是「開需求時段（地點+時段+人數）→ 人員
+   報名→主管審核」，但人員資格會卡權限——人員名冊有「人員資格」欄位
+   （理貨/作業員/餐飲有體檢/餐飲無體檢，複選），開需求時段也要勾選這筆
+   需求屬於哪些資格類別，只有資格符合的人員看得到、能報名（下一階段
+   實作）。
+
+**這次（Phase 1）做的範圍**：新增 `services/taoyuan_dispatch_service.py`
+（人員/地點的 Firestore CRUD、CSV 匯入純函式解析、部門權限判斷
+`has_taoyuan_access()`）、`taoyuan_dispatch_routes.py`（`/taoyuan-dispatch`
+系列頁面路由，直接掛在根 app，不是像 delivery/hr/management 那樣獨立
+掛載的子系統，共用主平台登入 session）：
+
+- **人員管理**（`/taoyuan-dispatch/personnel`）：姓名、電話、人員資格
+  （複選，可事後修改），支援手動新增跟 CSV 批次匯入（已存在相同
+  「姓名+電話」的人員會自動略過）。CSV 的「人員資格」欄位可以填中文
+  名稱或代碼，逗號/頓號分隔多筆；看不懂的值只略過那一項資格，不會讓
+  整列匯入失敗。
+- **地點管理**（`/taoyuan-dispatch/locations`）：名稱、緯度、經度，支援
+  手動新增跟 CSV 批次匯入，可停用但不刪除（跟裝備品項/服務區域等既有
+  清單同一套設計語言）。
+- `portal_routes.py` 的 `portal_home()` 在既有模組權限迴圈之外，另外
+  判斷 `has_taoyuan_access()` 加一張卡片。
+
+**這次（Phase 1）刻意還沒做的**：LINE 官方帳號綁定（人員傳「姓名+電話」
+核對身份）、需求時段開單（含資格勾選）、人員報名、主管審核、核准/駁回
+主動推播——這些是下一階段的 PR。
+
+**這次不需要任何手動設定步驟**（部門「桃園所」、桃園所同仁帳號的部門
+設定，使用者已經自行完成）。下一階段實作 LINE 官方帳號時，會需要把
+Channel Token/Secret 設成 Cloud Run 環境變數。
+
+新增測試：`tests/test_taoyuan_dispatch_service.py`（人員/地點 CRUD、CSV
+解析、`has_taoyuan_access()`）、`tests/test_taoyuan_dispatch_routes.py`
+（未登入導向、部門權限判斷、新增人員/地點路由）、`tests/test_portal.py`
+（`PortalHomeTaoyuanDispatchCardTests`，卡片依部門顯示/隱藏）。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1790 個全數
+通過。

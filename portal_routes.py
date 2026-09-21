@@ -22,6 +22,7 @@ import platform_accounts
 import platform_announcements
 from platform_announcements import ANNOUNCEMENT_DEFAULT_DAYS
 from platform_templating import templates
+from services.taoyuan_dispatch_service import has_taoyuan_access
 
 router = APIRouter()
 
@@ -126,6 +127,19 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
                 "description": info.get("description", ""),
                 "href": info.get("href", f"/{module['code']}/login"),
                 "help_href": info.get("help_href", ""),
+            }
+        )
+    # 桃園所專區（2026-09-21 新增）：不掛進 platform_accounts.MODULES，
+    # 能不能看到照「部門」判斷（見 services/taoyuan_dispatch_service.py
+    # 開頭說明），不是模組權限勾選，所以這裡另外判斷、另外加一張卡片，
+    # 跟上面那個迴圈分開。
+    if has_taoyuan_access(account):
+        cards.append(
+            {
+                "name": "桃園所專區",
+                "description": "桃園所派遣人員/地點管理（第一階段：需求媒合功能陸續上線中）",
+                "href": "/taoyuan-dispatch",
+                "help_href": "",
             }
         )
     return templates.TemplateResponse(
