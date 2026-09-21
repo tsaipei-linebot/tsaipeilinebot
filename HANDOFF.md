@@ -7476,3 +7476,44 @@ vendor_change.py`（`BulkUpdatePersonnelCooperationTypeVendorMatchTests`，
 （人員詳細頁 context 有帶上 `cooperation_types_by_vendor`）。全部測試
 （`python3 -m unittest discover -s tests -p "test_*.py"`）1716 個全數
 通過。
+
+### 追加：一次性腳本把既有人員的合作方式按廠商唯一對應自動補齊（2026-09-21）
+
+使用者需求：很多人員已經選好「所屬廠商」，但「合作方式」還沒填——使用者
+已經確認過，這些人目前的廠商在合作方式管理裡都是唯一對應（不是一個廠商
+同時掛著好幾種合作方式那種情境），要求一次補齊，不用等同仁一筆一筆去
+人員詳細頁手動點。
+
+新增 `scripts/fill_personnel_cooperation_type.py`，做法跟
+`scripts/seed_cooperation_types.py` 同一套模式（純函式 `plan_fill()` 負責
+規劃、不碰 Firestore 寫入，方便寫單元測試；`main()` 才是真的查資料/寫入
+的部分）：
+
+- 只處理「合作方式目前是空的」人員，已經填過的（不管是不是這裡會自動
+  判斷出來的值）一律跳過，不會覆蓋同仁手動修正過的資料。
+- 只有「這個人的廠商目前剛好對應到唯一一種合作方式」才會自動補上——
+  對應到不只一種、或完全沒有對應到任何選項的，都列出來但不自動處理，
+  避免猜錯人員身份（會影響外送員接單媒合的承攬/雇傭資格判斷，猜錯的
+  代價比留白還高）。
+- 沒有選廠商的人員不在處理範圍內，一併跳過。
+- 執行前會先印出即將變更的完整名單，要求輸入 `yes` 才會真的寫入。
+
+**使用方式**（在 Cloud Shell，位於 repo 根目錄）：
+
+```
+python -m scripts.fill_personnel_cooperation_type
+```
+
+看到印出來的名單確認沒問題後輸入 `yes` 執行。如果印出「無法自動判斷、
+需要人工處理」的名單，代表那些人的廠商在「合作方式管理」裡還是對應到
+不只一種（或零種）合作方式，麻煩到 `/delivery/cooperation-types` 把
+「適用廠商」的勾選調整成真的唯一對應之後，可以重新執行這支腳本（已經
+補過的人不會被動到，安全地重複執行）。
+
+**這次不需要額外的 Cloud Run/GitHub 設定**，純粹是一次性的資料補齊
+腳本。
+
+新增測試：`tests/test_fill_personnel_cooperation_type.py`
+（`PlanFillTests`，涵蓋唯一對應/已填過/沒廠商/多選項/零選項五種情境）。
+全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）
+1722 個全數通過。
