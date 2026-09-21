@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}桃園所地點管理 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">桃園所地點管理</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<h2 class="section-title">新增地點</h2>
+<form method="post" action="/taoyuan-dispatch/locations/new" class="form-stack form-narrow">
+    <label>地點名稱
+        <input type="text" name="name" required>
+    </label>
+    <label>緯度
+        <input type="text" name="lat" required placeholder="例如：24.9880">
+    </label>
+    <label>經度
+        <input type="text" name="lng" required placeholder="例如：121.3141">
+    </label>
+    <button type="submit" class="btn btn-primary">新增</button>
+</form>
+
+<h2 class="section-title">批次匯入</h2>
+<p class="hint">上傳 CSV 檔案（UTF-8 或 Big5 皆可），欄位需包含「地點」「緯度」「經度」。</p>
+<p><a href="/taoyuan-dispatch/locations/import/template.csv">下載範例 CSV 範本</a></p>
+<form method="post" action="/taoyuan-dispatch/locations/import" enctype="multipart/form-data" class="inline-form">
+    <input type="file" name="file" accept=".csv,text/csv" required>
+    <button type="submit" class="btn btn-primary">上傳並匯入</button>
+</form>
+
+{% if import_result %}
+    {% if import_result.header_error %}
+    <p class="error">檔案格式錯誤：{{ import_result.header_error }}</p>
+    {% else %}
+    <p class="meta">成功建立 {{ import_result.created|length }} 筆，失敗 {{ import_result.failed|length }} 筆。</p>
+    {% if import_result.failed %}
+    <table class="data-table">
+        <thead><tr><th>列</th><th>地點</th><th>失敗原因</th></tr></thead>
+        <tbody>
+            {% for r in import_result.failed %}
+            <tr><td>{{ r.row }}</td><td>{{ r.name }}</td><td>{{ r.error }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+{% endif %}
+
+<h2 class="section-title">地點清單</h2>
+{% if locations %}
+<table class="data-table">
+    <thead>
+        <tr><th>名稱</th><th>緯度</th><th>經度</th><th>狀態</th><th>修改</th></tr>
+    </thead>
+    <tbody>
+        {% for loc in locations %}
+        <tr>
+            <td>{{ loc.name }}</td>
+            <td>{{ loc.lat }}</td>
+            <td>{{ loc.lng }}</td>
+            <td><span class="badge {{ 'badge-ok' if loc.active else 'badge-resigned' }}">{{ "啟用" if loc.active else "停用" }}</span></td>
+            <td>
+                <form method="post" action="/taoyuan-dispatch/locations/{{ loc.id }}/active" style="display:inline">
+                    <input type="hidden" name="active" value="{{ '0' if loc.active else '1' }}">
+                    <button type="submit" class="btn btn-small {{ 'btn-danger' if loc.active else '' }}">{{ "停用" if loc.active else "啟用" }}</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有任何地點。</p>
+{% endif %}
+
+<p class="back-link"><a href="/taoyuan-dispatch">&larr; 回桃園所專區</a></p>
+{% endblock %}
