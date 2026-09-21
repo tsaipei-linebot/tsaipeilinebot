@@ -7793,3 +7793,54 @@ Secret 回 503、缺簽章 header 回 400，跟管理部 webhook 測試同一種
 測試類別）、`tests/test_taoyuan_dispatch_routes.py`（新增開需求路由、
 核准/駁回推播路由測試）。全部測試（`python3 -m unittest discover -s
 tests -p "test_*.py"`）1848 個全數通過。
+
+## 修正自動公告誤把「Merge pull request」合併說明當成公告標題（2026-09-21）
+
+`.github/workflows/deploy.yml` 部署成功後的「系統更新自動公告」邏輯，
+原本假設 PR 合併 commit 是 GitHub 網頁版「Squash and merge」那種格式
+（`PR 標題 (#NNN)`），直接把 commit 訊息第一行當公告標題。但這個 repo
+實際合併 PR 用的是一般合併（`git merge`／「Create a merge commit」），
+commit 訊息格式其實是「Merge pull request #NNN from owner/branch」加
+空行加 PR 標題——導致從 2026-09-19 自動公告功能上線後，**每一次**自動
+公告的標題都變成這種使用者看不懂的技術性合併說明，真正的 PR 標題反而
+被塞進公告內文。使用者在 `/portal` 看到 PR #174 合併後的公告標題長這樣
+才發現這個問題。
+
+**修正邏輯**：先判斷 commit 訊息第一行是不是「Merge pull request #NNN
+from ...」這種格式，是的話改抓空行之後的第一行（真正的 PR 標題）當公告
+標題；不是的話（例如哪天改成 squash 合併）才照原本假設的邏輯處理，
+保留向後相容。順便把過濾 `Claude-Session`/`Co-Authored-By` 這兩行的
+`grep` 改成不分大小寫（原本的大小寫沒對到我們實際使用的 trailer 格式）。
+
+**舊公告怎麼辦**：這個修正只影響「之後」新發的公告，已經發出去的舊公告
+資料不會自動被改掉。使用者選擇用一次性遷移腳本補救（而不是逐一手動
+刪除重發），新增 `scripts/fix_legacy_announcement_titles.py`，做法跟
+`scripts/fill_personnel_cooperation_type.py` 同一套模式（純函式
+`plan_fix()` 負責規劃、不碰 Firestore 寫入，方便寫單元測試；`main()`
+才是真的查資料/寫入的部分）：
+
+- 只處理標題符合「Merge pull request #NNN from ...」這個技術性格式的
+  公告，其他（含手動在網頁上發的正常公告）一律跳過不動。
+- 內文第一行當新標題、其餘行當新內文；正常情況下內文只有一行（PR
+  標題本身），修正後新內文會是空字串。
+- 內文也是空的（沒辦法從內文救回真正標題）的公告列出來但不亂猜、不
+  刪除，需要到 `/announcements` 手動處理。
+- 執行前會先印出即將變更的完整名單，要求輸入 `yes` 才會真的寫入。
+
+新增 `platform_announcements.update_announcement_title(announcement_id,
+title, content)`，公告管理頁本身目前沒有編輯功能（只有新增/停用/刪除），
+這個函式目前只有這支遷移腳本在用。
+
+**使用方式**（在 Cloud Shell，位於 repo 根目錄，部署完這次修正之後再跑）：
+
+```bash
+python -m scripts.fix_legacy_announcement_titles
+```
+
+看到印出來的名單確認沒問題後輸入 `yes` 執行。這支腳本只需要跑這一次，
+之後新發的公告已經不會再有這個問題。
+
+新增測試：`tests/test_fix_legacy_announcement_titles.py`（`plan_fix()`
+規劃邏輯）、`tests/test_platform_announcements.py`
+（`UpdateAnnouncementTitleTests`）。全部測試（`python3 -m unittest
+discover -s tests -p "test_*.py"`）1856 個全數通過。

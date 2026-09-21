@@ -110,6 +110,19 @@ def create_announcement(title: str, content: str, created_by: str = "", days: in
     return doc_ref.id
 
 
+def update_announcement_title(announcement_id: str, title: str, content: str) -> bool:
+    """改標題/內文，目前只有 `scripts/fix_legacy_announcement_titles.py`
+    這支一次性遷移腳本在用（修正 2026-09-19～2026-09-21 之間，自動公告
+    邏輯誤判合併 commit 格式、把技術性的「Merge pull request #NNN
+    from...」說明當成標題的舊公告）——公告管理頁本身目前沒有編輯功能，
+    只有新增/停用/刪除（見 portal_routes.py）。"""
+    ref = announcements_ref().document(announcement_id)
+    if not ref.get().exists:
+        return False
+    ref.update({"title": title, "content": content})
+    return True
+
+
 def set_announcement_active(announcement_id: str, active: bool) -> bool:
     ref = announcements_ref().document(announcement_id)
     if not ref.get().exists:
