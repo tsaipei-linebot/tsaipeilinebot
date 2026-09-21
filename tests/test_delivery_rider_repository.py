@@ -419,41 +419,54 @@ class UpsertRiderBindingPersonnelLinkTests(unittest.TestCase):
 
 class RiderFeatureCategoryTests(unittest.TestCase):
     """2026-09-21 新增：即時接單只給承攬、報班媒合只給雇傭，資格照這個人
-    在人員名冊裡「目前」的合作方式即時查詢決定，不是綁定當下寫死。"""
+    在人員名冊裡「目前」的合作方式即時查詢決定，不是綁定當下寫死。
 
-    def test_no_personnel_id_returns_empty_string(self):
+    2026-09-21 修正：原本靠 binding.personnel_id 這個綁定當下存的快照，
+    導致綁定之後才在人員名冊補工號/合作方式分類時，畫面看不到最新結果，
+    改成每次都拿 binding.employee_id 現查一次人員名冊（find_personnel_
+    by_employee_no），這裡的測試改成 mock 這支函式，不再 mock get_personnel。"""
+
+    def test_no_employee_id_returns_empty_string(self):
         self.assertEqual(rider_repository.rider_feature_category({}), "")
 
     def test_personnel_not_found_returns_empty_string(self):
-        with mock.patch.object(rider_repository.repository, "get_personnel", return_value=None):
-            self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "")
+        with mock.patch.object(rider_repository.repository, "find_personnel_by_employee_no", return_value=None):
+            self.assertEqual(rider_repository.rider_feature_category({"employee_id": "E1"}), "")
 
     def test_no_cooperation_type_returns_empty_string(self):
-        with mock.patch.object(rider_repository.repository, "get_personnel", return_value={"cooperation_type": ""}):
-            self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "")
+        with mock.patch.object(
+            rider_repository.repository, "find_personnel_by_employee_no", return_value={"cooperation_type": ""}
+        ):
+            self.assertEqual(rider_repository.rider_feature_category({"employee_id": "E1"}), "")
 
     def test_cooperation_type_without_category_returns_empty_string(self):
-        with mock.patch.object(rider_repository.repository, "get_personnel", return_value={"cooperation_type": "x"}):
+        with mock.patch.object(
+            rider_repository.repository, "find_personnel_by_employee_no", return_value={"cooperation_type": "x"}
+        ):
             with mock.patch.object(rider_repository.repository, "get_cooperation_type", return_value={"category": ""}):
-                self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "")
+                self.assertEqual(rider_repository.rider_feature_category({"employee_id": "E1"}), "")
 
     def test_returns_contract_category(self):
         with mock.patch.object(
-            rider_repository.repository, "get_personnel", return_value={"cooperation_type": "two_wheel_contract"}
+            rider_repository.repository,
+            "find_personnel_by_employee_no",
+            return_value={"cooperation_type": "two_wheel_contract"},
         ):
             with mock.patch.object(
                 rider_repository.repository, "get_cooperation_type", return_value={"category": "contract"}
             ):
-                self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "contract")
+                self.assertEqual(rider_repository.rider_feature_category({"employee_id": "E1"}), "contract")
 
     def test_returns_employed_category(self):
         with mock.patch.object(
-            rider_repository.repository, "get_personnel", return_value={"cooperation_type": "two_wheel_employed"}
+            rider_repository.repository,
+            "find_personnel_by_employee_no",
+            return_value={"cooperation_type": "two_wheel_employed"},
         ):
             with mock.patch.object(
                 rider_repository.repository, "get_cooperation_type", return_value={"category": "employed"}
             ):
-                self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "employed")
+                self.assertEqual(rider_repository.rider_feature_category({"employee_id": "E1"}), "employed")
 
 
 if __name__ == "__main__":

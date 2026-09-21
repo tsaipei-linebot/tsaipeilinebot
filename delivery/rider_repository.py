@@ -56,11 +56,12 @@ def upsert_rider_binding(user_id: str, employee_id: str, name: str) -> None:
     全新綁定才預設 active。
 
     2026-09-21 新增 personnel_id：拿騎士自己輸入的工號去人員名冊
-    （delivery_personnel）核對，核對到才存這個關聯欄位——即時接單/報班
-    媒合能不能用，是照這個人在人員名冊裡「目前」的合作方式即時判斷（見
-    rider_feature_category()），不是綁定當下就寫死，所以這裡每次同步都
-    重新查一次，不是只在第一次綁定時查。工號核對不到（打錯、或這個人
-    還沒建到人員名冊）時 personnel_id 存空字串，等同兩個功能都不能用。"""
+    （delivery_personnel）核對，核對到才存這個關聯欄位，方便後台顯示/除錯
+    用（例如將來要連到人員詳細頁）。**注意：即時接單/報班媒合能不能用，
+    不是靠這個欄位判斷**——那個判斷是 rider_feature_category() 每次都
+    拿 employee_id 現查一次人員名冊，不會有「這裡沒即時更新」的問題；這裡
+    存的 personnel_id 只是快照，工號核對不到（打錯、或這個人還沒建到
+    人員名冊）時存空字串。"""
     ref = rider_bindings_ref().document(user_id)
     snapshot = ref.get()
     status = RIDER_STATUS_ACTIVE
@@ -83,11 +84,18 @@ def rider_feature_category(binding: dict) -> str:
     """回傳這位騎士目前對應到人員名冊的合作方式分類（COOPERATION_CATEGORY_
     CONTRACT／COOPERATION_CATEGORY_EMPLOYED）。查不到人員資料、查無合作
     方式、或合作方式沒有設定分類，一律回傳空字串，呼叫端視同兩個功能都
-    不能用——即時接單只給承攬、報班媒合只給雇傭（見 rider_events.py）。"""
-    personnel_id = (binding or {}).get("personnel_id") or ""
-    if not personnel_id:
+    不能用——即時接單只給承攬、報班媒合只給雇傭（見 rider_events.py）。
+
+    2026-09-21 修正：改成每次都拿 binding.employee_id 現查一次人員名冊
+    （不是讀 binding.personnel_id 這個綁定當下存的快照）。原本的寫法會
+    導致綁定之後才在人員名冊補工號/合作方式分類時，「騎士名單管理」畫面
+    看不到最新結果，要等騎士重新綁定或管理員重跑 GAS 的
+    backfillRiderBindings8() 才會更新——不符合原本設計「即時查、不是
+    綁定當下寫死」的初衷，所以拿掉這個中間快照欄位的依賴。"""
+    employee_id = (binding or {}).get("employee_id") or ""
+    if not employee_id:
         return ""
-    personnel = repository.get_personnel(personnel_id)
+    personnel = repository.find_personnel_by_employee_no(employee_id)
     if not personnel:
         return ""
     coop = repository.get_cooperation_type(personnel.get("cooperation_type") or "")
