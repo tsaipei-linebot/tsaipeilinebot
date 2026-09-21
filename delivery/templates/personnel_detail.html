@@ -63,6 +63,10 @@
             到職日期
             <input type="date" name="hire_date" value="{{ person.hire_date or '' }}">
         </label>
+        <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+            工號
+            <input type="text" name="employee_no" value="{{ person.employee_no or '' }}" placeholder="外送員接單媒合用">
+        </label>
     </div>
 
     <button type="submit" class="btn btn-primary btn-bulk-update">一鍵全部更新</button>

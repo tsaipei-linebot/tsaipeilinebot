@@ -48,7 +48,7 @@ class GetCooperationTypeTests(unittest.TestCase):
 
     def test_returns_data_with_id_default_active_and_vendors(self):
         snapshot = _fake_doc_snapshot(
-            True, {"name": "二輪承攬", "vendors": ["shopee"]}, doc_id="two_wheel_contract"
+            True, {"name": "二輪承攬", "vendors": ["shopee"], "category": "contract"}, doc_id="two_wheel_contract"
         )
         fake_collection, _ = _fake_collection(snapshot)
         with mock.patch.object(repository, "cooperation_types_ref", return_value=fake_collection):
@@ -56,7 +56,15 @@ class GetCooperationTypeTests(unittest.TestCase):
         self.assertEqual(coop["id"], "two_wheel_contract")
         self.assertEqual(coop["name"], "二輪承攬")
         self.assertEqual(coop["vendors"], ["shopee"])
+        self.assertEqual(coop["category"], "contract")
         self.assertTrue(coop["active"])
+
+    def test_missing_category_field_defaults_to_empty_string(self):
+        snapshot = _fake_doc_snapshot(True, {"name": "順豐專用"}, doc_id="x")
+        fake_collection, _ = _fake_collection(snapshot)
+        with mock.patch.object(repository, "cooperation_types_ref", return_value=fake_collection):
+            coop = repository.get_cooperation_type("x")
+        self.assertEqual(coop["category"], "")
 
     def test_missing_vendors_field_defaults_to_empty_list(self):
         snapshot = _fake_doc_snapshot(True, {"name": "順豐專用"}, doc_id="x")
@@ -112,13 +120,18 @@ class CreateCooperationTypeTests(unittest.TestCase):
         fake_collection.document.return_value = fake_doc_ref
         with mock.patch.object(repository, "cooperation_types_ref", return_value=fake_collection):
             result = repository.create_cooperation_type(
-                "二輪承攬", ["shopee", "shopee_speed_warehouse"], type_id="two_wheel_contract", created_by="gary"
+                "二輪承攬",
+                ["shopee", "shopee_speed_warehouse"],
+                category="contract",
+                type_id="two_wheel_contract",
+                created_by="gary",
             )
         fake_collection.document.assert_called_once_with("two_wheel_contract")
         self.assertEqual(result, "two_wheel_contract")
         payload = fake_doc_ref.set.call_args.args[0]
         self.assertEqual(payload["name"], "二輪承攬")
         self.assertEqual(payload["vendors"], ["shopee", "shopee_speed_warehouse"])
+        self.assertEqual(payload["category"], "contract")
         self.assertTrue(payload["active"])
 
     def test_blank_id_uses_auto_generated_document_id(self):
@@ -136,11 +149,12 @@ class UpdateCooperationTypeTests(unittest.TestCase):
     def test_updates_name_and_vendors(self):
         fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True))
         with mock.patch.object(repository, "cooperation_types_ref", return_value=fake_collection):
-            result = repository.update_cooperation_type("x", "新名稱", ["ud", "uc"])
+            result = repository.update_cooperation_type("x", "新名稱", ["ud", "uc"], category="employed")
         self.assertTrue(result)
         payload = fake_doc_ref.update.call_args.args[0]
         self.assertEqual(payload["name"], "新名稱")
         self.assertEqual(payload["vendors"], ["ud", "uc"])
+        self.assertEqual(payload["category"], "employed")
 
     def test_returns_false_when_missing(self):
         fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(False))
@@ -254,23 +268,33 @@ class CooperationTypeAdminRoutesTests(unittest.TestCase):
         self.assertTrue(context["cooperation_types"][0]["has_history"])
 
     def test_create_calls_repository_with_checked_vendors(self):
-        form = _FakeFormData({"name": "二輪承攬"}, {"vendors": ["shopee", "shopee_speed_warehouse"]})
+        form = _FakeFormData(
+            {"name": "二輪承攬", "category": "contract"}, {"vendors": ["shopee", "shopee_speed_warehouse"]}
+        )
         with mock.patch.object(vendor_routes.repository, "create_cooperation_type") as mock_create:
             resp = asyncio.run(
                 vendor_routes.create_cooperation_type_submit(_FakeRequest(_admin_account(), form), redirect=None)
             )
         mock_create.assert_called_once_with(
-            "二輪承攬", ["shopee", "shopee_speed_warehouse"], created_by="alice"
+            "二輪承攬", ["shopee", "shopee_speed_warehouse"], category="contract", created_by="alice"
         )
         self.assertEqual(resp.status_code, 303)
 
     def test_create_ignores_unknown_vendor_codes(self):
-        form = _FakeFormData({"name": "測試"}, {"vendors": ["shopee", "made-up"]})
+        form = _FakeFormData({"name": "測試", "category": "employed"}, {"vendors": ["shopee", "made-up"]})
         with mock.patch.object(vendor_routes.repository, "create_cooperation_type") as mock_create:
             asyncio.run(
                 vendor_routes.create_cooperation_type_submit(_FakeRequest(_admin_account(), form), redirect=None)
             )
-        mock_create.assert_called_once_with("測試", ["shopee"], created_by="alice")
+        mock_create.assert_called_once_with("測試", ["shopee"], category="employed", created_by="alice")
+
+    def test_create_ignores_unknown_category(self):
+        form = _FakeFormData({"name": "測試", "category": "made-up"}, {"vendors": ["shopee"]})
+        with mock.patch.object(vendor_routes.repository, "create_cooperation_type") as mock_create:
+            asyncio.run(
+                vendor_routes.create_cooperation_type_submit(_FakeRequest(_admin_account(), form), redirect=None)
+            )
+        mock_create.assert_called_once_with("測試", ["shopee"], category="", created_by="alice")
 
     def test_create_blank_name_is_ignored(self):
         form = _FakeFormData({"name": "   "}, {"vendors": ["shopee"]})
@@ -281,14 +305,14 @@ class CooperationTypeAdminRoutesTests(unittest.TestCase):
         mock_create.assert_not_called()
 
     def test_edit_calls_repository(self):
-        form = _FakeFormData({"name": "新名稱"}, {"vendors": ["ud"]})
+        form = _FakeFormData({"name": "新名稱", "category": "employed"}, {"vendors": ["ud"]})
         with mock.patch.object(vendor_routes.repository, "update_cooperation_type") as mock_update:
             resp = asyncio.run(
                 vendor_routes.edit_cooperation_type_submit(
                     "x", _FakeRequest(_admin_account(), form), redirect=None
                 )
             )
-        mock_update.assert_called_once_with("x", "新名稱", ["ud"])
+        mock_update.assert_called_once_with("x", "新名稱", ["ud"], category="employed")
         self.assertEqual(resp.status_code, 303)
 
     def test_toggle_active_calls_repository(self):

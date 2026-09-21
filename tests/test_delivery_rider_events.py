@@ -56,30 +56,88 @@ class _ActiveBindingMixin:
 
 
 class TextKeywordDispatchTests(_ActiveBindingMixin, unittest.TestCase):
+    """2026-09-21 起，即時接單關鍵字要求 rider_feature_category() 回傳
+    「承攬」、報班媒合關鍵字要求回傳「雇傭」，這裡每個情境各自 patch
+    對應的分類，跟資格判斷本身的邊界情況（見 EligibilityGatingTests）
+    分開測。"""
+
     def test_nearby_order_keyword_prompts_location_share(self):
         """2026-09-19 改成附上 Quick Reply「位置」按鈕，一鍵分享位置，不用
         自己點左下角「+」→「位置資訊」（見 rider_messages.py）。"""
-        with mock.patch.object(rider_repository, "set_awaiting_location") as mock_set:
-            messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "查詢附近單"})
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="contract"):
+            with mock.patch.object(rider_repository, "set_awaiting_location") as mock_set:
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "查詢附近單"})
         mock_set.assert_called_once_with("U1")
         self.assertEqual(len(messages), 1)
         self.assertIn("分享", messages[0]["text"])
         self.assertEqual(messages[0]["quickReply"]["items"][0]["action"]["type"], "location")
 
     def test_shift_list_keyword_with_no_open_shifts(self):
-        with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=[]):
-            messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "瀏覽報班"})
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="employed"):
+            with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=[]):
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "瀏覽報班"})
         self.assertIn("沒有開放中的報班時段", messages[0]["text"])
 
     def test_shift_list_keyword_with_open_shifts_returns_carousel(self):
         shifts = [{"id": "s1", "location": "中和門市", "capacity": 3, "registered_count": 1, "start_time": 0, "end_time": 0}]
-        with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=shifts):
-            messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "瀏覽報班"})
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="employed"):
+            with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=shifts):
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "瀏覽報班"})
         self.assertEqual(messages[0]["type"], "flex")
 
     def test_unrecognized_text_returns_no_messages(self):
         messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "今天天氣真好"})
         self.assertEqual(messages, [])
+
+
+class EligibilityGatingTests(_ActiveBindingMixin, unittest.TestCase):
+    """2026-09-21 新增：即時接單限承攬、報班媒合限雇傭，身份不符（含工號
+    對不到人員名冊、合作方式沒設定分類等情況，rider_feature_category()
+    一律回傳空字串）都要擋下，不能走到查詢/操作邏輯。"""
+
+    def test_order_keyword_blocked_for_employed_category(self):
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="employed"):
+            with mock.patch.object(rider_repository, "set_awaiting_location") as mock_set:
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "查詢附近單"})
+        mock_set.assert_not_called()
+        self.assertIn("即時接單僅限承攬", messages[0]["text"])
+
+    def test_order_keyword_blocked_when_category_unresolved(self):
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value=""):
+            messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "查詢附近單"})
+        self.assertIn("即時接單僅限承攬", messages[0]["text"])
+
+    def test_shift_keyword_blocked_for_contract_category(self):
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="contract"):
+            with mock.patch.object(rider_repository, "list_open_shift_postings") as mock_list:
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "瀏覽報班"})
+        mock_list.assert_not_called()
+        self.assertIn("報班媒合僅限雇傭", messages[0]["text"])
+
+    def test_claim_store_postback_blocked_for_employed_category(self):
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="employed"):
+            with mock.patch.object(rider_repository, "get_store_delivery") as mock_get:
+                messages = rider_events.handle_rider_event(
+                    {"userId": "U1", "type": "postback", "postback_data": "action=CLAIM_STORE&storeId=store1"}
+                )
+        mock_get.assert_not_called()
+        self.assertIn("即時接單僅限承攬", messages[0]["text"])
+
+    def test_shift_list_postback_blocked_for_contract_category(self):
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="contract"):
+            with mock.patch.object(rider_repository, "list_open_shift_postings") as mock_list:
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "postback", "postback_data": "action=SHIFT_LIST"})
+        mock_list.assert_not_called()
+        self.assertIn("報班媒合僅限雇傭", messages[0]["text"])
+
+    def test_register_shift_postback_blocked_for_contract_category(self):
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="contract"):
+            with mock.patch.object(rider_repository, "register_shift") as mock_register:
+                messages = rider_events.handle_rider_event(
+                    {"userId": "U1", "type": "postback", "postback_data": "action=REGISTER_SHIFT&shiftId=shift1"}
+                )
+        mock_register.assert_not_called()
+        self.assertIn("報班媒合僅限雇傭", messages[0]["text"])
 
 
 class QuantityInputDispatchTests(_ActiveBindingMixin, unittest.TestCase):
@@ -161,32 +219,36 @@ class LocationDispatchTests(_ActiveBindingMixin, unittest.TestCase):
 class PostbackDispatchTests(_ActiveBindingMixin, unittest.TestCase):
     def test_claim_store_postback_sets_pending_claim_and_prompts_quantity(self):
         store = {"id": "store1", "store_name": "中和門市", "status": "open", "remaining_quantity": 5}
-        with mock.patch.object(rider_repository, "get_store_delivery", return_value=store):
-            with mock.patch.object(rider_repository, "set_pending_claim") as mock_set:
-                messages = rider_events.handle_rider_event(
-                    {"userId": "U1", "type": "postback", "postback_data": "action=CLAIM_STORE&storeId=store1"}
-                )
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="contract"):
+            with mock.patch.object(rider_repository, "get_store_delivery", return_value=store):
+                with mock.patch.object(rider_repository, "set_pending_claim") as mock_set:
+                    messages = rider_events.handle_rider_event(
+                        {"userId": "U1", "type": "postback", "postback_data": "action=CLAIM_STORE&storeId=store1"}
+                    )
         mock_set.assert_called_once_with("U1", "store1")
         self.assertIn("剩餘可承接量", messages[0]["text"])
 
     def test_claim_store_postback_for_closed_store(self):
-        with mock.patch.object(rider_repository, "get_store_delivery", return_value=None):
-            messages = rider_events.handle_rider_event(
-                {"userId": "U1", "type": "postback", "postback_data": "action=CLAIM_STORE&storeId=gone"}
-            )
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="contract"):
+            with mock.patch.object(rider_repository, "get_store_delivery", return_value=None):
+                messages = rider_events.handle_rider_event(
+                    {"userId": "U1", "type": "postback", "postback_data": "action=CLAIM_STORE&storeId=gone"}
+                )
         self.assertIn("已經不存在或已關閉", messages[0]["text"])
 
     def test_register_shift_postback_calls_register_shift(self):
-        with mock.patch.object(rider_repository, "register_shift", return_value=(True, "報名成功！")) as mock_register:
-            messages = rider_events.handle_rider_event(
-                {"userId": "U1", "type": "postback", "postback_data": "action=REGISTER_SHIFT&shiftId=shift1"}
-            )
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="employed"):
+            with mock.patch.object(rider_repository, "register_shift", return_value=(True, "報名成功！")) as mock_register:
+                messages = rider_events.handle_rider_event(
+                    {"userId": "U1", "type": "postback", "postback_data": "action=REGISTER_SHIFT&shiftId=shift1"}
+                )
         mock_register.assert_called_once_with("shift1", "U1", "小明")
         self.assertIn("報名成功", messages[0]["text"])
 
     def test_shift_list_postback_returns_carousel_or_empty_message(self):
-        with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=[]):
-            messages = rider_events.handle_rider_event({"userId": "U1", "type": "postback", "postback_data": "action=SHIFT_LIST"})
+        with mock.patch.object(rider_repository, "rider_feature_category", return_value="employed"):
+            with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=[]):
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "postback", "postback_data": "action=SHIFT_LIST"})
         self.assertIn("沒有開放中的報班時段", messages[0]["text"])
 
     def test_unrecognized_postback_action_returns_no_messages(self):

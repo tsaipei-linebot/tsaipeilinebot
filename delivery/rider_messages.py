@@ -29,6 +29,14 @@ def blocked_message() -> dict:
     return text_message("您目前無法使用這項功能，如有疑問請聯絡配送部管理員。")
 
 
+def not_eligible_for_order_message() -> dict:
+    return text_message("即時接單僅限承攬身份的合作騎士使用，您目前登記的合作身份無法使用這項功能，如有疑問請聯絡配送部管理員。")
+
+
+def not_eligible_for_shift_message() -> dict:
+    return text_message("報班媒合僅限雇傭身份的合作騎士使用，您目前登記的合作身份無法使用這項功能，如有疑問請聯絡配送部管理員。")
+
+
 def prompt_share_location_message() -> dict:
     """請騎士分享目前位置——訊息本身附上一顆 LINE 的 Quick Reply「位置」
     按鈕（點一下直接跳出 LINE 內建的位置選擇畫面），不用像純文字說明那樣

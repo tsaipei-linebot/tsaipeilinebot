@@ -82,6 +82,8 @@ def _handle_postback(user_id: str, binding: dict, data: str) -> list:
     action = params.get("action", "")
 
     if action == "CLAIM_STORE":
+        if not _is_eligible_for_order(binding):
+            return [rider_messages.not_eligible_for_order_message()]
         store = rider_repository.get_store_delivery(params.get("storeId", ""))
         if not store or store.get("status") != rider_repository.STORE_DELIVERY_STATUS_OPEN:
             return [rider_messages.text_message("這筆門市當日量已經不存在或已關閉，請重新查詢附近單。")]
@@ -89,9 +91,13 @@ def _handle_postback(user_id: str, binding: dict, data: str) -> list:
         return [rider_messages.prompt_claim_quantity_message(store)]
 
     if action == "SHIFT_LIST":
+        if not _is_eligible_for_shift(binding):
+            return [rider_messages.not_eligible_for_shift_message()]
         return _list_open_shifts()
 
     if action == "REGISTER_SHIFT":
+        if not _is_eligible_for_shift(binding):
+            return [rider_messages.not_eligible_for_shift_message()]
         _, message = rider_repository.register_shift(params.get("shiftId", ""), user_id, binding.get("name", ""))
         return [rider_messages.text_message(message)]
 
@@ -116,12 +122,30 @@ _NEARBY_ORDER_KEYWORDS = {"查詢附近單", "即時接單", "附近單"}
 _SHIFT_LIST_KEYWORDS = {"瀏覽報班", "報班媒合", "報班"}
 
 
+def _is_eligible_for_order(binding: dict) -> bool:
+    """即時接單僅限合作方式屬於「承攬」的騎士（見 config.py 的
+    COOPERATION_CATEGORY_CONTRACT）——資格照這個人在人員名冊裡「目前」的
+    合作方式即時查詢，工號核對不到人員名冊資料、或合作方式沒設定分類，
+    都視同不符資格。"""
+    return rider_repository.rider_feature_category(binding) == rider_repository.COOPERATION_CATEGORY_CONTRACT
+
+
+def _is_eligible_for_shift(binding: dict) -> bool:
+    """報班媒合僅限合作方式屬於「雇傭」的騎士，跟 _is_eligible_for_order()
+    是同一種判斷方式，只是比對的分類不同。"""
+    return rider_repository.rider_feature_category(binding) == rider_repository.COOPERATION_CATEGORY_EMPLOYED
+
+
 def _handle_text(user_id: str, binding: dict, text: str) -> list:
     if text in _NEARBY_ORDER_KEYWORDS:
+        if not _is_eligible_for_order(binding):
+            return [rider_messages.not_eligible_for_order_message()]
         rider_repository.set_awaiting_location(user_id)
         return [rider_messages.prompt_share_location_message()]
 
     if text in _SHIFT_LIST_KEYWORDS:
+        if not _is_eligible_for_shift(binding):
+            return [rider_messages.not_eligible_for_shift_message()]
         return _list_open_shifts()
 
     if text.isdigit():

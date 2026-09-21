@@ -7,13 +7,23 @@
 <p class="hint">
     一筆合作方式可以同時勾選多個適用廠商——蝦皮跟蝦皮三輪速配倉通常會共用同一組合作方式
     （例如「二輪承攬」「二輪雇傭」「三輪雇傭」），其他廠商可以自己獨立設定，也可以跟其他
-    廠商共用，視需要勾選即可。
+    廠商共用，視需要勾選即可。「屬於承攬還是雇傭」這個分類，決定人員名冊裡的騎士能不能
+    使用外送員接單媒合的「即時接單」（限承攬）或「報班媒合」（限雇傭）功能，請務必正確
+    設定。
 </p>
 
 <h2 class="section-title">新增合作方式</h2>
 <form method="post" action="/delivery/cooperation-types/new" class="form-stack form-narrow">
     <label>名稱
         <input type="text" name="name" required placeholder="例如：二輪承攬、二輪雇傭、三輪雇傭">
+    </label>
+    <label>屬於承攬還是雇傭
+        <select name="category" required>
+            <option value="">請選擇</option>
+            {% for c in categories %}
+            <option value="{{ c.code }}">{{ c.name }}</option>
+            {% endfor %}
+        </select>
     </label>
     <fieldset>
         <legend>適用廠商</legend>
@@ -30,7 +40,7 @@
 {% if cooperation_types %}
 <table class="data-table">
     <thead>
-        <tr><th>名稱</th><th>適用廠商</th><th>狀態</th><th>修改</th><th></th></tr>
+        <tr><th>名稱</th><th>承攬/雇傭</th><th>適用廠商</th><th>狀態</th><th>修改</th><th></th></tr>
     </thead>
     <tbody>
         {% for c in cooperation_types %}
@@ -38,6 +48,12 @@
             <td>
                 <form method="post" action="/delivery/cooperation-types/{{ c.id }}/edit" class="inline-form">
                     <input type="text" name="name" value="{{ c.name }}" required style="width:120px;">
+                    <select name="category" required>
+                        <option value="" {% if not c.category %}selected{% endif %}>請選擇</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat.code }}" {% if c.category == cat.code %}selected{% endif %}>{{ cat.name }}</option>
+                        {% endfor %}
+                    </select>
                     <fieldset style="display:inline-block; border:none; padding:0; margin:0;">
                         {% for v in vendors %}
                         <label style="display:inline-flex; align-items:center; gap:4px; margin-right:8px;">
@@ -47,6 +63,9 @@
                     </fieldset>
                     <button type="submit" class="btn btn-small">儲存</button>
                 </form>
+            </td>
+            <td>
+                {% if c.category %}<span class="badge">{{ category_map.get(c.category, c.category) }}</span>{% else %}<span class="hint">尚未設定</span>{% endif %}
             </td>
             <td>
                 {% for v in vendors %}

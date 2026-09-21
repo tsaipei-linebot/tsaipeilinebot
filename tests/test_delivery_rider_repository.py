@@ -169,5 +169,77 @@ class AwaitingLocationTests(unittest.TestCase):
         fake_doc_ref.update.assert_called_once_with({"awaiting_location": None})
 
 
+class UpsertRiderBindingPersonnelLinkTests(unittest.TestCase):
+    """2026-09-21 新增：騎士綁定時拿工號去核對人員名冊，核對到才存
+    personnel_id——即時接單/報班媒合的資格判斷靠這個欄位串起來。"""
+
+    def test_matched_employee_no_stores_personnel_id(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(False))
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            with mock.patch.object(
+                rider_repository.repository, "find_personnel_by_employee_no", return_value={"id": "p1", "name": "小明"}
+            ) as mock_find:
+                rider_repository.upsert_rider_binding("U1", "E001", "小明")
+        mock_find.assert_called_once_with("E001")
+        payload = fake_doc_ref.set.call_args.args[0]
+        self.assertEqual(payload["personnel_id"], "p1")
+
+    def test_unmatched_employee_no_stores_blank_personnel_id(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(False))
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            with mock.patch.object(rider_repository.repository, "find_personnel_by_employee_no", return_value=None):
+                rider_repository.upsert_rider_binding("U1", "no-such-id", "小明")
+        payload = fake_doc_ref.set.call_args.args[0]
+        self.assertEqual(payload["personnel_id"], "")
+
+    def test_blank_employee_id_does_not_query_personnel(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(False))
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            with mock.patch.object(rider_repository.repository, "find_personnel_by_employee_no") as mock_find:
+                rider_repository.upsert_rider_binding("U1", "", "小明")
+        mock_find.assert_not_called()
+        payload = fake_doc_ref.set.call_args.args[0]
+        self.assertEqual(payload["personnel_id"], "")
+
+
+class RiderFeatureCategoryTests(unittest.TestCase):
+    """2026-09-21 新增：即時接單只給承攬、報班媒合只給雇傭，資格照這個人
+    在人員名冊裡「目前」的合作方式即時查詢決定，不是綁定當下寫死。"""
+
+    def test_no_personnel_id_returns_empty_string(self):
+        self.assertEqual(rider_repository.rider_feature_category({}), "")
+
+    def test_personnel_not_found_returns_empty_string(self):
+        with mock.patch.object(rider_repository.repository, "get_personnel", return_value=None):
+            self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "")
+
+    def test_no_cooperation_type_returns_empty_string(self):
+        with mock.patch.object(rider_repository.repository, "get_personnel", return_value={"cooperation_type": ""}):
+            self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "")
+
+    def test_cooperation_type_without_category_returns_empty_string(self):
+        with mock.patch.object(rider_repository.repository, "get_personnel", return_value={"cooperation_type": "x"}):
+            with mock.patch.object(rider_repository.repository, "get_cooperation_type", return_value={"category": ""}):
+                self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "")
+
+    def test_returns_contract_category(self):
+        with mock.patch.object(
+            rider_repository.repository, "get_personnel", return_value={"cooperation_type": "two_wheel_contract"}
+        ):
+            with mock.patch.object(
+                rider_repository.repository, "get_cooperation_type", return_value={"category": "contract"}
+            ):
+                self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "contract")
+
+    def test_returns_employed_category(self):
+        with mock.patch.object(
+            rider_repository.repository, "get_personnel", return_value={"cooperation_type": "two_wheel_employed"}
+        ):
+            with mock.patch.object(
+                rider_repository.repository, "get_cooperation_type", return_value={"category": "employed"}
+            ):
+                self.assertEqual(rider_repository.rider_feature_category({"personnel_id": "p1"}), "employed")
+
+
 if __name__ == "__main__":
     unittest.main()

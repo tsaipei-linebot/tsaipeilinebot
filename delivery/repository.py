@@ -26,6 +26,7 @@ from delivery.config import (
     LEGACY_PERSONNEL_STATUS,
     RISK_LEVELS,
     SELECTABLE_APPLICANT_STATUSES,
+    SHOPEE_VENDOR_CODES,
     WORKDAY_HOURS,
     TEST_DRIVE_REQUIRED_SHOPEE_COOPERATION_TYPES,
     TEST_DRIVE_REQUIRED_VENDORS,
@@ -206,6 +207,7 @@ def list_cooperation_types(vendor: str = "", include_inactive: bool = False) -> 
         data["id"] = snapshot.id
         data.setdefault("active", True)
         data.setdefault("vendors", [])
+        data.setdefault("category", "")
         if include_inactive or data["active"]:
             result.append(data)
     result.sort(key=lambda c: c.get("name", ""))
@@ -222,22 +224,28 @@ def get_cooperation_type(type_id: str):
     data["id"] = snapshot.id
     data.setdefault("active", True)
     data.setdefault("vendors", [])
+    data.setdefault("category", "")
     return data
 
 
-def create_cooperation_type(name: str, vendors: list, type_id: str = "", created_by: str = "") -> str:
+def create_cooperation_type(name: str, vendors: list, category: str = "", type_id: str = "", created_by: str = "") -> str:
     """新增一個合作方式選項。`type_id` 留空時用 Firestore 自動產生的文件
     ID（主管在網頁上新增走這條路）；有指定時直接用它當文件 ID，只給
     `scripts/seed_cooperation_types.py` 那支一次性遷移腳本使用，讓蝦皮
     三輪/速配倉既有人員存的舊代碼（"two_wheel_contract"…）可以原封不動
     對應到新建的選項，不需要搬移人員資料，DOC_TYPES 的保險規則判斷也
-    完全不受影響。"""
+    完全不受影響。
+
+    `category`（2026-09-21 新增，見 config.py 的 COOPERATION_CATEGORIES）
+    是這個選項屬於承攬還是雇傭——外送員接單媒合的即時接單/報班媒合資格
+    判斷靠這個欄位，不是靠這裡的文件 ID 或中文名稱。"""
     now = time.time()
     doc_ref = cooperation_types_ref().document(type_id) if type_id else cooperation_types_ref().document()
     doc_ref.set(
         {
             "name": name,
             "vendors": vendors or [],
+            "category": category or "",
             "active": True,
             "created_by": created_by,
             "created_at": now,
@@ -247,11 +255,11 @@ def create_cooperation_type(name: str, vendors: list, type_id: str = "", created
     return doc_ref.id
 
 
-def update_cooperation_type(type_id: str, name: str, vendors: list) -> bool:
+def update_cooperation_type(type_id: str, name: str, vendors: list, category: str = "") -> bool:
     ref = cooperation_types_ref().document(type_id)
     if not ref.get().exists:
         return False
-    ref.update({"name": name, "vendors": vendors or [], "updated_at": time.time()})
+    ref.update({"name": name, "vendors": vendors or [], "category": category or "", "updated_at": time.time()})
     return True
 
 
@@ -292,6 +300,7 @@ def create_personnel(
     client: str = "",
     employment_status: str = "",
     hire_date: str = "",
+    employee_no: str = "",
 ) -> str:
     now = time.time()
     doc_ref = personnel_ref().document()
@@ -305,6 +314,7 @@ def create_personnel(
             "client": client or "",
             "employment_status": employment_status or DEFAULT_PERSONNEL_STATUS,
             "hire_date": hire_date or "",
+            "employee_no": employee_no or "",
             "status": "active",
             "documents": {},
             "created_at": now,
@@ -493,6 +503,68 @@ def update_personnel_email(personnel_id: str, email: str):
 
 def update_personnel_cooperation_type(personnel_id: str, cooperation_type: str):
     personnel_ref().document(personnel_id).update({"cooperation_type": cooperation_type, "updated_at": time.time()})
+
+
+def update_personnel_employee_no(personnel_id: str, employee_no: str):
+    """工號（2026-09-21 新增）——外送員接單媒合用這個欄位把 LINE 綁定的
+    騎士連到人員名冊裡正確的那一筆，藉此判斷這位騎士目前的合作方式屬於
+    承攬還是雇傭，決定他能用即時接單還是報班媒合。目前只有蝦皮系列廠商
+    的人員會用到這個欄位。"""
+    personnel_ref().document(personnel_id).update({"employee_no": employee_no, "updated_at": time.time()})
+
+
+def find_personnel_by_employee_no(employee_no: str):
+    """用工號找對應的人員名冊資料，找不到回傳 None。工號本身在建立/搬移
+    時就已經先確保过（見 match_shopee_personnel_employee_no()）只有唯一
+    對到一筆人員的情況才會寫入，這裡單純查詢，不重複做防呆。"""
+    employee_no = (employee_no or "").strip()
+    if not employee_no:
+        return None
+    for snapshot in personnel_ref().where("employee_no", "==", employee_no).limit(1).stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        return data
+    return None
+
+
+def match_shopee_personnel_employee_no(rows: list) -> dict:
+    """外送員接單媒合的工號一次性搬移用（2026-09-21 新增）：`rows` 是
+    [{"employee_no": "...", "name": "..."}, ...]（來自 delivery-gas-project
+    「人員管理」工作表），只在蝦皮系列廠商（SHOPEE_VENDOR_CODES，目前只有
+    這幾個廠商的人員名冊資料有工號可以比對）裡找姓名對得上的那一筆，寫入
+    工號。同名同姓對到不只一筆、或是這筆人員名冊資料本來就已經有工號的，
+    都不自動寫入，另外列出來讓管理員人工核對，避免寫錯人或蓋掉已經手動
+    修正過的資料。
+
+    回傳 {"matched": [...], "ambiguous": [...], "not_found": [...],
+    "already_set": [...]}，每個元素都是 {"employee_no": ..., "name": ...}，
+    方便呼叫端（webhook_routes.py）原樣回傳給 GAS 那邊列出來對照。"""
+    matched, ambiguous, not_found, already_set = [], [], [], []
+    for row in rows:
+        employee_no = (row.get("employee_no") or "").strip()
+        name = (row.get("name") or "").strip()
+        entry = {"employee_no": employee_no, "name": name}
+        if not employee_no or not name:
+            continue
+
+        candidates = []
+        for snapshot in personnel_ref().where("name", "==", name).stream():
+            data = snapshot.to_dict() or {}
+            if data.get("vendor") in SHOPEE_VENDOR_CODES:
+                data["id"] = snapshot.id
+                candidates.append(data)
+
+        if not candidates:
+            not_found.append(entry)
+        elif len(candidates) > 1:
+            ambiguous.append(entry)
+        elif candidates[0].get("employee_no"):
+            already_set.append(entry)
+        else:
+            update_personnel_employee_no(candidates[0]["id"], employee_no)
+            matched.append(entry)
+
+    return {"matched": matched, "ambiguous": ambiguous, "not_found": not_found, "already_set": already_set}
 
 
 def update_personnel_vendor(personnel_id: str, vendor: str):

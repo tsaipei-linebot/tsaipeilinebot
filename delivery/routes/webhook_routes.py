@@ -154,3 +154,24 @@ async def rider_binding_sync_webhook(request: Request, x_delivery_rider_secret: 
         raise HTTPException(status_code=400, detail="userId 欄位不可為空")
     rider_repository.upsert_rider_binding(user_id, body.get("employeeId") or "", body.get("name") or "")
     return {"status": "ok"}
+
+
+@router.post("/api/personnel-employee-no-sync")
+async def personnel_employee_no_sync_webhook(request: Request, x_delivery_rider_secret: str = Header(None)):
+    """外送員接單媒合（2026-09-21 新增）：一次性把工號搬移到人員名冊，只給
+    delivery-gas-project 的 syncPersonnelEmployeeNo() 呼叫，共用同一把
+    RIDER_WEBHOOK_SECRET（不是每個人都需要另外設定一把新密鑰）。實際的
+    比對/寫入邏輯在 repository.match_shopee_personnel_employee_no()，這裡
+    只負責密鑰驗證跟把結果原樣回傳，讓 GAS 那邊能把「同名同姓/查無此人」
+    的清單印出來給管理員人工核對。"""
+    if not RIDER_WEBHOOK_SECRET or not x_delivery_rider_secret or not hmac.compare_digest(
+        x_delivery_rider_secret, RIDER_WEBHOOK_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    body = await _parse_json_body(request)
+    rows = body.get("rows") or []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="rows 欄位必須是陣列")
+    result = repository.match_shopee_personnel_employee_no(rows)
+    return result

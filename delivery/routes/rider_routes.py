@@ -277,6 +277,8 @@ def rider_riders_page(request: Request, redirect=Depends(admin_required)):
     if redirect:
         return redirect
     riders = rider_repository.list_riders()
+    for rider in riders:
+        rider["feature_category"] = rider_repository.rider_feature_category(rider)
     return templates.TemplateResponse(request, "rider_riders.html", {"user": current_user(request), "riders": riders})
 
 

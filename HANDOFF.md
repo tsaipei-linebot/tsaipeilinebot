@@ -7231,3 +7231,96 @@ message()` 附帶 `location` 型別 Quick Reply 按鈕的邊界情況），更�
 `tests/test_delivery_rider_events.py` 對應的斷言文字。全部測試
 （`python3 -m unittest discover -s tests -p "test_*.py"`）1649 個
 全數通過。
+
+### 追加：即時接單/報班媒合改成照人員名冊的合作方式（承攬/雇傭）判斷資格（2026-09-21）
+
+即時接單、報班媒合上線前討論規劃時，使用者說明：即時接單的人員屬於
+**承攬制**，報班媒合的人員在上班當日屬於**雇傭制**——這是配送部系統
+既有的「人員名冊」（`delivery_personnel`）本來就有在追蹤的
+`cooperation_type`（合作方式）欄位所代表的兩個類別，但原本騎士接單
+機器人的綁定名單（`delivery_rider_bindings`）跟人員名冊完全是兩份互不
+相關的資料（騎士在 LINE 自己打工號/姓名，系統只是存起來，從來沒有真的
+去核對人員名冊），沒辦法用「合作方式」判斷資格。使用者確認同一人不會
+同時擁有承攬跟雇傭兩種身份（結束一種合作可能會換成另一種），所以不需要
+處理「同一人同時多重身份」這種複雜情境，人員名冊原本「一人一個
+cooperation_type」的設計本身就夠用。
+
+**做法（把人員名冊跟騎士綁定名單正式串起來）**：
+
+- `delivery_personnel` 新增 `employee_no`（工號）欄位——這是全新欄位，
+  之前人員名冊完全沒有「工號」這個概念，靠 Firestore 內部 ID 識別一個
+  人。新增/編輯人員的表單（`personnel_form.html`／`personnel_detail.html`
+  的「一鍵全部更新」）都加上這個欄位。目前只有蝦皮系列廠商的人員會用到。
+- `delivery_cooperation_types`（合作方式清單）每個選項加一個 `category`
+  欄位，值是 `contract`（承攬）或 `employed`（雇傭）——原本「二輪承攬／
+  二輪雇傭／三輪雇傭」這幾個選項只是主管自己取的中文名稱，系統從來沒有
+  結構化地知道「這個選項算承攬還是算雇傭」（只有幾支舊程式碼直接寫死
+  比對特定的文件 ID 字串）。改成主管在「合作方式管理」頁面新增/編輯
+  合作方式時，都要明確勾選屬於哪一類，之後不管新增多少個選項，資格
+  判斷邏輯都不用跟著修改。
+- 騎士在 LINE 綁定「工號+姓名」時（`rider_repository.upsert_rider_
+  binding()`），改成拿工號去 `repository.find_personnel_by_employee_no()`
+  核對人員名冊，核對到就把對應的 `personnel_id` 存進這筆綁定資料——
+  **每次綁定同步都重新查一次**，不是只在第一次綁定時查，這樣才能跟著
+  人員名冊之後的異動（例如改了合作方式）自動更新。
+- 新增 `rider_repository.rider_feature_category(binding)`：查這位騎士
+  綁定對應到的人員名冊資料，目前的合作方式屬於承攬還是雇傭，查不到
+  人員資料／查無合作方式／合作方式沒設定分類，都回傳空字串（視同兩個
+  功能都不能用）。`rider_events.py` 在即時接單相關的關鍵字（查詢附近單
+  等）、Postback（`CLAIM_STORE`）判斷資格要求回傳 `contract`；報班媒合
+  相關的關鍵字（瀏覽報班）、Postback（`SHIFT_LIST`／`REGISTER_SHIFT`）
+  要求回傳 `employed`。不符合資格的話回覆新增的
+  `not_eligible_for_order_message()`／`not_eligible_for_shift_message()`。
+  只在這幾個「進入點」判斷資格，後續的位置訊息/純數字件數輸入
+  （`_handle_location`／純數字分支）不用重複判斷——不符資格的人根本
+  不會走到設定 `awaiting_location`／`pending_claim` 那一步，這兩個暫存
+  狀態不可能被不符資格的人觸發。
+- 「騎士名單管理」（`/rider/riders`）後台頁面加一欄「合作身份」，即時
+  顯示每位騎士目前算出來的承攬/雇傭/未對應，方便管理員核對——「未對應」
+  代表工號在人員名冊找不到、或合作方式還沒設定分類，頁面上直接附連結到
+  人員名冊跟合作方式管理頁面方便排查。**這個啟用/停用開關維持不變**，
+  是管理員的手動覆蓋層，疊在合作身份判斷之上（就算身份符合，管理員還是
+  可以手動停用特定騎士）。
+
+**一次性資料搬移（工號補進人員名冊）**：新增 `repository.
+match_shopee_personnel_employee_no(rows)`，只在**蝦皮系列廠商**（
+`SHOPEE_VENDOR_CODES`：蝦皮三輪／蝦皮二輪公司車／蝦皮二輪雇傭自備車／
+蝦皮承攬／蝦皮三輪速配倉）的人員名冊資料裡，用姓名找唯一對得上的一筆
+寫入工號；同名同姓找到不只一筆、查無此人、或這筆資料本來就已經有工號，
+都不自動寫入，回傳清單讓呼叫端列出來給管理員人工核對，避免寫錯人或蓋掉
+手動修正過的資料。新增 webhook 端點 `POST /api/personnel-employee-no-
+sync`（共用既有的 `RIDER_WEBHOOK_SECRET`，不需要新密鑰），給
+`delivery-gas-project` 的 `syncPersonnelEmployeeNo()` 一次性手動執行呼叫
+（沿用之前 390 人綁定搬移同一份「人員管理」試算表的工號＋姓名欄位，不
+需要蒐集新資料）。
+
+**這次的手動設定步驟**：
+1. 到「合作方式管理」（`/delivery/cooperation-types`）把既有的「二輪
+   承攬」「二輪雇傭」「三輪雇傭」（以及其他廠商已經建立的合作方式）
+   都補上「承攬」或「雇傭」分類——這是**唯一一定要做**的步驟，沒設定
+   分類的合作方式，底下的人不管即時接單還是報班媒合都不能用。
+2. 到 `delivery-gas-project` 的 Apps Script 編輯器新增指令碼屬性
+   `PERSONNEL_EMPLOYEE_NO_SYNC_URL`（見該 repo HANDOFF.md），執行一次
+   `syncPersonnelEmployeeNo()`，把既有蝦皮系列人員的工號補進人員名冊；
+   執行紀錄列出來的「同名同姓」「查無此人」需要另外手動到人員名冊核對
+   補上。
+3. 之後新報到的人員，工號在建立人員名冊資料時一起填即可，不需要再跑
+   搬移腳本。
+
+即時接單、報班媒合這兩個功能目前都還在規劃/測試階段、尚未正式對外
+上線，所以**這次刻意沒有處理「資料還沒補齊時要不要保留舊行為」這種
+過渡期的相容性問題**——工號/合作方式分類沒設定好之前，兩個功能一律
+不能用，等正式上線前再視情況決定要不要放寬。
+
+新增/更新測試：`tests/test_delivery_cooperation_types.py`（`category`
+欄位的 CRUD／表單驗證）、`tests/test_delivery_personnel_employee_no.py`
+（工號欄位 CRUD、`find_personnel_by_employee_no()`、
+`match_shopee_personnel_employee_no()` 的比對/同名同姓/已有工號情境、
+人員詳細頁表單串接）、`tests/test_delivery_rider_repository.py`
+（`upsert_rider_binding()` 串 `personnel_id`、`rider_feature_category()`
+邊界情況）、`tests/test_delivery_rider_events.py`（新增
+`EligibilityGatingTests`，覆蓋即時接單/報班媒合各自的關鍵字跟 Postback
+資格判斷）、`tests/test_delivery_rider_routes.py`（`/api/personnel-
+employee-no-sync` webhook、騎士名單管理頁面附上合作身份）。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1684 個全數
+通過。
