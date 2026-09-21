@@ -508,3 +508,9 @@ RIDER_WEBHOOK_SECRET = os.getenv("DELIVERY_RIDER_WEBHOOK_SECRET", "")
 # 這個秒數就視為過期、不再採用。
 RIDER_PENDING_CLAIM_TTL_SECONDS = 600
 
+# 即時接單／報班媒合的「幾公里內才看得到」預設值（2026-09-21 新增）。
+# 同仁在後台開門市當日量/報班時段時，可以各自調整這一筆要開放給幾公里內
+# 的騎士，這裡只是表單沒填、或舊資料沒有這個欄位時的預設值——不是全域
+# 唯一的設定，每一筆需求可以各自不一樣。
+RIDER_DEFAULT_SEARCH_RADIUS_KM = 10
+

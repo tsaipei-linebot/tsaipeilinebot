@@ -72,18 +72,16 @@ class TextKeywordDispatchTests(_ActiveBindingMixin, unittest.TestCase):
         self.assertIn("分享", messages[0]["text"])
         self.assertEqual(messages[0]["quickReply"]["items"][0]["action"]["type"], "location")
 
-    def test_shift_list_keyword_with_no_open_shifts(self):
+    def test_shift_list_keyword_prompts_location_share(self):
+        """2026-09-21 起，報班媒合改成也要先分享位置（幾公里內才看得到），
+        跟即時接單同一種 Quick Reply 位置按鈕機制，不再馬上列出全部時段。"""
         with mock.patch.object(rider_repository, "rider_feature_category", return_value="employed"):
-            with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=[]):
+            with mock.patch.object(rider_repository, "set_awaiting_shift_location") as mock_set:
                 messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "瀏覽報班"})
-        self.assertIn("沒有開放中的報班時段", messages[0]["text"])
-
-    def test_shift_list_keyword_with_open_shifts_returns_carousel(self):
-        shifts = [{"id": "s1", "location": "中和門市", "capacity": 3, "registered_count": 1, "start_time": 0, "end_time": 0}]
-        with mock.patch.object(rider_repository, "rider_feature_category", return_value="employed"):
-            with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=shifts):
-                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "瀏覽報班"})
-        self.assertEqual(messages[0]["type"], "flex")
+        mock_set.assert_called_once_with("U1")
+        self.assertEqual(len(messages), 1)
+        self.assertIn("分享", messages[0]["text"])
+        self.assertEqual(messages[0]["quickReply"]["items"][0]["action"]["type"], "location")
 
     def test_unrecognized_text_returns_no_messages(self):
         messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "今天天氣真好"})
@@ -181,38 +179,67 @@ class QuantityInputDispatchTests(_ActiveBindingMixin, unittest.TestCase):
 
 class LocationDispatchTests(_ActiveBindingMixin, unittest.TestCase):
     """2026-09-19 使用者反映任何位置分享都被當成相關事件太容易誤觸發，
-    改成只有先問過「查詢附近單」（pop_awaiting_location() 為 True）才算
-    相關。"""
+    改成只有先問過「查詢附近單」或「瀏覽報班」其中一種（分別對應
+    pop_awaiting_location()／pop_awaiting_shift_location() 為 True）才算
+    相關（2026-09-21 報班媒合加入服務半徑篩選後，也一併要求先分享位置）。
+    一則位置訊息可能同時符合兩者（理論上極少發生），這裡兩個 pop 一律
+    都會執行；有沒有觸發列出附近單/附近報班則看各自的回傳值。"""
 
-    def test_location_without_prior_nearby_order_request_stays_silent(self):
+    def test_location_without_prior_request_stays_silent(self):
         with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=False):
-            with mock.patch.object(rider_repository, "list_nearby_open_stores") as mock_list:
-                messages = rider_events.handle_rider_event(
-                    {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
-                )
+            with mock.patch.object(rider_repository, "pop_awaiting_shift_location", return_value=False):
+                with mock.patch.object(rider_repository, "list_nearby_open_stores") as mock_list_stores:
+                    with mock.patch.object(rider_repository, "list_open_shift_postings") as mock_list_shifts:
+                        messages = rider_events.handle_rider_event(
+                            {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
+                        )
         self.assertEqual(messages, [])
-        mock_list.assert_not_called()
+        mock_list_stores.assert_not_called()
+        mock_list_shifts.assert_not_called()
 
     def test_location_message_with_no_nearby_stores(self):
         with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=True):
-            with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=[]):
-                messages = rider_events.handle_rider_event(
-                    {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
-                )
+            with mock.patch.object(rider_repository, "pop_awaiting_shift_location", return_value=False):
+                with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=[]):
+                    messages = rider_events.handle_rider_event(
+                        {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
+                    )
         self.assertIn("沒有開放中", messages[0]["text"])
 
     def test_location_message_with_nearby_stores_returns_carousel(self):
         stores = [{"id": "s1", "store_name": "中和門市", "remaining_quantity": 5, "distance_km": 1.2}]
         with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=True):
-            with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=stores):
-                messages = rider_events.handle_rider_event(
-                    {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
-                )
+            with mock.patch.object(rider_repository, "pop_awaiting_shift_location", return_value=False):
+                with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=stores):
+                    messages = rider_events.handle_rider_event(
+                        {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
+                    )
+        self.assertEqual(messages[0]["type"], "flex")
+
+    def test_location_message_with_no_nearby_shifts(self):
+        with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=False):
+            with mock.patch.object(rider_repository, "pop_awaiting_shift_location", return_value=True):
+                with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=[]) as mock_list_shifts:
+                    messages = rider_events.handle_rider_event(
+                        {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
+                    )
+        mock_list_shifts.assert_called_once_with(25.0, 121.5)
+        self.assertIn("附近目前沒有開放中的報班時段", messages[0]["text"])
+
+    def test_location_message_with_nearby_shifts_returns_carousel(self):
+        shifts = [{"id": "s1", "location": "台北車站", "capacity": 3, "registered_count": 1, "start_time": 0, "end_time": 0, "distance_km": 1.2}]
+        with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=False):
+            with mock.patch.object(rider_repository, "pop_awaiting_shift_location", return_value=True):
+                with mock.patch.object(rider_repository, "list_open_shift_postings", return_value=shifts):
+                    messages = rider_events.handle_rider_event(
+                        {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
+                    )
         self.assertEqual(messages[0]["type"], "flex")
 
     def test_location_missing_coordinates_returns_no_messages(self):
         with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=True):
-            messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "location"})
+            with mock.patch.object(rider_repository, "pop_awaiting_shift_location", return_value=False):
+                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "location"})
         self.assertEqual(messages, [])
 
 
