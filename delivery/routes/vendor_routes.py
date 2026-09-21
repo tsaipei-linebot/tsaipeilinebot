@@ -168,6 +168,7 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
             "vendor_name": VENDOR_MAP.get(vendor_code, vendor_code),
             "vendors": VENDORS,
             "cooperation_types": repository.list_cooperation_types(vendor=vendor_code),
+            "cooperation_types_by_vendor": repository.cooperation_types_by_vendor(),
             "clients": CLIENTS,
             "personnel_statuses": PERSONNEL_STATUSES,
             "current_employment_status": repository.personnel_employment_status(person),
@@ -212,16 +213,24 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
 
     form = await request.form()
 
+    effective_vendor = person.get("vendor", "")
     if "vendor" in form:
         vendor = form.get("vendor", "")
         if vendor in VENDOR_MAP:
             repository.update_personnel_vendor(personnel_id, vendor)
+            effective_vendor = vendor
 
     if "cooperation_type" in form:
+        # 2026-09-21 修正：原本只檢查這個合作方式 ID 存不存在，沒有檢查
+        # 是否真的適用「這次要存的廠商」——這個表單廠商/合作方式是同一次
+        # 送出，畫面上改了廠商的話瀏覽器端會即時把合作方式選單換成新廠商
+        # 的選項，但表單真的被竄改、或 JS 沒執行的情況下，伺服器端還是要
+        # 自己擋掉「廠商 A 配上廠商 B 的合作方式」這種不合理組合。
         cooperation_type = form.get("cooperation_type", "")
-        repository.update_personnel_cooperation_type(
-            personnel_id, cooperation_type if repository.get_cooperation_type(cooperation_type) else ""
-        )
+        coop = repository.get_cooperation_type(cooperation_type)
+        if not coop or effective_vendor not in coop.get("vendors", []):
+            cooperation_type = ""
+        repository.update_personnel_cooperation_type(personnel_id, cooperation_type)
 
     if "client" in form:
         client = form.get("client", "")

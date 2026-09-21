@@ -112,6 +112,59 @@ class ListCooperationTypesTests(unittest.TestCase):
         self.assertEqual([c["id"] for c in result], ["a", "b"])
 
 
+class CooperationTypesByVendorTests(unittest.TestCase):
+    """2026-09-21 新增：`人員的詳細資訊裡面，所屬廠商跟合作方式可以連動
+    嗎」——選廠商後合作方式篩選後只剩一個選項就直接帶入，不用同仁再手動
+    選一次。這支函式把「全部合作方式」重新按適用廠商分組一次，給前端
+    JS（人員詳細頁、應徵名單頁）在瀏覽器端即時篩選用，不用每次選廠商都
+    重新整理頁面問伺服器。"""
+
+    def _snapshot(self, doc_id, data):
+        snapshot = mock.Mock()
+        snapshot.id = doc_id
+        snapshot.to_dict.return_value = data
+        return snapshot
+
+    def test_groups_by_each_applicable_vendor(self):
+        fake_collection = mock.Mock()
+        fake_collection.stream.return_value = [
+            self._snapshot("two_wheel_contract", {"name": "二輪承攬", "vendors": ["shopee", "shopee_speed_warehouse"]}),
+            self._snapshot("shopee_contract_only", {"name": "蝦皮承攬專用", "vendors": ["shopee_contract"]}),
+        ]
+        with mock.patch.object(repository, "cooperation_types_ref", return_value=fake_collection):
+            result = repository.cooperation_types_by_vendor()
+        self.assertEqual(
+            result["shopee"],
+            [{"id": "two_wheel_contract", "name": "二輪承攬"}],
+        )
+        self.assertEqual(
+            result["shopee_speed_warehouse"],
+            [{"id": "two_wheel_contract", "name": "二輪承攬"}],
+        )
+        self.assertEqual(
+            result["shopee_contract"],
+            [{"id": "shopee_contract_only", "name": "蝦皮承攬專用"}],
+        )
+
+    def test_vendor_with_no_applicable_type_is_absent(self):
+        fake_collection = mock.Mock()
+        fake_collection.stream.return_value = [
+            self._snapshot("x", {"name": "X", "vendors": ["shopee"]}),
+        ]
+        with mock.patch.object(repository, "cooperation_types_ref", return_value=fake_collection):
+            result = repository.cooperation_types_by_vendor()
+        self.assertNotIn("ud", result)
+
+    def test_excludes_inactive_types(self):
+        fake_collection = mock.Mock()
+        fake_collection.stream.return_value = [
+            self._snapshot("x", {"name": "X", "vendors": ["shopee"], "active": False}),
+        ]
+        with mock.patch.object(repository, "cooperation_types_ref", return_value=fake_collection):
+            result = repository.cooperation_types_by_vendor()
+        self.assertNotIn("shopee", result)
+
+
 class CreateCooperationTypeTests(unittest.TestCase):
     def test_explicit_id_used_for_document_id(self):
         fake_doc_ref = mock.Mock()

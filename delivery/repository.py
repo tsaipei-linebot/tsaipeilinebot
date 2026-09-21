@@ -214,6 +214,17 @@ def list_cooperation_types(vendor: str = "", include_inactive: bool = False) -> 
     return result
 
 
+def cooperation_types_by_vendor() -> dict:
+    """回傳 {廠商代碼: [{"id":..., "name":...}, ...]}，給前端「選廠商時
+    合作方式下拉選單跟著即時篩選/只剩一個選項時直接帶入」用（人員詳細頁、
+    應徵名單頁都需要同一份資料，抽出來共用，避免各自重複組一次）。"""
+    result = {}
+    for coop in list_cooperation_types():
+        for vendor_code in coop.get("vendors", []):
+            result.setdefault(vendor_code, []).append({"id": coop["id"], "name": coop.get("name", "")})
+    return result
+
+
 def get_cooperation_type(type_id: str):
     if not type_id:
         return None

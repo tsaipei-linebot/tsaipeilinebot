@@ -72,6 +72,23 @@ class PersonnelDetailEquipmentDebtTests(unittest.TestCase):
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertEqual(context["equipment_debt"][0]["item_name"], "（已刪除品項）")
 
+    def test_passes_cooperation_types_by_vendor_for_live_filtering(self):
+        # 2026-09-21 新增：人員詳細頁的「所屬廠商」選單改廠商時，瀏覽器端
+        # JS 要靠這份全部廠商分組好的資料即時篩選/帶入合作方式，不用整頁
+        # 重新整理去問伺服器。
+        fake_by_vendor = {"shopee": [{"id": "two_wheel_contract", "name": "二輪承攬"}]}
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
+            with mock.patch.object(vendor_routes.repository, "list_equipment_debt", return_value=[]):
+                with mock.patch.object(vendor_routes.repository, "list_cooperation_types", return_value=[]):
+                    with mock.patch.object(
+                        vendor_routes.repository, "cooperation_types_by_vendor", return_value=fake_by_vendor
+                    ):
+                        with mock.patch.object(vendor_routes.repository, "all_document_statuses", return_value=[]):
+                            with mock.patch.object(vendor_routes, "templates") as mock_templates:
+                                vendor_routes.personnel_detail("p1", _FakeRequest(_staff_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["cooperation_types_by_vendor"], fake_by_vendor)
+
 
 if __name__ == "__main__":
     unittest.main()
