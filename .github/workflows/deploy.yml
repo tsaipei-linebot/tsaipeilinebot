@@ -99,8 +99,25 @@ jobs:
             exit 0
           fi
 
-          TITLE=$(printf '%s\n' "$COMMIT_MSG" | head -1 | sed -E 's/ \(#[0-9]+\)$//')
-          CONTENT=$(printf '%s\n' "$COMMIT_MSG" | tail -n +2 | grep -v '^Claude-Session:' | grep -v '^Co-authored-by:' | sed -e '/./,$!d')
+          # 【修正】這個 repo 合併 PR 用的是一般合併（git merge，"Create a
+          # merge commit"），commit 訊息格式是「Merge pull request #NNN
+          # from owner/branch」+ 空行 + PR 標題，不是 GitHub 網頁版
+          # squash merge 那種「PR 標題 (#NNN)」格式。原本的邏輯假設是
+          # squash 格式，把第一行（其實是這行技術性的合併說明，不是給人
+          # 看的標題）當成 TITLE，PR 標題反而被塞進 CONTENT——公告標題
+          # 因此變成「Merge pull request #174 from owner/branch」這種
+          # 使用者看不懂的技術訊息。改成先判斷是不是這種合併 commit 格式，
+          # 是的話改抓「空行之後的第一行」當 TITLE（那才是真正的 PR
+          # 標題），不是的話才照原本 squash 格式的邏輯處理。
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          if printf '%s\n' "$FIRST_LINE" | grep -qE '^Merge pull request #[0-9]+ from '; then
+            REST=$(printf '%s\n' "$COMMIT_MSG" | tail -n +2 | sed -e '/./,$!d')
+            TITLE=$(printf '%s\n' "$REST" | head -1)
+            CONTENT=$(printf '%s\n' "$REST" | tail -n +2 | grep -vi '^Claude-Session:' | grep -vi '^Co-authored-by:' | sed -e '/./,$!d')
+          else
+            TITLE=$(printf '%s\n' "$FIRST_LINE" | sed -E 's/ \(#[0-9]+\)$//')
+            CONTENT=$(printf '%s\n' "$COMMIT_MSG" | tail -n +2 | grep -vi '^Claude-Session:' | grep -vi '^Co-authored-by:' | sed -e '/./,$!d')
+          fi
 
           curl -sS -X POST \
             "https://recruitment-bot-412901869672.asia-east1.run.app/internal/announcements/auto-publish" \
