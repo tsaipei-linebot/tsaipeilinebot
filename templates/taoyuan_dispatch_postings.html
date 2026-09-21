@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}需求時段管理 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">需求時段管理</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<h2 class="section-title">開需求</h2>
+{% if not locations %}
+<p class="hint">目前還沒有登記任何地點，請先到<a href="/taoyuan-dispatch/locations">地點管理</a>新增地點。</p>
+{% else %}
+<form method="post" action="/taoyuan-dispatch/postings/new" class="form-stack form-narrow">
+    <label>地點
+        <select name="location_name" required>
+            <option value="">請選擇地點</option>
+            {% for loc in locations %}
+            <option value="{{ loc.name }}">{{ loc.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>開始時間
+        <input type="datetime-local" name="start_time" required>
+    </label>
+    <label>結束時間
+        <input type="datetime-local" name="end_time" required>
+    </label>
+    <label>需求人數
+        <input type="number" name="headcount" min="1" required>
+    </label>
+    <fieldset>
+        <legend>需要的人員資格（至少勾選一項，只有符合資格的人員才看得到這筆需求）</legend>
+        {% for q in qualifications %}
+        <label style="display:inline-flex; align-items:center; gap:4px; margin-right:12px;">
+            <input type="checkbox" name="required_qualifications" value="{{ q.code }}"> {{ q.name }}
+        </label>
+        {% endfor %}
+    </fieldset>
+    <button type="submit" class="btn btn-primary">新增</button>
+</form>
+{% endif %}
+
+<h2 class="section-title">需求時段清單</h2>
+<form method="get" action="/taoyuan-dispatch/postings" class="filter-bar">
+    <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+        地點
+        <select name="location">
+            <option value="">全部地點</option>
+            {% for loc in locations %}
+            <option value="{{ loc.name }}" {% if filter_location == loc.name %}selected{% endif %}>{{ loc.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+        日期
+        <input type="date" name="date" value="{{ filter_date }}">
+    </label>
+    <button type="submit" class="btn btn-small">篩選</button>
+    {% if filter_location or filter_date %}<a class="btn btn-small" href="/taoyuan-dispatch/postings">清除篩選</a>{% endif %}
+</form>
+
+{% if postings %}
+<table class="data-table">
+    <thead>
+        <tr><th>代碼</th><th>地點</th><th>時間</th><th>需求人數</th><th>已報名</th><th>待審核</th><th>所需資格</th><th>狀態</th><th>修改</th><th>報名名單</th></tr>
+    </thead>
+    <tbody>
+        {% for item in postings %}
+        <tr>
+            <td>{{ item.short_code }}</td>
+            <td>{{ item.location_name }}</td>
+            <td>{{ item.start_time_display }} - {{ item.end_time_display }}</td>
+            <td>{{ item.headcount }}</td>
+            <td>{{ item.registered_count }}</td>
+            <td>{{ item.pending_count }}</td>
+            <td>{% for code in item.required_qualifications %}{{ qualification_map.get(code, code) }}{% if not loop.last %}、{% endif %}{% endfor %}</td>
+            <td><span class="badge {{ 'badge-ok' if item.status == 'open' else 'badge-resigned' }}">{{ "開放中" if item.status == "open" else "已關閉" }}</span></td>
+            <td>
+                <form method="post" action="/taoyuan-dispatch/postings/{{ item.id }}/status" style="display:inline">
+                    <input type="hidden" name="status" value="{{ 'closed' if item.status == 'open' else 'open' }}">
+                    <button type="submit" class="btn btn-small">{{ "關閉" if item.status == "open" else "重新開放" }}</button>
+                </form>
+            </td>
+            <td><a class="btn btn-small" href="/taoyuan-dispatch/postings/{{ item.id }}/registrations">查看名單</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前還沒有任何需求時段。</p>
+{% endif %}
+
+<p class="back-link"><a href="/taoyuan-dispatch">&larr; 回桃園所專區</a></p>
+{% endblock %}

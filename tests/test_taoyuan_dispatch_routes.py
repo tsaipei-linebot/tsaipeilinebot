@@ -55,6 +55,14 @@ class TaoyuanDispatchRoutingSmokeTests(unittest.TestCase):
         resp = self.client.get("/taoyuan-dispatch/locations", follow_redirects=False)
         self.assertEqual(resp.status_code, 303)
 
+    def test_postings_page_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/taoyuan-dispatch/postings", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+
+    def test_posting_registrations_page_redirects_to_login_when_not_authenticated(self):
+        resp = self.client.get("/taoyuan-dispatch/postings/post1/registrations", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+
 
 class RequireAccessDependencyTests(unittest.TestCase):
     """_require_access()：沒登入導去登入頁，登入了但部門不是桃園所（也不是
@@ -136,6 +144,104 @@ class CreateLocationRouteTests(unittest.TestCase):
             )
         mock_create.assert_called_once_with("桃園火車站", 24.98, 121.31, created_by="alice")
         self.assertTrue(result.headers["location"].endswith("/taoyuan-dispatch/locations"))
+
+
+class CreatePostingRouteTests(unittest.TestCase):
+    """開需求時段路由：地點/資格缺一不可，時間格式要對，資格用
+    form.getlist() 讀（跟新增人員的 qualifications checkbox 同一種做法）。"""
+
+    def test_missing_location_redirects_with_error(self):
+        form = CreatePersonnelRouteTests._FakeFormData({"location_name": "", "start_time": "2026-09-25T09:00", "end_time": "2026-09-25T12:00", "headcount": "2"}, {"required_qualifications": ["restocking"]})
+        result = asyncio.run(
+            taoyuan_dispatch_routes.create_taoyuan_dispatch_posting(
+                CreatePersonnelRouteTests._FakeFormRequest(_taoyuan_account(), form), redirect=None
+            )
+        )
+        self.assertEqual(result.status_code, 303)
+        self.assertIn("error=", result.headers["location"])
+
+    def test_missing_qualifications_redirects_with_error(self):
+        form = CreatePersonnelRouteTests._FakeFormData(
+            {"location_name": "桃園火車站", "start_time": "2026-09-25T09:00", "end_time": "2026-09-25T12:00", "headcount": "2"}
+        )
+        result = asyncio.run(
+            taoyuan_dispatch_routes.create_taoyuan_dispatch_posting(
+                CreatePersonnelRouteTests._FakeFormRequest(_taoyuan_account(), form), redirect=None
+            )
+        )
+        self.assertEqual(result.status_code, 303)
+        self.assertIn("error=", result.headers["location"])
+
+    def test_invalid_time_format_redirects_with_error(self):
+        form = CreatePersonnelRouteTests._FakeFormData(
+            {"location_name": "桃園火車站", "start_time": "不是時間", "end_time": "2026-09-25T12:00", "headcount": "2"},
+            {"required_qualifications": ["restocking"]},
+        )
+        result = asyncio.run(
+            taoyuan_dispatch_routes.create_taoyuan_dispatch_posting(
+                CreatePersonnelRouteTests._FakeFormRequest(_taoyuan_account(), form), redirect=None
+            )
+        )
+        self.assertEqual(result.status_code, 303)
+        self.assertIn("error=", result.headers["location"])
+
+    def test_valid_submission_calls_create_posting(self):
+        form = CreatePersonnelRouteTests._FakeFormData(
+            {"location_name": "桃園火車站", "start_time": "2026-09-25T09:00", "end_time": "2026-09-25T12:00", "headcount": "2"},
+            {"required_qualifications": ["restocking", "operator"]},
+        )
+        with mock.patch.object(taoyuan_dispatch_routes, "create_posting") as mock_create:
+            result = asyncio.run(
+                taoyuan_dispatch_routes.create_taoyuan_dispatch_posting(
+                    CreatePersonnelRouteTests._FakeFormRequest(_taoyuan_account(), form), redirect=None
+                )
+            )
+        mock_create.assert_called_once()
+        args = mock_create.call_args.args
+        self.assertEqual(args[0], "桃園火車站")
+        self.assertEqual(args[3], 2)
+        self.assertEqual(args[4], ["restocking", "operator"])
+        self.assertEqual(mock_create.call_args.kwargs, {"created_by": "alice"})
+        self.assertTrue(result.headers["location"].endswith("/taoyuan-dispatch/postings"))
+
+
+class UpdateRegistrationStatusRouteTests(unittest.TestCase):
+    """核准/駁回：狀態真的有改變、而且有留 line_user_id 才推播，避免重複
+    按同一個按鈕造成重複推播。"""
+
+    def test_approve_pushes_line_message(self):
+        before = {"id": "r1", "status": "pending", "line_user_id": "U1"}
+        posting = {"id": "post1", "location_name": "桃園火車站", "start_time": 0}
+        with mock.patch.object(taoyuan_dispatch_routes, "get_registration", return_value=before):
+            with mock.patch.object(taoyuan_dispatch_routes, "update_registration_status", return_value=True):
+                with mock.patch.object(taoyuan_dispatch_routes, "get_posting", return_value=posting):
+                    with mock.patch.object(taoyuan_dispatch_routes, "push_message") as mock_push:
+                        result = taoyuan_dispatch_routes.update_taoyuan_dispatch_registration_status(
+                            "post1", "r1", status="approved", redirect=None
+                        )
+        mock_push.assert_called_once()
+        self.assertEqual(mock_push.call_args.args[0], "U1")
+        self.assertTrue(result.headers["location"].endswith("/taoyuan-dispatch/postings/post1/registrations"))
+
+    def test_no_push_when_status_unchanged(self):
+        before = {"id": "r1", "status": "approved", "line_user_id": "U1"}
+        with mock.patch.object(taoyuan_dispatch_routes, "get_registration", return_value=before):
+            with mock.patch.object(taoyuan_dispatch_routes, "update_registration_status", return_value=True):
+                with mock.patch.object(taoyuan_dispatch_routes, "push_message") as mock_push:
+                    taoyuan_dispatch_routes.update_taoyuan_dispatch_registration_status(
+                        "post1", "r1", status="approved", redirect=None
+                    )
+        mock_push.assert_not_called()
+
+    def test_no_push_when_no_line_user_id(self):
+        before = {"id": "r1", "status": "pending", "line_user_id": ""}
+        with mock.patch.object(taoyuan_dispatch_routes, "get_registration", return_value=before):
+            with mock.patch.object(taoyuan_dispatch_routes, "update_registration_status", return_value=True):
+                with mock.patch.object(taoyuan_dispatch_routes, "push_message") as mock_push:
+                    taoyuan_dispatch_routes.update_taoyuan_dispatch_registration_status(
+                        "post1", "r1", status="approved", redirect=None
+                    )
+        mock_push.assert_not_called()
 
 
 if __name__ == "__main__":
