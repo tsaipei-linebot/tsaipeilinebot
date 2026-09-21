@@ -169,6 +169,221 @@ class AwaitingLocationTests(unittest.TestCase):
         fake_doc_ref.update.assert_called_once_with({"awaiting_location": None})
 
 
+class AwaitingShiftLocationTests(unittest.TestCase):
+    """2026-09-21 新增：報班媒合加入服務半徑篩選後，也要先請騎士分享
+    位置——跟 AwaitingLocationTests 是同一種機制，存在不同欄位
+    （awaiting_shift_location），兩條線互不干擾。"""
+
+    def test_set_awaiting_shift_location_updates_binding(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True))
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            rider_repository.set_awaiting_shift_location("U1")
+        payload = fake_doc_ref.update.call_args.args[0]
+        self.assertIn("set_at", payload["awaiting_shift_location"])
+
+    def test_pop_returns_false_when_nothing_pending(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True, {}))
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            self.assertFalse(rider_repository.pop_awaiting_shift_location("U1"))
+        fake_doc_ref.update.assert_not_called()
+
+    def test_pop_returns_true_and_clears_when_fresh(self):
+        snapshot = _fake_doc_snapshot(True, {"awaiting_shift_location": {"set_at": time.time()}})
+        fake_collection, fake_doc_ref = _fake_collection(snapshot)
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            result = rider_repository.pop_awaiting_shift_location("U1")
+        self.assertTrue(result)
+        fake_doc_ref.update.assert_called_once_with({"awaiting_shift_location": None})
+
+    def test_pop_returns_false_but_still_clears_when_expired(self):
+        set_at = time.time() - rider_repository.RIDER_PENDING_CLAIM_TTL_SECONDS - 1
+        snapshot = _fake_doc_snapshot(True, {"awaiting_shift_location": {"set_at": set_at}})
+        fake_collection, fake_doc_ref = _fake_collection(snapshot)
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            result = rider_repository.pop_awaiting_shift_location("U1")
+        self.assertFalse(result)
+        fake_doc_ref.update.assert_called_once_with({"awaiting_shift_location": None})
+
+    def test_setting_shift_location_does_not_touch_order_location(self):
+        """兩個暫存欄位各自獨立：設定報班媒合的暫存狀態，寫入的 payload
+        不會動到即時接單那個欄位。"""
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True))
+        with mock.patch.object(rider_repository, "rider_bindings_ref", return_value=fake_collection):
+            rider_repository.set_awaiting_shift_location("U1")
+        payload = fake_doc_ref.update.call_args.args[0]
+        self.assertNotIn("awaiting_location", payload)
+
+
+class CreateStoreDeliveryRadiusTests(unittest.TestCase):
+    """2026-09-21 新增：即時接單開需求時可以調整服務半徑（幾公里內才看得
+    到），預設 RIDER_DEFAULT_SEARCH_RADIUS_KM。"""
+
+    def test_defaults_to_config_radius_when_not_given(self):
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.id = "s1"
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=fake_collection):
+            rider_repository.create_store_delivery("中和門市", 1.0, 2.0, "2026-09-20", 10, "alice")
+        payload = fake_doc_ref.set.call_args.args[0]
+        self.assertEqual(payload["radius_km"], rider_repository.RIDER_DEFAULT_SEARCH_RADIUS_KM)
+
+    def test_stores_custom_radius(self):
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.id = "s1"
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=fake_collection):
+            rider_repository.create_store_delivery("中和門市", 1.0, 2.0, "2026-09-20", 10, "alice", radius_km=5)
+        payload = fake_doc_ref.set.call_args.args[0]
+        self.assertEqual(payload["radius_km"], 5)
+
+
+class ListNearbyOpenStoresRadiusTests(unittest.TestCase):
+    """list_nearby_open_stores() 只回傳在這筆門市自己的 radius_km 範圍內
+    的結果——每一筆可以各自設定不同的半徑，不是全域一個值。"""
+
+    def _snapshot(self, doc_id, data):
+        snapshot = mock.Mock()
+        snapshot.id = doc_id
+        snapshot.to_dict.return_value = data
+        return snapshot
+
+    def _fake_query(self, snapshots):
+        fake_query = mock.Mock()
+        fake_query.where.return_value = fake_query
+        fake_query.stream.return_value = snapshots
+        fake_collection = mock.Mock()
+        fake_collection.where.return_value = fake_query
+        return fake_collection
+
+    def test_excludes_store_beyond_its_own_radius(self):
+        # 中和 (24.9998, 121.4996) 到左營高鐵站 (22.6873, 120.3086) 約 280 公里，遠超過 5 公里半徑
+        far_store = self._snapshot(
+            "far",
+            {
+                "store_name": "遠門市", "lat": 22.6873, "lng": 120.3086,
+                "total_quantity": 10, "claimed_quantity": 0, "radius_km": 5,
+            },
+        )
+        collection = self._fake_query([far_store])
+        with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=collection):
+            results = rider_repository.list_nearby_open_stores(24.9998, 121.4996, "2026-09-20")
+        self.assertEqual(results, [])
+
+    def test_includes_store_within_its_own_radius(self):
+        near_store = self._snapshot(
+            "near",
+            {
+                "store_name": "近門市", "lat": 24.9999, "lng": 121.4997,
+                "total_quantity": 10, "claimed_quantity": 0, "radius_km": 5,
+            },
+        )
+        collection = self._fake_query([near_store])
+        with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=collection):
+            results = rider_repository.list_nearby_open_stores(24.9998, 121.4996, "2026-09-20")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["store_name"], "近門市")
+
+    def test_missing_radius_field_falls_back_to_default(self):
+        near_store = self._snapshot(
+            "near",
+            {"store_name": "近門市", "lat": 24.9999, "lng": 121.4997, "total_quantity": 10, "claimed_quantity": 0},
+        )
+        collection = self._fake_query([near_store])
+        with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=collection):
+            results = rider_repository.list_nearby_open_stores(24.9998, 121.4996, "2026-09-20")
+        self.assertEqual(len(results), 1)
+
+
+class CreateShiftPostingRadiusTests(unittest.TestCase):
+    """2026-09-21 新增：報班媒合開時段時可以調整服務半徑，時段本身也要
+    存經緯度（之前只存地點名稱文字）才有東西可以算距離。"""
+
+    def test_stores_lat_lng_and_default_radius(self):
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.id = "sh1"
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=fake_collection):
+            rider_repository.create_shift_posting("alice", "台北車站", 25.0478, 121.5170, 100.0, 200.0, 3)
+        payload = fake_doc_ref.set.call_args.args[0]
+        self.assertEqual(payload["lat"], 25.0478)
+        self.assertEqual(payload["lng"], 121.5170)
+        self.assertEqual(payload["radius_km"], rider_repository.RIDER_DEFAULT_SEARCH_RADIUS_KM)
+
+    def test_stores_custom_radius(self):
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.id = "sh1"
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=fake_collection):
+            rider_repository.create_shift_posting("alice", "台北車站", 25.0478, 121.5170, 100.0, 200.0, 3, radius_km=8)
+        payload = fake_doc_ref.set.call_args.args[0]
+        self.assertEqual(payload["radius_km"], 8)
+
+
+class ListOpenShiftPostingsRadiusTests(unittest.TestCase):
+    """list_open_shift_postings() 沒給位置時維持原本「全部、依開始時間
+    排序」的行為；有給位置時改成只列出各自服務半徑內的時段，依距離排序。"""
+
+    def _snapshot(self, doc_id, data):
+        snapshot = mock.Mock()
+        snapshot.id = doc_id
+        snapshot.to_dict.return_value = data
+        return snapshot
+
+    def _fake_query(self, snapshots):
+        fake_query = mock.Mock()
+        fake_query.where.return_value = fake_query
+        fake_query.stream.return_value = snapshots
+        fake_collection = mock.Mock()
+        fake_collection.where.return_value = fake_query
+        return fake_collection
+
+    def test_without_location_returns_all_sorted_by_start_time(self):
+        shifts = [
+            self._snapshot("later", {"location": "B", "start_time": 200}),
+            self._snapshot("earlier", {"location": "A", "start_time": 100}),
+        ]
+        collection = self._fake_query(shifts)
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=collection):
+            with mock.patch.object(rider_repository, "count_registrations", return_value=0):
+                results = rider_repository.list_open_shift_postings()
+        self.assertEqual([r["id"] for r in results], ["earlier", "later"])
+        self.assertNotIn("distance_km", results[0])
+
+    def test_with_location_excludes_shift_beyond_its_own_radius(self):
+        far_shift = self._snapshot(
+            "far", {"location": "遠地點", "lat": 22.6873, "lng": 120.3086, "start_time": 100, "radius_km": 5}
+        )
+        collection = self._fake_query([far_shift])
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=collection):
+            with mock.patch.object(rider_repository, "count_registrations", return_value=0):
+                results = rider_repository.list_open_shift_postings(24.9998, 121.4996)
+        self.assertEqual(results, [])
+
+    def test_with_location_includes_shift_within_its_own_radius(self):
+        near_shift = self._snapshot(
+            "near", {"location": "近地點", "lat": 24.9999, "lng": 121.4997, "start_time": 100, "radius_km": 5}
+        )
+        collection = self._fake_query([near_shift])
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=collection):
+            with mock.patch.object(rider_repository, "count_registrations", return_value=0):
+                results = rider_repository.list_open_shift_postings(24.9998, 121.4996)
+        self.assertEqual(len(results), 1)
+        self.assertIsNotNone(results[0]["distance_km"])
+
+    def test_with_location_legacy_shift_without_coordinates_is_always_included(self):
+        legacy_shift = self._snapshot("legacy", {"location": "舊資料沒有經緯度", "start_time": 100})
+        collection = self._fake_query([legacy_shift])
+        with mock.patch.object(rider_repository, "rider_shift_postings_ref", return_value=collection):
+            with mock.patch.object(rider_repository, "count_registrations", return_value=0):
+                results = rider_repository.list_open_shift_postings(24.9998, 121.4996)
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(results[0]["distance_km"])
+
+
 class UpsertRiderBindingPersonnelLinkTests(unittest.TestCase):
     """2026-09-21 新增：騎士綁定時拿工號去核對人員名冊，核對到才存
     personnel_id——即時接單/報班媒合的資格判斷靠這個欄位串起來。"""

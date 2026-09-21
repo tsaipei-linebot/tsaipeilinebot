@@ -44,17 +44,27 @@ def handle_rider_event(body: dict) -> list:
     # 位置訊息、純數字文字這兩種情況刻意額外要求「使用者剛做過對應的
     # 前置動作」才算相關（2026-09-19 使用者反映任何位置分享/任何數字
     # 文字都會觸發回覆，太容易誤觸發）：分享位置一定要先問過「查詢附近
-    # 單」，純數字一定要先點過「承接」按鈕，兩者都有 10 分鐘的有效期限
-    # （RIDER_PENDING_CLAIM_TTL_SECONDS）。這裡用 pop_awaiting_location()
-    # 而不是單純檢查有沒有暫存，是因為判斷完相關與否後就不需要再保留這個
-    # 一次性的暫存狀態；has_pending_claim() 則只是檢查、不清除，清除交給
-    # 真的處理這則訊息時的 pop_pending_claim() 做。
+    # 單」或「瀏覽報班」其中一種，純數字一定要先點過「承接」按鈕，都有
+    # 10 分鐘的有效期限（RIDER_PENDING_CLAIM_TTL_SECONDS）。這裡用
+    # pop_awaiting_location()／pop_awaiting_shift_location() 而不是單純
+    # 檢查有沒有暫存，是因為判斷完相關與否後就不需要再保留這個一次性的
+    # 暫存狀態；has_pending_claim() 則只是檢查、不清除，清除交給真的處理
+    # 這則訊息時的 pop_pending_claim() 做。
+    #
+    # 位置訊息可能同時符合「即時接單」跟「報班媒合」兩條線各自暫存中的
+    # 前置狀態（例如騎士連續問了兩次都還沒分享位置）——理論上極少發生，
+    # 這裡兩個 pop 都會執行、兩邊暫存都會清掉，實際處理時以即時接單優先
+    # （見下方 order_awaited 的判斷順序）。
+    awaiting_order_location = False
+    awaiting_shift_location = False
     if event_type == "postback":
         is_relevant = True
     elif text in _NEARBY_ORDER_KEYWORDS or text in _SHIFT_LIST_KEYWORDS:
         is_relevant = True
     elif message_type == "location":
-        is_relevant = rider_repository.pop_awaiting_location(user_id)
+        awaiting_order_location = rider_repository.pop_awaiting_location(user_id)
+        awaiting_shift_location = rider_repository.pop_awaiting_shift_location(user_id)
+        is_relevant = awaiting_order_location or awaiting_shift_location
     elif text.isdigit():
         is_relevant = rider_repository.has_pending_claim(user_id)
     else:
@@ -71,7 +81,7 @@ def handle_rider_event(body: dict) -> list:
     if event_type == "postback":
         return _handle_postback(user_id, binding, body.get("postback_data") or "")
     if message_type == "location":
-        return _handle_location(body.get("latitude"), body.get("longitude"))
+        return _handle_location(body.get("latitude"), body.get("longitude"), awaiting_order_location, awaiting_shift_location)
     if message_type == "text":
         return _handle_text(user_id, binding, text)
     return []
@@ -104,14 +114,21 @@ def _handle_postback(user_id: str, binding: dict, data: str) -> list:
     return []
 
 
-def _handle_location(lat, lng) -> list:
+def _handle_location(lat, lng, awaiting_order_location: bool, awaiting_shift_location: bool) -> list:
     if lat is None or lng is None:
         return []
-    today = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
-    stores = rider_repository.list_nearby_open_stores(float(lat), float(lng), today)
-    if not stores:
-        return [rider_messages.no_nearby_stores_message()]
-    return [rider_messages.nearby_stores_carousel(stores)]
+    if awaiting_order_location:
+        today = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
+        stores = rider_repository.list_nearby_open_stores(float(lat), float(lng), today)
+        if not stores:
+            return [rider_messages.no_nearby_stores_message()]
+        return [rider_messages.nearby_stores_carousel(stores)]
+    if awaiting_shift_location:
+        shifts = rider_repository.list_open_shift_postings(float(lat), float(lng))
+        if not shifts:
+            return [rider_messages.no_nearby_shifts_message()]
+        return [rider_messages.shifts_carousel(shifts)]
+    return []
 
 
 # 私訊裡觸發「查詢附近單」「瀏覽報班」的關鍵字，刻意收斂成固定幾種常見說
@@ -146,7 +163,8 @@ def _handle_text(user_id: str, binding: dict, text: str) -> list:
     if text in _SHIFT_LIST_KEYWORDS:
         if not _is_eligible_for_shift(binding):
             return [rider_messages.not_eligible_for_shift_message()]
-        return _list_open_shifts()
+        rider_repository.set_awaiting_shift_location(user_id)
+        return [rider_messages.prompt_share_location_for_shift_message()]
 
     if text.isdigit():
         store_id = rider_repository.pop_pending_claim(user_id)

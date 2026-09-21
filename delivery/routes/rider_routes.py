@@ -14,6 +14,7 @@ from fastapi.responses import RedirectResponse
 from config import TAIPEI_TZ
 from delivery import rider_repository
 from delivery.auth import admin_required, current_user, login_required
+from delivery.config import RIDER_DEFAULT_SEARCH_RADIUS_KM
 from delivery.templating import templates
 
 router = APIRouter()
@@ -21,6 +22,23 @@ router = APIRouter()
 
 def _today_str() -> str:
     return datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
+
+
+def _parse_radius_km(raw: str):
+    """即時接單／報班媒合開需求時可以調整「幾公里內才看得到」，這裡統一
+    處理表單送來的字串：空白/打不合法的數字都回退成預設值，不擋單，避免
+    同仁沒填這個新欄位時整筆送不出去；回傳 (radius_km, error_message)，
+    只有「有填但填的是非正數」才視為錯誤擋下。"""
+    raw = (raw or "").strip()
+    if not raw:
+        return RIDER_DEFAULT_SEARCH_RADIUS_KM, ""
+    try:
+        radius_km = float(raw)
+    except ValueError:
+        return None, "服務半徑請輸入正確的數字"
+    if radius_km <= 0:
+        return None, "服務半徑要大於 0"
+    return radius_km, ""
 
 
 # ==========================================
@@ -114,6 +132,7 @@ def rider_store_deliveries_page(request: Request, date: str = "", error: str = "
             "filter_date": date_filter,
             "today": _today_str(),
             "locations": rider_repository.list_order_locations(),
+            "default_radius_km": RIDER_DEFAULT_SEARCH_RADIUS_KM,
             "error": error,
         },
     )
@@ -125,6 +144,7 @@ def create_rider_store_delivery(
     location_id: str = Form(...),
     date: str = Form(...),
     total_quantity: str = Form(...),
+    radius_km: str = Form(""),
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -145,9 +165,12 @@ def create_rider_store_delivery(
         return RedirectResponse(
             url=f"/delivery/rider/store-deliveries?date={date}&error=可承接量要大於 0", status_code=303
         )
+    radius_value, radius_error = _parse_radius_km(radius_km)
+    if radius_error:
+        return RedirectResponse(url=f"/delivery/rider/store-deliveries?date={date}&error={radius_error}", status_code=303)
     account = current_user(request)
     rider_repository.create_store_delivery(
-        location["name"], location["lat"], location["lng"], date, quantity_value, account["username"]
+        location["name"], location["lat"], location["lng"], date, quantity_value, account["username"], radius_km=radius_value
     )
     return RedirectResponse(url=f"/delivery/rider/store-deliveries?date={date}", status_code=303)
 
@@ -209,7 +232,13 @@ def rider_shifts_page(request: Request, error: str = "", redirect=Depends(login_
     return templates.TemplateResponse(
         request,
         "rider_shifts.html",
-        {"user": current_user(request), "items": items, "locations": rider_repository.list_shift_locations(), "error": error},
+        {
+            "user": current_user(request),
+            "items": items,
+            "locations": rider_repository.list_shift_locations(),
+            "default_radius_km": RIDER_DEFAULT_SEARCH_RADIUS_KM,
+            "error": error,
+        },
     )
 
 
@@ -220,6 +249,7 @@ def create_rider_shift(
     start_time: str = Form(...),
     end_time: str = Form(...),
     capacity: str = Form(...),
+    radius_km: str = Form(""),
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -237,8 +267,13 @@ def create_rider_shift(
         return RedirectResponse(
             url="/delivery/rider/shifts?error=需求人數要大於 0，結束時間要晚於開始時間", status_code=303
         )
+    radius_value, radius_error = _parse_radius_km(radius_km)
+    if radius_error:
+        return RedirectResponse(url=f"/delivery/rider/shifts?error={radius_error}", status_code=303)
     account = current_user(request)
-    rider_repository.create_shift_posting(account["username"], location["name"], start_at, end_at, capacity_value)
+    rider_repository.create_shift_posting(
+        account["username"], location["name"], location["lat"], location["lng"], start_at, end_at, capacity_value, radius_km=radius_value
+    )
     return RedirectResponse(url="/delivery/rider/shifts", status_code=303)
 
 

@@ -7332,3 +7332,63 @@ sync`（共用既有的 `RIDER_WEBHOOK_SECRET`，不需要新密鑰），給
 employee-no-sync` webhook、騎士名單管理頁面附上合作身份）。全部測試
 （`python3 -m unittest discover -s tests -p "test_*.py"`）1684 個全數
 通過。
+
+### 追加：即時接單/報班媒合開需求時可以調整服務半徑（幾公里內才看得到，2026-09-21）
+
+使用者需求：同仁開門市當日量（即時接單）或報班時段（報班媒合）時，能
+調整「只有幾公里內的騎士才看得到」，預設 10 公里、可以每一筆各自調整。
+
+**即時接單**：
+- `create_store_delivery()` 新增 `radius_km` 參數（預設
+  `RIDER_DEFAULT_SEARCH_RADIUS_KM = 10`），存進門市當日量這筆資料本身。
+- `list_nearby_open_stores()` 算出距離之後，多一道篩選：距離超過**這筆
+  門市自己**的 `radius_km` 就跳過（不是全域一個半徑，每筆可以不一樣）；
+  算不出距離的（理論上不會發生，建立時就一定會有經緯度）不套用限制，
+  一律視為符合，避免資料異常時整筆憑空消失。
+- 「新增門市當日量」表單加一個「服務半徑」輸入框，預設值 10，同仁可以
+  自行調整；後台清單也加一欄顯示。
+
+**報班媒合**（改動比即時接單大，因為報班時段原本完全沒有位置概念）：
+- 報班時段（`rider_shift_postings`）原本只存地點名稱文字，這次比照即時
+  接單改成也存 `lat`／`lng`（從報班地點主檔 `get_shift_location()` 解析
+  出來，跟門市當日量解析地點的方式一樣），再加 `radius_km`。
+- `list_open_shift_postings()` 改成可以選擇性帶 `lat`／`lng`：**沒帶**
+  維持原本行為（全部開放中時段、依開始時間排序，後台管理／Postback
+  觸發等不知道騎士位置的情境用這個模式，不受影響）；**有帶**才會依照
+  每筆時段自己的 `radius_km` 篩選、依距離排序，跟即時接單那份邏輯
+  對稱。沒有經緯度的舊資料（這個功能上線前建立的）不套用篩選，一律
+  視為符合，避免舊資料整批消失。
+- **這是這次改動裡唯一牽動使用者體感的部分**：因為要用騎士目前位置
+  才能篩選「幾公里內」，**騎士瀏覽報班媒合現在也要先分享位置**，跟
+  即時接單「查詢附近單」是同一種操作（傳「瀏覽報班」→ 跳出「分享目前
+  位置」Quick Reply 按鈕 → 分享後才列出附近的時段），不再像之前那樣
+  傳「瀏覽報班」就立刻列出全部時段。這是使用者確認過、比照即時接單
+  體驗一致的做法（曾經考慮「不分享位置就列出全部」當退回選項，使用者
+  選擇統一成分享位置的流程）。
+- 新增 `rider_repository.set_awaiting_shift_location()` /
+  `pop_awaiting_shift_location()`，跟即時接單的 `set_awaiting_location()`
+  / `pop_awaiting_location()` 是同一種暫存機制，但存在不同欄位
+  （`awaiting_shift_location`），兩條線互不干擾——一則位置訊息理論上
+  可能同時符合兩條線各自的暫存（例如騎士連續問了「查詢附近單」又問
+  「瀏覽報班」都還沒分享位置），這種極少見情況下兩邊暫存都會被清掉，
+  但只會處理其中一種（即時接單優先），不會兩則都回覆。
+- 「新增報班時段」表單、後台清單同步加上服務半徑欄位，跟即時接單那邊
+  一致。
+- `rider_messages.shifts_carousel()` 有距離資料時順便顯示「約 X.X
+  公里」，比照 `nearby_stores_carousel()` 既有的做法；沒有距離資料
+  （Postback 觸發、後台管理用的呼叫）就不顯示，不會印出奇怪的內容。
+
+**這次不需要任何額外的手動設定步驟**，合併後自動部署即可生效；既有的
+報班時段/門市當日量資料沒有服務半徑欄位時，一律回退成預設 10 公里，
+不會突然消失或動不了。
+
+新增/更新測試：`tests/test_delivery_rider_repository.py`
+（`CreateStoreDeliveryRadiusTests`／`ListNearbyOpenStoresRadiusTests`／
+`CreateShiftPostingRadiusTests`／`ListOpenShiftPostingsRadiusTests`／
+`AwaitingShiftLocationTests`）、`tests/test_delivery_rider_events.py`
+（報班媒合關鍵字改成先分享位置、位置訊息依前置動作分流到即時接單或
+報班媒合）、`tests/test_delivery_rider_locations.py`（建立門市當日量/
+報班時段時服務半徑的表單驗證與傳遞）、`tests/test_delivery_rider_
+messages.py`（報班版分享位置提示、`shifts_carousel()` 距離顯示）。
+全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）
+1708 個全數通過。

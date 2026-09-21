@@ -19,6 +19,7 @@ from delivery import repository
 from delivery.config import (
     COOPERATION_CATEGORY_CONTRACT,
     COOPERATION_CATEGORY_EMPLOYED,
+    RIDER_DEFAULT_SEARCH_RADIUS_KM,
     RIDER_PENDING_CLAIM_TTL_SECONDS,
 )
 from delivery.db import (
@@ -199,6 +200,31 @@ def pop_awaiting_location(user_id: str) -> bool:
     return (time.time() - set_at) <= RIDER_PENDING_CLAIM_TTL_SECONDS
 
 
+def set_awaiting_shift_location(user_id: str) -> None:
+    """騎士私訊「瀏覽報班」關鍵字後，暫存「正在等他分享位置」——2026-09-21
+    新增，報班媒合開始支援「幾公里內才看得到」之後，瀏覽報班也要先知道
+    騎士的位置才能篩選。跟 set_awaiting_location() 是同一種機制，但存在
+    不同的欄位（awaiting_shift_location），這樣「查詢附近單」跟「瀏覽
+    報班」兩種前置動作互不干擾，就算同時暫存中也不會互相蓋掉。"""
+    rider_bindings_ref().document(user_id).update(
+        {"awaiting_shift_location": {"set_at": time.time()}}
+    )
+
+
+def pop_awaiting_shift_location(user_id: str) -> bool:
+    """跟 pop_awaiting_location() 是同一種邏輯，只是對應報班媒合這條線。"""
+    ref = rider_bindings_ref().document(user_id)
+    snapshot = ref.get()
+    if not snapshot.exists:
+        return False
+    pending = (snapshot.to_dict() or {}).get("awaiting_shift_location") or {}
+    set_at = pending.get("set_at") or 0
+    if not set_at:
+        return False
+    ref.update({"awaiting_shift_location": None})
+    return (time.time() - set_at) <= RIDER_PENDING_CLAIM_TTL_SECONDS
+
+
 # ==========================================
 # 地點主檔（2026-09-19 新增；2026-09-19 拆成即時接單／報班媒合兩份獨立清單）
 # 門市當日量、報班時段這兩個表單原本都要同仁自己輸入經緯度／地點名稱，
@@ -319,7 +345,15 @@ def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * earth_radius_km * math.asin(math.sqrt(a))
 
 
-def create_store_delivery(store_name: str, lat: float, lng: float, date_str: str, total_quantity: int, created_by: str) -> str:
+def create_store_delivery(
+    store_name: str,
+    lat: float,
+    lng: float,
+    date_str: str,
+    total_quantity: int,
+    created_by: str,
+    radius_km: float = RIDER_DEFAULT_SEARCH_RADIUS_KM,
+) -> str:
     ref = rider_store_deliveries_ref().document()
     ref.set(
         {
@@ -329,6 +363,7 @@ def create_store_delivery(store_name: str, lat: float, lng: float, date_str: str
             "date": date_str,
             "total_quantity": total_quantity,
             "claimed_quantity": 0,
+            "radius_km": radius_km or RIDER_DEFAULT_SEARCH_RADIUS_KM,
             "source": "manual",
             "status": STORE_DELIVERY_STATUS_OPEN,
             "created_by": created_by,
@@ -384,7 +419,12 @@ def set_store_delivery_status(store_id: str, status: str, updated_by: str) -> bo
 
 
 def list_nearby_open_stores(lat: float, lng: float, date_str: str, limit: int = 8) -> list:
-    """騎士查詢附近單：當日開放中、還有剩餘量的門市，依距離由近到遠排序。"""
+    """騎士查詢附近單：當日開放中、還有剩餘量、而且在這筆門市自己設定的服務
+    半徑（radius_km，同仁開這筆門市當日量時可以自行調整，預設
+    RIDER_DEFAULT_SEARCH_RADIUS_KM）以內的門市，依距離由近到遠排序，最多
+    列出 `limit` 間。算不出距離的門市（理論上不會發生，門市當日量建立時
+    一定會有經緯度）不套用半徑限制，一律視為符合，避免資料異常時整筆
+    憑空消失。"""
     results = []
     query = rider_store_deliveries_ref().where("date", "==", date_str).where("status", "==", STORE_DELIVERY_STATUS_OPEN)
     for snapshot in query.stream():
@@ -396,6 +436,9 @@ def list_nearby_open_stores(lat: float, lng: float, date_str: str, limit: int = 
         distance_km = None
         if store_lat is not None and store_lng is not None:
             distance_km = _haversine_km(lat, lng, store_lat, store_lng)
+            radius_km = data.get("radius_km") or RIDER_DEFAULT_SEARCH_RADIUS_KM
+            if distance_km > radius_km:
+                continue
         results.append(
             {
                 "id": snapshot.id,
@@ -474,12 +517,24 @@ def claim_store_delivery(store_id: str, rider_id: str, rider_name: str, quantity
 # ==========================================
 # 報班媒合：需求時段
 # ==========================================
-def create_shift_posting(posted_by: str, location: str, start_time: float, end_time: float, capacity: int) -> str:
+def create_shift_posting(
+    posted_by: str,
+    location: str,
+    lat: float,
+    lng: float,
+    start_time: float,
+    end_time: float,
+    capacity: int,
+    radius_km: float = RIDER_DEFAULT_SEARCH_RADIUS_KM,
+) -> str:
     ref = rider_shift_postings_ref().document()
     ref.set(
         {
             "posted_by": posted_by,
             "location": location,
+            "lat": lat,
+            "lng": lng,
+            "radius_km": radius_km or RIDER_DEFAULT_SEARCH_RADIUS_KM,
             "start_time": start_time,
             "end_time": end_time,
             "capacity": capacity,
@@ -511,16 +566,43 @@ def list_shift_postings() -> list:
     return items
 
 
-def list_open_shift_postings() -> list:
-    """騎士瀏覽報班：只列出開放中的時段，依開始時間排序。"""
+def list_open_shift_postings(lat: float = None, lng: float = None, limit: int = 8) -> list:
+    """騎士瀏覽報班：列出開放中的時段。
+
+    沒給騎士目前位置（lat/lng 皆為 None）時維持原本的行為：全部開放中
+    時段、依開始時間排序，不做距離篩選（後台管理／Postback 觸發等不
+    知道騎士位置的情境用這個模式）。
+
+    有給位置時，改成只列出在這筆時段自己設定的服務半徑（radius_km，
+    同仁開報班時段時可以自行調整，預設 RIDER_DEFAULT_SEARCH_RADIUS_KM）
+    以內的時段，依距離由近到遠排序，最多列出 `limit` 筆——跟
+    list_nearby_open_stores() 是同一套設計。算不出距離的時段（例如
+    這個功能上線前就建立、還沒有經緯度的舊資料）不套用半徑限制，一律
+    視為符合，避免舊資料整批憑空消失。"""
     items = []
     for snapshot in rider_shift_postings_ref().where("status", "==", SHIFT_STATUS_OPEN).stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
         data["registered_count"] = count_registrations(snapshot.id)
         items.append(data)
-    items.sort(key=lambda d: d.get("start_time") or 0)
-    return items
+
+    if lat is None or lng is None:
+        items.sort(key=lambda d: d.get("start_time") or 0)
+        return items
+
+    results = []
+    for data in items:
+        shift_lat, shift_lng = data.get("lat"), data.get("lng")
+        distance_km = None
+        if shift_lat is not None and shift_lng is not None:
+            distance_km = _haversine_km(lat, lng, shift_lat, shift_lng)
+            radius_km = data.get("radius_km") or RIDER_DEFAULT_SEARCH_RADIUS_KM
+            if distance_km > radius_km:
+                continue
+        data["distance_km"] = distance_km
+        results.append(data)
+    results.sort(key=lambda d: (d["distance_km"] is None, d["distance_km"]))
+    return results[:limit]
 
 
 def set_shift_posting_status(shift_id: str, status: str) -> bool:

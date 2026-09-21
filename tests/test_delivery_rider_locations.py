@@ -231,11 +231,49 @@ class CreateRiderStoreDeliveryLocationResolutionTests(unittest.TestCase):
         with mock.patch.object(rider_routes.rider_repository, "get_order_location", return_value=location):
             with mock.patch.object(rider_routes.rider_repository, "create_store_delivery") as mock_create:
                 resp = rider_routes.create_rider_store_delivery(
-                    _FakeRequest(_staff_account()), location_id="loc1", date="2026-09-20", total_quantity="10", redirect=None
+                    _FakeRequest(_staff_account()),
+                    location_id="loc1",
+                    date="2026-09-20",
+                    total_quantity="10",
+                    radius_km="",
+                    redirect=None,
                 )
-        mock_create.assert_called_once_with("中和門市", 24.9998, 121.4996, "2026-09-20", 10, "alice")
+        mock_create.assert_called_once_with(
+            "中和門市", 24.9998, 121.4996, "2026-09-20", 10, "alice", radius_km=rider_routes.RIDER_DEFAULT_SEARCH_RADIUS_KM
+        )
         self.assertEqual(resp.status_code, 303)
         self.assertNotIn("error", resp.headers["location"])
+
+    def test_custom_radius_km_is_passed_through(self):
+        location = {"id": "loc1", "name": "中和門市", "lat": 24.9998, "lng": 121.4996, "active": True}
+        with mock.patch.object(rider_routes.rider_repository, "get_order_location", return_value=location):
+            with mock.patch.object(rider_routes.rider_repository, "create_store_delivery") as mock_create:
+                resp = rider_routes.create_rider_store_delivery(
+                    _FakeRequest(_staff_account()),
+                    location_id="loc1",
+                    date="2026-09-20",
+                    total_quantity="10",
+                    radius_km="5",
+                    redirect=None,
+                )
+        mock_create.assert_called_once_with("中和門市", 24.9998, 121.4996, "2026-09-20", 10, "alice", radius_km=5.0)
+        self.assertEqual(resp.status_code, 303)
+
+    def test_invalid_radius_km_is_rejected(self):
+        location = {"id": "loc1", "name": "中和門市", "lat": 24.9998, "lng": 121.4996, "active": True}
+        with mock.patch.object(rider_routes.rider_repository, "get_order_location", return_value=location):
+            with mock.patch.object(rider_routes.rider_repository, "create_store_delivery") as mock_create:
+                resp = rider_routes.create_rider_store_delivery(
+                    _FakeRequest(_staff_account()),
+                    location_id="loc1",
+                    date="2026-09-20",
+                    total_quantity="10",
+                    radius_km="0",
+                    redirect=None,
+                )
+        mock_create.assert_not_called()
+        self.assertEqual(resp.status_code, 303)
+        self.assertIn("服務半徑要大於 0", unquote(resp.headers["location"]))
 
 
 class CreateRiderShiftLocationResolutionTests(unittest.TestCase):
@@ -266,11 +304,30 @@ class CreateRiderShiftLocationResolutionTests(unittest.TestCase):
                     start_time="2026-09-20T09:00",
                     end_time="2026-09-20T12:00",
                     capacity="3",
+                    radius_km="",
                     redirect=None,
                 )
         mock_create.assert_called_once()
         self.assertEqual(mock_create.call_args.args[1], "台北車站")
+        self.assertEqual(mock_create.call_args.args[2], 25.0478)
+        self.assertEqual(mock_create.call_args.args[3], 121.5170)
+        self.assertEqual(mock_create.call_args.kwargs["radius_km"], rider_routes.RIDER_DEFAULT_SEARCH_RADIUS_KM)
         self.assertEqual(resp.status_code, 303)
+
+    def test_custom_radius_km_is_passed_through(self):
+        location = {"id": "sloc1", "name": "台北車站", "lat": 25.0478, "lng": 121.5170, "active": True}
+        with mock.patch.object(rider_routes.rider_repository, "get_shift_location", return_value=location):
+            with mock.patch.object(rider_routes.rider_repository, "create_shift_posting") as mock_create:
+                rider_routes.create_rider_shift(
+                    _FakeRequest(_staff_account()),
+                    location_id="sloc1",
+                    start_time="2026-09-20T09:00",
+                    end_time="2026-09-20T12:00",
+                    capacity="3",
+                    radius_km="8",
+                    redirect=None,
+                )
+        self.assertEqual(mock_create.call_args.kwargs["radius_km"], 8.0)
 
     def test_does_not_fall_back_to_order_location(self):
         """即使同一個 id 剛好在即時接單地點清單裡存在，建立報班時段也不能

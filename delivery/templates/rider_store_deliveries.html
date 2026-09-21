@@ -26,6 +26,9 @@
     <label>當日可承接總量（件）
         <input type="number" name="total_quantity" min="1" required>
     </label>
+    <label>服務半徑（公里，騎士要在這個範圍內才看得到）
+        <input type="number" name="radius_km" min="0.1" step="0.1" value="{{ default_radius_km }}">
+    </label>
     <button type="submit" class="btn btn-primary">新增</button>
 </form>
 <script>
@@ -59,7 +62,7 @@
 {% if items %}
 <table class="data-table">
     <thead>
-        <tr><th>門市名稱</th><th>總量</th><th>已承接</th><th>剩餘</th><th>狀態</th><th>修改</th><th>對帳</th></tr>
+        <tr><th>門市名稱</th><th>總量</th><th>已承接</th><th>剩餘</th><th>服務半徑</th><th>狀態</th><th>修改</th><th>對帳</th></tr>
     </thead>
     <tbody>
         {% for item in items %}
@@ -68,6 +71,7 @@
             <td>{{ item.total_quantity }}</td>
             <td>{{ item.claimed_quantity }}</td>
             <td>{{ item.remaining_quantity }}</td>
+            <td>{{ item.radius_km or default_radius_km }} 公里</td>
             <td><span class="badge {{ 'badge-ok' if item.status == 'open' else 'badge-resigned' }}">{{ "開放中" if item.status == "open" else "已關閉" }}</span></td>
             <td>
                 <form method="post" action="/delivery/rider/store-deliveries/{{ item.id }}/quantity" style="display:inline">

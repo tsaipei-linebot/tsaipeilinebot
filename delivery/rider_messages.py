@@ -53,6 +53,19 @@ def prompt_share_location_message() -> dict:
     return message
 
 
+def prompt_share_location_for_shift_message() -> dict:
+    """報班媒合版本的分享位置提示（2026-09-21 新增，跟即時接單的
+    prompt_share_location_message() 是同一種 Quick Reply 位置按鈕機制，
+    只是文字內容改成報班時段）。"""
+    message = text_message("請分享您目前的位置，系統會幫您找出附近開放中的報班時段（點下面的「分享目前位置」按鈕最快）。")
+    message["quickReply"] = {
+        "items": [
+            {"type": "action", "action": {"type": "location", "label": "分享目前位置"}},
+        ]
+    }
+    return message
+
+
 def no_nearby_stores_message() -> dict:
     return text_message("目前附近沒有開放中、還有剩餘量的門市貨量，請稍後再試。")
 
@@ -120,12 +133,26 @@ def no_open_shifts_message() -> dict:
     return text_message("目前沒有開放中的報班時段，請稍後再試。")
 
 
+def no_nearby_shifts_message() -> dict:
+    """2026-09-21 新增：報班媒合改成要先分享位置，篩選出附近的時段之後，
+    「完全沒有開放中的時段」（no_open_shifts_message）跟「附近沒有、但
+    別的地方可能有」是不同情況，文案分開比較不會誤導。"""
+    return text_message("您附近目前沒有開放中的報班時段，請稍後再試。")
+
+
 def shifts_carousel(shifts: list) -> dict:
     bubbles = []
     for shift in shifts[:MAX_CAROUSEL_BUBBLES]:
         capacity = shift.get("capacity") or 0
         registered = shift.get("registered_count") or 0
         remaining = max(capacity - registered, 0)
+        # distance_km 只有騎士分享過位置、list_open_shift_postings() 帶
+        # lat/lng 查詢時才會有值（見 rider_repository.py），Postback 觸發
+        # 或後台管理用的呼叫沒有這個欄位，這裡就不顯示距離那一行。
+        distance_km = shift.get("distance_km")
+        time_and_distance = format_shift_time_range(shift)
+        if distance_km is not None:
+            time_and_distance += f"（約 {distance_km:.1f} 公里）"
         bubble = {
             "type": "bubble",
             "body": {
@@ -133,7 +160,7 @@ def shifts_carousel(shifts: list) -> dict:
                 "layout": "vertical",
                 "contents": [
                     {"type": "text", "text": shift.get("location", ""), "weight": "bold", "size": "lg", "wrap": True},
-                    {"type": "text", "text": format_shift_time_range(shift), "size": "sm", "color": "#666666", "margin": "sm", "wrap": True},
+                    {"type": "text", "text": time_and_distance, "size": "sm", "color": "#666666", "margin": "sm", "wrap": True},
                     {
                         "type": "text",
                         "text": f"剩餘名額：{remaining} / {capacity} 人",
