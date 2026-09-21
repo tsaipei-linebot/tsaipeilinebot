@@ -69,5 +69,43 @@ class ShiftsCarouselDistanceTests(unittest.TestCase):
         self.assertNotIn("公里", body_text)
 
 
+class ShiftRegistrationStatusMessageTests(unittest.TestCase):
+    """2026-09-21 新增：「查詢報名狀態」的回覆——報班改成人工審核制，
+    騎士要自己傳關鍵字查詢最近幾筆報名的審核結果。"""
+
+    def test_no_registrations_returns_hint(self):
+        message = rider_messages.shift_registration_status_message([])
+        self.assertEqual(message["type"], "text")
+        self.assertIn("沒有任何報班紀錄", message["text"])
+
+    def test_lists_each_registration_with_status_label(self):
+        registrations = [
+            {"shift_location": "台北車站", "shift_start_time": None, "shift_end_time": None, "status": "pending"},
+            {"shift_location": "新北中和門市", "shift_start_time": None, "shift_end_time": None, "status": "approved"},
+            {"shift_location": "板橋門市", "shift_start_time": None, "shift_end_time": None, "status": "rejected"},
+        ]
+        message = rider_messages.shift_registration_status_message(registrations)
+        self.assertIn("台北車站", message["text"])
+        self.assertIn("待審核", message["text"])
+        self.assertIn("新北中和門市", message["text"])
+        self.assertIn("已核准", message["text"])
+        self.assertIn("板橋門市", message["text"])
+        self.assertIn("額滿", message["text"])
+
+    def test_includes_time_range_when_available(self):
+        registrations = [
+            {
+                "shift_location": "台北車站",
+                "shift_start_time": 1735689600,
+                "shift_end_time": 1735696800,
+                "status": "approved",
+            }
+        ]
+        message = rider_messages.shift_registration_status_message(registrations)
+        self.assertIn("台北車站", message["text"])
+        # 有起訖時間時應該附上時間區間，不會只印地點名稱。
+        self.assertNotEqual(message["text"].strip().splitlines()[1], "・台北車站：已核准（報名成功）")
+
+
 if __name__ == "__main__":
     unittest.main()
