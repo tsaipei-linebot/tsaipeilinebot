@@ -49,12 +49,7 @@ def applicants_list(
                 ),
             }
         )
-    cooperation_types_by_vendor = {}
-    for coop in repository.list_cooperation_types():
-        for vendor_code in coop.get("vendors", []):
-            cooperation_types_by_vendor.setdefault(vendor_code, []).append(
-                {"id": coop["id"], "name": coop.get("name", "")}
-            )
+    cooperation_types_by_vendor = repository.cooperation_types_by_vendor()
     return templates.TemplateResponse(
         request,
         "applicants_list.html",

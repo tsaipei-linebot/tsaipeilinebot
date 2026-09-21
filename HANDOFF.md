@@ -7426,3 +7426,53 @@ messages.py`（報班版分享位置提示、`shifts_carousel()` 距離顯示）
 `RiderFeatureCategoryTests` 改成 mock `find_personnel_by_employee_no()`
 而不是 `get_personnel()`。全部測試（`python3 -m unittest discover -s
 tests -p "test_*.py"`）1708 個全數通過。
+
+## 人員詳細頁：所屬廠商改了，合作方式選單即時跟著篩選/單一選項自動帶入（2026-09-21）
+
+使用者反映：人員詳細頁的「所屬廠商」跟「合作方式」都是單一對應值（例如
+某個廠商目前只設定了一種合作方式可以選），改廠商之後應該不用還要自己
+再去合作方式選單裡篩選/手動點選。
+
+**原本的行為**：合作方式下拉選單本來就有照「合作方式管理」設定的
+「適用廠商」在伺服器端篩選過（`repository.list_cooperation_types(vendor=
+...)`），但這是頁面**第一次載入**時算好的；「所屬廠商」是可以直接在
+下拉選單改的（不用重新整理頁面），改了之後畫面上合作方式的選項不會
+跟著換一批——同仁還是要自己記得「這個廠商應該對應哪個合作方式」、
+從舊廠商那份選項清單裡挑（甚至可能挑到不屬於新廠商的選項，一鍵更新
+送出時才被伺服器擋下清空，同仁看不出原因）。
+
+**修法**：
+
+- `repository.cooperation_types_by_vendor()`（新增）：回傳
+  `{廠商代碼: [{"id":..., "name":...}, ...]}`，把全部合作方式按「適用
+  廠商」重新分組一次——這份資料本來就分散在 `applicant_routes.py`
+  （應徵名單頁的廠商/合作方式聯動）自己組一次，現在抽成共用函式，兩個
+  地方都改用它。
+- 人員詳細頁（`personnel_detail.html`）新增一段 JS：所屬廠商選單
+  `change` 事件觸發時，用 `COOPERATION_TYPES_BY_VENDOR`（伺服器端傳入
+  的上面那份資料）即時重建合作方式選單的選項——**篩選後如果剛好只剩
+  一個選項，直接帶入，不用同仁自己點**；如果原本選的值在新廠商底下還
+  是合法選項就保留；都不符合就清空回「尚未決定」，不會殘留舊廠商的
+  選項。
+- 「新增人員」表單（`personnel_form.html`，這個頁面廠商是網址固定的、
+  不能在頁面上改）也同步調整：伺服器端算出的合作方式選項如果剛好只有
+  一個，預設值直接是那個選項（不是「尚未決定」），同仁還是可以手動
+  改選別的，只是不用因為只有一個選項還要多點一次。
+- **順便補一個既有漏洞**：「一鍵全部更新」（`bulk_update_personnel`）
+  原本存合作方式時只檢查這個 ID 存不存在，沒檢查是不是真的適用**這次
+  要存的廠商**——畫面上有 JS 擋，但表單被竄改、或 JS 沒執行時，伺服器
+  端會照單全收存進不合理的組合。改成存之前一定重新核對一次「這次要存
+  的廠商（如果這次同時改了廠商，用新廠商；沒改就用這個人原本的廠商）」
+  是不是真的在這個合作方式的適用清單裡，兜不起來就清空存空字串，跟
+  「新增人員」「應徵名單→錄取」既有的驗證邏輯一致。
+
+**這次不需要任何手動設定步驟**，合併部署後直接生效。
+
+新增/更新測試：`tests/test_delivery_cooperation_types.py`
+（`CooperationTypesByVendorTests`）、`tests/test_delivery_personnel_
+vendor_change.py`（`BulkUpdatePersonnelCooperationTypeVendorMatchTests`，
+涵蓋「廠商沒變但合作方式對不上」「同一次送出裡廠商也一起改了」「合作
+方式 ID 根本不存在」）、`tests/test_delivery_personnel_equipment_debt.py`
+（人員詳細頁 context 有帶上 `cooperation_types_by_vendor`）。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1716 個全數
+通過。

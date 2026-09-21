@@ -18,9 +18,9 @@
     </label>
     <label>合作方式（可之後在人員詳細頁再設定）
         <select name="cooperation_type">
-            <option value="">尚未決定</option>
+            <option value="" {% if cooperation_types|length != 1 %}selected{% endif %}>尚未決定</option>
             {% for c in cooperation_types %}
-            <option value="{{ c.id }}">{{ c.name }}</option>
+            <option value="{{ c.id }}" {% if cooperation_types|length == 1 %}selected{% endif %}>{{ c.name }}</option>
             {% endfor %}
         </select>
     </label>

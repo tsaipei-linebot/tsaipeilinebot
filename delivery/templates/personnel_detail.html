@@ -25,7 +25,7 @@
     <div class="filter-bar">
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
             所屬廠商
-            <select name="vendor">
+            <select name="vendor" id="vendor">
                 {% for v in vendors %}
                 <option value="{{ v.code }}" {% if person.vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
                 {% endfor %}
@@ -41,7 +41,7 @@
         </label>
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
             合作方式
-            <select name="cooperation_type">
+            <select name="cooperation_type" id="cooperation_type">
                 <option value="" {% if not person.cooperation_type %}selected{% endif %}>尚未決定</option>
                 {% for c in cooperation_types %}
                 <option value="{{ c.id }}" {% if person.cooperation_type == c.id %}selected{% endif %}>{{ c.name }}</option>
@@ -146,6 +146,43 @@
 
 <script>
 (function () {
+    // 廠商/合作方式連動（2026-09-21 新增）：合作方式的可選項目本來就是
+    // 靠「合作方式管理」頁面設定的「適用廠商」在後端篩選過（見
+    // repository.list_cooperation_types(vendor=...)），但這個頁面的
+    // 所屬廠商是可以直接在下拉選單改的，改了之後原本畫面上的合作方式
+    // 選項不會跟著換一批——所以改用 COOPERATION_TYPES_BY_VENDOR 這份
+    // 全部選項的資料，選廠商的當下就在瀏覽器端重新篩選一次；篩選後如果
+    // 剛好只剩一個選項，直接帶入，不用使用者自己點——這是使用者反映的
+    // 需求（例如某個廠商目前設定只對應一種合作方式，選了廠商就不用再
+    // 手動選一次）。如果篩選後有不只一個選項，還是維持人工選，不用猜。
+    var COOPERATION_TYPES_BY_VENDOR = {{ cooperation_types_by_vendor | tojson }};
+    var vendorSelect = document.getElementById('vendor');
+    var coopSelect = document.getElementById('cooperation_type');
+    if (vendorSelect && coopSelect) {
+        vendorSelect.addEventListener('change', function () {
+            var options = COOPERATION_TYPES_BY_VENDOR[vendorSelect.value] || [];
+            var currentValue = coopSelect.value;
+            coopSelect.innerHTML = '';
+            var blank = document.createElement('option');
+            blank.value = '';
+            blank.textContent = '尚未決定';
+            coopSelect.appendChild(blank);
+            options.forEach(function (c) {
+                var opt = document.createElement('option');
+                opt.value = c.id;
+                opt.textContent = c.name;
+                coopSelect.appendChild(opt);
+            });
+            if (options.length === 1) {
+                coopSelect.value = options[0].id;
+            } else if (options.some(function (c) { return c.id === currentValue; })) {
+                coopSelect.value = currentValue;
+            } else {
+                coopSelect.value = '';
+            }
+        });
+    }
+
     // 退保連動提醒（2026-09-17 新增）：選單改選「離職」的當下，如果這個人
     // 名下還有裝備借還管理登記的未歸還裝備，跳出提醒視窗——純提醒、不擋
     // 送出，經辦人看到之後還是可以繼續把狀態改成離職，只是希望能先去把
