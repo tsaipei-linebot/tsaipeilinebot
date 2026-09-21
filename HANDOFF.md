@@ -7392,3 +7392,37 @@ employee-no-sync` webhook、騎士名單管理頁面附上合作身份）。全�
 messages.py`（報班版分享位置提示、`shifts_carousel()` 距離顯示）。
 全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）
 1708 個全數通過。
+
+### 修正：騎士名單管理的「合作身份」沒有即時反映人員名冊/合作方式的異動（2026-09-21）
+
+使用者回報：在人員名冊補上工號、在合作方式管理設定好承攬/雇傭分類之後，
+「騎士名單管理」（`/rider/riders`）的「合作身份」欄位沒有跟著更新，還是
+顯示「未對應」。
+
+**根本原因**：`rider_feature_category(binding)` 原本是拿騎士綁定資料裡的
+`personnel_id` 去查人員名冊——但 `personnel_id` 這個欄位是
+`upsert_rider_binding()`（騎士在 LINE 傳「綁定+工號+姓名」時、或
+`backfillRiderBindings8()` 批次搬移時）當下查一次工號寫進去的**快照**，
+之後在人員名冊/合作方式管理頁面另外補資料，不會回頭更新這個快照。也就是
+說，只有「先在人員名冊建好工號、設定好合作方式分類，騎士才第一次綁定」
+或「管理員事後又手動重跑一次 GAS 的 `backfillRiderBindings8()`」這兩種
+情境才會抓到最新結果，跟原本設計文件裡寫的「即時查、不是綁定當下寫死」
+其實對不上——這是一個真正的程式邏輯漏洞，不是操作步驟或環境設定問題。
+
+**修法**：`rider_feature_category()` 改成不依賴這個快照欄位，每次都直接
+拿騎士綁定資料裡的 `employee_id`（騎士自己在 LINE 輸入的工號，這個欄位
+本來就每次同步都會更新）現查一次
+`repository.find_personnel_by_employee_no()`，再往下查合作方式分類——
+真正做到「查詢當下人員名冊/合作方式管理是什麼設定，就回傳什麼結果」，
+不會再有「補完資料後还要等騎士重新綁定或管理員重跑搬移腳本」的問題。
+綁定資料裡的 `personnel_id` 欄位保留（給後台顯示/除錯用），但資格判斷
+已經完全不靠它。
+
+**這次不需要任何手動設定步驟**，合併部署後「騎士名單管理」頁面重新整理
+就會看到最新的合作身份，不用請騎士重新綁定、也不用重跑
+`backfillRiderBindings8()`。
+
+更新測試：`tests/test_delivery_rider_repository.py` 的
+`RiderFeatureCategoryTests` 改成 mock `find_personnel_by_employee_no()`
+而不是 `get_personnel()`。全部測試（`python3 -m unittest discover -s
+tests -p "test_*.py"`）1708 個全數通過。
