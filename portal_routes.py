@@ -162,7 +162,7 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
                     "name": f"{site['name']}專區",
                     "description": f"{site['name']}派遣人員/地點管理、需求時段媒合",
                     "href": f"/dispatch/{site['code']}",
-                    "help_href": "",
+                    "help_href": f"/dispatch/{site['code']}/help",
                 }
             )
 
@@ -197,7 +197,7 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
                 "name": f"{department}專區",
                 "description": "上傳每日加退保 Excel、查詢自己部門的上傳紀錄",
                 "href": "/hr/insurance/upload",
-                "help_href": "",
+                "help_href": "/hr/insurance/help",
             }
         )
 
@@ -210,7 +210,7 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
                 "name": "財務部專區",
                 "description": "查看所有已核准的薪資補款紀錄，依日期區間下載存查用 PDF",
                 "href": "/finance",
-                "help_href": "",
+                "help_href": "/finance/help",
             }
         )
     return templates.TemplateResponse(

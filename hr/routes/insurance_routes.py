@@ -81,6 +81,22 @@ def insurance_home(request: Request, redirect=Depends(_require_login)):
     return RedirectResponse(url="/hr/insurance/upload", status_code=303)
 
 
+@router.get("/insurance/help")
+def insurance_help_page(request: Request, redirect=Depends(_require_login)):
+    """2026-09-22 新增：獨立於 `/hr/help` 之外的加退保使用說明頁，給
+    `_require_login()` 那組不需要人資模組權限的帳號用（7 個上傳部門的
+    同仁不一定有人資模組權限，借用 `/hr/help` 會被模組權限擋下來，見
+    這個檔案開頭的說明）。內容只寫部門同仁需要知道的部分（上傳/查
+    歷史），人資才需要的收單/下載彙總維持只放在 `/hr/help`。"""
+    if redirect:
+        return redirect
+    user = current_user(request)
+    access_redirect = _access_redirect(user)
+    if access_redirect:
+        return access_redirect
+    return templates.TemplateResponse(request, "insurance_help.html", {"user": user})
+
+
 @router.get("/insurance/upload")
 def upload_page(request: Request, work_date: str = "", redirect=Depends(_require_login)):
     if redirect:

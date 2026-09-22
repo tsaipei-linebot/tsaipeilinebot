@@ -94,6 +94,9 @@ class HrRoutingSmokeTests(unittest.TestCase):
     def test_insurance_history_page_redirects_to_login_when_not_authenticated(self):
         self._assert_redirects_to_root_login("/hr/insurance/history")
 
+    def test_insurance_help_page_redirects_to_login_when_not_authenticated(self):
+        self._assert_redirects_to_root_login("/hr/insurance/help")
+
     def test_insurance_summary_page_redirects_to_login_when_not_authenticated(self):
         self._assert_redirects_to_login("/hr/insurance/summary")
 
@@ -151,6 +154,22 @@ class UploadPageAccessTests(unittest.TestCase):
 
     def test_unrelated_department_redirected_to_portal(self):
         result = insurance_routes.upload_page(_FakeRequest(_unrelated_department_account()), work_date="", redirect=None)
+        self.assertEqual(result.status_code, 303)
+        self.assertEqual(result.headers["location"], "/portal")
+
+
+class InsuranceHelpPageTests(unittest.TestCase):
+    """insurance_help_page()（2026-09-22 新增）：獨立於 /hr/help 之外，
+    不用「人資專區」模組權限也看得到的加退保使用說明頁。"""
+
+    def test_upload_department_can_view_help_page(self):
+        with mock.patch.object(insurance_routes, "templates") as mock_templates:
+            insurance_routes.insurance_help_page(_FakeRequest(_upload_department_account()), redirect=None)
+        args = mock_templates.TemplateResponse.call_args[0]
+        self.assertEqual(args[1], "insurance_help.html")
+
+    def test_unrelated_department_redirected_to_portal(self):
+        result = insurance_routes.insurance_help_page(_FakeRequest(_unrelated_department_account()), redirect=None)
         self.assertEqual(result.status_code, 303)
         self.assertEqual(result.headers["location"], "/portal")
 

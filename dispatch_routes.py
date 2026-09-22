@@ -85,6 +85,13 @@ def dispatch_home(site: str, request: Request, redirect=Depends(_require_access)
     )
 
 
+@router.get("/dispatch/{site}/help")
+def dispatch_help_page(site: str, request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(request, "dispatch_help.html", _template_context(site, request))
+
+
 # ==========================================
 # 人員管理
 # ==========================================
