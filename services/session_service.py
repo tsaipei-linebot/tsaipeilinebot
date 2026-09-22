@@ -11,7 +11,9 @@ db = firestore.Client(project=GCP_PROJECT_ID, database="(default)")
 
 SESSIONS_COLLECTION = "user_sessions"
 
-DEFAULT_SLOTS = {"location": "", "category": "", "shift": "", "leave": "", "brand": ""}
+# pay/benefit：求職者講過的發薪方式/福利條件，跟地區一樣記住到他改口為止
+# （使用者 2026-09-23 決定，見 HANDOFF.md 第 66 項）。
+DEFAULT_SLOTS = {"location": "", "category": "", "shift": "", "leave": "", "brand": "", "pay": "", "benefit": ""}
 
 # ==========================================
 # 槽位三態機制的「清除」訊號
@@ -54,7 +56,7 @@ def _normalize_session(raw: dict, now: float) -> tuple:
     return session, True
 
 
-def _merge_slot_updates(slots: dict, location: str = "", category: str = "", shift: str = "", leave: str = "", brand: str = "") -> dict:
+def _merge_slot_updates(slots: dict, location: str = "", category: str = "", shift: str = "", leave: str = "", brand: str = "", pay: str = "", benefit: str = "") -> dict:
     """三態機制的純邏輯部分：
     - 傳入空字串或不傳：這句話沒提到這個維度，維持原值
     - 傳入 CLEAR_SLOT：使用者明確表示不限/取消，清空該維度
@@ -68,6 +70,8 @@ def _merge_slot_updates(slots: dict, location: str = "", category: str = "", shi
         ("shift", shift),
         ("leave", leave),
         ("brand", brand),
+        ("pay", pay),
+        ("benefit", benefit),
     ]:
         if not value:
             continue
@@ -148,9 +152,9 @@ def _run_in_transaction(user_id: str, mutate):
     return _txn(transaction)
 
 
-def update_user_slots(user_id: str, location: str = "", category: str = "", shift: str = "", leave: str = "", brand: str = "") -> dict:
+def update_user_slots(user_id: str, location: str = "", category: str = "", shift: str = "", leave: str = "", brand: str = "", pay: str = "", benefit: str = "") -> dict:
     def _mutate(session):
-        session["slots"] = _merge_slot_updates(session["slots"], location, category, shift, leave, brand)
+        session["slots"] = _merge_slot_updates(session["slots"], location, category, shift, leave, brand, pay, benefit)
         return session["slots"]
 
     return _run_in_transaction(user_id, _mutate)

@@ -56,7 +56,9 @@ class ShiftAndLeaveTests(unittest.TestCase):
 
     def test_leave_preference(self):
         self.assertEqual(m.extract_leave_preference("想要週休二日"), "週休二日")
-        self.assertEqual(m.extract_leave_preference("做四休二可以"), "四休二")
+        self.assertEqual(m.extract_leave_preference("做四休二可以"), "做四休二")
+        # 做二休二跟做四休二是不同班表（使用者 2026-09-23 決定分開）
+        self.assertEqual(m.extract_leave_preference("做二休二也行"), "做二休二")
         self.assertEqual(m.extract_leave_preference("排休也行"), "排休")
 
 
@@ -749,12 +751,19 @@ class FindLeaveMatchedJobsTests(unittest.TestCase):
         self.assertEqual(jobs, [job_a])
 
     def test_synonym_in_job_field_is_recognized(self):
-        # 職缺欄位寫「做二休二」，求職者問「四休二」，兩者都屬於同一個標準
-        # 分類（四休二），應該要能對得上。
+        # 職缺欄位寫「做二休二」，求職者問「2休2」，兩者都屬於同一個標準
+        # 分類（做二休二），應該要能對得上。
         job = {"職缺名稱": "工作A", "休假方式": "做二休二"}
-        label, jobs = m.find_leave_matched_jobs("想找四休二的工作", [job])
-        self.assertEqual(label, "四休二")
+        label, jobs = m.find_leave_matched_jobs("想找2休2的工作", [job])
+        self.assertEqual(label, "做二休二")
         self.assertEqual(jobs, [job])
+
+    def test_work_four_rest_two_does_not_match_work_two_rest_two(self):
+        # 使用者 2026-09-23 決定分開：問做四休二不能推薦做二休二的職缺。
+        job = {"職缺名稱": "美光(桃園)_Porter", "休假方式": "做二休二"}
+        label, jobs = m.find_leave_matched_jobs("想找做四休二的工作", [job])
+        self.assertEqual(label, "做四休二")
+        self.assertEqual(jobs, [])
 
     def test_no_leave_keyword_returns_empty(self):
         job = {"職缺名稱": "工作A", "休假方式": "排休"}
@@ -780,8 +789,8 @@ class FindLeaveMatchedJobsTests(unittest.TestCase):
 
     def test_job_with_multiple_leave_values_still_matches_the_first_checked_one(self):
         job = {"職缺名稱": "康寧(世捷)_倉儲", "休假方式": "做二休二,排休"}
-        label, jobs = m.find_leave_matched_jobs("有四休二的工作嗎", [job])
-        self.assertEqual(label, "四休二")
+        label, jobs = m.find_leave_matched_jobs("有做二休二的工作嗎", [job])
+        self.assertEqual(label, "做二休二")
         self.assertEqual(jobs, [job])
 
 
