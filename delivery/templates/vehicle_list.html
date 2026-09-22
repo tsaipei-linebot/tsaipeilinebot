@@ -59,6 +59,7 @@
             <th>廠商</th>
             <th>輪別</th>
             <th>服務區域</th>
+            <th>站所</th>
             <th>狀態</th>
             <th>目前使用人</th>
             <th>手機號碼</th>
@@ -75,6 +76,7 @@
             <td>{{ vendor_map.get(v.vendor, v.vendor) }}</td>
             <td>{{ wheel_type_map.get(v.wheel_type, v.wheel_type) }}</td>
             <td>{{ service_area_map.get(v.service_area, "未設定") }}</td>
+            <td>{{ v.site or "-" }}</td>
             <td>
                 <span class="badge {{ 'badge-ok' if v.status == 'available' else ('badge-missing' if v.status == 'maintenance' else 'badge-pending') }}">
                     {{ vehicle_status_map.get(v.status, v.status) }}

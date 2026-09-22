@@ -8541,6 +8541,102 @@ staff）。
 測試（`python3 -m unittest discover -s tests -p "test_*.py"`）2024 個
 全數通過。
 
+## 車輛管理新增「站所」欄位＋UD 廠商領車/還車自動同步到材霈試算表（2026-09-22）
+
+使用者想擴充新北所配送組系統的車輛管理，來源是他自己維護的一份 Google
+Sheet（「三輪車(同步材霈)」分頁，網址 gid=1971778587），裡面除了一張
+給 Uber 車隊後台用的表（車輛 uuid／文件審核狀態，我們系統完全沒有這些
+資料，這次沒有處理），還有一張比較單純、跟我們車輛主檔欄位對得上的
+事件紀錄表，表頭是：地區／車號／外送員／手機號碼／站所／目前使用狀況／
+停車地點／給車／還車／備註。跟使用者來回討論確認的設計：
+
+- **只有廠商是 UD 的車輛**觸發同步，其他廠商（蝦皮系列/UC/順豐）不動。
+- **觸發時機是「領車」「還車」事件本身**（不管是 LINE 群組回報還是網頁
+  手動補登，兩條路徑最後都會走到同一支 `repository.record_vehicle_event()`），
+  不是新增車輛、也不是定時排程或手動按鈕。
+- **這份表是事件流水帳，不是每台車一列的主檔**：每次領車/還車都是新增
+  一列，不會回頭找舊的那一列覆蓋。「給車」欄位只有領車事件那一列會填
+  日期，「還車」欄位只有還車事件那一列會填日期，另一欄留空——不會因為
+  車還了就把給車日期清掉。
+- **試算表本身沒有「站所」這個欄位對應**，所以車輛管理主檔新增了一個
+  同名的「站所」自由文字欄位（不像服務區域是固定清單，同仁自己打字），
+  套用到全部車輛、不分廠商，車輛詳細頁可以直接更新（`POST
+  /delivery/vehicles/{車號}/site`，`repository.set_vehicle_site()`）。
+
+### 同步邏輯（`delivery/ud_vehicle_sheet_sync.py`）
+
+跟 `services/salesdev_sheet_service.py` 一樣的模式：Cloud Run 服務帳戶的
+ADC 連 Google Sheets API（可讀寫 scope），差別是這份試算表**用分頁的
+gid（`delivery.config.UD_VEHICLE_SHEET_GID`，寫死在程式碼裡，不是環境
+變數）定位分頁，不是用分頁名稱字串比對**——分頁改名字、或名稱裡全形/
+半形括號打法不一致，都不會影響（這個系統之前在部門名稱比對已經踩過
+一模一樣的雷，見 `platform_accounts.normalize_department()`）。這個 gid
+只有分頁被整個刪掉重建（不是改名，是真的刪掉）才會變，需要工程師改
+`delivery/config.py` 重新部署。
+
+因為這個分頁裡實際上堆疊了好幾張不相干的表格（包含上面提到那張 Uber
+專用表），同步邏輯不是寫死欄位在第幾列第幾欄，而是每次都：
+1. 讀一大段範圍（`A1:P1000`），掃描找到同時有「車號」「外送員」兩個
+   欄位名稱的那一列，當作表頭列，從欄位名稱對應出實際的欄位字母。
+2. 從表頭列往下掃「車號」那一整欄，找到第一個空白的列——這既是「這張
+   表資料寫到哪裡了」的判斷依據，同時也是天然的表格邊界，不會不小心
+   掃到下面那張不相干的表格（正常情況下同一張表的資料列之間不會夾著
+   空白列，下一張表跟這張表之間才會有）。
+3. 只針對找到的欄位（用 `batchUpdate` 個別欄位分開寫，不是整列一次寫
+   死的範圍），寫入這一筆事件對應的值。
+
+同步失敗（試算表權限沒開、找不到分頁、網路錯誤……）只會印 log、回傳
+False，**不會拋例外、不會讓領車/還車這個主要操作跟著失敗**——比照
+`delivery/group_notify.py` 的既有作法，觸發點在
+`delivery/repository.py` 的 `_sync_ud_vehicle_sheet()`（`record_vehicle_
+event()` 內部呼叫，`vendor == "ud"` 才會觸發），外面還包了一層
+try/except 保險。
+
+### 上線前使用者要手動做的事
+
+1. **確認 Cloud Run 服務帳戶 email**：Cloud Shell 執行
+   `gcloud run services describe recruitment-bot --region asia-east1
+   --format="value(spec.template.spec.serviceAccountName)"`；如果印出
+   空白，代表用的是專案預設的 Compute Engine 服務帳戶，執行
+   `gcloud projects describe tsaipei-505807 --format="value(projectNumber)"`
+   拿到專案編號，服務帳戶就是 `該編號-compute@developer.gserviceaccount.com`。
+2. **分享試算表權限**：打開「三輪車(同步材霈)」這份 Google Sheet →
+   右上角「共用」→ 貼上上一步拿到的服務帳戶 email → 權限選「編輯者」。
+3. **設定環境變數**（可選，不設定會用程式碼裡寫死的預設值，即目前這份
+   試算表的 ID）：
+
+   ```bash
+   gcloud run services update recruitment-bot \
+     --region asia-east1 \
+     --update-env-vars UD_VEHICLE_SHEET_ID=11bN718SeTpOmomDkNO6ht_DiAM9Nj2y_54irASY5Wmw
+   ```
+
+**怎麼確認同步真的有生效**：找一台廠商是 UD 的車輛，在網頁上手動登記
+一次領車或還車（或請同仁在 LINE 群組回報一次），完成後去試算表那張
+表格最後一列檢查有沒有新增一筆資料；如果沒有，先確認第 1、2 步的權限
+有沒有設定對，Cloud Run 的 log 裡搜尋「UD車輛同步」會印出具體失敗原因。
+
+新增/調整檔案：`delivery/config.py`（`UD_VEHICLE_SHEET_ID`／
+`UD_VEHICLE_SHEET_GID`）、`delivery/ud_vehicle_sheet_sync.py`（新檔）、
+`delivery/repository.py`（`create_vehicle`／`get_vehicle`／`list_vehicles`
+支援 `site` 欄位、新增 `set_vehicle_site()`、`record_vehicle_event()`
+內新增 `_sync_ud_vehicle_sheet()` 觸發點）、`delivery/routes/vehicle_
+routes.py`（新增站所欄位／`POST /vehicles/{車號}/site`）、
+`delivery/templates/vehicle_form.html`／`vehicle_detail.html`／
+`vehicle_list.html`（站所欄位顯示/編輯）、`delivery/templates/help.html`
+（補說明段落）。
+
+新增測試：`tests/test_delivery_vehicle_repository.py`（新檔，
+`SetVehicleSiteTests`／`GetVehicleSiteDefaultTests`／
+`RecordVehicleEventUdSyncTriggerTests`／`SyncUdVehicleSheetHelperTests`）、
+`tests/test_ud_vehicle_sheet_sync.py`（新檔，涵蓋欄位定位純函式邏輯跟
+`sync_vehicle_event()` 的成功/各種失敗情境，都是 mock 掉 Google Sheets
+API 呼叫，不會真的連線）、`tests/test_delivery_vehicle_routes.py` 新增
+`CreateVehicleSiteTests`／`UpdateVehicleSiteTests`，既有的
+`CreateVehicleWheelTypeTests`／`CreateVehicleServiceAreaTests` 補上
+`site=""` 跟著新增的參數同步更新斷言。全部測試（`python3 -m unittest
+discover -s tests -p "test_*.py"`）2073 個全數通過。
+
 ## 即時接單改成「點承接直接完成」＋報班媒合拆成獨立卡片（2026-09-22）
 
 使用者要求繼續擴充新北所(配送組)系統，這次兩件事：主頁上「外送員接單

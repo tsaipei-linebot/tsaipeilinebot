@@ -46,9 +46,12 @@ class CreateVehicleWheelTypeTests(unittest.TestCase):
                     vendor="ud",
                     wheel_type="two_wheel",
                     service_area="taipei",
+                    site="",
                     redirect=None,
                 )
-        mock_create.assert_called_once_with("ERV-1", "ud", "bob", wheel_type="two_wheel", service_area="taipei")
+        mock_create.assert_called_once_with(
+            "ERV-1", "ud", "bob", wheel_type="two_wheel", service_area="taipei", site=""
+        )
         self.assertEqual(resp.status_code, 303)
 
     def test_default_wheel_type_constant_is_three_wheel(self):
@@ -87,10 +90,11 @@ class CreateVehicleServiceAreaTests(unittest.TestCase):
                     vendor="ud",
                     wheel_type="three_wheel",
                     service_area="kaohsiung",
+                    site="",
                     redirect=None,
                 )
         mock_create.assert_called_once_with(
-            "ERV-1", "ud", "bob", wheel_type="three_wheel", service_area="kaohsiung"
+            "ERV-1", "ud", "bob", wheel_type="three_wheel", service_area="kaohsiung", site=""
         )
         self.assertEqual(resp.status_code, 303)
 
@@ -140,6 +144,47 @@ class UpdateVehicleServiceAreaTests(unittest.TestCase):
         with mock.patch.object(vehicle_routes.repository, "set_vehicle_service_area", return_value=True) as mock_set:
             resp = vehicle_routes.update_vehicle_service_area(
                 "ERV-1", _FakeRequest(_staff_account()), service_area="", redirect=None
+            )
+        mock_set.assert_called_once_with("ERV-1", "")
+        self.assertEqual(resp.status_code, 303)
+
+
+class CreateVehicleSiteTests(unittest.TestCase):
+    """2026-09-22 新增：新增車輛時可以順便填「站所」（自由文字、選填）。"""
+
+    def test_site_is_passed_to_repository(self):
+        with mock.patch.object(vehicle_routes.repository, "get_vehicle_service_area", return_value=_TAIPEI_AREA):
+            with mock.patch.object(vehicle_routes.repository, "create_vehicle", return_value=True) as mock_create:
+                resp = vehicle_routes.create_vehicle_submit(
+                    _FakeRequest(_staff_account()),
+                    vehicle_no="ERV-1",
+                    vendor="ud",
+                    wheel_type="three_wheel",
+                    service_area="taipei",
+                    site="  NS2  ",
+                    redirect=None,
+                )
+        # route 層不做 strip，實際去頭尾空白是 repository.create_vehicle()
+        # 自己的責任（跟其他自由文字欄位一致）。
+        mock_create.assert_called_once_with(
+            "ERV-1", "ud", "bob", wheel_type="three_wheel", service_area="taipei", site="  NS2  "
+        )
+        self.assertEqual(resp.status_code, 303)
+
+
+class UpdateVehicleSiteTests(unittest.TestCase):
+    def test_calls_repository_and_redirects(self):
+        with mock.patch.object(vehicle_routes.repository, "set_vehicle_site", return_value=True) as mock_set:
+            resp = vehicle_routes.update_vehicle_site(
+                "ERV-1", _FakeRequest(_staff_account()), site="NS2", redirect=None
+            )
+        mock_set.assert_called_once_with("ERV-1", "NS2")
+        self.assertEqual(resp.status_code, 303)
+
+    def test_blank_site_clears_it(self):
+        with mock.patch.object(vehicle_routes.repository, "set_vehicle_site", return_value=True) as mock_set:
+            resp = vehicle_routes.update_vehicle_site(
+                "ERV-1", _FakeRequest(_staff_account()), site="", redirect=None
             )
         mock_set.assert_called_once_with("ERV-1", "")
         self.assertEqual(resp.status_code, 303)
