@@ -471,6 +471,23 @@ def extract_leave_preference(text: str) -> str:
         return "排休"
     return ""
 
+
+def find_leave_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
+    """依 extract_leave_preference() 判斷出的休假制度，直接比對職缺結構化的
+    「休假方式」欄位，完全不看任何自由文字欄位。跟 find_pay_method_matched_jobs()
+    是同一種寫法：刻意重複使用 extract_leave_preference() 這同一套分類邏輯，
+    同時套用在求職者的話跟職缺自己的「休假方式」欄位值上——確保兩邊都歸類到
+    同一個標準用語（週休二日／四休二／排休）才算符合，不需要另外維護一份
+    對照表。回傳 (休假制度標籤, 符合的職缺清單)；沒有命中休假關鍵字則回傳
+    ("", [])。"""
+    if not active_jobs:
+        return "", []
+    label = extract_leave_preference(raw_msg)
+    if not label:
+        return "", []
+    matched = [j for j in active_jobs if extract_leave_preference(str(j.get("休假方式") or "")) == label]
+    return label, matched
+
 def extract_numeric_salary_preference(text: str) -> dict:
     """解析文字中的具體數值型薪資需求（例如：時薪200以上、月薪4萬以上）[cite: 1]"""
     clean = clean_text_for_search(text)

@@ -735,5 +735,38 @@ class DistinctRoutableCategoriesForJobsTests(unittest.TestCase):
         self.assertEqual(m.distinct_routable_categories_for_jobs([]), [])
 
 
+class FindLeaveMatchedJobsTests(unittest.TestCase):
+    """跟 find_pay_method_matched_jobs() 同一種寫法：刻意重複使用
+    extract_leave_preference() 這同一套分類邏輯，同時套用在求職者的話跟
+    職缺自己的「休假方式」欄位值上，確保兩邊都歸類到同一個標準用語才算
+    符合。"""
+
+    def test_matches_job_by_structured_leave_field(self):
+        job_a = {"職缺名稱": "工作A", "休假方式": "週休"}
+        job_b = {"職缺名稱": "工作B", "休假方式": "排休"}
+        label, jobs = m.find_leave_matched_jobs("有週休二日的工作嗎", [job_a, job_b])
+        self.assertEqual(label, "週休二日")
+        self.assertEqual(jobs, [job_a])
+
+    def test_synonym_in_job_field_is_recognized(self):
+        # 職缺欄位寫「做二休二」，求職者問「四休二」，兩者都屬於同一個標準
+        # 分類（四休二），應該要能對得上。
+        job = {"職缺名稱": "工作A", "休假方式": "做二休二"}
+        label, jobs = m.find_leave_matched_jobs("想找四休二的工作", [job])
+        self.assertEqual(label, "四休二")
+        self.assertEqual(jobs, [job])
+
+    def test_no_leave_keyword_returns_empty(self):
+        job = {"職缺名稱": "工作A", "休假方式": "排休"}
+        label, jobs = m.find_leave_matched_jobs("台北的工作", [job])
+        self.assertEqual(label, "")
+        self.assertEqual(jobs, [])
+
+    def test_no_active_jobs_returns_empty(self):
+        label, jobs = m.find_leave_matched_jobs("週休二日的工作", [])
+        self.assertEqual(label, "")
+        self.assertEqual(jobs, [])
+
+
 if __name__ == "__main__":
     unittest.main()
