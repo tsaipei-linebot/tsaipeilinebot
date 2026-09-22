@@ -35,7 +35,7 @@ class BuildReportTests(unittest.TestCase):
                 return_value=mock.Mock(stream=mock.Mock(return_value=[_fake_doc("alice", {"delivery": "admin"})])),
             ):
                 report = build_report()
-        self.assertEqual(report[0]["was_admin_of"], ["新北所(配送組)系統"])
+        self.assertEqual(report[0]["was_admin_of"], ["新北所(配送組)專區"])
 
     def test_legacy_staff_is_not_flagged(self):
         accounts = [

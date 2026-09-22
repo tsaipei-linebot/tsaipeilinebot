@@ -22,6 +22,12 @@
         <h2>需求時段管理</h2>
         <p class="hint">開需求（地點/時段/人數/需要的人員資格），審核人員報名，核准/駁回會直接推播 LINE 訊息通知人員。</p>
     </a>
+    {% if show_insurance_panel %}
+    <a class="home-panel" href="/hr/insurance/upload" style="text-decoration: none; display: block;">
+        <h2>每日加退保</h2>
+        <p class="hint">上傳每日加退保 Excel、查詢自己部門的上傳紀錄。</p>
+    </a>
+    {% endif %}
 </div>
 
 <p class="back-link"><a href="/portal">&larr; 回主頁</a></p>

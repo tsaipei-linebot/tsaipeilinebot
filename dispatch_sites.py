@@ -59,7 +59,10 @@ def site_exists(code: str) -> bool:
 def site_for_department(department: str):
     """帳號的部門字串反查對應的所別設定，找不到回傳 None——
     `services/dispatch_service.has_dispatch_access()`、/portal 卡片用。"""
+    import platform_accounts
+
+    normalized = platform_accounts.normalize_department(department)
     for site in DISPATCH_SITES.values():
-        if site["department"] == department:
+        if platform_accounts.normalize_department(site["department"]) == normalized:
             return site
     return None

@@ -39,6 +39,12 @@ class CanUploadTests(unittest.TestCase):
     def test_collector_department_is_not_an_upload_department(self):
         self.assertFalse(repo.can_upload({"department": "人資部門"}))
 
+    def test_fullwidth_parens_in_account_department_still_matches(self):
+        """2026-09-22 新增：帳號的部門欄位如果是用全形括號打的「新北所
+        （配送組）」，也要能對到 hr/config.py 半形括號的「新北所(配送組)」
+        ——見 platform_accounts.normalize_department() 的說明。"""
+        self.assertTrue(repo.can_upload({"department": "新北所（配送組）"}))
+
 
 class IsCollectorTests(unittest.TestCase):
     def test_hr_department_is_collector(self):

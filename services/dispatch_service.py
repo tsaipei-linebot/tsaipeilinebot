@@ -52,6 +52,7 @@ from datetime import datetime
 
 from google.cloud import firestore
 
+import platform_accounts
 from config import TAIPEI_TZ
 from platform_db import get_db
 
@@ -99,7 +100,9 @@ def has_dispatch_access(account: dict, site: str) -> bool:
     site_config = get_site(site)
     if not site_config:
         return False
-    return account.get("department") == site_config["department"]
+    return platform_accounts.normalize_department(account.get("department")) == platform_accounts.normalize_department(
+        site_config["department"]
+    )
 
 
 # ==========================================

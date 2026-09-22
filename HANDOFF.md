@@ -8310,3 +8310,81 @@ test_portal.py` 新增 `PortalHomeInsuranceCardTests`（含「部門同仁看得
 但全平台管理員不會看到 7 張卡片」這個刻意的行為差異）。全部測試
 （`python3 -m unittest discover -s tests -p "test_*.py"`）1993 個全數
 通過。
+
+## 加退保 7 個部門卡片統一命名＋併入既有系統＋部門字串正規化（2026-09-22 再修正）
+
+上一節上線後，使用者提出更完整的設計：7 個上傳部門應該各自有一張
+「{部門}專區」卡片（不是「{部門} 加退保」），已經有其他系統的部門
+（新北所(配送組)/桃園所/高雄所）不要重複顯示兩張卡片，加退保應該併進
+那個系統自己的首頁當一個按鈕。同時使用者主動問到「部門名稱的括號全形
+半形會不會影響權限讀取」，確認會之後決定一起修。
+
+### 1. 部門字串比對正規化（`platform_accounts.normalize_department()`）
+
+新增 `normalize_department()`：比對前把全形括號「（）」轉成半形
+「()」，只轉括號、不動其他字元。原因：這個平台已經有 5 種功能是靠
+`account.get("department")` 完全字串比對來判斷權限（加退保、財務部
+專區、桃園所/高雄所專區、契約彙總的服務部門比對、這次新增的配送部
+部門存取），只要 `/departments` 部門主檔或帳號的部門欄位當初打字時
+全形半形習慣不一致，畫面上會直接看起來像「沒有權限」，沒有任何錯誤
+訊息，同仁自己完全抓不出來。套用的地方：`hr/insurance_repository.py`
+（`can_upload`／`is_collector`）、`services/dispatch_service.py`
+（`has_dispatch_access`）、`dispatch_sites.py`（`site_for_department`）、
+`services/salary_repayment_service.py`（`has_finance_access`）、
+`services/contract_summary_service.py`（三支服務部門比對函式）、
+`delivery/auth.py`（新的 `has_delivery_access`，見下面）。
+
+### 2. 配送部（`delivery` 模組）改成「模組打勾 or 部門字串」
+
+`delivery/auth.py` 新增 `has_delivery_access(account)`：帳號有勾
+「新北所(配送組)專區」模組**或**帳號的部門就是「新北所(配送組)」，
+符合其一即可，`login_required` 改用這個判斷（不再只認模組打勾）。跟
+加退保/財務部/桃園所/高雄所同一套道理——部門本身就是配送部的同仁，
+不該還要額外去 `/accounts` 勾模組權限才進得去自己部門的系統。**這是
+這幾個「部門字串比對」的功能裡，唯一一個實際放寬既有模組存取範圍的
+改動**（其他都是新功能，這個是把舊模組多開一個入口），已經勾模組
+權限的既有帳號完全不受影響，都算 staff 角色（`module_role()` 對只靠
+部門字串進來的帳號回傳 None，`current_user()` 原本的 fallback 就是
+staff）。
+
+### 3. `/portal` 卡片重新設計
+
+- **台北所(派遣組)／台北所(國際組)／新北所(派遣組)／台中所**：沒有
+  其他系統，卡片名稱從「{部門} 加退保」改成「{部門}專區」，點進去
+  還是直接到 `/hr/insurance/upload`。
+- **新北所(配送組)**：不再顯示獨立卡片，`platform_accounts.MODULES`
+  的 `delivery` 顯示名稱從「新北所(配送組)系統」改成「新北所(配送組)
+  專區」（`/accounts` 模組勾選欄位的名稱也會一起變，同一個地方定義），
+  卡片顯示條件從純模組打勾改成 `has_delivery_access()`；配送部系統
+  首頁（`delivery/templates/home.html`）新增「每日加退保」功能區塊，
+  顯示條件是 `hr.insurance_repository.can_upload(user)`。
+- **桃園所／高雄所**：卡片名稱本來就是「{所名}專區」不用改；各自的
+  派遣媒合專區首頁（`templates/dispatch_home.html`）新增「每日加退保」
+  功能區塊，顯示條件同上。
+- `portal_routes.py` 新增 `_INSURANCE_MERGED_ELSEWHERE_DEPARTMENTS`
+  （正規化過的新北所(配送組)/桃園所/高雄所），獨立的加退保卡片只給
+  「能上傳加退保、但部門不在這份清單裡」的帳號顯示，避免同一個部門
+  的同仁畫面上出現兩張功能重疊的卡片。**這張獨立卡片維持不給全平台
+  管理員例外顯示**——原因同上一節：`/hr/insurance/upload` 是讀帳號
+  自己的 `department` 決定內容，管理員自己部門通常是空的，硬顯示只會
+  變成點不進去的卡片。
+
+### 使用者需要做的事
+
+**不需要額外手動設定**——這次全部是程式邏輯調整，部門主檔
+（`/departments`）跟帳號的部門欄位維持原樣不用改；如果之前發現過
+`/departments` 或某些舊帳號的部門名稱括號打法不一致，這次上線後也
+不用特地去修正，程式碼會自動正規化比對。合併後會自動部署，不用手動
+跑指令。
+
+新增/調整測試：`tests/test_platform_accounts.py` 新增
+`NormalizeDepartmentTests`，`tests/test_hr_insurance.py`／
+`tests/test_contract_summary_service.py` 各補一個全形括號比對測試，
+`tests/test_delivery_routes.py` 新增 `HasDeliveryAccessTests`／
+`DeliveryLoginRequiredDependencyTests`，`tests/test_delivery_home_routes.py`
+新增 `HomeInsurancePanelTests`，`tests/test_dispatch_routes.py` 新增
+`DispatchHomeInsurancePanelTests`，`tests/test_portal.py` 的
+`PortalHomeInsuranceCardTests` 整個改寫成對應新的卡片命名跟併卡邏輯，
+`tests/test_report_accounts_for_rank_setup.py`／`tests/test_portal.py`
+既有測試跟著 `delivery` 模組顯示名稱改名同步更新。全部測試（`python3
+-m unittest discover -s tests -p "test_*.py"`）2016 個全數通過。

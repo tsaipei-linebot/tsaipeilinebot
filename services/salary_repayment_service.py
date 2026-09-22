@@ -56,7 +56,9 @@ def has_finance_access(account: dict) -> bool:
         return False
     if account.get("is_platform_admin"):
         return True
-    return account.get("department") == FINANCE_DEPARTMENT
+    return platform_accounts.normalize_department(account.get("department")) == platform_accounts.normalize_department(
+        FINANCE_DEPARTMENT
+    )
 
 
 def _get_sheets_service():
