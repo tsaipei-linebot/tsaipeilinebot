@@ -9,9 +9,22 @@
 `handle_message()` 才會真的讀寫資料庫——跟 `hr/incident_report.py` 的
 `parse_incident_report()`/`handle_incident_report()` 拆法一樣。
 
-完全沒有自動對話/AI 邏輯，指令看不懂就回覆固定的操作說明，不會嘗試用
-AI 猜使用者的意圖（避免猜錯造成誤解，也避免混進招募機器人那套對話
-邏輯——見 `dispatch_line.py` 開頭說明）。
+完全沒有自動對話/AI 邏輯，不會嘗試用 AI 猜使用者的意圖（避免猜錯造成
+誤解，也避免混進招募機器人那套對話邏輯——見 `dispatch_line.py` 開頭說明）。
+
+**2026-09-22 修正：沒有觸發指令關鍵字就完全不回覆（`handle_message()`
+回傳空字串，webhook 那邊就不會呼叫 reply_message）。** 原本的寫法是
+「指令看不懂 → 先檢查有沒有綁定 → 沒綁定就回『請先完成身分綁定』」，
+結果在**跟求職者共用同一個 LINE 官方帳號**的所（使用者確認桃園所/高雄所
+就是這種情況）變成：求職者傳「哈囉」「有工作嗎」都會收到綁定提示，
+完全文不對題。現在改成只有真的在跟這個功能互動（以「綁定」開頭、或
+傳了需求列表/報名/我的報名這幾組固定關鍵字）才回話，其餘一律安靜，
+讓 LINE 內建的自動回應訊息跟專員接手——跟外送員接單媒合
+（`delivery/rider_events.py`）踩過同一種誤觸發後的處理方式一致。
+
+**之後上圖文選單時，選單按鈕送出的文字必須是下面這幾組關鍵字之一**
+（`_BIND_PREFIX`／`_LIST_KEYWORDS`／`_REGISTER_PATTERN`／
+`_MY_REGISTRATIONS_KEYWORDS`），不然點了會完全沒反應。
 """
 import re
 from datetime import datetime
@@ -30,7 +43,9 @@ CMD_BIND_INVALID = "bind_invalid"
 CMD_LIST_POSTINGS = "list_postings"
 CMD_REGISTER = "register"
 CMD_MY_REGISTRATIONS = "my_registrations"
-CMD_HELP = "help"
+# 沒有觸發任何指令關鍵字：這則訊息看起來不是在跟派遣功能互動（可能是
+# 求職者在問工作），一律不回覆，見檔案開頭的說明。
+CMD_IGNORE = "ignore"
 
 _BIND_INVALID_TEXT = "綁定格式不對，請用「綁定+姓名+電話」，中間用「+」隔開，例如「綁定+王小明+0912345678」。"
 
@@ -43,23 +58,9 @@ _REGISTRATION_STATUS_LABELS = {
 }
 
 
-def _help_text(site: str) -> str:
-    from dispatch_sites import get_site
-
-    site_config = get_site(site)
-    site_name = site_config["name"] if site_config else "派遣"
-    return (
-        f"{site_name}派遣小幫手，可以用的指令：\n"
-        "「綁定+姓名+電話」：第一次使用要先綁定身分，例如「綁定+王小明+0912345678」\n"
-        "「需求列表」：查看目前開放報名、符合您人員資格的需求\n"
-        "「報名 代碼」：報名需求列表裡的某一筆，例如「報名 A1B2C3」\n"
-        "「我的報名」：查詢自己報名紀錄的審核狀態"
-    )
-
-
 def parse_command(text: str) -> dict:
-    """回傳 {"type": ..., 對應參數...}，看不懂的指令回傳 {"type": "help"}。
-    純文字解析，不牽涉所別。"""
+    """回傳 {"type": ..., 對應參數...}，沒有觸發任何指令關鍵字的文字回傳
+    {"type": CMD_IGNORE}（呼叫端一律不回覆）。純文字解析，不牽涉所別。"""
     text = (text or "").strip()
     bind_match = _BIND_PATTERN.match(text)
     if bind_match:
@@ -73,7 +74,7 @@ def parse_command(text: str) -> dict:
         return {"type": CMD_REGISTER, "short_code": register_match.group(1)}
     if text in _MY_REGISTRATIONS_KEYWORDS:
         return {"type": CMD_MY_REGISTRATIONS}
-    return {"type": CMD_HELP}
+    return {"type": CMD_IGNORE}
 
 
 def _format_posting_line(posting: dict) -> str:
@@ -107,9 +108,18 @@ def _format_registration_line(registration: dict, posting: dict) -> str:
 def handle_message(site: str, line_user_id: str, text: str) -> str:
     """真正讀寫 Firestore 的入口——webhook 收到文字訊息時呼叫這個函式，
     回傳的字串直接用 reply_message() 回覆。`site` 決定讀寫哪個所的資料，
-    由 `dispatch_webhook_routes.py` 依收到訊息的 Channel 帶入。"""
+    由 `dispatch_webhook_routes.py` 依收到訊息的 Channel 帶入。
+
+    **回傳空字串代表「不要回覆任何東西」**（見檔案開頭的說明），呼叫端
+    要自己判斷、空字串時不要呼叫 reply_message()。"""
     command = parse_command(text)
     cmd_type = command["type"]
+
+    # 沒觸發任何關鍵字：直接安靜退出，連「有沒有綁定」都不查——這一步
+    # 一定要在下面那段綁定檢查之前，不然求職者的閒聊又會收到綁定提示
+    # （這正是 2026-09-22 修正的問題本身）。
+    if cmd_type == CMD_IGNORE:
+        return ""
 
     if cmd_type == CMD_BIND:
         personnel = service.find_personnel_by_name_and_phone(site, command["name"], command["phone"])
@@ -152,4 +162,4 @@ def handle_message(site: str, line_user_id: str, text: str) -> str:
         ]
         return "您的報名紀錄：\n\n" + "\n\n".join(lines)
 
-    return _help_text(site)
+    return ""

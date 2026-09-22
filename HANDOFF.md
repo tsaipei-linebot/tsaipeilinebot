@@ -8737,3 +8737,65 @@ discover -s tests -p "test_*.py"`）2073 個全數通過。
 `rider_store_delivery_claims.html` 確認樣板語法跟卡片拆分結果正確（樣板
 本身不會被單元測試真的渲染，只有 mock 過 `templates` 物件）。全部測試
 （`python3 -m unittest discover -s tests -p "test_*.py"`）2084 個全數通過。
+
+## 派遣媒合 LINE 機器人：沒觸發關鍵字就完全不回覆（2026-09-22 修正）
+
+使用者把桃園所的 webhook 打開測試時發現：**求職者傳任何一句話都會收到
+「請先完成身分綁定：傳送『綁定+姓名+電話』…」**（截圖裡求職者傳「哈囉」
+「阿怎麼會這樣」各收到一次）。
+
+### 根本原因
+
+`dispatch_bot.handle_message()` 原本的順序是「解析指令 → 查有沒有綁定 →
+沒綁定就回 `_NOT_BOUND_TEXT`」，**指令看不懂（`CMD_HELP`）這條路也會先
+經過那段綁定檢查**，所以任何閒聊都會拿到綁定提示，只有已經綁定的人才
+看得到原本設計的操作說明。
+
+關鍵的前提是使用者確認的一件事：**桃園所/高雄所這兩個所的派遣，是跟
+求職者共用同一個 LINE 官方帳號**（截圖那個帳號的歡迎訊息就是招募那套
+「姓名／年次／手機電話…」）。所以這不只是文案不精準，是會直接干擾求職
+者跟專員的對話。
+
+### 修法（比照外送員接單媒合踩過同一種雷之後的做法）
+
+只有真的在跟派遣功能互動才回話，其餘一律安靜：
+
+| 傳的內容 | 行為 |
+|---|---|
+| 以「綁定」**開頭** | 綁定結果／格式提示（不分有沒有綁定） |
+| `需求列表`／`需求`／`查看需求`／`查詢需求` | 需求清單；沒綁定 → 請先完成身分綁定 |
+| `報名 代碼`（例如 `報名 A1B2C3`） | 報名結果；沒綁定 → 請先完成身分綁定 |
+| `我的報名`／`報名紀錄`／`查詢報名`／`查詢報名狀態` | 報名狀態；沒綁定 → 請先完成身分綁定 |
+| **其他任何文字** | **完全不回覆**（不分有沒有綁定） |
+
+- `parse_command()` 的 `CMD_HELP` 改名成 `CMD_IGNORE`（語意從「回操作
+  說明」變成「這則訊息不是在跟這個功能互動」），`handle_message()` 對
+  這種訊息回傳空字串，而且**這個判斷放在綁定檢查之前**（連綁定狀態都
+  不查）——順序放錯就等於沒修。
+- `_help_text()` 整個移除：使用者確認已綁定的人傳看不懂的文字也要安靜，
+  這段文字已經沒有任何地方會用到（指令清單在網頁版使用說明頁還有一份）。
+- `dispatch_webhook_routes._make_reply_handler()` 補上「空字串就 return、
+  不呼叫 `reply_message()`」——replyToken 自然過期，不會有任何副作用。
+- 「報名」這兩個字**單獨傳**（沒帶代碼）現在也算安靜：求職者很可能傳
+  這兩個字（想應徵工作），比起讓派遣人員少一句提示，誤擾求職者的代價
+  高得多。同理「我要怎麼綁定啊」因為「綁定」不在開頭，也不會被觸發。
+
+**之後上圖文選單時，選單按鈕送出的文字必須是上表那幾組關鍵字之一**，
+不然點下去會完全沒反應（這也記在 `dispatch_bot.py` 開頭）。
+
+**這次不需要任何手動設定**，合併後自動部署即可生效。
+
+新增/調整檔案：`dispatch_bot.py`（`CMD_IGNORE`、移除 `_help_text()`、
+`handle_message()` 提前安靜退出）、`dispatch_webhook_routes.py`（空字串
+不回覆）、`templates/dispatch_help.html`（LINE 指令那節改寫成「沒打到
+關鍵字一律不回覆」並說明原因）。
+
+新增/更新測試：`tests/test_dispatch_bot.py` 新增 `HandleMessageSilenceTests`
+（沒綁定/已綁定的閒聊都要空字串、求職者常見說法一次驗一組、真正的指令
+沒綁定時仍要回綁定提示），`ParseCommandTests` 補上「綁定不在開頭」「報名
+沒帶代碼」兩個誤觸發邊界，既有那個**斷言舊行為**的
+`test_unbound_user_unknown_text_prompted_to_bind_not_help` 直接反轉成
+`test_unbound_user_unknown_text_gets_no_reply_at_all`；
+`tests/test_dispatch_webhook_routes.py` 新增 `ReplyHandlerSilenceTests`
+（空字串時連 `get_line_bot_api()` 都不能呼叫）。全部測試（`python3 -m
+unittest discover -s tests -p "test_*.py"`）2120 個全數通過。

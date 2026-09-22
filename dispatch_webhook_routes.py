@@ -44,6 +44,12 @@ async def dispatch_line_callback(site: str, request: Request, x_line_signature: 
 def _make_reply_handler(site: str):
     def _reply(event):
         reply = dispatch_bot.handle_message(site, event.source.user_id, event.message.text or "")
+        # 空字串代表這則訊息沒有觸發任何派遣指令關鍵字（可能是求職者在問
+        # 工作——這幾個所的 LINE 官方帳號跟求職者共用），這時候完全不回覆，
+        # replyToken 自然過期、不會有任何副作用，讓 LINE 內建的自動回應
+        # 訊息跟專員接手（見 dispatch_bot.py 開頭的說明）。
+        if not reply:
+            return
         get_line_bot_api(site).reply_message(event.reply_token, TextSendMessage(text=reply))
 
     return _reply
