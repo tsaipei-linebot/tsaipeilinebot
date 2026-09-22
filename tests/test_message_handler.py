@@ -1793,6 +1793,154 @@ class ShopeeCategoryClarifyTests(unittest.TestCase):
         self.assertEqual(shown_titles, {"蝦皮外送三輪雇傭", "蝦皮店到店門市夥伴", "蝦皮物流理貨員"})
 
 
+class CompoundSecondaryFilterTests(unittest.TestCase):
+    """使用者實測回報（並用真實 Notion 資料驗證）：「蝦皮有公司車的工作嗎」
+    這種「廠商/類別 + 福利/發薪方式/休假方式」合併問的句子，原本福利/發薪
+    方式/休假方式完全沒機會被檢查（廠商/類別攔截先搶到就直接回覆/反問，
+    答非所問）。改成把這四項（地區、休假方式、福利、發薪方式）疊加套用在
+    廠商/類別決定出來的候選池上，不再各自獨立、先搶先贏。"""
+
+    def _job(self, 職缺名稱, 職務類別, 系統廠商名稱, 縣市, 行政區, 領薪方式="", 福利="", 休假方式=""):
+        from services.notion_service import clean_text_for_search
+        raw_parts = [職缺名稱, "、".join(職務類別), 系統廠商名稱, "、".join(縣市), "、".join(行政區), 領薪方式, 福利, 休假方式]
+        return {
+            "職缺名稱": 職缺名稱, "職缺名稱(對外)": 職缺名稱,
+            "_internal_title": 職缺名稱, "_parsed_title": 職缺名稱,
+            "職務類別": "、".join(職務類別), "_job_category": "、".join(職務類別),
+            "系統廠商名稱": 系統廠商名稱, "_vendor_name_clean": clean_text_for_search(系統廠商名稱),
+            "縣市": "、".join(縣市), "行政區": "、".join(行政區),
+            "_location_search_text": clean_text_for_search(" ".join(縣市) + " " + " ".join(行政區)),
+            "_search_text": clean_text_for_search(" ".join(raw_parts)),
+            "領薪方式": 領薪方式, "福利": 福利, "休假方式": 休假方式,
+        }
+
+    def _shopee_jobs(self):
+        # 貼近真實 Notion 資料：外送有公司車、排休；門市無福利、週休；
+        # 威獅倉（理貨/倉儲）無福利、排休。
+        return [
+            self._job("蝦皮外送三輪雇傭", ["外送員"], "蝦皮三輪雇傭", ["桃園市"], ["桃園市桃園區"], "週領,匯款,月領", "公司車", "排休"),
+            self._job("蝦皮門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市桃園區"], "月領,匯款", "", "週休"),
+            self._job("蝦皮(威獅)(時薪)", ["倉儲人員"], "蝦皮(威獅)(時薪)", ["桃園市"], ["桃園市楊梅區"], "月領,週領,匯款,現金", "", "排休"),
+        ]
+
+    def _momo_jobs(self):
+        return [
+            self._job("momo楊梅倉", ["倉儲人員"], "momo理貨員", ["桃園市"], ["桃園市楊梅區"], "日領,月領", "交通車", "排休"),
+            self._job("momo蘆竹倉", ["倉儲人員"], "momo理貨員", ["桃園市"], ["桃園市蘆竹區"], "月領,匯款", "", "週休"),
+        ]
+
+    def _run(self, msg, jobs, user_id):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = user_id
+        event.message.text = msg
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=jobs), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+        return mock_ai_decision, mock_flex_card, line_bot_api
+
+    def test_brand_plus_benefit_recommends_directly_without_type_clarify(self):
+        # 這是使用者實測回報的確切案例：蝦皮橫跨多種類型，原本會被類型反問
+        # 攔截、完全沒理會「公司車」。現在應該直接用福利篩出唯一符合的一筆。
+        mock_ai, mock_flex, api = self._run("蝦皮有公司車的工作嗎", self._shopee_jobs(), "test-brand-benefit")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["蝦皮外送三輪雇傭"])
+
+    def test_brand_plus_leave_preference_recommends_directly(self):
+        mock_ai, mock_flex, api = self._run("蝦皮有週休二日的工作嗎", self._shopee_jobs(), "test-brand-leave")
+        mock_ai.assert_not_called()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["蝦皮門市"])
+
+    def test_momo_pay_method_no_longer_includes_job_without_that_pay_method(self):
+        # 實測回報的第二個案例：momo 有兩筆倉別，只有一筆是日領，問「momo有
+        # 日領的工作嗎」原本會把沒有日領的那筆也一起顯示。
+        mock_ai, mock_flex, api = self._run("momo有日領的工作嗎", self._momo_jobs(), "test-momo-pay")
+        mock_ai.assert_not_called()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["momo楊梅倉"])
+
+    def test_momo_benefit_no_longer_includes_job_without_that_benefit(self):
+        mock_ai, mock_flex, api = self._run("momo有交通車的工作嗎", self._momo_jobs(), "test-momo-benefit")
+        mock_ai.assert_not_called()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["momo楊梅倉"])
+
+    def test_no_exact_match_asks_which_condition_to_relax(self):
+        # 蝦皮同時要「週休二日」跟「公司車」沒有職缺同時符合，應該反問要放寬
+        # 哪一項，而不是直接落到 AI 或誠實說完全沒有。
+        jobs = self._shopee_jobs()
+        mock_ai, mock_flex, api = self._run("蝦皮想要週休二日、有公司車的工作", jobs, "test-relax-ask")
+        mock_ai.assert_not_called()
+        mock_flex.assert_not_called()
+        api.reply_message.assert_called_once()
+        args, _ = api.reply_message.call_args
+        reply_msg = args[1]
+        self.assertIn("週休二日", reply_msg.text)
+        self.assertIn("公司車", reply_msg.text)
+        button_texts = {b.action.text for b in reply_msg.quick_reply.items}
+        self.assertEqual(button_texts, {"蝦皮 公司車", "蝦皮 週休二日", "蝦皮"})
+
+    def test_relaxing_leave_shows_job_matching_remaining_benefit_condition(self):
+        jobs = self._shopee_jobs()
+        mock_ai, mock_flex, api = self._run("蝦皮 公司車", jobs, "test-relax-pick-benefit")
+        mock_ai.assert_not_called()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["蝦皮外送三輪雇傭"])
+
+    def test_relaxing_benefit_shows_job_matching_remaining_leave_condition(self):
+        jobs = self._shopee_jobs()
+        mock_ai, mock_flex, api = self._run("蝦皮 週休二日", jobs, "test-relax-pick-leave")
+        mock_ai.assert_not_called()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["蝦皮門市"])
+
+    def test_no_relaxable_dimension_gives_honest_no_match_reply(self):
+        # 三個條件疊在一起，就算放寬任何一項也還是找不到，應該誠實說沒有，
+        # 不提供無效的放寬選項，也不落到 AI。
+        jobs = [self._job(
+            "蝦皮外送三輪雇傭", ["外送員"], "蝦皮三輪雇傭", ["新竹市"], ["新竹市東區"],
+            "月領,匯款", "公司車", "週休",
+        )]
+        mock_ai, mock_flex, api = self._run("蝦皮想要台北週休二日、日領、公司車的工作", jobs, "test-no-relax")
+        mock_ai.assert_not_called()
+        mock_flex.assert_not_called()
+
+    def test_negated_secondary_keyword_falls_through_to_ai(self):
+        jobs = self._shopee_jobs()
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-negated-secondary"
+        event.message.text = "蝦皮不要公司車的工作"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=jobs), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
     """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或
     類似的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德目前沒有蝦皮

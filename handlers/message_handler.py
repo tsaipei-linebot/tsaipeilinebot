@@ -31,7 +31,7 @@ from services.matcher_service import (
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match,
     find_county_level_alternative_jobs, find_same_county_district_labels,
     resolve_county_for_location, find_benefit_matched_jobs, find_pay_method_matched_jobs,
-    distinct_routable_categories_for_jobs
+    distinct_routable_categories_for_jobs, find_leave_matched_jobs
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -598,34 +598,30 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             elif detected_brand == "蝦皮":
                 is_shopee_intent = True
 
-        direct_matches = []
-        # 這三個分支各自的「類別/廠商比對通過、但還沒篩地區」候選池，供地區
-        # 精準比對落空時，退一步找「同縣市」還有沒有符合條件的職缺用（見下面
-        # 步驟 1-4 的同縣市鄰近地區退讓建議）。沒有走到對應分支時維持空清單，
-        # 不影響原本的判斷。
-        _category_matched_jobs_for_fallback = []
-        _category_desc_for_fallback = ""
+        # ---------------- 步驟 1a：決定候選池（廠商/類別），不篩地區 ----------------
+        # 使用者實測回報：「蝦皮有公司車的工作嗎」這種「廠商/類別 + 福利/發薪
+        # 方式/休假方式」合併問的句子，原本福利/發薪方式完全沒機會被檢查到
+        # （廠商/類別攔截先搶到就直接回覆/反問，答非所問）。改成這裡只決定
+        # 「候選池」（不篩地區、不直接回覆），地區／福利／發薪方式／休假方式
+        # 這四項全部挪到後面統一疊加篩選（見下方步驟 1b/1c），才能讓「蝦皮」
+        # 加上「公司車」這種合併問法正確同時生效。
+        # `_pool_query_phrase`：給「詢問求職者可以放寬哪個條件」那段重組按鈕
+        # 文字用——只要把這個詞、地區、還沒被放寬的其他關鍵字組成一句話，
+        # 重新送進這個函式就能自然命中同一個候選池，不需要另外寫路由邏輯，
+        # 跟蝦皮反問／全域重置確認是同一種「按鈕文字完全自己控制」的精神。
+        _pool = []
+        _pool_desc = ""
+        _pool_query_phrase = ""
 
         if is_delivery_intent:
-            _delivery_matched_jobs = []
             for j in active_jobs:
                 cat = str(j.get("_job_category", "")).lower()
                 int_t = str(j.get("_internal_title", "")).lower()
                 pub_t = str(j.get("職缺名稱(對外)", "")).lower()
                 if any(k in cat for k in ["外送", "司機", "配送"]) or any(k in int_t for k in ["外送", "司機", "配送"]) or any(k in pub_t for k in ["外送", "司機", "配送"]):
-                    _delivery_matched_jobs.append(j)
-
-            if current_location:
-                loc_clean = current_location.replace("台", "臺")
-                # 地區比對用 _location_search_text（只含縣市/行政區），見
-                # notion_service.py 的欄位說明：不能用 _search_text，否則
-                # 職缺描述文字裡剛好提到的地名（例如路名）會被誤判成該職缺
-                # 真的位於那個行政區。
-                direct_matches = [j for j in _delivery_matched_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
-            else:
-                direct_matches = _delivery_matched_jobs
-            _category_matched_jobs_for_fallback = _delivery_matched_jobs
-            _category_desc_for_fallback = "外送"
+                    _pool.append(j)
+            _pool_desc = "外送"
+            _pool_query_phrase = "外送"
 
         elif is_store_intent:
             # 改用 detected_brand（這輪偵測到的，或延續前一輪鎖定的廠商），
@@ -633,52 +629,18 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             # 這樣「蝦皮門市有嗎」下一句接著問「八德有缺嗎」時，也能正確延續
             # 蝦皮這個廠商條件，不會變成查「不限廠商的門市」。
             _store_brand = detected_brand
-            _location_jobs = []
-            for j in active_jobs:
-                if current_location:
-                    loc_clean = current_location.replace("台", "臺")
-                    if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", ""):
-                        _location_jobs.append(j)
-                else:
-                    _location_jobs.append(j)
-
-            direct_matches = filter_jobs_by_category_tiered(_location_jobs, "門市", _store_brand)
-            # 這裡刻意「另外」對全部 active_jobs（不先篩地區）再跑一次類別/廠商
-            # 比對，只給同縣市退讓建議用，不會反過來影響上面 direct_matches 的
-            # 判斷結果——避免因為改成「先比類別再篩地區」而讓嚴格/寬鬆兩層
-            # 比對的判斷基準跟著地區篩選範圍變動，波及到已經驗證過的既有行為。
-            _category_matched_jobs_for_fallback = filter_jobs_by_category_tiered(active_jobs, "門市", _store_brand)
-            _category_desc_for_fallback = f"{_store_brand}門市" if _store_brand else "門市"
+            _pool = filter_jobs_by_category_tiered(active_jobs, "門市", _store_brand)
+            _pool_desc = f"{_store_brand}門市" if _store_brand else "門市"
+            _pool_query_phrase = _pool_desc
 
         elif is_momo_intent:
-            # 地區沒有精準命中時不再退讓顯示「全部」momo 職缺——之前這樣設計
-            # 會讓使用者收到跟他問的地區完全無關的職缺、卻被告知「找到符合
-            # 條件的推薦職缺」，答非所問（見 HANDOFF.md 案例）。跟 delivery/
-            # store 分支一致：地區沒有精準命中就是沒有直接命中，落到下面的
-            # 同縣市退讓建議，還是沒有才落到 AI 決策，由 AI 依候選職缺清單
-            # 判斷、老實回覆。
-            momo_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"])]
-            if current_location:
-                loc_clean = current_location.replace("台", "臺")
-                direct_matches = [j for j in momo_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
-            else:
-                direct_matches = momo_jobs
-            _category_matched_jobs_for_fallback = momo_jobs
-            _category_desc_for_fallback = "momo"
+            _pool = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"])]
+            _pool_desc = "momo"
+            _pool_query_phrase = "momo"
 
         elif is_warehouse_intent or is_manufacturing_intent:
             _category_label_for_intent = "理貨/倉儲" if is_warehouse_intent else "製造/作業員"
-            _location_jobs = []
-            for j in active_jobs:
-                if current_location:
-                    loc_clean = current_location.replace("台", "臺")
-                    if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", ""):
-                        _location_jobs.append(j)
-                else:
-                    _location_jobs.append(j)
-
-            direct_matches = filter_jobs_by_category_tiered(_location_jobs, _category_label_for_intent)
-            _category_matched_jobs_for_fallback = filter_jobs_by_category_tiered(active_jobs, _category_label_for_intent)
+            _pool = filter_jobs_by_category_tiered(active_jobs, _category_label_for_intent)
             if detected_brand:
                 # job_matches_category_filter() 的 brand_label 參數只有在
                 # category_label == "門市" 時才會真的拿來篩選（見該函式內部
@@ -687,59 +649,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 一次，避免求職者指定廠商（例如「蝦皮理貨」）時混進其他
                 # 廠商的職缺，答非所問。
                 _brand_clean_for_intent = clean_text_for_search(detected_brand)
-                direct_matches = [j for j in direct_matches if _brand_clean_for_intent in j.get("_search_text", "")]
-                _category_matched_jobs_for_fallback = [j for j in _category_matched_jobs_for_fallback if _brand_clean_for_intent in j.get("_search_text", "")]
-            _category_desc_for_fallback = f"{detected_brand}{_category_label_for_intent}" if detected_brand else _category_label_for_intent
+                _pool = [j for j in _pool if _brand_clean_for_intent in j.get("_search_text", "")]
+            _pool_desc = f"{detected_brand}{_category_label_for_intent}" if detected_brand else _category_label_for_intent
+            _pool_query_phrase = f"{detected_brand}{'理貨' if is_warehouse_intent else '作業員'}" if detected_brand else ("理貨" if is_warehouse_intent else "作業員")
 
         elif is_shopee_intent:
-            shopee_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["蝦皮", "spx"])]
-            if current_location:
-                loc_clean = current_location.replace("台", "臺")
-                shopee_jobs = [j for j in shopee_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
-            _category_matched_jobs_for_fallback = shopee_jobs
-            _category_desc_for_fallback = "蝦皮"
-
-            # ---------------- 蝦皮職缺類型反問 ----------------
-            # 使用者反映：蝦皮同時橫跨外送/門市/理貨倉儲等好幾種職缺類型，
-            # 求職者只問「蝦皮有工作嗎」時，原本會把所有類型混在一起顯示，
-            # 求職者不一定能一眼分辨。比照今天稍早「清空所有條件」改成先
-            # 反問確認的做法（不是每次都試著把關鍵字/判斷邏輯調到完美，
-            # 而是遇到真的有歧義時，直接反問求職者本人最準）：蝦皮目前
-            # 實際涵蓋兩種以上「有專屬直達攔截」的類型時，先反問求職者
-            # 想看哪一種，選完之後那句話會自然命中對應的門市/外送等分支，
-            # 不需要另外寫路由邏輯。求職者按下「全部類型都看看」保底按鈕
-            # （SHOPEE_CLARIFY_ALL_TEXT，完全由我們自己的按鈕控制、不是
-            # 猜使用者打字）時，一律直接顯示全部，不再重新判斷要不要問，
-            # 避免卡在無限循環。
-            if raw_msg.strip() != SHOPEE_CLARIFY_ALL_TEXT:
-                _shopee_known_categories = distinct_routable_categories_for_jobs(shopee_jobs)
-                if len(_shopee_known_categories) >= 2:
-                    _shopee_category_emoji = {"外送": "🚚", "門市": "🏬", "理貨/倉儲": "📦", "製造/作業員": "🏭"}
-                    clarify_reply = f"蝦皮目前有{'、'.join(_shopee_known_categories)}這幾種職缺在招募，請問您想看哪一種呢？😊"
-                    append_user_history(user_id, "求職者", raw_msg)
-                    append_user_history(user_id, "招募顧問沛沛", clarify_reply)
-                    shopee_clarify_buttons = [
-                        QuickReplyButton(action=MessageAction(
-                            label=f"{_shopee_category_emoji.get(c, '✨')} 蝦皮{c}",
-                            text=f"蝦皮{c}",
-                        ))
-                        for c in _shopee_known_categories
-                    ]
-                    shopee_clarify_buttons.append(
-                        QuickReplyButton(action=MessageAction(label="👀 全部類型都看看", text=SHOPEE_CLARIFY_ALL_TEXT))
-                    )
-                    target_line_bot_api.reply_message(reply_token, TextSendMessage(
-                        text=clarify_reply,
-                        quick_reply=QuickReply(items=shopee_clarify_buttons),
-                    ))
-                    log_ai_decision_event(
-                        path="direct_intercept", intercept_type="shopee_clarify",
-                        matched_brand="蝦皮",
-                        latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
-                    )
-                    return
-
-            direct_matches = shopee_jobs
+            _pool = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["蝦皮", "spx"])]
+            _pool_desc = "蝦皮"
+            _pool_query_phrase = "蝦皮"
 
         def _resolve_intercept_type():
             if is_delivery_intent:
@@ -754,130 +671,219 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 return "manufacturing"
             return "shopee"
 
-        if direct_matches:
-            reply_text = f"有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
-            append_user_history(user_id, "求職者", raw_msg)
-            append_user_history(user_id, "招募顧問沛沛", reply_text)
-            target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:4], user_id, current_location)])
-            log_ai_decision_event(
-                path="direct_intercept", intercept_type=_resolve_intercept_type(),
-                matched_brand="momo" if is_momo_intent else ("蝦皮" if is_shopee_intent else ""),
-                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
-            )
-            return
+        _has_pool_intent = bool(is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_shopee_intent)
 
-        # ---------------- 步驟 1-3：福利/配備關鍵字直達攔截 ----------------
-        # 使用者反映：有些求職者問的不是地區/類別/廠商，而是「這份工作有沒有
-        # 某項福利/配備」（例如「有公司車嗎」「我要公司車的工作」），這種問法
-        # 通常很直接對應到某幾筆有勾選該福利的職缺。改成從 Notion 職缺資料庫
-        # 的「福利」欄位（同仁自行維護，見 services/matcher_service.py 的
-        # find_benefit_matched_jobs() 說明）動態辨識關鍵字，命中就直接攔截
-        # 推薦，不用交給 AI 自己從候選職缺的自由文字裡猜。刻意排在類別/廠商
-        # 直達攔截之後才檢查——兩者是各自獨立的判斷維度，這句話沒有命中類別/
-        # 廠商關鍵字時才會走到這裡，不會互相搶著攔截。跟其他三種直達攔截一樣
-        # 排除否定語氣（例如「不要公司車的」），且使用者這輪如果已經鎖定地區，
-        # 一併用地區篩選縮小範圍；篩選後沒有職缺就視為沒有命中，往下走既有的
-        # AI 決策保底流程，不特別做「福利版本的同縣市退讓建議」。
-        matched_benefit_keyword, benefit_jobs = find_benefit_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
-        if current_location and benefit_jobs:
-            loc_clean = current_location.replace("台", "臺")
-            benefit_jobs = [j for j in benefit_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
+        # ---------------- 步驟 1b：偵測休假方式／福利／發薪方式關鍵字 ----------------
+        # 這三項疊加在廠商/類別「候選池」之上一起判斷（見上方步驟 1a）：不管
+        # 候選池是怎麼決定出來的，只要訊息裡「同時」講到這幾項，都要疊加篩選，
+        # 不能像過去那樣「廠商/類別攔截先搶到就不再檢查福利/發薪方式/休假
+        # 方式」（使用者實測回報「蝦皮有公司車的工作嗎」：蝦皮橫跨多種類型、
+        # 直接跳去問「想看哪一種類型」，完全沒理會「公司車」這個條件）。
+        # 沒有命中廠商/類別時，這三項改成直接對全部 active_jobs 判斷，
+        # 沿用福利/發薪方式攔截原本就有的行為。
+        _secondary_pool_source = _pool if _has_pool_intent else active_jobs
+        _leave_label, _ = find_leave_matched_jobs(raw_msg, _secondary_pool_source) if not is_negative else ("", [])
+        _benefit_label, _ = find_benefit_matched_jobs(raw_msg, _secondary_pool_source) if not is_negative else ("", [])
+        _pay_label, _ = find_pay_method_matched_jobs(raw_msg, _secondary_pool_source) if not is_negative else ("", [])
+        _has_secondary_intent = bool(_leave_label or _benefit_label or _pay_label)
 
-        if matched_benefit_keyword and benefit_jobs:
-            reply_text = f"有的！沛沛為您找到有「{matched_benefit_keyword}」的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
-            append_user_history(user_id, "求職者", raw_msg)
-            append_user_history(user_id, "招募顧問沛沛", reply_text)
-            target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(benefit_jobs[:4], user_id, current_location)])
-            log_ai_decision_event(
-                path="direct_intercept", intercept_type="benefit_keyword",
-                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
-            )
-            return
-
-        # ---------------- 步驟 1-3B：領薪方式關鍵字直達攔截 ----------------
-        # 求職者問到特定發薪方式（例如「日領」「週領」）時，一律直接比對
-        # Notion 職缺資料庫結構化的「領薪方式」欄位，完全不交給 AI 判斷——
-        # 即使候選職缺清單裡的「特色」「工作內容」等自由文字寫了「當日結算」
-        # 「薪資當天算」之類行銷字眼，也絕對不能被誤判成「日領」（見
-        # HANDOFF.md 日領誤判案例：AI 曾經把「薪資當日結算」跟「日領」搞混，
-        # 即使當時已經把「領薪方式:週領,匯款,月領,現金」這個正確的結構化
-        # 欄位資訊列給 AI 看，AI 還是判斷錯）。命中關鍵字但完全沒有職缺符合，
-        # 也要在這裡直接誠實回覆「目前沒有」，不能讓這句話落到下面的 AI
-        # 決策保底流程重蹈覆轍。
-        matched_pay_method_label, pay_method_jobs = find_pay_method_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
-        if matched_pay_method_label:
-            if current_location:
-                loc_clean = current_location.replace("台", "臺")
-                pay_method_jobs = [j for j in pay_method_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
-
-            if pay_method_jobs:
-                reply_text = f"有的！沛沛為您找到「{matched_pay_method_label}」的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
+        # ---------------- 蝦皮職缺類型反問 ----------------
+        # 使用者反映：蝦皮同時橫跨外送/門市/理貨倉儲等好幾種職缺類型，求職者
+        # 只問「蝦皮有工作嗎」時，原本會把所有類型混在一起顯示，求職者不一定
+        # 能一眼分辨。比照「清空所有條件」改成先反問確認的做法：蝦皮目前
+        # 實際涵蓋兩種以上「有專屬直達攔截」的類型時，先反問求職者想看哪一種，
+        # 選完之後那句話會自然命中對應的門市/外送等分支。**但如果這句話同時
+        # 講到休假方式/福利/發薪方式，就不用再問類型了**——這些條件本身就能
+        # 幫忙篩出更精準的結果（見下方步驟 1c），不需要多問一次（使用者實測
+        # 回報案例的後續討論）。求職者按下「全部類型都看看」保底按鈕
+        # （SHOPEE_CLARIFY_ALL_TEXT，完全由我們自己的按鈕控制、不是猜使用者
+        # 打字）時，一律直接顯示全部，不再重新判斷要不要問，避免卡在無限循環。
+        if is_shopee_intent and not _has_secondary_intent and raw_msg.strip() != SHOPEE_CLARIFY_ALL_TEXT:
+            _shopee_known_categories = distinct_routable_categories_for_jobs(_pool)
+            if len(_shopee_known_categories) >= 2:
+                _shopee_category_emoji = {"外送": "🚚", "門市": "🏬", "理貨/倉儲": "📦", "製造/作業員": "🏭"}
+                clarify_reply = f"蝦皮目前有{'、'.join(_shopee_known_categories)}這幾種職缺在招募，請問您想看哪一種呢？😊"
                 append_user_history(user_id, "求職者", raw_msg)
-                append_user_history(user_id, "招募顧問沛沛", reply_text)
-                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(pay_method_jobs[:4], user_id, current_location)])
+                append_user_history(user_id, "招募顧問沛沛", clarify_reply)
+                shopee_clarify_buttons = [
+                    QuickReplyButton(action=MessageAction(
+                        label=f"{_shopee_category_emoji.get(c, '✨')} 蝦皮{c}",
+                        text=f"蝦皮{c}",
+                    ))
+                    for c in _shopee_known_categories
+                ]
+                shopee_clarify_buttons.append(
+                    QuickReplyButton(action=MessageAction(label="👀 全部類型都看看", text=SHOPEE_CLARIFY_ALL_TEXT))
+                )
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                    text=clarify_reply,
+                    quick_reply=QuickReply(items=shopee_clarify_buttons),
+                ))
                 log_ai_decision_event(
-                    path="direct_intercept", intercept_type="pay_method_keyword",
+                    path="direct_intercept", intercept_type="shopee_clarify",
+                    matched_brand="蝦皮",
                     latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
                 )
                 return
 
-            no_match_reply = f"不好意思，沛沛目前查詢到的職缺中，暫時沒有「{matched_pay_method_label}」的發薪方式喔 🙏 要不要告訴沛沛您想找哪個地區或哪種工作，幫您看看還有沒有其他合適的職缺呢？"
-            append_user_history(user_id, "求職者", raw_msg)
-            append_user_history(user_id, "招募顧問沛沛", no_match_reply)
-            target_line_bot_api.reply_message(reply_token, TextSendMessage(
-                text=no_match_reply,
-                quick_reply=QuickReply(items=[
-                    QuickReplyButton(action=MessageAction(label="📍 找新莊工作", text="新莊工作")),
-                    QuickReplyButton(action=MessageAction(label="📍 找桃園工作", text="桃園工作")),
-                    QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
-                ])
-            ))
-            log_ai_decision_event(
-                path="direct_intercept", intercept_type="pay_method_keyword_no_match",
-                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
-            )
-            return
+        # ---------------- 步驟 1c：候選池 + 地區 + 休假/福利/發薪方式 疊加篩選 ----------------
+        if _has_pool_intent or _has_secondary_intent:
+            _effective_pool = _pool if _has_pool_intent else active_jobs
 
-        # ---------------- 步驟 1-4：同縣市鄰近地區退讓建議 ----------------
-        # 真人派遣專員跟求職者對話時，通常會順口推薦鄰近或類似的工作——例如
-        # 求職者問「蝦皮門市 八德有缺嗎」，八德沒有缺額時，會提「桃園市其他
-        # 地方有喔」。這裡刻意做成確定性比對（只靠 resolve_county_for_location()
-        # 查「同一個縣市」——優先查 LOCATION_TO_COUNTY 手動對照表，查不到再退一步
-        # 從目前職缺資料動態解析，見 matcher_service.py 說明，不做地理相鄰推論），
-        # 回覆文字也刻意明講「原本問的
-        # 地區沒有，這是同縣市的其他地方」——不能讓使用者誤以為原本問的地區
-        # 也有符合的職缺，那樣會重蹈這幾天才修好的「AI 自行推論地區涵蓋範圍」
-        # 覆轍。只有在使用者真的有指定地區、且這句話有對應到門市/外送/momo
-        # 其中一種精準攔截意圖時才會觸發；找不到同縣市的替代方案，就繼續往下
-        # 落到 AI 決策，跟原本行為一致。
-        if current_location and _category_matched_jobs_for_fallback:
-            county_alt_jobs = find_county_level_alternative_jobs(_category_matched_jobs_for_fallback, current_location, active_jobs)
-            if county_alt_jobs:
-                county_name = resolve_county_for_location(current_location, active_jobs)
-                # 能拆出具體同縣市行政區名稱時，直接列出來讓求職者知道確切
-                # 有哪些地區可選（使用者要求這裡不設數量上限）；拆不出來時
-                # （例如職缺沒有結構化的「行政區」欄位）退回原本的空泛說法，
-                # 不能因為列不出清單就不回覆。
-                district_labels = find_same_county_district_labels(county_alt_jobs, current_location, active_jobs)
-                if district_labels:
-                    fallback_reply_text = (
-                        f"「{current_location}」目前沒有明確列出的{_category_desc_for_fallback}職缺，"
-                        f"不過{county_name}的{'、'.join(district_labels)}有相關職缺，要不要參考看看呢？😊"
-                    )
-                else:
-                    fallback_reply_text = (
-                        f"「{current_location}」目前沒有明確列出的{_category_desc_for_fallback}職缺，"
-                        f"不過同樣在{county_name}還有相關職缺，要不要參考看看呢？😊"
-                    )
+            def _apply_secondary_filters(jobs, skip=None):
+                """依序套用休假方式/福利/發薪方式篩選（只套用這輪訊息裡真的
+                偵測到的那幾項）；skip 可以指定跳過某一項不篩，供「放寬其中
+                一項還找不找得到」的判斷使用。"""
+                if _leave_label and skip != "leave":
+                    _, jobs = find_leave_matched_jobs(raw_msg, jobs)
+                if _benefit_label and skip != "benefit":
+                    _, jobs = find_benefit_matched_jobs(raw_msg, jobs)
+                if _pay_label and skip != "pay":
+                    _, jobs = find_pay_method_matched_jobs(raw_msg, jobs)
+                return jobs
+
+            def _secondary_desc_parts():
+                parts = []
+                if _leave_label:
+                    parts.append(f"休假方式：{_leave_label}")
+                if _benefit_label:
+                    parts.append(f"福利：{_benefit_label}")
+                if _pay_label:
+                    parts.append(f"發薪方式：{_pay_label}")
+                return parts
+
+            _loc_filtered = _effective_pool
+            if current_location:
+                loc_clean = current_location.replace("台", "臺")
+                _loc_filtered = [j for j in _loc_filtered if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
+
+            _fully_filtered = _apply_secondary_filters(_loc_filtered)
+
+            if _fully_filtered:
+                reply_text = "有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
                 append_user_history(user_id, "求職者", raw_msg)
-                append_user_history(user_id, "招募顧問沛沛", fallback_reply_text)
-                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text), create_job_flex_card(county_alt_jobs[:4], user_id, "", same_county_scope=county_name)])
+                append_user_history(user_id, "招募顧問沛沛", reply_text)
+                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(_fully_filtered[:4], user_id, current_location)])
                 log_ai_decision_event(
-                    path="direct_intercept", intercept_type=f"{_resolve_intercept_type()}_county_fallback",
+                    path="direct_intercept", intercept_type=_resolve_intercept_type() if _has_pool_intent else "secondary_filter",
                     matched_brand="momo" if is_momo_intent else ("蝦皮" if is_shopee_intent else ""),
                     latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
                 )
                 return
+
+            # ---------------- 同縣市鄰近地區退讓建議 ----------------
+            # 真人派遣專員跟求職者對話時，通常會順口推薦鄰近或類似的工作——例如
+            # 求職者問「蝦皮門市 八德有缺嗎」，八德沒有缺額時，會提「桃園市其他
+            # 地方有喔」。這裡刻意做成確定性比對（只靠 resolve_county_for_location()
+            # 查「同一個縣市」，不做地理相鄰推論），回覆文字也刻意明講「原本問
+            # 的地區沒有，這是同縣市的其他地方」——不能讓使用者誤以為原本問的
+            # 地區也有符合的職缺。休假方式/福利/發薪方式篩過的候選池（不篩
+            # 地區）拿來查同縣市替代方案，確保這些條件在退讓建議裡也有生效。
+            _secondary_filtered_no_loc = _apply_secondary_filters(_effective_pool)
+            if current_location and _secondary_filtered_no_loc:
+                county_alt_jobs = find_county_level_alternative_jobs(_secondary_filtered_no_loc, current_location, active_jobs)
+                if county_alt_jobs:
+                    county_name = resolve_county_for_location(current_location, active_jobs)
+                    district_labels = find_same_county_district_labels(county_alt_jobs, current_location, active_jobs)
+                    _desc_for_county = _pool_desc if _has_pool_intent else "、".join(_secondary_desc_parts())
+                    if district_labels:
+                        fallback_reply_text = (
+                            f"「{current_location}」目前沒有明確列出的{_desc_for_county}職缺，"
+                            f"不過{county_name}的{'、'.join(district_labels)}有相關職缺，要不要參考看看呢？😊"
+                        )
+                    else:
+                        fallback_reply_text = (
+                            f"「{current_location}」目前沒有明確列出的{_desc_for_county}職缺，"
+                            f"不過同樣在{county_name}還有相關職缺，要不要參考看看呢？😊"
+                        )
+                    append_user_history(user_id, "求職者", raw_msg)
+                    append_user_history(user_id, "招募顧問沛沛", fallback_reply_text)
+                    target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text), create_job_flex_card(county_alt_jobs[:4], user_id, "", same_county_scope=county_name)])
+                    log_ai_decision_event(
+                        path="direct_intercept", intercept_type=f"{_resolve_intercept_type() if _has_pool_intent else 'secondary_filter'}_county_fallback",
+                        matched_brand="momo" if is_momo_intent else ("蝦皮" if is_shopee_intent else ""),
+                        latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                    )
+                    return
+
+            # ---------------- 詢問求職者可以放寬哪個條件 ----------------
+            # 使用者提出的設計：條件全部套用後篩到 0 筆時，不要自己猜該放寬
+            # 哪一項（也不要一次列出好幾個各自放寬的職缺），而是直接反問求職者
+            # 本人比較能接受放寬哪一項——只列出「這句話真的有講到、且單獨放寬
+            # 這一項就真的找得到職缺」的選項，不問放寬了也沒用的條件。發薪方式
+            # 涉及金錢、原則上不特別鼓勵放寬，但這裡仍一視同仁地檢查、交給
+            # 求職者自己決定，不由程式碼替他決定「這項不能問」。
+            if _has_secondary_intent:
+                _dimensions = [
+                    ("leave", "休假方式", _leave_label),
+                    ("benefit", "福利", _benefit_label),
+                    ("pay", "發薪方式", _pay_label),
+                ]
+                _relaxable = [
+                    (dim, name, label) for dim, name, label in _dimensions
+                    if label and _apply_secondary_filters(_loc_filtered, skip=dim)
+                ]
+
+                if _relaxable:
+                    _relax_desc = "、".join(f"「{name}：{label}」" for _, name, label in _relaxable)
+                    clarify_reply = f"目前沒有完全符合{_relax_desc}的職缺，方便告訴沛沛您比較能接受放寬哪個條件嗎？😊"
+                    append_user_history(user_id, "求職者", raw_msg)
+                    append_user_history(user_id, "招募顧問沛沛", clarify_reply)
+
+                    _remaining_keywords = {"leave": _leave_label, "benefit": _benefit_label, "pay": _pay_label}
+                    _relax_emoji = {"leave": "🏖️", "benefit": "🎁", "pay": "💰"}
+                    _reconstructed_texts = set()
+                    relax_buttons = []
+                    for dim, name, label in _relaxable:
+                        _kept = [_remaining_keywords[d] for d, _, _ in _dimensions if d != dim and _remaining_keywords[d]]
+                        _reconstructed = " ".join(filter(None, [_pool_query_phrase, current_location] + _kept))
+                        _reconstructed_texts.add(_reconstructed)
+                        relax_buttons.append(QuickReplyButton(action=MessageAction(
+                            label=f"{_relax_emoji[dim]} {name}可以彈性",
+                            text=_reconstructed,
+                        )))
+
+                    # 保底選項：全部次要條件都放寬、只看廠商/類別/地區。跟上面
+                    # 某個單一放寬按鈕重組出來的文字剛好一樣時（例如這輪只講了
+                    # 一項次要條件，放寬那一項就等於全部放寬），不重複列一次。
+                    _catchall_text = " ".join(filter(None, [_pool_query_phrase, current_location])) or "都給我看看"
+                    if _loc_filtered and _catchall_text not in _reconstructed_texts:
+                        relax_buttons.append(QuickReplyButton(action=MessageAction(label="👀 都可以，看看其他", text=_catchall_text)))
+
+                    target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                        text=clarify_reply,
+                        quick_reply=QuickReply(items=relax_buttons),
+                    ))
+                    log_ai_decision_event(
+                        path="direct_intercept", intercept_type="secondary_filter_relax_ask",
+                        latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                    )
+                    return
+
+                # 完全沒有辦法放寬出結果 → 老實告知目前沒有符合的職缺，不落到
+                # AI 決策保底流程（避免 AI 從自由文字裡硬湊答案，見 HANDOFF.md
+                # 日領誤判案例）。
+                _desc = "、".join(_secondary_desc_parts())
+                no_match_reply = f"不好意思，沛沛目前查詢到的職缺中，暫時沒有符合{_desc}的喔 🙏 要不要告訴沛沛您想找哪個地區或哪種工作，幫您看看還有沒有其他合適的職缺呢？"
+                append_user_history(user_id, "求職者", raw_msg)
+                append_user_history(user_id, "招募顧問沛沛", no_match_reply)
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                    text=no_match_reply,
+                    quick_reply=QuickReply(items=[
+                        QuickReplyButton(action=MessageAction(label="📍 找新莊工作", text="新莊工作")),
+                        QuickReplyButton(action=MessageAction(label="📍 找桃園工作", text="桃園工作")),
+                        QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
+                    ])
+                ))
+                log_ai_decision_event(
+                    path="direct_intercept", intercept_type="secondary_filter_no_match",
+                    latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                )
+                return
+
+            # _has_pool_intent 為 True、但完全沒有偵測到休假/福利/發薪方式、
+            # 地區也沒有同縣市替代方案時，維持修正前的既有行為：不在這裡
+            # 回覆，繼續往下走 FAQ 高信心比對／AI 決策保底流程。
 
         # ---------------- 步驟 1-5：FAQ 高信心比對，直接回傳 Notion 原文（不經 AI 改寫）----------------
         # 求職者問句完整命中某一筆 FAQ 問題本文時，代表這題有明確、已審核過的官方答案，
