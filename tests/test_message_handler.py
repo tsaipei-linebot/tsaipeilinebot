@@ -2537,6 +2537,45 @@ class MultiTurnUserDesignDecisionTests(unittest.TestCase):
         self.assertIn("週休二日", self._reply_text(api))
 
 
+class LocationGranularityHandlerTests(unittest.TestCase):
+    """全資料庫自動比對測到地區比對太粗（約 135 次推薦了不在求職者指定
+    地區的職缺）：「台北市中山區」被當成整個台北、「桃園區」被當成整個
+    桃園市、「嘉義縣」混到嘉義市。"""
+
+    _job = MultiTurnLockedCategoryPersistenceTests._job
+    _make_session = MultiTurnLockedCategoryPersistenceTests._make_session
+    _titles = staticmethod(MultiTurnRoundThreeHandlerFixTests._titles)
+
+    def _jobs(self):
+        return [
+            self._job("台北中山餐廳", ["內場人員"], "甲餐飲", ["台北市"], ["台北市中山區"], "月領", "", "排休"),
+            self._job("台北大安餐廳", ["內場人員"], "乙餐飲", ["台北市"], ["台北市大安區"], "月領", "", "排休"),
+            self._job("基隆中山餐廳", ["內場人員"], "丙餐飲", ["基隆市"], ["基隆市中山區"], "月領", "", "排休"),
+            self._job("桃園區倉庫", ["倉儲人員"], "丁物流", ["桃園市"], ["桃園市桃園區"], "月領", "", "週休"),
+            self._job("八德倉庫", ["倉儲人員"], "戊物流", ["桃園市"], ["桃園市八德區"], "月領", "", "週休"),
+            self._job("嘉義縣工廠", ["作業員"], "己工業", ["嘉義縣"], ["嘉義縣大林鎮"], "月領", "", "週休"),
+            self._job("嘉義市門市", ["門市人員"], "庚門市", ["嘉義市"], ["嘉義市東區"], "月領", "", "週休"),
+        ]
+
+    def test_district_with_same_name_in_two_counties(self):
+        run_turn = self._make_session(self._jobs())
+        mock_ai, mock_flex, _ = run_turn("台北市中山區有內場的工作嗎")
+        mock_ai.assert_not_called()
+        self.assertEqual(self._titles(mock_flex), ["台北中山餐廳"])
+
+    def test_taoyuan_district_is_not_whole_city(self):
+        run_turn = self._make_session(self._jobs())
+        mock_ai, mock_flex, _ = run_turn("桃園區理貨的工作")
+        mock_ai.assert_not_called()
+        self.assertEqual(self._titles(mock_flex), ["桃園區倉庫"])
+
+    def test_chiayi_county_excludes_chiayi_city(self):
+        run_turn = self._make_session(self._jobs())
+        mock_ai, mock_flex, _ = run_turn("嘉義縣有週休的嗎")
+        mock_ai.assert_not_called()
+        self.assertEqual(self._titles(mock_flex), ["嘉義縣工廠"])
+
+
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
     """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或
     類似的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德目前沒有蝦皮
