@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}加退保上傳歷史 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">加退保上傳歷史</h1>
+
+<form method="get" action="/hr/insurance/history" class="filter-bar">
+    {% if is_collector %}
+    <select name="department">
+        <option value="">全部部門</option>
+        {% for d in department_options %}
+        <option value="{{ d }}" {% if d == filter_department %}selected{% endif %}>{{ d }}</option>
+        {% endfor %}
+    </select>
+    {% endif %}
+    <label>從
+        <input type="date" name="start_date" value="{{ filter_start_date }}">
+    </label>
+    <label>到
+        <input type="date" name="end_date" value="{{ filter_end_date }}">
+    </label>
+    <button type="submit" class="btn">搜尋</button>
+</form>
+
+{% if records %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>日期</th>
+            {% if is_collector %}
+            <th>部門</th>
+            {% endif %}
+            <th>檔名</th>
+            <th>上傳人</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in records %}
+        <tr>
+            <td>{{ r.work_date }}</td>
+            {% if is_collector %}
+            <td>{{ r.department }}</td>
+            {% endif %}
+            <td>{{ r.filename }}</td>
+            <td>{{ r.uploaded_by_name }}</td>
+            <td><a href="/hr/files/{{ r.blob_path }}">下載</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty">目前沒有符合條件的上傳紀錄。</p>
+{% endif %}
+
+<p class="back-link"><a href="/hr/insurance">&larr; 回每日加退保</a></p>
+{% endblock %}

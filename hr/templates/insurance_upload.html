@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}每日加退保上傳 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">每日加退保上傳</h1>
+<p class="hint">部門：{{ department }}</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="get" action="/hr/insurance/upload" class="filter-bar">
+    <label>選擇日期
+        <input type="date" name="work_date" value="{{ work_date }}" onchange="this.form.submit()">
+    </label>
+</form>
+
+{% if closed %}
+<p class="error">這一天人資已經收單，沒辦法再上傳，如果真的需要補傳請聯絡人資。</p>
+{% else %}
+<form method="post" action="/hr/insurance/upload" enctype="multipart/form-data" class="form-stack form-narrow">
+    <input type="hidden" name="work_date" value="{{ work_date }}">
+    <label>加退保 Excel 檔案
+        <input type="file" name="file" required>
+    </label>
+    <button type="submit" class="btn btn-primary">上傳</button>
+</form>
+{% endif %}
+
+{% if existing %}
+<h2>{{ work_date }} 已上傳的檔案</h2>
+<p>檔名：{{ existing.filename }}（{{ existing.uploaded_by_name }} 上傳）</p>
+<p><a href="/hr/files/{{ existing.blob_path }}">下載目前這份檔案</a></p>
+<p class="hint">再上傳一次會直接蓋掉上面這份。</p>
+{% endif %}
+
+<p class="back-link">
+    <a href="/hr/insurance/history">查詢我部門的歷史上傳紀錄</a> ・
+    <a href="/hr/">回主頁</a>
+</p>
+{% endblock %}

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 
+from hr import insurance_repository
 from hr.auth import current_user, login_required
 from hr.templating import templates
 
@@ -10,7 +11,12 @@ router = APIRouter()
 def home(request: Request, redirect=Depends(login_required)):
     if redirect:
         return redirect
-    return templates.TemplateResponse(request, "home.html", {"user": current_user(request)})
+    user = current_user(request)
+    return templates.TemplateResponse(
+        request,
+        "home.html",
+        {"user": user, "has_insurance_access": insurance_repository.has_insurance_access(user)},
+    )
 
 
 @router.get("/help")
