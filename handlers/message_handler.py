@@ -676,9 +676,20 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                         _location_jobs.append(j)
                 else:
                     _location_jobs.append(j)
+
             direct_matches = filter_jobs_by_category_tiered(_location_jobs, _category_label_for_intent)
             _category_matched_jobs_for_fallback = filter_jobs_by_category_tiered(active_jobs, _category_label_for_intent)
-            _category_desc_for_fallback = _category_label_for_intent
+            if detected_brand:
+                # job_matches_category_filter() 的 brand_label 參數只有在
+                # category_label == "門市" 時才會真的拿來篩選（見該函式內部
+                # 的特例判斷），理貨/倉儲、製造/作業員這兩個類別即使傳了
+                # brand_label 也完全不會用到、等於沒篩選——這裡另外手動篩
+                # 一次，避免求職者指定廠商（例如「蝦皮理貨」）時混進其他
+                # 廠商的職缺，答非所問。
+                _brand_clean_for_intent = clean_text_for_search(detected_brand)
+                direct_matches = [j for j in direct_matches if _brand_clean_for_intent in j.get("_search_text", "")]
+                _category_matched_jobs_for_fallback = [j for j in _category_matched_jobs_for_fallback if _brand_clean_for_intent in j.get("_search_text", "")]
+            _category_desc_for_fallback = f"{detected_brand}{_category_label_for_intent}" if detected_brand else _category_label_for_intent
 
         elif is_shopee_intent:
             shopee_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["蝦皮", "spx"])]
