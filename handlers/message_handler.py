@@ -30,10 +30,18 @@ from services.matcher_service import (
     detect_negated_location, detect_negated_category, has_recognizable_category_or_brand_keyword,
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match,
     find_county_level_alternative_jobs, find_same_county_district_labels,
-    resolve_county_for_location, find_benefit_matched_jobs, find_pay_method_matched_jobs
+    resolve_county_for_location, find_benefit_matched_jobs, find_pay_method_matched_jobs,
+    distinct_routable_categories_for_jobs
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
+
+
+# 「蝦皮職缺類型反問」保底按鈕的確切回傳文字，完全由我們自己的按鈕控制、
+# 不是猜使用者打字，跟全域重置確認流程（RESET_CONFIRM_TEXT）用的是同一個
+# 精神：求職者按下「全部類型都看看」時，一律直接顯示蝦皮全部職缺，不用
+# 再重新判斷一次要不要反問，避免卡在無限循環。
+SHOPEE_CLARIFY_ALL_TEXT = "蝦皮全部類型都看看"
 
 
 def _is_staffed_hours(now: datetime = None) -> bool:
@@ -676,11 +684,51 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             shopee_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["蝦皮", "spx"])]
             if current_location:
                 loc_clean = current_location.replace("台", "臺")
-                direct_matches = [j for j in shopee_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
-            else:
-                direct_matches = shopee_jobs
+                shopee_jobs = [j for j in shopee_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
             _category_matched_jobs_for_fallback = shopee_jobs
             _category_desc_for_fallback = "蝦皮"
+
+            # ---------------- 蝦皮職缺類型反問 ----------------
+            # 使用者反映：蝦皮同時橫跨外送/門市/理貨倉儲等好幾種職缺類型，
+            # 求職者只問「蝦皮有工作嗎」時，原本會把所有類型混在一起顯示，
+            # 求職者不一定能一眼分辨。比照今天稍早「清空所有條件」改成先
+            # 反問確認的做法（不是每次都試著把關鍵字/判斷邏輯調到完美，
+            # 而是遇到真的有歧義時，直接反問求職者本人最準）：蝦皮目前
+            # 實際涵蓋兩種以上「有專屬直達攔截」的類型時，先反問求職者
+            # 想看哪一種，選完之後那句話會自然命中對應的門市/外送等分支，
+            # 不需要另外寫路由邏輯。求職者按下「全部類型都看看」保底按鈕
+            # （SHOPEE_CLARIFY_ALL_TEXT，完全由我們自己的按鈕控制、不是
+            # 猜使用者打字）時，一律直接顯示全部，不再重新判斷要不要問，
+            # 避免卡在無限循環。
+            if raw_msg.strip() != SHOPEE_CLARIFY_ALL_TEXT:
+                _shopee_known_categories = distinct_routable_categories_for_jobs(shopee_jobs)
+                if len(_shopee_known_categories) >= 2:
+                    _shopee_category_emoji = {"外送": "🚚", "門市": "🏬", "理貨/倉儲": "📦", "製造/作業員": "🏭"}
+                    clarify_reply = f"蝦皮目前有{'、'.join(_shopee_known_categories)}這幾種職缺在招募，請問您想看哪一種呢？😊"
+                    append_user_history(user_id, "求職者", raw_msg)
+                    append_user_history(user_id, "招募顧問沛沛", clarify_reply)
+                    shopee_clarify_buttons = [
+                        QuickReplyButton(action=MessageAction(
+                            label=f"{_shopee_category_emoji.get(c, '✨')} 蝦皮{c}",
+                            text=f"蝦皮{c}",
+                        ))
+                        for c in _shopee_known_categories
+                    ]
+                    shopee_clarify_buttons.append(
+                        QuickReplyButton(action=MessageAction(label="👀 全部類型都看看", text=SHOPEE_CLARIFY_ALL_TEXT))
+                    )
+                    target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                        text=clarify_reply,
+                        quick_reply=QuickReply(items=shopee_clarify_buttons),
+                    ))
+                    log_ai_decision_event(
+                        path="direct_intercept", intercept_type="shopee_clarify",
+                        matched_brand="蝦皮",
+                        latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                    )
+                    return
+
+            direct_matches = shopee_jobs
 
         def _resolve_intercept_type():
             if is_delivery_intent:

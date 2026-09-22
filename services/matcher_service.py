@@ -763,6 +763,28 @@ def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label:
         if job_matches_category_filter(j, category_label, brand_label, allow_relaxed=True)
     ]
 
+
+# 目前唯一有各自專屬「精準工種直達攔截」分支的類別（見 handlers/message_handler.py），
+# 只有這幾種才適合拿來當「蝦皮職缺類型反問」的按鈕選項——求職者點下按鈕、把
+# 這個類別名稱送回來時，一定要能命中對應的直達攔截分支，不能落回同一個反問，
+# 否則會卡在無限循環。像「設備人員」「餐飲/服務」這種目前還沒有專屬分支的
+# 類別，刻意不單獨列成按鈕，統一併進「全部類型都看看」保底選項，不會完全
+# 看不到，只是不能精準篩選。
+DIRECT_INTERCEPT_ROUTABLE_CATEGORIES = ["外送", "門市", "理貨/倉儲", "製造/作業員"]
+
+
+def distinct_routable_categories_for_jobs(jobs: list) -> list:
+    """找出這批職缺實際涵蓋 DIRECT_INTERCEPT_ROUTABLE_CATEGORIES 裡的哪幾種
+    類別（依該清單順序回傳，刻意用嚴格比對 allow_relaxed=False，只信任
+    結構化的「職務類別」／「職缺名稱(對外)」欄位，不看自由文字，避免誤判
+    ——見 job_matches_category_filter() 的欄位信任原則說明）。供「蝦皮職缺
+    類型反問」判斷要不要問、要問哪幾個選項使用：同一時間蝦皮如果只有一種
+    類型在招，不需要多問；有兩種以上才需要讓求職者選。"""
+    return [
+        label for label in DIRECT_INTERCEPT_ROUTABLE_CATEGORIES
+        if any(job_matches_category_filter(j, label, allow_relaxed=False) for j in jobs)
+    ]
+
 def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", slots: dict = None) -> int:
     slots = slots or {}
     search_text = job.get("_search_text", "")

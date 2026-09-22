@@ -1626,6 +1626,137 @@ class WarehouseManufacturingShopeeDirectInterceptTests(unittest.TestCase):
         self.assertEqual(args[1], control_message)
 
 
+class ShopeeCategoryClarifyTests(unittest.TestCase):
+    """使用者提出：蝦皮同時橫跨外送/門市等好幾種職缺類型，求職者只問「蝦皮
+    有工作嗎」不該把所有類型混在一起直接顯示，應該先反問求職者想看哪一種
+    （比照今天稍早「清空所有條件」改成先反問確認的做法：遇到真的有歧義時
+    直接反問，不是把判斷邏輯調到完美）。只有蝦皮目前真的同時有兩種以上
+    「有專屬直達攔截」的類型在招時才需要反問；只有一種或完全沒有已知類型
+    時，直接顯示不用多問。"""
+
+    def _delivery_job(self):
+        return {
+            "職缺名稱": "蝦皮外送三輪雇傭", "_internal_title": "蝦皮外送三輪雇傭",
+            "_parsed_title": "蝦皮外送三輪雇傭", "職缺名稱(對外)": "蝦皮外送三輪雇傭",
+            "_job_category": "外送", "職務類別": "外送", "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮外送三輪雇傭", "_location_search_text": "台北市",
+        }
+
+    def _store_job(self):
+        return {
+            "職缺名稱": "蝦皮店到店門市夥伴", "_internal_title": "蝦皮店到店門市夥伴",
+            "_parsed_title": "蝦皮店到店門市夥伴", "職缺名稱(對外)": "蝦皮店到店門市夥伴",
+            "_job_category": "門市", "職務類別": "門市", "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮店到店門市夥伴", "_location_search_text": "台北市",
+        }
+
+    def _warehouse_job(self):
+        return {
+            "職缺名稱": "蝦皮物流理貨員", "_internal_title": "蝦皮物流理貨員",
+            "_parsed_title": "蝦皮物流理貨員", "職缺名稱(對外)": "蝦皮物流理貨員",
+            "_job_category": "理貨/倉儲", "職務類別": "理貨/倉儲", "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮物流理貨員", "_location_search_text": "台北市",
+        }
+
+    def _unroutable_job(self):
+        # 職務類別不在 DIRECT_INTERCEPT_ROUTABLE_CATEGORIES 裡（例如人資專員），
+        # 這種職缺不該被算進「需要反問的類型數」，也不該單獨給一顆按鈕。
+        return {
+            "職缺名稱": "蝦皮內勤人資專員", "_internal_title": "蝦皮內勤人資專員",
+            "_parsed_title": "蝦皮內勤人資專員", "職缺名稱(對外)": "蝦皮內勤人資專員",
+            "_job_category": "人資專員", "職務類別": "人資專員", "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮內勤人資專員", "_location_search_text": "台北市",
+        }
+
+    def _run(self, msg, jobs, user_id):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = user_id
+        event.message.text = msg
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=jobs), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+        return mock_ai_decision, mock_flex_card, line_bot_api
+
+    def test_mixed_categories_triggers_clarifying_question_not_direct_cards(self):
+        jobs = [self._delivery_job(), self._store_job()]
+        mock_ai, mock_flex, api = self._run("蝦皮有工作嗎", jobs, "test-shopee-clarify")
+
+        mock_ai.assert_not_called()
+        mock_flex.assert_not_called()
+        api.reply_message.assert_called_once()
+        args, _ = api.reply_message.call_args
+        reply_msg = args[1]
+        self.assertIn("外送", reply_msg.text)
+        self.assertIn("門市", reply_msg.text)
+        button_texts = [b.action.text for b in reply_msg.quick_reply.items]
+        self.assertIn("蝦皮外送", button_texts)
+        self.assertIn("蝦皮門市", button_texts)
+        self.assertIn(h.SHOPEE_CLARIFY_ALL_TEXT, button_texts)
+
+    def test_single_known_category_shows_cards_directly_without_asking(self):
+        jobs = [self._delivery_job()]
+        mock_ai, mock_flex, api = self._run("蝦皮有工作嗎", jobs, "test-shopee-single-category")
+
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        self.assertIn(self._delivery_job(), mock_flex.call_args[0][0])
+
+    def test_only_unroutable_category_shows_cards_directly_without_asking(self):
+        # 只有「人資專員」這種沒有專屬直達攔截的類型時，不該反問（反問了也
+        # 沒有對應按鈕可以精準路由），直接顯示即可。
+        jobs = [self._unroutable_job()]
+        mock_ai, mock_flex, api = self._run("蝦皮有工作嗎", jobs, "test-shopee-unroutable-only")
+
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+
+    def test_unroutable_category_does_not_get_its_own_button_but_counted_in_show_all(self):
+        jobs = [self._delivery_job(), self._store_job(), self._unroutable_job()]
+        mock_ai, mock_flex, api = self._run("蝦皮有工作嗎", jobs, "test-shopee-unroutable-mixed")
+
+        args, _ = api.reply_message.call_args
+        button_texts = [b.action.text for b in args[1].quick_reply.items]
+        self.assertIn("蝦皮外送", button_texts)
+        self.assertIn("蝦皮門市", button_texts)
+        self.assertNotIn("蝦皮人資專員", button_texts)
+        self.assertEqual(button_texts.count(h.SHOPEE_CLARIFY_ALL_TEXT), 1)
+
+        # 按「全部類型都看看」時，人資專員那筆職缺也要能看得到，不會消失。
+        mock_ai2, mock_flex2, api2 = self._run(h.SHOPEE_CLARIFY_ALL_TEXT, jobs, "test-shopee-show-all")
+        mock_ai2.assert_not_called()
+        mock_flex2.assert_called_once()
+        shown_titles = [j["職缺名稱"] for j in mock_flex2.call_args[0][0]]
+        self.assertIn("蝦皮內勤人資專員", shown_titles)
+
+    def test_clicking_specific_category_button_routes_to_exact_category_only(self):
+        jobs = [self._delivery_job(), self._store_job()]
+        mock_ai, mock_flex, api = self._run("蝦皮外送", jobs, "test-shopee-pick-delivery")
+
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        shown_titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(shown_titles, ["蝦皮外送三輪雇傭"])
+
+    def test_show_all_button_does_not_loop_back_into_clarifying_question(self):
+        jobs = [self._delivery_job(), self._store_job(), self._warehouse_job()]
+        mock_ai, mock_flex, api = self._run(h.SHOPEE_CLARIFY_ALL_TEXT, jobs, "test-shopee-show-all-no-loop")
+
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        shown_titles = {j["職缺名稱"] for j in mock_flex.call_args[0][0]}
+        self.assertEqual(shown_titles, {"蝦皮外送三輪雇傭", "蝦皮店到店門市夥伴", "蝦皮物流理貨員"})
+
+
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
     """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或
     類似的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德目前沒有蝦皮
