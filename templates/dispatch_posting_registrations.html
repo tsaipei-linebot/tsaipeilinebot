@@ -24,11 +24,11 @@
                 {% endif %}
             </td>
             <td>
-                <form method="post" action="/taoyuan-dispatch/postings/{{ posting.id }}/registrations/{{ registration.id }}/status" style="display:inline">
+                <form method="post" action="/dispatch/{{ site }}/postings/{{ posting.id }}/registrations/{{ registration.id }}/status" style="display:inline">
                     <input type="hidden" name="status" value="approved">
                     <button type="submit" class="btn btn-small" {% if registration.status == "approved" %}disabled{% endif %}>核准</button>
                 </form>
-                <form method="post" action="/taoyuan-dispatch/postings/{{ posting.id }}/registrations/{{ registration.id }}/status" style="display:inline">
+                <form method="post" action="/dispatch/{{ site }}/postings/{{ posting.id }}/registrations/{{ registration.id }}/status" style="display:inline">
                     <input type="hidden" name="status" value="rejected">
                     <button type="submit" class="btn btn-small btn-danger" {% if registration.status == "rejected" %}disabled{% endif %}>駁回</button>
                 </form>
@@ -41,5 +41,5 @@
 <p class="empty">目前還沒有人員報名這筆需求。</p>
 {% endif %}
 
-<p class="back-link"><a href="/taoyuan-dispatch/postings">&larr; 回需求時段管理</a></p>
+<p class="back-link"><a href="/dispatch/{{ site }}/postings">&larr; 回需求時段管理</a></p>
 {% endblock %}

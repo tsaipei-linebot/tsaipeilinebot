@@ -7972,3 +7972,110 @@ E-learning 這幾種檔案（2026-09-22 使用者確認過，之後有需要再�
 民國格式轉換、Excel 讀取/攤平組表的完整涵蓋）、`tests/test_hr_routes.py`
 （新路由未登入一律導去登入頁的 smoke test）。全部測試（`python3 -m
 unittest discover -s tests -p "test_*.py"`）1921 個全數通過。
+
+## 桃園所專區重構成「多所派遣媒合」＋新增高雄所（2026-09-22）
+
+使用者要把桃園所的報班功能整套複製一份給高雄所（之後還會陸續開其他
+所），討論後選擇不是單純複製貼上改名字（那樣以後每個所都要各自改一次
+程式碼，容易漏改），而是把原本寫死「桃園所」的 `taoyuan_dispatch_*`
+系列檔案，重構成所有所共用同一套程式碼＋同一份 Firestore 資料表，每筆
+資料多存一個 `site` 欄位分所。**重構當下桃園所這個功能還沒有任何真實
+資料在用**（人員/地點/LINE 綁定都是空的），所以直接把 Firestore 資料表
+跟網址都改名，不需要寫遷移腳本、不影響任何正式資料。
+
+### 新架構
+
+- **`dispatch_sites.py`**（新增）：所有所別的設定清單（所別代碼、中文
+  名稱、部門權限字串、LINE Channel Token/Secret 的環境變數名稱），先放
+  `taoyuan`（桃園所）、`kaohsiung`（高雄所）兩筆。**之後要再開新所，只
+  要在這裡加一筆設定＋申請一組新 LINE 官方帳號並設定對應環境變數，不用
+  改任何程式碼。**
+- **`services/dispatch_service.py`**（取代 `services/taoyuan_dispatch_service.py`）：
+  人員/地點/LINE 綁定/需求時段/報名的 CRUD，所有函式第一個參數都是
+  `site`（所別代碼）。Firestore 資料表改名：`taoyuan_dispatch_personnel`
+  → `dispatch_personnel`，`taoyuan_dispatch_locations` →
+  `dispatch_locations`，新增 `dispatch_line_bindings`（原
+  `taoyuan_dispatch_line_bindings`）、`dispatch_postings`（原
+  `taoyuan_dispatch_postings`）、`dispatch_registrations`（原
+  `taoyuan_dispatch_registrations`），每筆文件都多存一個 `site` 欄位。
+  **跨所資料隔離**：用文件 ID 直接查一筆的函式（`get_personnel()` 等）
+  都會檢查該筆資料的 `site` 欄位是否跟呼叫端要求的所別一致，不一致視同
+  查無資料——避免「猜到／記錯另一個所的文件 ID」意外讀到別所資料。LINE
+  綁定的文件 ID 額外把所別代碼併進去（`{site}__{line_user_id}`），因為
+  LINE 的 `user_id` 少數情況下可能跨不同 Channel 重複。
+- **`dispatch_line.py`**（取代 `taoyuan_dispatch_line.py`）：依
+  `dispatch_sites.py` 的環境變數名稱，各自建立每個所獨立的
+  LineBotApi/WebhookHandler 實例並快取。
+- **`dispatch_bot.py`**（取代 `taoyuan_dispatch_bot.py`）：`handle_message(site, ...)`
+  多一個 `site` 參數決定讀寫哪個所的資料，指令格式/流程所有所完全共用。
+- **`dispatch_webhook_routes.py`**（取代 `taoyuan_dispatch_webhook_routes.py`）：
+  網址改成 `POST /dispatch/{site}/line/callback`，對每個有設定好環境
+  變數的所各自註冊一次 LINE 事件處理函式（`WebhookHandler` 的
+  `@handler.add()` 是綁在特定實例上的，不能只註冊一次共用）。
+- **`dispatch_routes.py`**（取代 `taoyuan_dispatch_routes.py`）：後台頁面
+  網址改成 `/dispatch/{site}/...`（例如 `/dispatch/taoyuan/personnel`、
+  `/dispatch/kaohsiung/personnel`），權限判斷 `has_dispatch_access(account, site)`
+  一樣是「帳號部門＝該所部門名稱，或全平台管理員」。
+- **樣板**：`templates/taoyuan_dispatch_*.html` 改名成
+  `templates/dispatch_*.html`，畫面上的「桃園所」文字改成依所別動態帶入
+  的 `{{ site_name }}`，連結改成 `/dispatch/{{ site }}/...`。
+- **`portal_routes.py`**：原本只判斷桃園所加一張卡片，改成迴圈跑過
+  `dispatch_sites.list_sites()`，帳號的部門符合哪個所就加那張卡片（全
+  平台管理員因此每個所都會看到自己的卡片）。
+- **`config.py`**：拿掉原本寫死的 `TAOYUAN_DISPATCH_LINE_CHANNEL_ACCESS_TOKEN`
+  /`_SECRET` 兩個常數，改成 `dispatch_line.py` 直接依
+  `dispatch_sites.py` 登記的環境變數名稱用 `os.getenv()` 讀取。
+
+### 業務邏輯完全沒變
+
+報名資格 4 種類別（理貨/作業員/餐飲有體檢/餐飲無體檢）、LINE 綁定指令
+格式（「綁定+姓名+電話」）、報名/審核/推播流程，所有所完全共用同一套，
+不分所別客製——2026-09-22 使用者明確確認，這次只是把「這是哪個所」抽
+成參數，沒有改任何業務規則。
+
+### 使用者需要知道的事——這次要幫高雄所申請一組新的 LINE 官方帳號
+
+跟當初桃園所上線的流程完全一樣（見上面「桃園所專區：Phase 2」那節的
+詳細步驟），差別只是這次是幫高雄所：
+
+1. 申請一組新的 LINE 官方帳號（Messaging API），跟桃園所那組用同一個
+   Provider 即可，記下 Channel Access Token、Channel Secret。
+2. 到 Cloud Run 服務 `recruitment-bot`（GCP 專案 `tsaipei-505807`，
+   region `asia-east1`）設定兩個新環境變數：
+   ```bash
+   gcloud run services update recruitment-bot \
+     --region asia-east1 \
+     --update-env-vars KAOHSIUNG_DISPATCH_LINE_CHANNEL_ACCESS_TOKEN="貼上你的CHANNEL_ACCESS_TOKEN",KAOHSIUNG_DISPATCH_LINE_CHANNEL_SECRET="貼上你的CHANNEL_SECRET"
+   ```
+   這一步在做什麼：把高雄所這組 LINE 帳號的金鑰交給 Cloud Run 上跑的
+   服務。指令執行完會自動觸發一次新的部署，跑完最後一行會顯示 `URL:`
+   開頭的服務網址，代表部署成功。
+3. 回到 LINE Developers Console，把高雄所這組帳號的 Webhook URL 設定成：
+   ```
+   https://recruitment-bot-412901869672.asia-east1.run.app/dispatch/kaohsiung/line/callback
+   ```
+   貼上後按「Verify」按鈕測試，應該會顯示成功（綠勾勾）。
+4. **桃園所原本設定的環境變數名稱沒有變**
+   （`TAOYUAN_DISPATCH_LINE_CHANNEL_ACCESS_TOKEN`/`_SECRET`），已經設定
+   過的話不用重新設定；但桃園所的 LINE webhook 網址如果之前已經在 LINE
+   Developers Console 設定過，**因為網址從 `/taoyuan-dispatch/line/callback`
+   改成 `/dispatch/taoyuan/line/callback`，需要回去 LINE Developers
+   Console 重新設定一次桃園所這組帳號的 Webhook URL**，不然桃園所之後
+   上線 LINE 綁定功能時會收不到訊息。桃園所這次重構前都還沒有真的申請
+   LINE 帳號在用，所以這一步現在做也不影響任何人。
+5. 高雄所的人員管理/地點管理/需求時段管理網頁功能（`/dispatch/kaohsiung/...`）
+   不需要等 LINE 帳號申請好就能先用；只有「LINE 綁定＋人員在 LINE 上
+   查詢/報名＋審核推播」這幾項需要等上面 1-3 步驟做完才會動起來。
+
+新增測試：`tests/test_dispatch_sites.py`（所別設定清單）、
+`tests/test_dispatch_service.py`（取代
+`tests/test_taoyuan_dispatch_service.py`，新增跨所資料隔離測試）、
+`tests/test_dispatch_bot.py`（取代 `tests/test_taoyuan_dispatch_bot.py`）、
+`tests/test_dispatch_webhook_routes.py`（取代
+`tests/test_taoyuan_dispatch_webhook_routes.py`，新增未知所別回 503 的
+測試）、`tests/test_dispatch_routes.py`（取代
+`tests/test_taoyuan_dispatch_routes.py`，新增跨所隔離測試）、
+`tests/test_portal.py` 的 `PortalHomeDispatchSiteCardTests`（原
+`PortalHomeTaoyuanDispatchCardTests`，新增高雄所卡片測試）。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1945 個全數
+通過。

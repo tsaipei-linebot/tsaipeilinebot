@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ site_name }}專區 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">{{ site_name }}專區</h1>
+</div>
+<p class="hint">
+    {{ site_name }}派遣媒合：人員名冊、地點清單、開需求時段、人員報名審核。人員綁定 LINE 官方帳號、查看需求、報名，
+    都直接在{{ site_name }}派遣的 LINE 官方帳號裡用文字指令操作，審核核准/駁回會直接推播通知人員。
+</p>
+
+<div class="home-grid">
+    <a class="home-panel" href="/dispatch/{{ site }}/personnel" style="text-decoration: none; display: block;">
+        <h2>人員管理</h2>
+        <p class="hint">維護派遣人員姓名、電話、人員資格（理貨/作業員/餐飲有體檢/餐飲無體檢），可手動新增或 CSV 批次匯入。</p>
+    </a>
+    <a class="home-panel" href="/dispatch/{{ site }}/locations" style="text-decoration: none; display: block;">
+        <h2>地點管理</h2>
+        <p class="hint">維護{{ site_name }}的服務地點清單，可手動新增或 CSV 批次匯入。</p>
+    </a>
+    <a class="home-panel" href="/dispatch/{{ site }}/postings" style="text-decoration: none; display: block;">
+        <h2>需求時段管理</h2>
+        <p class="hint">開需求（地點/時段/人數/需要的人員資格），審核人員報名，核准/駁回會直接推播 LINE 訊息通知人員。</p>
+    </a>
+</div>
+
+<p class="back-link"><a href="/portal">&larr; 回主頁</a></p>
+{% endblock %}
