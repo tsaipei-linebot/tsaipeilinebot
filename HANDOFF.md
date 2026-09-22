@@ -7232,6 +7232,8 @@ unittest discover -s tests -p "test_*.py"`）1636 個全數通過。
 既有的門市當日量資料跟已經建立好的報班時段（這些紀錄本身各自存了自己
 的地點名稱/經緯度快照，不受這次拆分影響）。
 
+**（2026-09-22 使用者回報已重新登記完成。）**
+
 `tests/test_delivery_rider_locations.py` 改寫成涵蓋兩組獨立函式跟
 路由（含一筆「建立報班時段不會誤用即時接單地點清單」的防呆測試），
 新增 `tests/test_delivery_rider_routes.py` 的 `/rider/shift-locations`
@@ -7336,11 +7338,13 @@ sync`（共用既有的 `RIDER_WEBHOOK_SECRET`，不需要新密鑰），給
    承攬」「二輪雇傭」「三輪雇傭」（以及其他廠商已經建立的合作方式）
    都補上「承攬」或「雇傭」分類——這是**唯一一定要做**的步驟，沒設定
    分類的合作方式，底下的人不管即時接單還是報班媒合都不能用。
+   **（2026-09-22 使用者回報已補完成。）**
 2. 到 `delivery-gas-project` 的 Apps Script 編輯器新增指令碼屬性
    `PERSONNEL_EMPLOYEE_NO_SYNC_URL`（見該 repo HANDOFF.md），執行一次
    `syncPersonnelEmployeeNo()`，把既有蝦皮系列人員的工號補進人員名冊；
    執行紀錄列出來的「同名同姓」「查無此人」需要另外手動到人員名冊核對
-   補上。
+   補上。**（2026-09-22 使用者回報已執行；執行紀錄列出的同名同姓/查無
+   此人名單，麻煩之後找時間到人員名冊逐筆核對補上工號。）**
 3. 之後新報到的人員，工號在建立人員名冊資料時一起填即可，不需要再跑
    搬移腳本。
 
@@ -7869,6 +7873,8 @@ python -m scripts.fix_legacy_announcement_titles
 看到印出來的名單確認沒問題後輸入 `yes` 執行。這支腳本只需要跑這一次，
 之後新發的公告已經不會再有這個問題。
 
+**（2026-09-22 使用者回報已執行完成。）**
+
 新增測試：`tests/test_fix_legacy_announcement_titles.py`（`plan_fix()`
 規劃邏輯）、`tests/test_platform_announcements.py`
 （`UpdateAnnouncementTitleTests`）。全部測試（`python3 -m unittest
@@ -8074,6 +8080,9 @@ unittest discover -s tests -p "test_*.py"`）1921 個全數通過。
    不需要等 LINE 帳號申請好就能先用；只有「LINE 綁定＋人員在 LINE 上
    查詢/報名＋審核推播」這幾項需要等上面 1-3 步驟做完才會動起來。
 
+**進度（2026-09-22 使用者回報）**：桃園所這組 LINE 帳號的申請/環境變數/
+Webhook URL 都已經設定完成。**高雄所還沒設定**，上面 1-3 步驟還要做。
+
 新增測試：`tests/test_dispatch_sites.py`（所別設定清單）、
 `tests/test_dispatch_service.py`（取代
 `tests/test_taoyuan_dispatch_service.py`，新增跨所資料隔離測試）、
@@ -8212,6 +8221,10 @@ handleSalaryPostback()` 三則 LINE 訊息都照實反映真正結果，寄信�
 4. 合併 `job-portal-gas-project` 的 PR 後，如果自動部署（`clasp push`）
    還沒設定好（見上一節），要先手動 `clasp push` 一次，不然新增的兩個
    端點不會真的生效。
+
+**（2026-09-22 使用者回報財務部專區這幾步都已完成，功能可以正常使用；
+`CLASPRC_JSON`／`clasp deploy -i` 固定版本部署的問題也已經在後面
+「clasp-push 補上 clasp deploy -i」那節修好並驗證過。）**
 
 新增測試：`tests/test_salary_repayment_service.py` 的
 `HasFinanceAccessTests`／`GetAllApprovedRepaymentRecordsTests`、
