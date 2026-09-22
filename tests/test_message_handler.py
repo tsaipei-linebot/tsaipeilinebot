@@ -1941,6 +1941,132 @@ class CompoundSecondaryFilterTests(unittest.TestCase):
         self.assertEqual(args[1], control_message)
 
 
+class BrandPoolNarrowingFixTests(unittest.TestCase):
+    """用真實 Notion 資料背景測試（4 個 agent 分別測蝦皮/外送、製造/作業員、
+    理貨/倉儲、門市/餐飲）找到的 3 個真實邏輯問題，都是同一個根因：候選池
+    在某些情況下沒有依廠商窄化，導致廠商條件被忽略或整個丟掉。
+
+    1. 外送類別的候選池原本完全沒有依廠商窄化（門市/理貨/製造都有）。
+    2. 福利關鍵字辨識只看窄化後的候選池——候選池剛好都是福利欄位是空的
+       職缺時，訊息裡真的講到的福利關鍵字會完全辨識不到，條件被當成沒說過。
+    3. 只講廠商名稱、沒講類別關鍵字，又同時問休假/福利/發薪方式時，廠商
+       條件會被整個丟掉，改成對全部廠商一起篩選。"""
+
+    def _job(self, 職缺名稱, 職務類別, 系統廠商名稱, 縣市, 行政區, 領薪方式="", 福利="", 休假方式=""):
+        from services.notion_service import clean_text_for_search
+        raw_parts = [職缺名稱, "、".join(職務類別), 系統廠商名稱, "、".join(縣市), "、".join(行政區), 領薪方式, 福利, 休假方式]
+        return {
+            "職缺名稱": 職缺名稱, "職缺名稱(對外)": 職缺名稱,
+            "_internal_title": 職缺名稱, "_parsed_title": 職缺名稱,
+            "職務類別": "、".join(職務類別), "_job_category": "、".join(職務類別),
+            "系統廠商名稱": 系統廠商名稱, "_vendor_name_clean": clean_text_for_search(系統廠商名稱),
+            "縣市": "、".join(縣市), "行政區": "、".join(行政區),
+            "_location_search_text": clean_text_for_search(" ".join(縣市) + " " + " ".join(行政區)),
+            "_search_text": clean_text_for_search(" ".join(raw_parts)),
+            "領薪方式": 領薪方式, "福利": 福利, "休假方式": 休假方式,
+        }
+
+    def _run(self, msg, jobs, user_id):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = user_id
+        event.message.text = msg
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=jobs), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+        return mock_ai_decision, mock_flex_card, line_bot_api
+
+    def test_delivery_pool_narrows_by_brand(self):
+        # 實測回報案例：問「Uber外送的工作」原本會混進蝦皮的外送職缺；問
+        # 「momo外送的工作」（momo根本沒有外送職缺）也會混進蝦皮/Uber的職缺。
+        jobs = [
+            self._job("蝦皮外送三輪雇傭", ["外送員"], "蝦皮三輪雇傭", ["桃園市"], ["桃園市八德區"]),
+            self._job("Uber(COSTCO)", ["外送員"], "Uber(COSTCO)", ["台中市"], ["台中市西屯區"]),
+        ]
+        mock_ai, mock_flex, api = self._run("Uber外送的工作", jobs, "test-delivery-brand-narrow")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["Uber(COSTCO)"])
+
+    def test_delivery_pool_brand_with_zero_match_does_not_fall_back_to_other_vendors(self):
+        # momo 根本沒有外送職缺——不該混進蝦皮/Uber 的外送職缺當替代答案。
+        jobs = [
+            self._job("蝦皮外送三輪雇傭", ["外送員"], "蝦皮三輪雇傭", ["桃園市"], ["桃園市八德區"]),
+            self._job("Uber(COSTCO)", ["外送員"], "Uber(COSTCO)", ["台中市"], ["台中市西屯區"]),
+        ]
+        mock_ai, mock_flex, api = self._run("momo外送的工作", jobs, "test-delivery-brand-zero-match")
+        mock_flex.assert_not_called()
+        titles = []
+        if mock_flex.called:
+            titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertNotIn("蝦皮外送三輪雇傭", titles)
+        self.assertNotIn("Uber(COSTCO)", titles)
+
+    def test_benefit_keyword_recognized_even_when_narrowed_pool_lacks_it(self):
+        # 實測回報案例：「蝦皮門市有沒有公司車的工作」——先窄化成只剩蝦皮門市
+        # （福利欄位是空的），"公司車" 這個真實存在的福利（只在蝦皮外送職缺
+        # 上）原本完全辨識不到，導致條件被當成沒說過、直接回蝦皮門市。現在
+        # 應該老實反問「要不要放寬福利條件」，不能假裝使用者沒問公司車。
+        jobs = [
+            self._job("蝦皮門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市中壢區"], "月領,匯款", "", "週休"),
+            self._job("蝦皮外送三輪雇傭", ["外送員"], "蝦皮三輪雇傭", ["桃園市"], ["桃園市八德區"], "週領,匯款", "公司車", "排休"),
+        ]
+        mock_ai, mock_flex, api = self._run("蝦皮門市有沒有公司車的工作", jobs, "test-benefit-broad-detection")
+        mock_ai.assert_not_called()
+        mock_flex.assert_not_called()
+        api.reply_message.assert_called_once()
+        args, _ = api.reply_message.call_args
+        reply_msg = args[1]
+        self.assertIn("公司車", reply_msg.text)
+
+    def test_bare_brand_with_leave_condition_does_not_leak_other_vendor_jobs(self):
+        # 實測回報案例：「康寧有週休二日的工作嗎」——康寧沒有類別關鍵字觸發
+        # 任何一個既有分支，原本廠商條件會被整個丟掉，變成對全部廠商篩選，
+        # 混進瑪諾醫藥生技（週休二日）的職缺，即使康寧自己是做二休二。
+        jobs = [
+            self._job("康寧(世捷)_倉儲", ["倉儲人員"], "康寧(世捷)", ["台中市"], ["台中市西屯區"], "月領,週領", "", "做二休二"),
+            self._job("瑪諾醫藥生技_倉儲", ["倉儲人員"], "瑪諾醫藥生技", ["新北市"], ["新北市新莊區"], "月領,匯款", "", "週休"),
+        ]
+        mock_ai, mock_flex, api = self._run("康寧有週休二日的工作嗎", jobs, "test-bare-brand-no-leak")
+        mock_ai.assert_not_called()
+        titles = []
+        if mock_flex.called:
+            titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertNotIn("瑪諾醫藥生技_倉儲", titles)
+
+    def test_bare_brand_with_matching_leave_condition_recommends_only_that_vendor(self):
+        # 反過來：康寧真的有一筆符合週休二日時，應該只推薦康寧自己的那筆，
+        # 不能把其他廠商同樣符合週休二日的職缺也一起列進來。
+        jobs = [
+            self._job("康寧(世捷)_倉儲", ["倉儲人員"], "康寧(世捷)", ["台中市"], ["台中市西屯區"], "月領,週領", "", "週休"),
+            self._job("瑪諾醫藥生技_倉儲", ["倉儲人員"], "瑪諾醫藥生技", ["新北市"], ["新北市新莊區"], "月領,匯款", "", "週休"),
+        ]
+        mock_ai, mock_flex, api = self._run("康寧有週休二日的工作嗎", jobs, "test-bare-brand-match")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["康寧(世捷)_倉儲"])
+
+    def test_bare_brand_alone_without_secondary_condition_still_falls_through_to_ai(self):
+        # 刻意保守：單純講廠商名稱、沒有其他資訊（類別/福利/發薪/休假）時，
+        # 維持原本會落到 AI 決策的既有行為，不擴大這次修正的範圍。
+        jobs = [
+            self._job("康寧(世捷)_倉儲", ["倉儲人員"], "康寧(世捷)", ["台中市"], ["台中市西屯區"], "月領,週領", "", "週休"),
+        ]
+        mock_ai, mock_flex, api = self._run("康寧的工作", jobs, "test-bare-brand-no-secondary")
+        mock_ai.assert_called_once()
+
+
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
     """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或
     類似的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德目前沒有蝦皮
