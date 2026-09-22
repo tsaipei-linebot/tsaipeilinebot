@@ -767,6 +767,23 @@ class FindLeaveMatchedJobsTests(unittest.TestCase):
         self.assertEqual(label, "")
         self.assertEqual(jobs, [])
 
+    def test_job_with_multiple_leave_values_matches_the_one_not_checked_first(self):
+        # 多輪對話背景測試找到的真實案例：康寧的職缺「休假方式」欄位同時
+        # 填了「做二休二,排休」，代表這筆職缺依班別不同分別適用兩種制度。
+        # extract_leave_preference() 一次只判斷「第一個命中」的分類（週休
+        # 二日→四休二→排休 依序檢查），對整串欄位值只呼叫一次的話，「做二
+        # 休二」先命中、"排休" 就完全比對不到，即使欄位裡明明也寫了排休。
+        job = {"職缺名稱": "康寧(世捷)_倉儲", "休假方式": "做二休二,排休"}
+        label, jobs = m.find_leave_matched_jobs("有排休的工作嗎", [job])
+        self.assertEqual(label, "排休")
+        self.assertEqual(jobs, [job])
+
+    def test_job_with_multiple_leave_values_still_matches_the_first_checked_one(self):
+        job = {"職缺名稱": "康寧(世捷)_倉儲", "休假方式": "做二休二,排休"}
+        label, jobs = m.find_leave_matched_jobs("有四休二的工作嗎", [job])
+        self.assertEqual(label, "四休二")
+        self.assertEqual(jobs, [job])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2174,6 +2174,131 @@ class FoodServicePoolAndUberBrandFixTests(unittest.TestCase):
         self.assertTrue(all("門市門市" not in t for t in button_texts), button_texts)
 
 
+class MultiTurnLockedCategoryPersistenceTests(unittest.TestCase):
+    """用 4 個 agent 分別針對「多輪對話」背景測試才找得到的真實 bug：先問
+    「蝦皮門市有工作嗎」（鎖定廠商=蝦皮、類別=門市），下一句只問「有公司車
+    的嗎」（沒有再提「門市」或「蝦皮」）——地區的鎖定條件本來就會正確沿用，
+    但廠商/類別的鎖定條件原本完全沒被拿來篩選，候選池會退回「蝦皮全部
+    類別」，甚至（如果連廠商都沒鎖、只鎖了類別）整個退回全部職缺、混進
+    其他廠商的職缺。這裡用真正會保留 session 狀態的多輪測試（不是每次都
+    重置槽位）驗證修好了。"""
+
+    def _job(self, 職缺名稱, 職務類別, 系統廠商名稱, 縣市, 行政區, 領薪方式="", 福利="", 休假方式=""):
+        from services.notion_service import clean_text_for_search
+        raw_parts = [職缺名稱, "、".join(職務類別), 系統廠商名稱, "、".join(縣市), "、".join(行政區), 領薪方式, 福利, 休假方式]
+        return {
+            "職缺名稱": 職缺名稱, "職缺名稱(對外)": 職缺名稱,
+            "_internal_title": 職缺名稱, "_parsed_title": 職缺名稱,
+            "職務類別": "、".join(職務類別), "_job_category": "、".join(職務類別),
+            "系統廠商名稱": 系統廠商名稱, "_vendor_name_clean": clean_text_for_search(系統廠商名稱),
+            "縣市": "、".join(縣市), "行政區": "、".join(行政區),
+            "_location_search_text": clean_text_for_search(" ".join(縣市) + " " + " ".join(行政區)),
+            "_search_text": clean_text_for_search(" ".join(raw_parts)),
+            "領薪方式": 領薪方式, "福利": 福利, "休假方式": 休假方式,
+        }
+
+    def _make_session(self, jobs):
+        """建立一個真正會保留槽位/對話紀錄狀態的多輪測試環境，不是每輪都
+        重置——跟真實 LINE 對話一樣，上一輪鎖定的槽位要能沿用到下一輪。"""
+        session_slots = dict(location="", category="", shift="", leave="", brand="")
+        history = []
+
+        def _merge_slots(user_id, location="", category="", shift="", leave="", brand=""):
+            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand)]:
+                if value == h.CLEAR_SLOT:
+                    session_slots[key] = ""
+                elif value:
+                    session_slots[key] = value
+            return dict(session_slots)
+
+        def _run_turn(msg, user_id="test-multiturn-user"):
+            event = MagicMock()
+            event.reply_token = "valid-reply-token"
+            event.source.user_id = user_id
+            event.message.text = msg
+            line_bot_api = MagicMock()
+            with patch("handlers.message_handler.fetch_jobs_data", return_value=jobs), \
+                 patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+                 patch("handlers.message_handler.get_user_history", side_effect=lambda uid: list(history)), \
+                 patch("handlers.message_handler.get_user_slots", side_effect=lambda uid: dict(session_slots)), \
+                 patch("handlers.message_handler.update_user_slots", side_effect=_merge_slots), \
+                 patch("handlers.message_handler.append_user_history", side_effect=lambda uid, role, text: history.append({"role": role, "text": text})), \
+                 patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+                 patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+                 patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+                h.process_user_message(event, line_bot_api)
+            return mock_ai_decision, mock_flex_card, line_bot_api
+
+        return _run_turn
+
+    def test_locked_brand_and_category_persist_when_second_turn_only_asks_secondary_condition(self):
+        # 蝦皮同時有門市跟理貨/倉儲兩種類別，且理貨/倉儲那筆真的有休假方式
+        # 符合的職缺——鎖定「蝦皮門市」後，第二輪只問休假方式，答案應該還是
+        # 只有蝦皮門市（因為門市那筆也符合），不能把蝦皮理貨/倉儲那筆也一起
+        # 混進來，即使它同樣符合休假方式條件。
+        jobs = [
+            self._job("蝦皮門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市中壢區"], "月領,匯款", "", "週休"),
+            self._job("蝦皮(威獅)(時薪)", ["倉儲人員"], "蝦皮威獅", ["桃園市"], ["桃園市楊梅區"], "月領,週領", "", "週休"),
+        ]
+        run_turn = self._make_session(jobs)
+
+        mock_ai_1, mock_flex_1, _ = run_turn("蝦皮門市有工作嗎")
+        mock_ai_1.assert_not_called()
+        titles_1 = [j["職缺名稱"] for j in mock_flex_1.call_args[0][0]]
+        self.assertEqual(titles_1, ["蝦皮門市"])
+
+        mock_ai_2, mock_flex_2, _ = run_turn("有週休二日的嗎")
+        mock_ai_2.assert_not_called()
+        mock_flex_2.assert_called_once()
+        titles_2 = [j["職缺名稱"] for j in mock_flex_2.call_args[0][0]]
+        self.assertEqual(titles_2, ["蝦皮門市"])
+
+    def test_locked_brand_and_category_do_not_leak_into_relax_ask_across_turns(self):
+        # 蝦皮門市沒有公司車，只有蝦皮外送才有——鎖定「蝦皮門市」後，第二輪
+        # 只問公司車，應該老實反問/告知蝦皮門市查無公司車，不能因為忘記
+        # 「門市」這個鎖定類別，就把蝦皮外送（有公司車）混進來當答案。
+        jobs = [
+            self._job("蝦皮門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市中壢區"], "月領,匯款", "", "週休"),
+            self._job("蝦皮外送三輪雇傭", ["外送員"], "蝦皮三輪雇傭", ["桃園市"], ["桃園市八德區"], "週領,匯款", "公司車", "排休"),
+        ]
+        run_turn = self._make_session(jobs)
+
+        run_turn("蝦皮門市有工作嗎")
+        mock_ai_2, mock_flex_2, api_2 = run_turn("有公司車的嗎")
+        mock_ai_2.assert_not_called()
+        titles_2 = []
+        if mock_flex_2.called:
+            titles_2 = [j["職缺名稱"] for j in mock_flex_2.call_args[0][0]]
+        self.assertNotIn("蝦皮外送三輪雇傭", titles_2)
+        # 應該進入「查無/放寬」的正確流程，而不是悄悄忽略公司車這個條件
+        args, _ = api_2.reply_message.call_args
+        reply_payload = args[1]
+        reply_text = reply_payload.text if hasattr(reply_payload, "text") else reply_payload[0].text
+        self.assertIn("公司車", reply_text)
+
+    def test_locked_category_only_without_brand_persists_and_excludes_other_category(self):
+        # 第一輪只鎖類別（沒有鎖廠商）——第二輪只問福利/發薪等條件時，候選池
+        # 應該還是只看「理貨/倉儲」這個類別的職缺，不能因為沒有廠商可以窄化
+        # 就整個退回全部職缺、混進「製造/作業員」類別的職缺。
+        jobs = [
+            self._job("momo楊梅倉", ["倉儲人員"], "momo理貨員", ["桃園市"], ["桃園市楊梅區"], "日領,月領", "", "排休"),
+            self._job("美光(台中)_OP", ["作業員"], "美光(台中)", ["台中市"], ["台中市后里區"], "月領,週領", "交通車", "四休二"),
+        ]
+        run_turn = self._make_session(jobs)
+
+        mock_ai_1, mock_flex_1, _ = run_turn("理貨的工作")
+        mock_ai_1.assert_not_called()
+        titles_1 = [j["職缺名稱"] for j in mock_flex_1.call_args[0][0]]
+        self.assertEqual(titles_1, ["momo楊梅倉"])
+
+        mock_ai_2, mock_flex_2, _ = run_turn("有交通車的嗎")
+        mock_ai_2.assert_not_called()
+        titles_2 = []
+        if mock_flex_2.called:
+            titles_2 = [j["職缺名稱"] for j in mock_flex_2.call_args[0][0]]
+        self.assertNotIn("美光(台中)_OP", titles_2)
+
+
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
     """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或
     類似的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德目前沒有蝦皮

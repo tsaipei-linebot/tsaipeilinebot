@@ -712,9 +712,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             if is_shopee_intent:
                 return "shopee"
             # 七個類別/品牌關鍵字都沒命中，卻仍然有候選池的情況，只會是下面
-            # 步驟 1b 補上的「只有廠商名稱、沒有類別關鍵字」分支
-            # （_is_bare_brand_pool_intent）。
-            return "brand_only"
+            # 步驟 1b 補上的「沿用上一輪鎖定的廠商/類別」分支
+            # （_is_locked_context_pool_intent）。
+            return "locked_context"
 
         _has_category_pool_intent = bool(is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_food_service_intent or is_shopee_intent)
 
@@ -738,26 +738,41 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         _pay_label, _ = find_pay_method_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
         _has_secondary_intent = bool(_leave_label or _benefit_label or _pay_label)
 
-        # ---------------- 只有廠商名稱、沒有類別關鍵字時的候選池補救 ----------------
-        # 六個既有分支都要靠類別關鍵字（作業員/門市/外送/理貨…，或 momo/蝦皮
-        # 這兩個寫死的品牌）才會建立候選池。求職者只講了廠商名稱（例如「康寧」
-        # 「惠特科技」，detect_brand_label() 認得、但不是這六個分支的觸發詞）、
-        # 同時又問了休假/福利/發薪方式時，原本 _has_pool_intent 會是 False，
-        # 候選池整個退回 active_jobs，等於廠商條件被丟掉——真實案例：「惠特
-        # 科技週領的工作」「康寧有週休二日的工作嗎」都會混進其他廠商的職缺，
-        # 而且系統還很有把握地直接回覆，不會說查無這家公司資料。
+        # ---------------- 沒有再提類別關鍵字時，沿用上一輪鎖定的廠商/類別 ----------------
+        # 用多輪對話背景測試才找得到的真實 bug（4 個 agent 各自獨立測到同一個
+        # 問題）：例如先問「蝦皮門市有工作嗎」（鎖定廠商=蝦皮、類別=門市），
+        # 下一句只問「有交通車的嗎」（沒有再提「門市」或「蝦皮」）——地區的
+        # 鎖定條件（current_location）本來就會正確沿用，但廠商/類別的鎖定
+        # 條件原本完全沒被拿來篩選：候選池會退回「蝦皮全部類別」（如果連廠商
+        # 都沒鎖、只鎖了類別，例如先問「理貨的工作」，甚至會整個退回
+        # active_jobs、混進其他廠商的職缺，比只漏廠商還嚴重）。真人招募顧問
+        # 聊到一半換話題問福利，不會突然忘記剛剛在聊哪個廠商、哪個類別。
         #
-        # 這裡刻意只在「同時偵測到次要條件」時才啟用這個候選池，單純講廠商
-        # 名稱、沒有其他資訊時（例如只打「康寧」），維持原本會落到 AI 決策的
-        # 既有行為不變，不擴大這次修正的範圍。
-        _is_bare_brand_pool_intent = bool(detected_brand) and not _has_category_pool_intent and _has_secondary_intent and not is_negative
-        if _is_bare_brand_pool_intent:
-            _brand_clean_for_pool = clean_text_for_search(detected_brand)
-            _pool = [j for j in active_jobs if _brand_clean_for_pool in j.get("_search_text", "")]
-            _pool_desc = detected_brand
-            _pool_query_phrase = detected_brand
+        # `detected_category_from_text`／`detected_brand`（步驟 0-3 已經算好）
+        # 本來就會在這句話沒有提到新類別/廠商、也沒有明確表示不限時，自動
+        # 沿用上一輪鎖定的值——這裡只是把這兩個「早就算好、沿用中的鎖定值」
+        # 也納入候選池的決定，不是新增另一套鎖定機制。刻意只在「同時偵測到
+        # 次要條件」時才啟用，單純換話題但什麼條件都沒問時（例如只打
+        # 「康寧」），維持原本會落到 AI 決策的既有行為，不擴大這次修正的範圍。
+        _locked_category_for_secondary = detected_category_from_text if detected_category_from_text and detected_category_from_text != "不限" else ""
+        _is_locked_context_pool_intent = (
+            not _has_category_pool_intent
+            and _has_secondary_intent
+            and not is_negative
+            and bool(detected_brand or _locked_category_for_secondary)
+        )
+        if _is_locked_context_pool_intent:
+            if _locked_category_for_secondary:
+                _pool = filter_jobs_by_category_tiered(active_jobs, _locked_category_for_secondary, detected_brand)
+            else:
+                _pool = list(active_jobs)
+            if detected_brand:
+                _brand_clean_for_pool = clean_text_for_search(detected_brand)
+                _pool = [j for j in _pool if _brand_clean_for_pool in j.get("_search_text", "")]
+            _pool_desc = _brand_plus_suffix(detected_brand, _locked_category_for_secondary) if _locked_category_for_secondary else detected_brand
+            _pool_query_phrase = _pool_desc
 
-        _has_pool_intent = _has_category_pool_intent or _is_bare_brand_pool_intent
+        _has_pool_intent = _has_category_pool_intent or _is_locked_context_pool_intent
 
         # ---------------- 蝦皮職缺類型反問 ----------------
         # 使用者反映：蝦皮同時橫跨外送/門市/理貨倉儲等好幾種職缺類型，求職者

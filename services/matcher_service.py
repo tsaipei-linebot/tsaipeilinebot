@@ -472,6 +472,30 @@ def extract_leave_preference(text: str) -> str:
     return ""
 
 
+def _classify_all_leave_labels(text: str) -> set:
+    """一筆職缺的「休假方式」欄位可能同時填了兩種制度（例如同仁實際填過
+    「做二休二,排休」，代表這筆職缺依班別不同分別適用這兩種休假制度）。
+    extract_leave_preference() 一次只會依優先順序判斷出「第一個命中」的
+    一種分類，直接對整串欄位值呼叫一次，「排休」就會因為「週休/四休二」
+    的關鍵字檢查排在前面且先命中「做二休二」而完全被忽略，導致求職者問
+    「有排休的工作嗎」時，這筆其實也真的有排休的職缺永遠比對不到。這裡
+    改成先用逗號/頓號/空白拆開欄位裡的每一段分別判斷，再加上對整串欄位值
+    判斷一次當保險（涵蓋「做二休二」這種本身就帶有頓號可能被拆壞的最小
+    單位寫法），回傳「這筆職缺實際涵蓋的所有休假制度分類」。"""
+    labels = set()
+    for token in re.split(r'[,，、\s]+', str(text or "")):
+        token = token.strip()
+        if not token:
+            continue
+        label = extract_leave_preference(token)
+        if label:
+            labels.add(label)
+    whole_label = extract_leave_preference(str(text or ""))
+    if whole_label:
+        labels.add(whole_label)
+    return labels
+
+
 def find_leave_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
     """依 extract_leave_preference() 判斷出的休假制度，直接比對職缺結構化的
     「休假方式」欄位，完全不看任何自由文字欄位。跟 find_pay_method_matched_jobs()
@@ -485,7 +509,7 @@ def find_leave_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
     label = extract_leave_preference(raw_msg)
     if not label:
         return "", []
-    matched = [j for j in active_jobs if extract_leave_preference(str(j.get("休假方式") or "")) == label]
+    matched = [j for j in active_jobs if label in _classify_all_leave_labels(j.get("休假方式") or "")]
     return label, matched
 
 def extract_numeric_salary_preference(text: str) -> dict:
