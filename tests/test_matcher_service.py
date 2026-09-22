@@ -626,5 +626,77 @@ class FindBenefitMatchedJobsTests(unittest.TestCase):
         self.assertEqual(jobs, [])
 
 
+class DetectPayMethodLabelTests(unittest.TestCase):
+    """使用者實測回報：求職者問「台北日領工作」，卻被推薦了領薪方式其實是
+    「週領,匯款,月領,現金」（沒有日領）的職缺，因為 AI 把職缺行銷文案裡的
+    「薪資當日結算」誤判成「日領」。改成手動維護一份固定的發薪方式同義詞
+    清單，求職者問到任一種發薪方式都要能正確辨識，不能因為系統裡目前剛好
+    沒有職缺勾選某個發薪方式，就辨識不出求職者在問什麼。"""
+
+    def test_detects_canonical_label_from_synonyms(self):
+        self.assertEqual(m.detect_pay_method_label("台北日領工作"), "日領")
+        self.assertEqual(m.detect_pay_method_label("有沒有日結的工作"), "日領")
+        self.assertEqual(m.detect_pay_method_label("當天領的工作"), "日領")
+        self.assertEqual(m.detect_pay_method_label("我想找週領的工作"), "週領")
+        self.assertEqual(m.detect_pay_method_label("月領薪水的工作"), "月領")
+        self.assertEqual(m.detect_pay_method_label("現金領薪的工作"), "現金")
+
+    def test_no_pay_method_mentioned_returns_empty(self):
+        self.assertEqual(m.detect_pay_method_label("台北的工作"), "")
+
+    def test_negated_pay_method_is_not_matched(self):
+        self.assertEqual(m.detect_pay_method_label("不要日領的工作"), "")
+
+
+class FindPayMethodMatchedJobsTests(unittest.TestCase):
+    """比對必須完全依據 Notion 結構化的「領薪方式」欄位，不能受職缺行銷
+    文案（「特色」「工作內容」等自由文字）裡出現的相似字眼影響——這正是
+    使用者回報的那個實際案例：職缺「精華亮點」寫著「薪資當日結算」，但
+    「領薪方式」欄位裡沒有日領，問「日領」時這筆職缺就不該被算進去。"""
+
+    def test_matches_job_by_structured_pay_method_field_only(self):
+        shopee_job = {
+            "職缺名稱": "蝦皮外送三輪雇傭-大型宅配店",
+            "領薪方式": "週領,匯款,月領,現金",
+            "精華亮點": "公司提供三輪車，享勞健保與電話費補助，薪資當日結算，多點可選輕鬆賺！",
+        }
+        daily_pay_job = {
+            "職缺名稱": "測試日領外送員",
+            "領薪方式": "日領,現金",
+        }
+        label, jobs = m.find_pay_method_matched_jobs("台北日領工作", [shopee_job, daily_pay_job])
+        self.assertEqual(label, "日領")
+        self.assertEqual(jobs, [daily_pay_job])
+
+    def test_marketing_text_mentioning_same_day_settlement_does_not_count_as_daily_pay(self):
+        # 使用者實測回報的確切案例：領薪方式沒有日領，但精華亮點提到
+        # 「當日結算」，這筆職缺絕對不能被算進「日領」的比對結果裡。
+        job = {
+            "職缺名稱": "蝦皮外送三輪雇傭-大型宅配店",
+            "領薪方式": "週領,匯款,月領,現金",
+            "精華亮點": "薪資採當日結算，時薪或件酬取最高計算",
+        }
+        label, jobs = m.find_pay_method_matched_jobs("台北日領工作", [job])
+        self.assertEqual(label, "日領")
+        self.assertEqual(jobs, [])
+
+    def test_no_pay_method_keyword_returns_empty_label(self):
+        job = {"職缺名稱": "工作A", "領薪方式": "月領"}
+        label, jobs = m.find_pay_method_matched_jobs("台北的工作", [job])
+        self.assertEqual(label, "")
+        self.assertEqual(jobs, [])
+
+    def test_no_active_jobs_returns_empty(self):
+        label, jobs = m.find_pay_method_matched_jobs("台北日領工作", [])
+        self.assertEqual(label, "")
+        self.assertEqual(jobs, [])
+
+    def test_negated_pay_method_does_not_match(self):
+        job = {"職缺名稱": "工作A", "領薪方式": "日領"}
+        label, jobs = m.find_pay_method_matched_jobs("不要日領的工作", [job])
+        self.assertEqual(label, "")
+        self.assertEqual(jobs, [])
+
+
 if __name__ == "__main__":
     unittest.main()

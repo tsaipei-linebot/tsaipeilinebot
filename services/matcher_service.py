@@ -384,6 +384,61 @@ def find_benefit_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
     return "", []
 
 
+# ==========================================
+# 領薪方式關鍵字直達攔截：跟福利關鍵字直達攔截（見上方 find_benefit_matched_jobs）
+# 同樣的精神——求職者問到發薪方式時，一律直接比對結構化欄位、完全不交給
+# AI 判斷。但刻意不是動態掃描 Notion 資料庫「長」出關鍵字清單：領薪方式
+# （日領/週領/月領/年薪/現金/匯款…）是求職者最在意、最不能出錯的資訊，
+# 就算系統裡剛好目前沒有任何職缺勾選某個發薪方式（例如目前完全沒有日領
+# 職缺），求職者問「有沒有日領的工作」時，也必須明確誠實告知「目前沒
+# 有」，不能因為關鍵字清單裡沒收錄這個詞、就讓這句話落到 AI 決策保底
+# 流程——AI 判斷發薪方式時曾經把職缺行銷文案（「精華亮點」）裡的「薪資
+# 當日結算」（意思是薪資用當天紀錄去計算，不代表當天真的撥款）誤判成
+# 「日領」，即使當時候選職缺清單裡已經老實列出「領薪方式:週領,匯款,
+# 月領,現金」這個正確的結構化欄位資訊給 AI 看，AI 還是判斷錯（見
+# HANDOFF.md 日領誤判案例）。所以這裡手動維護一份固定的發薪方式同義詞
+# 清單（跟 SHIFT_SYNONYMS 班別同義詞是同一種寫法），求職者問到任何一種
+# 發薪方式時，一律改成直接查表比對結構化的「領薪方式」欄位，完全不看
+# 任何自由文字欄位，杜絕 AI 自行從行銷文案延伸推論的風險。
+# ==========================================
+PAY_METHOD_SYNONYMS = {
+    "日領": ["日領", "當日領", "當天領", "日結"],
+    "週領": ["週領", "周領"],
+    "雙週領": ["雙週領", "雙周領"],
+    "月領": ["月領"],
+    "年薪": ["年薪", "年領"],
+    "現金": ["現金"],
+    "匯款": ["匯款", "轉帳"],
+}
+
+
+def detect_pay_method_label(text: str) -> str:
+    """從文字中判斷求職者指定的發薪方式，跳過被否定的詞（例如「不要日領的」）。"""
+    clean = clean_text_for_search(text)
+    for label, synonyms in PAY_METHOD_SYNONYMS.items():
+        for syn in synonyms:
+            if clean_text_for_search(syn) in clean and not _keyword_is_negated(text, syn):
+                return label
+    return ""
+
+
+def find_pay_method_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
+    """依 detect_pay_method_label() 判斷出的發薪方式，直接比對職缺結構化的
+    「領薪方式」欄位（同仁在 Notion 勾選的官方資料），完全不看任何自由文字
+    欄位。回傳 (發薪方式標籤, 符合的職缺清單)；沒有命中發薪方式關鍵字則
+    回傳 ("", [])——代表這句話跟發薪方式無關，交由既有流程判斷。命中關鍵字
+    但完全沒有職缺符合（結構化欄位裡沒有任何職缺勾選這個發薪方式）時，
+    呼叫端要老實回覆「目前沒有」，不能落到 AI 決策保底流程重蹈覆轍。"""
+    if not active_jobs:
+        return "", []
+    label = detect_pay_method_label(raw_msg)
+    if not label:
+        return "", []
+    label_clean = clean_text_for_search(label)
+    matched = [j for j in active_jobs if label_clean in clean_text_for_search(str(j.get("領薪方式") or ""))]
+    return label, matched
+
+
 # 班別同義詞清單：獨立成模組常數，讓 extract_shift_preference 跟 _tokenize_search_terms
 # 共用同一份來源，避免兩處各自維護、覆蓋範圍不一致。
 SHIFT_SYNONYMS = {
