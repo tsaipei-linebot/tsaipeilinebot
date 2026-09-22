@@ -64,13 +64,13 @@
   - ⏸️ **目前刻意關閉**：整個機制受 `config.py` 的 `STAFFED_HOURS_GUARD_ENABLED` 總開關控制（讀環境變數，預設 `false`）。原本卡著這項待辦的兩個前提，**「線上履歷跳轉」已於 2026-09-09 完成並實測確認**（見上一則），**目前唯一剩下的前提是使用者自己確定要正式切換到正式頻道**——切換前如果守門邏輯生效、剛好在白天測試，機器人會靜默不回覆、容易被誤以為故障，所以暫時不開。
   - **確定要正式啟用時，要做兩件事**：① 在 Cloud Run 設定環境變數 `STAFFED_HOURS_GUARD_ENABLED=true`（不需要改程式碼、重新部署）；② 到 LINE 官方帳號後台「設定」→「回應設定」→「回應時間設定」，排程 10:10–18:50 切到「聊天」模式（同仁手動回覆）、18:50–10:10 切到「Bot」模式（webhook 交給沛沛），這步無法用程式碼代勞。兩者建議一起設定：就算 LINE 後台沒設定或設錯，只要①開了，我們自己的守門邏輯還是會擋住白天的自動回覆（2022 年更新後「聊天」模式跟 Webhook 可以並存），算是雙重保險；但只做①不做②，白天的訊息會進到 LINE 後台一般收件匣，同仁要主動去那邊看才會發現。
   - 已知限制：真人在 LINE App／OA 後台手動回覆完全不會寫入 Firestore（LINE 平台沒有提供這類事件的 webhook），晚間沛沛接手時看不到白天談過什麼，屬於預期中的限制，非 bug。
-- **【程式碼已完成，還缺外部設定才會真正生效】監控與告警機制＋FAQ 週報**：把原本分開討論的「監控告警」跟「FAQ 週報／職缺關鍵字缺口」合併成同一支每日／每週排程端點實作，見下方「已完成」第 26 項的完整說明。這裡只記還缺什麼設定：
-  1. **服務帳戶要能讀 Cloud Logging**：`run_daily_report()` 是直接查 Cloud Logging（`google-cloud-logging`），不是走 Cloud Monitoring 記錄型指標——這點跟原始設計草稿（「結構化 log → Cloud Monitoring 指標」）不同，是實作時的簡化：直接查 log 一樣能算出 p95／保底訊息次數，不用多一道設定記錄型指標的手續。目前服務帳戶靠「編輯者」角色能讀 log，但下方安全性待辦要拿掉編輯者時，記得要另外加「記錄檢視者」（`roles/logging.viewer`），不然這個報告會讀不到 log。
-  2. **建 LINE 群組＋把沛沛加進去**，取得群組 ID 後設進 `DAILY_REPORT_LINE_TARGET_ID`（沒設定時只會印 log、不推播，可以先這樣測試觀察報告內容對不對）。
-  3. **設一個隨機字串當 `DAILY_REPORT_TRIGGER_SECRET`**，並在 GCP Cloud Scheduler 建一個每天一次的排程 job，用 HTTP POST 呼叫 Cloud Run 的 `/internal/daily-report/run`，帶上 header `X-Daily-Report-Secret: <同一組密鑰>`（跟每週工廠監控端點的做法完全一樣）。
-  4. **確定要正式生效時，設定環境變數 `DAILY_REPORT_ENABLED=true`**（預設關閉，即使 Cloud Scheduler 已經照排程在打這支端點，沒開這個總開關只會回傳「尚未啟用」、不會真的去讀 log／推播），比照「日夜接力」`STAFFED_HOURS_GUARD_ENABLED` 的做法。
+- ✅ **【已完成並實測確認，1-4 項設定都已生效】監控與告警機制＋FAQ 週報**：把原本分開討論的「監控告警」跟「FAQ 週報／職缺關鍵字缺口」合併成同一支每日／每週排程端點實作，見下方「已完成」第 26 項的完整說明。使用者已於 2026-09-22 確認：`DAILY_REPORT_LINE_TARGET_ID` 已設定，每天 21:00 都有正常收到週報，代表下面 1-4 項設定（服務帳戶讀 log 權限、LINE 群組、Cloud Scheduler 排程、`DAILY_REPORT_ENABLED=true`）全部已生效，這幾項待辦解除。
+  1. ✅ **服務帳戶要能讀 Cloud Logging**：`run_daily_report()` 是直接查 Cloud Logging（`google-cloud-logging`），不是走 Cloud Monitoring 記錄型指標——這點跟原始設計草稿（「結構化 log → Cloud Monitoring 指標」）不同，是實作時的簡化：直接查 log 一樣能算出 p95／保底訊息次數，不用多一道設定記錄型指標的手續。目前服務帳戶靠「編輯者」角色能讀 log，但下方安全性待辦要拿掉編輯者時，記得要另外加「記錄檢視者」（`roles/logging.viewer`），不然這個報告會讀不到 log。
+  2. ✅ **建 LINE 群組＋把沛沛加進去**，取得群組 ID 後設進 `DAILY_REPORT_LINE_TARGET_ID`：已完成，每天 21:00 正常收到報告，確認推播正常運作。
+  3. ✅ **設一個隨機字串當 `DAILY_REPORT_TRIGGER_SECRET`**，並在 GCP Cloud Scheduler 建一個每天一次的排程 job，用 HTTP POST 呼叫 Cloud Run 的 `/internal/daily-report/run`，帶上 header `X-Daily-Report-Secret: <同一組密鑰>`（跟每週工廠監控端點的做法完全一樣）：已完成，每天準時 21:00 觸發。
+  4. ✅ **確定要正式生效時，設定環境變數 `DAILY_REPORT_ENABLED=true`**（預設關閉，即使 Cloud Scheduler 已經照排程在打這支端點，沒開這個總開關只會回傳「尚未啟用」、不會真的去讀 log／推播），比照「日夜接力」`STAFFED_HOURS_GUARD_ENABLED` 的做法：已完成。
   5. **「Claude 對話串」這個通知管道目前沒有做**：跟使用者討論後的結論是，正式生效的通知只走 LINE 群組（見上面第 2 點），比較不會因為某個 Claude Code session／排程沒有活著而漏發，這點是實作時額外的判斷，跟原始定案設計（雙管道都發）不同，請知悉。
-  6. **原生 Cloud Monitoring alert（完全掛掉時 5 分鐘內就通知，不用等每日報告）尚未設定**：這是每日報告以外，另一層獨立的緊急備援，設定方式：
+  6. **（仍待設定，非急迫）原生 Cloud Monitoring alert（完全掛掉時 5 分鐘內就通知，不用等每日報告）尚未設定**：這是每日報告以外，另一層獨立的緊急備援，設定方式：
      ```bash
      gcloud logging metrics create ai_decision_fallback_count \
        --project=tsaipei-505807 \
