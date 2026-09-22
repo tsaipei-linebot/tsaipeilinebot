@@ -25,6 +25,7 @@
 
 ## 待辦事項（下一步優先處理）
 
+- 🔴 **【最急迫，需要使用者/GCP權限者處理】延遲持續惡化，9/22 單日 p95 已飆到 747 秒**：使用者貼出 09/09～09/22 兩週的每日/週報告，核對後發現 p95 延遲從 34.6 秒一路惡化到 747 秒，過去兩週沒有一天低於 12 秒門檻。詳見下方「已完成」第 58 項的完整分析。治本需要調高 Vertex AI 配額，但**使用者已自行嘗試申請超過一小時、求助 Google 客服也沒解決**——Gemini 走的是 Dynamic Shared Quota，不一定能透過一般「配額」頁面直接申請調高，可能需要改走 Provisioned Throughput（購買保留吞吐量）或直接聯繫 Google Cloud 業務/客戶經理，這部分 Claude 沒有 GCP 存取權限，需要使用者或有權限的人繼續嘗試。**已從需求端做了緩解**（見第 58 項：蝦皮/理貨倉儲/製造作業員補上直達攔截，減少不必要的 Gemini 呼叫量），但這只是緩解、不是根治，建議持續觀察後續報告的 p95 數字有沒有改善。
 - **【上線前流量/正確性盤點，PR 待跑，見下方「已完成」第 27 項】**：使用者希望盡快切換到正式頻道，請 Claude 對現有程式碼、對話流程、可承受流量做一次全面盤點。找到並已在程式碼裡修好 4 個問題（見第 27 項細節），另外有幾項**需要使用者自己去 GCP 動手做，Claude 這邊沒辦法代勞**：
   1. ✅ **Cloud Run `--min-instances=1`：已完成**。用 `gcloud run services describe recruitment-bot --region asia-east1 --format="value(spec.template.metadata.annotations)"` 確認過，`autoscaling.knative.dev/minScale=1` 已生效，不會再有容器冷啟動疊加 AI 決策時間、逼近 LINE 30 秒時限的風險。同時確認 `run.googleapis.com/cpu-throttling=false`（CPU 一律配置，先前就設定過的仍在生效）、`run.googleapis.com/startup-cpu-boost=true`（額外加速容器啟動）。
   2. ✅ **正式上線前重新壓測：已完成，結果健康**。合併＋部署上方第 27 項的修正後，用 `scripts/load_test.py --concurrency 30 --total 100 --distinct-users 20` 實測：100 筆全部成功（無失敗），wall time p50=6.40s／p95=12.32s／p99=13.50s／max=13.50s，伺服器端純處理 p99=11.97s／max=11.97s——安全落在 LINE 30 秒 reply token 上限內（超過 2 倍餘裕）。**跟先前併發 15 的舊紀錄（見上方「Vertex AI 回應延遲」待辦事項）幾乎持平**（舊：wall p99/max=13.31s／伺服器 p99/max=10.78s），代表併發數翻倍後，`min-instances=1`＋CPU 一律配置＋這次修的 Firestore 並發問題，撐住了兩倍流量沒有明顯劣化。p50 落在 5-6 秒區間（一半以上請求要等 5 秒以上才有回覆），不是這次測試才有的新現象，是 Vertex AI 中高併發下既有的排隊現象；如果正式流量長時間維持併發 20-30 這個量級，可以考慮把「去 Vertex AI 主控台申請調高配額」這項低優先待辦往前提。
@@ -381,6 +382,12 @@
     - **驗證**：用實際回報案例的職缺資料（領薪方式：週領,匯款,月領,現金；精華亮點：薪資當日結算）搭配一筆真的有日領選項的對照職缺，實測「台北日領工作」只會比對到真正有日領的職缺，不會再誤判到蝦皮外送三輪雇傭這筆；「不要日領的工作」正確被否定語氣排除、不觸發攔截。
     - **新增測試**：`tests/test_matcher_service.py` 新增 `DetectPayMethodLabelTests`、`FindPayMethodMatchedJobsTests`（含實際回報案例的還原測試：精華亮點寫「當日結算」的職缺，問「日領」時不能被算進去）；`tests/test_message_handler.py` 新增 `PayMethodKeywordDirectInterceptTests`（還原實測案例、命中關鍵字但無符合職缺時誠實回覆、否定語氣排除、無發薪方式關鍵字時正常落到 AI 決策）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 647 個測試，OK。
+58. **使用者把兩週份（09/09～09/22）每日/週報告貼給 Claude 分析，找出兩個問題並修正**：
+    - **問題一：延遲已持續惡化到嚴重程度（9/22 單日 p95 高達 747 秒）**：核對兩週報告發現 p95 延遲從 09/09 的 34.6 秒一路惡化到 09/22 的 747 秒，且過去兩週沒有一天低於 12 秒門檻，「⚠️ 超標」警示已經失去警示效果。根本原因研判是 Vertex AI Gemini 併發雪崩效應（見上方壓測相關待辦），治本需要調高 Vertex AI 配額（使用者反映自行嘗試申請超過一小時、求助 Google 客服也沒解決——Gemini 走的是 Dynamic Shared Quota，不一定能透過一般配額申請頁面直接調高，可能需要走 Provisioned Throughput 或另外聯繫 Google Cloud 業務窗口，這部分 Claude 無法代勞）；治標則是從「需求端」降低不必要的 Gemini 呼叫量，即問題二的修正。
+    - **問題二：「蝦皮」「理貨/倉儲」「製造/作業員」長期高頻被問，卻完全沒有精準工種直達攔截**：兩週報告的「建議新增的職缺關鍵字」裡，這三個類別/廠商幾乎每天/每週都上榜（理貨/倉儲單週最高 281 次、蝦皮單週最高 195 次），代表這幾百次請求原本都能確定性回答，卻每次都硬要排隊等 Gemini，直接加重問題一的雪崩效應。**修正**：比照既有的外送/門市/momo 直達攔截，在 `handlers/message_handler.py` 新增 `is_warehouse_intent`（理貨/倉儲）、`is_manufacturing_intent`（製造/作業員）、`is_shopee_intent`（蝦皮，純廠商、不含類別關鍵字時）三個直達攔截分支，並同步更新 `services/daily_report_service.py` 的 `DIRECT_INTERCEPT_CATEGORIES`／`DIRECT_INTERCEPT_BRANDS`，避免這幾個之後又被誤判成「缺口」重複建議。優先順序刻意排在既有的外送/門市/momo 之後——「蝦皮門市」這種組合已經由門市分支（含品牌篩選）處理，只有訊息完全沒命中任何類別關鍵字、純問蝦皮時才會落到新的 `is_shopee_intent` 分支，避免互搶。
+    - **附帶問題：FAQ 候選清單（每週原樣推播到 LINE 群組的報告）混進了求職者個資與廣告垃圾訊息**：翻閱報告內容時發現候選清單裡有「姓名＋電話號碼」（求職者告知資料方便確認履歷，被誤判成 FAQ 候選問句，個資因此外洩到每天推播的報告裡）、以及詐騙/廣告連結（文旦團購、直播詐騙、旅行社廣告等，因為 AI 判斷不出對應職缺/FAQ 而被一併記錄）。**修正**：`services/notion_service.py` 新增 `_looks_unsuitable_for_faq_candidate()`，過濾含電話號碼（`09\d{2}[-\s]?\d{3}[-\s]?\d{3}`）、含網址、或內容過長（>150字，疑似廣告文案）的訊息，接在 `append_unresolved_faq_to_notion()`（FAQ候選清單，會出現在報告）前面生效。**刻意不影響** `append_unresolved_question_for_followup()`（求職者提問追蹤，招募專員用來回頭找到本人手動回覆的獨立資料庫）——即使內容含姓名/電話，招募專員也必須完整看到才能確認履歷，這條過濾邏輯只擋 FAQ 候選清單這一個寫入路徑。
+    - **新增測試**：`tests/test_notion_service.py` 新增 `LooksUnsuitableForFaqCandidateTests`、`AppendUnresolvedFaqFiltersUnsuitableContentTests`（含求職者提問追蹤不受影響的還原測試）；`tests/test_message_handler.py` 新增 `WarehouseManufacturingShopeeDirectInterceptTests`（三個新攔截各自能繞過 AI 直接推薦、蝦皮+門市組合仍正確走門市分支、否定語氣排除）；`tests/test_daily_report_service.py` 新增這三個類別/廠商不再被誤判成缺口的測試。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 2030 個測試，OK。
 
 ## 目前所有檔案的狀態
 
