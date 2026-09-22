@@ -41,38 +41,62 @@ class HaversineDistanceTests(unittest.TestCase):
 
 class EvaluateClaimTests(unittest.TestCase):
     """_evaluate_claim() 是承接 transaction 的核心決策，刻意寫成不依賴
-    Firestore 的純函式，這裡直接測邊界情況（剛好用完／超過／已關閉／
-    非正整數），不需要真的連 Firestore。"""
+    Firestore 的純函式，這裡直接測邊界情況，不需要真的連 Firestore。
 
-    def _store(self, total=10, claimed=0, status="open"):
-        return {"total_quantity": total, "claimed_quantity": claimed, "status": status, "store_name": "測試門市"}
+    2026-09-22 改版：不再比對件數，改成只看「需求騎士數量」的名額——一位
+    騎士佔一個名額，同一位騎士不能重複承接同一間門市（見
+    rider_repository.DEFAULT_RIDER_CAPACITY 的說明）。"""
 
-    def test_accepts_when_quantity_within_remaining(self):
-        ok, message, new_claimed = rider_repository._evaluate_claim(self._store(total=10, claimed=2), 5)
+    def _store(self, capacity=3, claimed_ids=None, status="open"):
+        store = {"rider_capacity": capacity, "status": status, "store_name": "測試門市"}
+        if claimed_ids is not None:
+            store["claimed_rider_ids"] = claimed_ids
+        return store
+
+    def test_accepts_when_slots_remaining(self):
+        ok, message, new_ids = rider_repository._evaluate_claim(self._store(capacity=3, claimed_ids=["r1"]), "r2")
         self.assertTrue(ok)
         self.assertEqual(message, "")
-        self.assertEqual(new_claimed, 7)
+        self.assertEqual(new_ids, ["r1", "r2"])
 
-    def test_accepts_when_quantity_exactly_equals_remaining(self):
-        ok, message, new_claimed = rider_repository._evaluate_claim(self._store(total=10, claimed=8), 2)
+    def test_accepts_last_remaining_slot(self):
+        ok, message, new_ids = rider_repository._evaluate_claim(self._store(capacity=2, claimed_ids=["r1"]), "r2")
         self.assertTrue(ok)
-        self.assertEqual(new_claimed, 10)
+        self.assertEqual(new_ids, ["r1", "r2"])
 
-    def test_rejects_when_quantity_exceeds_remaining(self):
-        ok, message, new_claimed = rider_repository._evaluate_claim(self._store(total=10, claimed=8), 3)
+    def test_rejects_when_slots_full(self):
+        ok, message, new_ids = rider_repository._evaluate_claim(
+            self._store(capacity=2, claimed_ids=["r1", "r2"]), "r3"
+        )
         self.assertFalse(ok)
-        self.assertIn("剩餘可承接量只有 2 件", message)
-        self.assertIsNone(new_claimed)
+        self.assertIn("額滿", message)
+        self.assertIsNone(new_ids)
+
+    def test_rejects_duplicate_claim_by_same_rider(self):
+        ok, message, new_ids = rider_repository._evaluate_claim(
+            self._store(capacity=5, claimed_ids=["r1", "r2"]), "r1"
+        )
+        self.assertFalse(ok)
+        self.assertIn("已經承接過", message)
+        self.assertIsNone(new_ids)
 
     def test_rejects_when_store_closed(self):
-        ok, message, _ = rider_repository._evaluate_claim(self._store(status="closed"), 1)
+        ok, message, _ = rider_repository._evaluate_claim(self._store(status="closed"), "r1")
         self.assertFalse(ok)
         self.assertIn("已經關閉", message)
 
-    def test_rejects_zero_or_negative_quantity(self):
-        ok, message, _ = rider_repository._evaluate_claim(self._store(), 0)
+    def test_legacy_store_without_capacity_field_allows_exactly_one_rider(self):
+        """改版前建立的門市當日量沒有 rider_capacity 欄位，一律視為需求
+        1 位騎士。"""
+        legacy = {"status": "open", "store_name": "舊資料門市", "total_quantity": 30, "claimed_quantity": 0}
+        ok, _, new_ids = rider_repository._evaluate_claim(legacy, "r1")
+        self.assertTrue(ok)
+        self.assertEqual(new_ids, ["r1"])
+
+        legacy_claimed = dict(legacy, claimed_rider_ids=["r1"])
+        ok, message, _ = rider_repository._evaluate_claim(legacy_claimed, "r2")
         self.assertFalse(ok)
-        self.assertIn("大於 0", message)
+        self.assertIn("額滿", message)
 
 
 class EvaluateRegistrationTests(unittest.TestCase):
@@ -106,30 +130,32 @@ class EvaluateRegistrationTests(unittest.TestCase):
         self.assertIn("已經關閉", message)
 
 
-class HasPendingClaimTests(unittest.TestCase):
-    """2026-09-19 新增：只檢查、不清掉暫存狀態，給 rider_events.py 判斷
-    一則純數字文字看起來是不是真的在回覆承接件數用。"""
+class DecorateStoreDeliveryTests(unittest.TestCase):
+    """2026-09-22 新增：門市當日量讀出來時補上的騎士名額衍生欄位，舊資料
+    沒有 rider_capacity／claimed_rider_ids 時要分別視為「需求 1 位」跟
+    「還沒有人承接」。"""
 
-    def test_no_binding_returns_false(self):
-        with mock.patch.object(rider_repository, "get_rider_binding", return_value=None):
-            self.assertFalse(rider_repository.has_pending_claim("U1"))
+    def test_fills_rider_slot_fields(self):
+        data = rider_repository._decorate_store_delivery(
+            {"rider_capacity": 3, "claimed_rider_ids": ["r1", "r2"]}
+        )
+        self.assertEqual(data["rider_capacity"], 3)
+        self.assertEqual(data["claimed_rider_count"], 2)
+        self.assertEqual(data["remaining_rider_slots"], 1)
 
-    def test_no_pending_claim_returns_false(self):
-        with mock.patch.object(rider_repository, "get_rider_binding", return_value={"user_id": "U1"}):
-            self.assertFalse(rider_repository.has_pending_claim("U1"))
+    def test_legacy_record_defaults_to_one_rider(self):
+        data = rider_repository._decorate_store_delivery({"total_quantity": 30, "claimed_quantity": 12})
+        self.assertEqual(data["rider_capacity"], rider_repository.DEFAULT_RIDER_CAPACITY)
+        self.assertEqual(data["claimed_rider_count"], 0)
+        self.assertEqual(data["remaining_rider_slots"], 1)
 
-    def test_fresh_pending_claim_returns_true(self):
-        binding = {"user_id": "U1", "pending_claim": {"store_id": "store1", "set_at": time.time()}}
-        with mock.patch.object(rider_repository, "get_rider_binding", return_value=binding):
-            self.assertTrue(rider_repository.has_pending_claim("U1"))
-
-    def test_expired_pending_claim_returns_false(self):
-        binding = {
-            "user_id": "U1",
-            "pending_claim": {"store_id": "store1", "set_at": time.time() - rider_repository.RIDER_PENDING_CLAIM_TTL_SECONDS - 1},
-        }
-        with mock.patch.object(rider_repository, "get_rider_binding", return_value=binding):
-            self.assertFalse(rider_repository.has_pending_claim("U1"))
+    def test_remaining_slots_never_negative_when_capacity_lowered_afterwards(self):
+        # 後台把需求騎士數量調小到比已承接人數還少時，不會踢掉任何人，
+        # 只是「還缺」會是 0、不再有人接得到。
+        data = rider_repository._decorate_store_delivery(
+            {"rider_capacity": 1, "claimed_rider_ids": ["r1", "r2", "r3"]}
+        )
+        self.assertEqual(data["remaining_rider_slots"], 0)
 
 
 class AwaitingLocationTests(unittest.TestCase):
@@ -228,7 +254,7 @@ class CreateStoreDeliveryRadiusTests(unittest.TestCase):
         fake_collection = mock.Mock()
         fake_collection.document.return_value = fake_doc_ref
         with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=fake_collection):
-            rider_repository.create_store_delivery("中和門市", 1.0, 2.0, "2026-09-20", 10, "alice")
+            rider_repository.create_store_delivery("中和門市", 1.0, 2.0, "2026-09-20", 10, 2, "alice")
         payload = fake_doc_ref.set.call_args.args[0]
         self.assertEqual(payload["radius_km"], rider_repository.RIDER_DEFAULT_SEARCH_RADIUS_KM)
 
@@ -238,9 +264,21 @@ class CreateStoreDeliveryRadiusTests(unittest.TestCase):
         fake_collection = mock.Mock()
         fake_collection.document.return_value = fake_doc_ref
         with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=fake_collection):
-            rider_repository.create_store_delivery("中和門市", 1.0, 2.0, "2026-09-20", 10, "alice", radius_km=5)
+            rider_repository.create_store_delivery("中和門市", 1.0, 2.0, "2026-09-20", 10, 2, "alice", radius_km=5)
         payload = fake_doc_ref.set.call_args.args[0]
         self.assertEqual(payload["radius_km"], 5)
+
+    def test_stores_rider_capacity_and_empty_claimed_rider_ids(self):
+        fake_doc_ref = mock.Mock()
+        fake_doc_ref.id = "s1"
+        fake_collection = mock.Mock()
+        fake_collection.document.return_value = fake_doc_ref
+        with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=fake_collection):
+            rider_repository.create_store_delivery("中和門市", 1.0, 2.0, "2026-09-20", 30, 3, "alice")
+        payload = fake_doc_ref.set.call_args.args[0]
+        self.assertEqual(payload["total_quantity"], 30)
+        self.assertEqual(payload["rider_capacity"], 3)
+        self.assertEqual(payload["claimed_rider_ids"], [])
 
 
 class ListNearbyOpenStoresRadiusTests(unittest.TestCase):
@@ -267,7 +305,7 @@ class ListNearbyOpenStoresRadiusTests(unittest.TestCase):
             "far",
             {
                 "store_name": "遠門市", "lat": 22.6873, "lng": 120.3086,
-                "total_quantity": 10, "claimed_quantity": 0, "radius_km": 5,
+                "total_quantity": 10, "rider_capacity": 2, "radius_km": 5,
             },
         )
         collection = self._fake_query([far_store])
@@ -280,7 +318,7 @@ class ListNearbyOpenStoresRadiusTests(unittest.TestCase):
             "near",
             {
                 "store_name": "近門市", "lat": 24.9999, "lng": 121.4997,
-                "total_quantity": 10, "claimed_quantity": 0, "radius_km": 5,
+                "total_quantity": 10, "rider_capacity": 2, "radius_km": 5,
             },
         )
         collection = self._fake_query([near_store])
@@ -292,12 +330,83 @@ class ListNearbyOpenStoresRadiusTests(unittest.TestCase):
     def test_missing_radius_field_falls_back_to_default(self):
         near_store = self._snapshot(
             "near",
-            {"store_name": "近門市", "lat": 24.9999, "lng": 121.4997, "total_quantity": 10, "claimed_quantity": 0},
+            {"store_name": "近門市", "lat": 24.9999, "lng": 121.4997, "total_quantity": 10, "rider_capacity": 2},
         )
         collection = self._fake_query([near_store])
         with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=collection):
             results = rider_repository.list_nearby_open_stores(24.9998, 121.4996, "2026-09-20")
         self.assertEqual(len(results), 1)
+
+
+class ListNearbyOpenStoresRiderSlotTests(unittest.TestCase):
+    """2026-09-22 改版：附近單清單改成用「需求騎士數量」的名額篩選（不是
+    剩餘件數），而且會濾掉這位騎士自己已經承接過的門市。"""
+
+    def _snapshot(self, doc_id, data):
+        snapshot = mock.Mock()
+        snapshot.id = doc_id
+        snapshot.to_dict.return_value = data
+        return snapshot
+
+    def _fake_query(self, snapshots):
+        fake_query = mock.Mock()
+        fake_query.where.return_value = fake_query
+        fake_query.stream.return_value = snapshots
+        fake_collection = mock.Mock()
+        fake_collection.where.return_value = fake_query
+        return fake_collection
+
+    def _store_data(self, **overrides):
+        data = {
+            "store_name": "近門市",
+            "lat": 24.9999,
+            "lng": 121.4997,
+            "total_quantity": 30,
+            "rider_capacity": 2,
+            "radius_km": 5,
+        }
+        data.update(overrides)
+        return data
+
+    def _list(self, snapshots, rider_id=""):
+        collection = self._fake_query(snapshots)
+        with mock.patch.object(rider_repository, "rider_store_deliveries_ref", return_value=collection):
+            return rider_repository.list_nearby_open_stores(24.9998, 121.4996, "2026-09-20", rider_id=rider_id)
+
+    def test_reports_rider_slot_fields_instead_of_remaining_quantity(self):
+        results = self._list([self._snapshot("s1", self._store_data(claimed_rider_ids=["r1"]))])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["total_quantity"], 30)
+        self.assertEqual(results[0]["rider_capacity"], 2)
+        self.assertEqual(results[0]["remaining_rider_slots"], 1)
+        self.assertNotIn("remaining_quantity", results[0])
+
+    def test_excludes_store_with_no_rider_slots_left(self):
+        results = self._list([self._snapshot("s1", self._store_data(claimed_rider_ids=["r1", "r2"]))])
+        self.assertEqual(results, [])
+
+    def test_excludes_store_already_claimed_by_this_rider(self):
+        # 名額還有剩，但這位騎士自己已經接過了，不要再列出來讓他白點一次。
+        results = self._list(
+            [self._snapshot("s1", self._store_data(rider_capacity=5, claimed_rider_ids=["r1"]))], rider_id="r1"
+        )
+        self.assertEqual(results, [])
+
+    def test_includes_store_claimed_by_someone_else(self):
+        results = self._list(
+            [self._snapshot("s1", self._store_data(rider_capacity=5, claimed_rider_ids=["r9"]))], rider_id="r1"
+        )
+        self.assertEqual(len(results), 1)
+
+    def test_legacy_store_without_capacity_is_treated_as_one_rider(self):
+        legacy = self._store_data(total_quantity=30, claimed_quantity=0)
+        legacy.pop("rider_capacity")
+        results = self._list([self._snapshot("s1", legacy)])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["rider_capacity"], rider_repository.DEFAULT_RIDER_CAPACITY)
+
+        legacy_claimed = dict(legacy, claimed_rider_ids=["r9"])
+        self.assertEqual(self._list([self._snapshot("s1", legacy_claimed)]), [])
 
 
 class CreateShiftPostingRadiusTests(unittest.TestCase):

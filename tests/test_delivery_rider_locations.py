@@ -210,7 +210,12 @@ class CreateRiderStoreDeliveryLocationResolutionTests(unittest.TestCase):
         with mock.patch.object(rider_routes.rider_repository, "get_order_location", return_value=None):
             with mock.patch.object(rider_routes.rider_repository, "create_store_delivery") as mock_create:
                 resp = rider_routes.create_rider_store_delivery(
-                    _FakeRequest(_staff_account()), location_id="missing", date="2026-09-20", total_quantity="10", redirect=None
+                    _FakeRequest(_staff_account()),
+                    location_id="missing",
+                    date="2026-09-20",
+                    total_quantity="10",
+                    rider_capacity="2",
+                    redirect=None,
                 )
         mock_create.assert_not_called()
         self.assertEqual(resp.status_code, 303)
@@ -221,7 +226,12 @@ class CreateRiderStoreDeliveryLocationResolutionTests(unittest.TestCase):
         with mock.patch.object(rider_routes.rider_repository, "get_order_location", return_value=location):
             with mock.patch.object(rider_routes.rider_repository, "create_store_delivery") as mock_create:
                 resp = rider_routes.create_rider_store_delivery(
-                    _FakeRequest(_staff_account()), location_id="loc1", date="2026-09-20", total_quantity="10", redirect=None
+                    _FakeRequest(_staff_account()),
+                    location_id="loc1",
+                    date="2026-09-20",
+                    total_quantity="10",
+                    rider_capacity="2",
+                    redirect=None,
                 )
         mock_create.assert_not_called()
         self.assertEqual(resp.status_code, 303)
@@ -235,11 +245,19 @@ class CreateRiderStoreDeliveryLocationResolutionTests(unittest.TestCase):
                     location_id="loc1",
                     date="2026-09-20",
                     total_quantity="10",
+                    rider_capacity="2",
                     radius_km="",
                     redirect=None,
                 )
         mock_create.assert_called_once_with(
-            "中和門市", 24.9998, 121.4996, "2026-09-20", 10, "alice", radius_km=rider_routes.RIDER_DEFAULT_SEARCH_RADIUS_KM
+            "中和門市",
+            24.9998,
+            121.4996,
+            "2026-09-20",
+            10,
+            2,
+            "alice",
+            radius_km=rider_routes.RIDER_DEFAULT_SEARCH_RADIUS_KM,
         )
         self.assertEqual(resp.status_code, 303)
         self.assertNotIn("error", resp.headers["location"])
@@ -253,10 +271,13 @@ class CreateRiderStoreDeliveryLocationResolutionTests(unittest.TestCase):
                     location_id="loc1",
                     date="2026-09-20",
                     total_quantity="10",
+                    rider_capacity="2",
                     radius_km="5",
                     redirect=None,
                 )
-        mock_create.assert_called_once_with("中和門市", 24.9998, 121.4996, "2026-09-20", 10, "alice", radius_km=5.0)
+        mock_create.assert_called_once_with(
+            "中和門市", 24.9998, 121.4996, "2026-09-20", 10, 2, "alice", radius_km=5.0
+        )
         self.assertEqual(resp.status_code, 303)
 
     def test_invalid_radius_km_is_rejected(self):
@@ -268,12 +289,90 @@ class CreateRiderStoreDeliveryLocationResolutionTests(unittest.TestCase):
                     location_id="loc1",
                     date="2026-09-20",
                     total_quantity="10",
+                    rider_capacity="2",
                     radius_km="0",
                     redirect=None,
                 )
         mock_create.assert_not_called()
         self.assertEqual(resp.status_code, 303)
         self.assertIn("服務半徑要大於 0", unquote(resp.headers["location"]))
+
+
+class CreateRiderStoreDeliveryRiderCapacityTests(unittest.TestCase):
+    """2026-09-22 新增：門市當日量除了件數，還要填「需求騎士數量」——這個
+    才是實際管控騎士能不能承接的依據（見 rider_repository.py 的
+    DEFAULT_RIDER_CAPACITY 說明）。"""
+
+    _LOCATION = {"id": "loc1", "name": "中和門市", "lat": 24.9998, "lng": 121.4996, "active": True}
+
+    def _submit(self, rider_capacity: str):
+        with mock.patch.object(rider_routes.rider_repository, "get_order_location", return_value=self._LOCATION):
+            with mock.patch.object(rider_routes.rider_repository, "create_store_delivery") as mock_create:
+                resp = rider_routes.create_rider_store_delivery(
+                    _FakeRequest(_staff_account()),
+                    location_id="loc1",
+                    date="2026-09-20",
+                    total_quantity="30",
+                    rider_capacity=rider_capacity,
+                    radius_km="",
+                    redirect=None,
+                )
+        return resp, mock_create
+
+    def test_rider_capacity_is_passed_to_repository(self):
+        resp, mock_create = self._submit("3")
+        self.assertEqual(mock_create.call_args.args[5], 3)
+        self.assertEqual(resp.status_code, 303)
+
+    def test_non_numeric_rider_capacity_is_rejected(self):
+        resp, mock_create = self._submit("三位")
+        mock_create.assert_not_called()
+        self.assertIn("需求騎士數量請輸入正確的數字", unquote(resp.headers["location"]))
+
+    def test_zero_rider_capacity_is_rejected(self):
+        resp, mock_create = self._submit("0")
+        mock_create.assert_not_called()
+        self.assertIn("需求騎士數量要大於 0", unquote(resp.headers["location"]))
+
+
+class UpdateRiderStoreDeliveryQuantitiesTests(unittest.TestCase):
+    def test_updates_both_quantity_and_rider_capacity(self):
+        with mock.patch.object(rider_routes.rider_repository, "update_store_delivery_quantities") as mock_update:
+            resp = rider_routes.update_rider_store_delivery_quantity(
+                "store1",
+                _FakeRequest(_staff_account()),
+                total_quantity="40",
+                rider_capacity="4",
+                date="2026-09-20",
+                redirect=None,
+            )
+        mock_update.assert_called_once_with("store1", 40, 4, "alice")
+        self.assertEqual(resp.status_code, 303)
+
+    def test_invalid_numbers_are_ignored_without_updating(self):
+        with mock.patch.object(rider_routes.rider_repository, "update_store_delivery_quantities") as mock_update:
+            resp = rider_routes.update_rider_store_delivery_quantity(
+                "store1",
+                _FakeRequest(_staff_account()),
+                total_quantity="40",
+                rider_capacity="零",
+                date="2026-09-20",
+                redirect=None,
+            )
+        mock_update.assert_not_called()
+        self.assertEqual(resp.status_code, 303)
+
+    def test_zero_rider_capacity_is_ignored_without_updating(self):
+        with mock.patch.object(rider_routes.rider_repository, "update_store_delivery_quantities") as mock_update:
+            rider_routes.update_rider_store_delivery_quantity(
+                "store1",
+                _FakeRequest(_staff_account()),
+                total_quantity="40",
+                rider_capacity="0",
+                date="2026-09-20",
+                redirect=None,
+            )
+        mock_update.assert_not_called()
 
 
 class CreateRiderShiftLocationResolutionTests(unittest.TestCase):

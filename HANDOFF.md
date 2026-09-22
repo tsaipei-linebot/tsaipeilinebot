@@ -8636,3 +8636,104 @@ API 呼叫，不會真的連線）、`tests/test_delivery_vehicle_routes.py` 新
 `CreateVehicleWheelTypeTests`／`CreateVehicleServiceAreaTests` 補上
 `site=""` 跟著新增的參數同步更新斷言。全部測試（`python3 -m unittest
 discover -s tests -p "test_*.py"`）2073 個全數通過。
+
+## 即時接單改成「點承接直接完成」＋報班媒合拆成獨立卡片（2026-09-22）
+
+使用者要求繼續擴充新北所(配送組)系統，這次兩件事：主頁上「外送員接單
+媒合」這張卡片只留即時接單相關的功能，報班搬到獨立的一張新卡片；即時
+接單本身則簡化成「點承接就完成」，並且承接成功要通知配送群組。
+
+### 1. 即時接單：管控依據從「件數」改成「需求騎士數量」
+
+原本的流程是：騎士點「承接」→ 系統問「請回覆您要承接的件數」→ 騎士回
+一則純數字訊息 → 系統比對剩餘件數夠不夠才成立。使用者確認實際作業上
+不需要騎士報件數，改成：
+
+- **點「承接」直接完成**，系統回「✅ 已登記承攬請前往配送／門市：○○」，
+  中間問件數那一步整個拿掉。
+- **管控依據改成「需求騎士數量」**（門市當日量新增 `rider_capacity`
+  欄位）：一位騎士佔一個名額，名額滿了這筆門市當日量就不再出現在其他
+  騎士的清單上。**原本的「當日量（件）」欄位保留，但只是顯示給騎士參考
+  這間門市大概有多少貨，不再是管控依據**，`claimed_quantity` 也不再累加
+  （欄位留著只是為了舊資料還看得懂）。
+- **舊資料（沒有 `rider_capacity` 的門市當日量）一律視為需求 1 位騎士**
+  （`rider_repository.DEFAULT_RIDER_CAPACITY`）——門市當日量本來就是每天
+  各自獨立、隔天就過期的資料，不需要寫遷移腳本回頭補欄位。
+- **同一位騎士不能重複承接同一間門市**：已承接的騎士 LINE userId 直接
+  存在門市當日量文件自己的 `claimed_rider_ids` 陣列裡，承接的 Firestore
+  transaction 只讀這一份文件就能同時判斷「名額滿了沒」跟「這位騎士接過
+  了沒」，不用在 transaction 裡再跑一次 collection 查詢；`rider_claims`
+  那邊照樣留一筆完整紀錄（姓名/時間）給後台對帳。附近單清單也會把這位
+  騎士已經承接過的門市先濾掉，不會讓他白點一次才看到錯誤訊息。
+- **連帶移除**（已經沒有任何地方用得到）：`set_pending_claim()`／
+  `pop_pending_claim()`／`has_pending_claim()` 這組暫存機制、
+  `prompt_claim_quantity_message()`／`claim_expired_message()`／
+  `invalid_quantity_message()` 三則訊息、以及 `rider_events.py` 裡處理
+  純數字文字的那一段分支（現在純數字私訊一律安靜略過，不會再回「操作
+  逾時」那種文不對題的訊息）。`RIDER_PENDING_CLAIM_TTL_SECONDS` 這個
+  常數還留著，但現在只剩「等騎士分享位置」這一種用途。
+
+### 2. 承接成功自動通知配送組作業群組
+
+`rider_events._notify_group_claimed()`，沿用 `delivery/group_notify.py`
+那條既有的 GAS 橋接（跟領車/還車通知同一個群組，**不需要動 GAS 專案、
+不用重新部署 clasp、也不用設定新的群組或 Token**）。推播內容：
+
+```
+🛵［即時接單］✅ 王小明 已承接「中和門市」
+承接時間：09/22 15:30
+這間門市還缺 1 位騎士（需求 3 位）
+```
+
+推播失敗只會印 log、回傳 False，不影響騎士那邊已經成立的承接結果。
+報班媒合的核准/駁回**不**推播（使用者確認這次只要即時接單承接這一種）。
+
+### 3. 主頁卡片拆分
+
+- **「外送員接單媒合」（名稱不變）**：即時接單地點管理、門市當日量管理、
+  騎士名單管理（限管理員）。
+- **「報班媒合」（新卡片）**：報班地點管理、報班時段管理。
+- **網址全部不變**（`/delivery/rider/shifts` 等等照舊），只是主頁按鈕
+  重新分組，已經存起來的書籤不受影響。
+- 「騎士名單管理」照使用者指示只留在原卡片、不放到新卡片——使用者提到
+  未來報班媒合會有自己獨立的騎士名單，屆時那張卡片再長出自己的按鈕，
+  現在先不要做成「同一顆按鈕出現在兩張卡片、點進去卻是同一份混在一起
+  的名單」的過渡狀態。**未來真的要脫勾時，要先確認報班媒合是沿用現在
+  同一個 LINE 官方帳號，還是另外開一個獨立帳號**（後者要新增 LINE
+  Channel、GAS 轉發、webhook、綁定指令各一套，工程量差很多）。
+- `delivery/templates/help.html` 的「外送員接單媒合」那一節也跟著拆成
+  「外送員接單媒合（即時接單）」跟「報班媒合」兩節，導覽列各自一顆按鈕。
+
+**這次不需要任何手動設定**，合併後自動部署即可生效；GAS 專案完全不用動。
+上線後第一次開門市當日量時，表單會多一個「需求騎士數量」必填欄位。
+
+新增/調整檔案：`delivery/rider_repository.py`（`DEFAULT_RIDER_CAPACITY`、
+`_decorate_store_delivery()`、`create_store_delivery()` 多收
+`rider_capacity`、`update_store_delivery_quantity()` 改名成
+`update_store_delivery_quantities()` 並同時更新兩個數字、
+`list_nearby_open_stores()` 改用名額篩選＋濾掉自己接過的、`_evaluate_claim()`
+／`claim_store_delivery()` 改寫、移除 pending_claim 那組函式）、
+`delivery/rider_events.py`（承接直接完成＋群組推播＋移除純數字分支）、
+`delivery/rider_messages.py`（卡片改顯示當日量＋還缺幾位騎士、移除三則
+件數相關訊息）、`delivery/routes/rider_routes.py`（新增/修改門市當日量
+都多收 `rider_capacity`）、`delivery/config.py`（
+`RIDER_PENDING_CLAIM_TTL_SECONDS` 的說明更新）、
+`delivery/templates/home.html`（卡片拆分）、`delivery/templates/help.html`
+（說明拆成兩節）、`delivery/templates/rider_store_deliveries.html`／
+`rider_store_delivery_claims.html`（欄位改成騎士名額）。
+
+新增/更新測試：`tests/test_delivery_rider_repository.py` 的
+`EvaluateClaimTests` 整個改寫成名額/重複承接的邊界情況、新增
+`DecorateStoreDeliveryTests`（含舊資料預設 1 位、名額調小後不會變負數）
+跟 `ListNearbyOpenStoresRiderSlotTests`（名額滿、已承接過、舊資料），
+移除 `HasPendingClaimTests`；`tests/test_delivery_rider_events.py` 的
+`QuantityInputDispatchTests` 換成 `DigitTextIsNoLongerRelevantTests`
+（純數字要完全安靜）、`PostbackDispatchTests` 改寫成「直接承接＋成功才
+推播群組」三個案例；`tests/test_delivery_rider_locations.py` 新增
+`CreateRiderStoreDeliveryRiderCapacityTests`／
+`UpdateRiderStoreDeliveryQuantitiesTests`，既有的建立門市當日量測試跟著
+補上 `rider_capacity` 參數。另外手動用 Jinja2 直接 render
+`home.html`／`help.html`／`rider_store_deliveries.html`／
+`rider_store_delivery_claims.html` 確認樣板語法跟卡片拆分結果正確（樣板
+本身不會被單元測試真的渲染，只有 mock 過 `templates` 物件）。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）2084 個全數通過。
