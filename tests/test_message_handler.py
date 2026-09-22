@@ -2067,6 +2067,113 @@ class BrandPoolNarrowingFixTests(unittest.TestCase):
         mock_ai.assert_called_once()
 
 
+class FoodServicePoolAndUberBrandFixTests(unittest.TestCase):
+    """用 4 個 agent 從不同角度背景測試前一輪修正（PR #193）後，找到的 3 個
+    問題：
+    1. 「餐飲/服務」類別完全沒有專屬候選池分支（外送/門市/理貨倉儲/製造
+       作業員都有），類別+福利/發薪/休假方式合併問、又沒指定廠商時，候選池
+       會整個退回全部職缺，混進完全不相關廠商的職缺（實測案例：問「餐飲類
+       的工作有交通車的嗎」，推薦了半導體廠的作業員職缺）。
+    2. Uber 這個廠商的候選池窄化，只有在使用者訊息裡剛好命中「系統廠商
+       名稱」本身、或該名稱可以用括號/連字號切出短核心名稱時才會生效——
+       如果 Notion 上的系統廠商名稱是「UBER DRIECT」這種沒有括號可切、
+       KNOWN_BRANDS 也沒有收錄「Uber」的寫法，使用者只打「Uber外送的工作」
+       就完全比對不到，廠商窄化形同沒生效。
+    3. 「蝦皮門市有沒有公司車的工作」這類訊息，因為偵測到的廠商名稱剛好
+       命中的是「完整職缺廠商名稱」（某筆職缺系統廠商名稱本身就叫「蝦皮
+       門市」），反問放寬的按鈕重組文字會變成「蝦皮門市門市」這種重複
+       字樣。"""
+
+    def _job(self, 職缺名稱, 職務類別, 系統廠商名稱, 縣市, 行政區, 領薪方式="", 福利="", 休假方式=""):
+        from services.notion_service import clean_text_for_search
+        raw_parts = [職缺名稱, "、".join(職務類別), 系統廠商名稱, "、".join(縣市), "、".join(行政區), 領薪方式, 福利, 休假方式]
+        return {
+            "職缺名稱": 職缺名稱, "職缺名稱(對外)": 職缺名稱,
+            "_internal_title": 職缺名稱, "_parsed_title": 職缺名稱,
+            "職務類別": "、".join(職務類別), "_job_category": "、".join(職務類別),
+            "系統廠商名稱": 系統廠商名稱, "_vendor_name_clean": clean_text_for_search(系統廠商名稱),
+            "縣市": "、".join(縣市), "行政區": "、".join(行政區),
+            "_location_search_text": clean_text_for_search(" ".join(縣市) + " " + " ".join(行政區)),
+            "_search_text": clean_text_for_search(" ".join(raw_parts)),
+            "領薪方式": 領薪方式, "福利": 福利, "休假方式": 休假方式,
+        }
+
+    def _run(self, msg, jobs, user_id):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = user_id
+        event.message.text = msg
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=jobs), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+        return mock_ai_decision, mock_flex_card, line_bot_api
+
+    def test_food_service_category_does_not_leak_unrelated_vendor_benefit_match(self):
+        # 實測回報案例：「餐飲類的工作有交通車的嗎」——石二鍋（餐飲/服務）
+        # 沒有交通車，美光（製造/作業員）有交通車，原本會混進完全不相關的
+        # 半導體廠職缺。
+        jobs = [
+            self._job("石二鍋(代招)_時薪", ["內場人員"], "石二鍋", ["台北市"], ["台北市大安區"], "月領,匯款", "", "排休"),
+            self._job("美光(台中)_OP", ["作業員"], "美光(台中)", ["台中市"], ["台中市后里區"], "月領,週領", "交通車", "四休二"),
+        ]
+        mock_ai, mock_flex, api = self._run("餐飲類的工作有交通車的嗎", jobs, "test-food-service-no-leak")
+        mock_ai.assert_not_called()
+        titles = []
+        if mock_flex.called:
+            titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertNotIn("美光(台中)_OP", titles)
+
+    def test_food_service_category_recommends_only_matching_job_when_real_match_exists(self):
+        jobs = [
+            self._job("石二鍋(代招)_時薪", ["內場人員"], "石二鍋", ["台北市"], ["台北市大安區"], "月領,匯款", "交通車", "排休"),
+            self._job("美光(台中)_OP", ["作業員"], "美光(台中)", ["台中市"], ["台中市后里區"], "月領,週領", "交通車", "四休二"),
+        ]
+        mock_ai, mock_flex, api = self._run("餐飲類的工作有交通車的嗎", jobs, "test-food-service-match")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["石二鍋(代招)_時薪"])
+
+    def test_uber_delivery_brand_recognized_from_vendor_name_without_brackets(self):
+        # 實測回報案例：Notion 上真實的系統廠商名稱「UBER DRIECT」沒有括號
+        # 可以切出核心名稱，「Uber」以前也不在廠商白名單裡，導致「Uber外送
+        # 的工作」完全比對不到廠商、混進蝦皮的外送職缺。
+        jobs = [
+            self._job("UBER DRIECT", ["外送員"], "UBER DRIECT", ["台北市"], ["台北市中正區"]),
+            self._job("蝦皮外送三輪雇傭", ["外送員"], "蝦皮三輪雇傭", ["桃園市"], ["桃園市八德區"]),
+        ]
+        mock_ai, mock_flex, api = self._run("Uber外送的工作", jobs, "test-uber-brand-recognized")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
+        self.assertEqual(titles, ["UBER DRIECT"])
+
+    def test_store_relax_button_does_not_duplicate_brand_name_containing_category_word(self):
+        # 實測回報的顯示瑕疵：偵測到的廠商名稱剛好是「蝦皮門市」這個完整
+        # 職缺廠商名稱本身，反問放寬的按鈕文字不該變成「蝦皮門市門市」。
+        jobs = [
+            self._job("蝦皮門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市中壢區"], "月領,匯款", "", "週休"),
+            self._job("蝦皮外送三輪雇傭", ["外送員"], "蝦皮三輪雇傭", ["桃園市"], ["桃園市八德區"], "週領,匯款", "公司車", "排休"),
+        ]
+        mock_ai, mock_flex, api = self._run("蝦皮門市有沒有公司車的工作", jobs, "test-store-no-dup-suffix")
+        mock_ai.assert_not_called()
+        mock_flex.assert_not_called()
+        api.reply_message.assert_called_once()
+        args, _ = api.reply_message.call_args
+        reply_msg = args[1]
+        button_texts = [b.action.text for b in reply_msg.quick_reply.items]
+        self.assertTrue(all("門市門市" not in t for t in button_texts), button_texts)
+
+
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
     """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或
     類似的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德目前沒有蝦皮
