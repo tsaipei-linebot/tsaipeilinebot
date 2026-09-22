@@ -88,10 +88,10 @@
   - 其餘角色（服務帳戶使用者、記錄寫入者、Artifact Registry 寫入者、Cloud Run 管理員）研判是 Cloud Build 部署流程需要，可以保留；「Aiplatform 編輯者」可以考慮之後降級成範圍較小的「Aiplatform 使用者」（`roles/aiplatform.user`，因為只是呼叫 Gemini 生成回覆，不需要管理模型/端點的權限），非急迫。
   - 相關但優先度較低的資料安全項目，之後也可以一併處理：① Firestore 目前沒有資料保留/自動清除機制（`SESSION_TTL` 只是「軟過期」邏輯，使用者如果不再回來，session 文件會永久留在 Firestore，建議設定 Firestore 原生 [TTL 政策](https://cloud.google.com/firestore/docs/ttl) 自動清掉過期文件）；② 各項金鑰（`NOTION_API_KEY`／`GEMINI_API_KEY`／LINE channel secret／`LOAD_TEST_SECRET`）目前是明文 Cloud Run 環境變數，可以考慮搬到 Secret Manager 多一層存取控制與稽核紀錄。
 
-- **【程式碼已合併部署，等使用者確認環境變數都設定好即可生效】履歷點擊紀錄：記錄誰點了職缺卡片的「填寫線上履歷」按鈕**：詳見下方「已完成」第 47 項的完整說明。這裡只記還缺什麼設定：
-  1. Notion「履歷點擊紀錄」資料庫已建立、欄位也已確認正確（求職者暱稱/LINE User ID/應徵職缺/產業類別皆為對的類型，點擊時間已改成日期類型）。
-  2. 確認這個資料庫已分享給機器人用的 Notion 整合。
-  3. 到 Cloud Run 設定 `NOTION_RESUME_CLICK_LOG_DB_ID`（該資料庫 ID）與 `SERVICE_BASE_URL`（`https://recruitment-bot-412901869672.asia-east1.run.app`）這兩個環境變數，兩者都設定好功能才會真正生效。
+- ✅ **【已完成，使用者確認】履歷點擊紀錄：記錄誰點了職缺卡片的「填寫線上履歷」按鈕**：詳見下方「已完成」第 47 項的完整說明。使用者已於 2026-09-22 確認這項也做好了，以下設定全部生效：
+  1. ✅ Notion「履歷點擊紀錄」資料庫已建立、欄位也已確認正確（求職者暱稱/LINE User ID/應徵職缺/產業類別皆為對的類型，點擊時間已改成日期類型）。
+  2. ✅ 確認這個資料庫已分享給機器人用的 Notion 整合。
+  3. ✅ 到 Cloud Run 設定 `NOTION_RESUME_CLICK_LOG_DB_ID`（該資料庫 ID）與 `SERVICE_BASE_URL`（`https://recruitment-bot-412901869672.asia-east1.run.app`）這兩個環境變數，功能已正式生效。
 
 **注意：面試預約功能（原本在同一個分支上開發）這次刻意沒有一起合併**——使用者明確表示「面試預約請先不要加進去」，程式碼仍然只留在 `claude/tsaipei-linebot-handoff-7jdsks` 分支上，main 這邊完全沒有相關程式碼，之後如果要上線這個功能，需要另外再合併一次。
 
