@@ -15,6 +15,51 @@ def _detail_texts(bubble):
     return [c.text for c in detail_box.contents]
 
 
+class ResolveApplyUrlKeyByIndustryTests(unittest.TestCase):
+    """實測回報案例：蝦皮外送職缺的履歷連結被錯發成蝦皮門市專屬版。根本原因
+    是原本的判斷邏輯只要文字裡出現「蝦皮」兩個字就直接歸類成 Spx（蝦皮門市
+    專屬），蝦皮外送職缺的文字同時包含「蝦皮」跟「外送」，一律被「蝦皮」
+    搶先攔截。改成對齊 Notion「小雞上工客服自動化／職缺分類與履歷連結對照
+    表」這份同仁確認過的權威對照表，這裡驗證各類職缺都分類到正確的履歷
+    連結分類鍵。"""
+
+    def test_shopee_delivery_job_classified_as_service_not_spx(self):
+        job = {
+            "職缺名稱(對外)": "蝦皮外送三輪車配送員", "職缺名稱": "蝦皮外送三輪雇傭",
+            "職務類別": "外送員", "行業別": "物流業",
+        }
+        self.assertEqual(f.resolve_apply_url_key_by_industry(job), "Service")
+
+    def test_shopee_store_job_classified_as_spx(self):
+        job = {
+            "職缺名稱(對外)": "蝦皮店到店門市夥伴", "職缺名稱": "蝦皮店到店門市夥伴",
+            "職務類別": "門市", "行業別": "服務業",
+        }
+        self.assertEqual(f.resolve_apply_url_key_by_industry(job), "Spx")
+
+    def test_shopee_pickup_point_job_classified_as_spx(self):
+        job = {"職缺名稱(對外)": "蝦皮智取店門市人員", "職務類別": "門市"}
+        self.assertEqual(f.resolve_apply_url_key_by_industry(job), "Spx")
+
+    def test_shopee_logistics_job_classified_as_manufacture_not_spx(self):
+        # 蝦皮物流／倉儲類職缺不屬於「蝦皮門市專屬」，不能因為文字裡有「蝦皮」
+        # 兩個字就誤判成 Spx。
+        job = {"職缺名稱(對外)": "蝦皮物流倉管", "職務類別": "倉管", "行業別": "物流業"}
+        self.assertEqual(f.resolve_apply_url_key_by_industry(job), "Manufacture")
+
+    def test_non_shopee_store_job_classified_as_service(self):
+        job = {"職缺名稱(對外)": "測試門市職缺", "職務類別": "門市"}
+        self.assertEqual(f.resolve_apply_url_key_by_industry(job), "Service")
+
+    def test_non_shopee_delivery_job_classified_as_service(self):
+        job = {"職缺名稱(對外)": "美食外送員", "職務類別": "外送員"}
+        self.assertEqual(f.resolve_apply_url_key_by_industry(job), "Service")
+
+    def test_manufacture_job_classified_as_manufacture(self):
+        job = {"職缺名稱(對外)": "半導體作業員", "職務類別": "作業員", "行業別": "科技廠"}
+        self.assertEqual(f.resolve_apply_url_key_by_industry(job), "Manufacture")
+
+
 class FormatCleanLocationCountyPrefixTests(unittest.TestCase):
     """使用者反映：同仁為了避免同名行政區跨縣市搞混（例如中山區台北市、
     基隆市都有），習慣在「行政區」欄位直接寫成「桃園市八德區」這種帶縣市
