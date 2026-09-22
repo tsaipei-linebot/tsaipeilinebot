@@ -51,12 +51,22 @@ def _keyword_is_negated(text: str, keyword: str) -> bool:
         return False
     window_start = max(0, idx - 6)
     window = text[window_start:idx]
+    # 否定詞只管到同一個子句：「不要蝦皮了 高雄有什麼」裡的「高雄」不該被
+    # 前一個子句的「不要」波及（實測會把高雄當成被排除的地區清掉）。
+    window = _CLAUSE_BREAK_RE.split(window)[-1]
     return any(trigger in window for trigger in NEGATION_TRIGGERS)
+
+
+# 「了」當子句結尾（「不要蝦皮了」），但「除了」本身就是否定詞，不能被切開。
+_CLAUSE_BREAK_RE = re.compile(r'[，,。！!？?\s、；;]|(?<!除)了')
 
 LOCATION_CANDIDATES = [
     "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
     "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
-    "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆"
+    "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆",
+    # 原本沒收錄的縣市：實測「花蓮有週休二日的工作嗎」抓不到地區，直接回
+    # 「有的！」推薦台北/新北的職缺。
+    "花蓮", "台東", "臺東", "南投", "雲林", "澎湖", "金門", "馬祖", "連江",
 ]
 
 # LOCATION_CANDIDATES 裡屬於「縣市層級」（不是行政區層級）的詞——用來讓
@@ -67,6 +77,7 @@ LOCATION_CANDIDATES = [
 _LOCATION_COUNTY_LEVEL_NAMES = {
     "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄",
     "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆",
+    "花蓮", "台東", "臺東", "南投", "雲林", "澎湖", "金門", "馬祖", "連江",
 }
 
 # 行政區/城市關鍵字 -> 所屬縣市，只給「同縣市鄰近地區退讓建議」這個功能用
@@ -91,6 +102,13 @@ LOCATION_TO_COUNTY = {
     "宜蘭": "宜蘭縣",
     "屏東": "屏東縣",
     "基隆": "基隆市",
+    "花蓮": "花蓮縣",
+    "台東": "台東縣", "臺東": "台東縣",
+    "南投": "南投縣",
+    "雲林": "雲林縣",
+    "澎湖": "澎湖縣",
+    "金門": "金門縣",
+    "馬祖": "連江縣", "連江": "連江縣",
 }
 
 
@@ -409,17 +427,25 @@ PAY_METHOD_SYNONYMS = {
     "年薪": ["年薪", "年領"],
     "現金": ["現金"],
     "匯款": ["匯款", "轉帳"],
+    # Notion「領薪方式」欄位真實存在的選項，原本沒收錄，問到會落到 AI。
+    "街口": ["街口"],
+    "預支": ["預支", "借支"],
 }
 
 
 def detect_pay_method_label(text: str) -> str:
-    """從文字中判斷求職者指定的發薪方式，跳過被否定的詞（例如「不要日領的」）。"""
+    """從文字中判斷求職者指定的發薪方式，跳過被否定的詞（例如「不要日領的」）。
+    同義詞由長到短比對：「雙週領」裡面包含「週領」，照字典順序會先命中週領。"""
     clean = clean_text_for_search(text)
-    for label, synonyms in PAY_METHOD_SYNONYMS.items():
-        for syn in synonyms:
-            if clean_text_for_search(syn) in clean and not _keyword_is_negated(text, syn):
-                return label
+    pairs = [(syn, label) for label, syns in PAY_METHOD_SYNONYMS.items() for syn in syns]
+    for syn, label in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
+        if clean_text_for_search(syn) in clean and not _keyword_is_negated(text, syn):
+            return label
     return ""
+
+
+def _job_pay_method_tokens(job: dict) -> set:
+    return {clean_text_for_search(t) for t in re.split(r'[,，、\s]+', str(job.get("領薪方式") or "")) if t.strip()}
 
 
 def find_pay_method_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
@@ -435,7 +461,8 @@ def find_pay_method_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
     if not label:
         return "", []
     label_clean = clean_text_for_search(label)
-    matched = [j for j in active_jobs if label_clean in clean_text_for_search(str(j.get("領薪方式") or ""))]
+    # 逐一比對欄位裡的每個選項，不用子字串：避免「週領」命中「雙週領」。
+    matched = [j for j in active_jobs if label_clean in _job_pay_method_tokens(j)]
     return label, matched
 
 
@@ -543,7 +570,9 @@ CATEGORY_KEYWORDS = {
     "門市": ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店", "櫃檯"],
     "製造/作業員": ["製造", "製造業", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技廠", "電子廠", "品管", "包裝員"],
     "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "物流", "堆高機", "貼標"],
-    "餐飲/服務": ["餐飲", "服務", "廚房", "內場", "外場", "專櫃", "服飾", "洗碗", "助手"],
+    # 刻意不收單獨的「服務」：「有交通車接送服務嗎」會被誤判成要找餐飲類，
+    # 把原本鎖定的作業員/理貨類別換掉。
+    "餐飲/服務": ["餐飲", "服務員", "服務生", "服務業", "服務類", "餐廳", "廚房", "內場", "外場", "專櫃", "服飾", "洗碗", "助手"],
 }
 
 
@@ -576,9 +605,13 @@ def category_search_keywords(category_label: str) -> list:
     mapping = {
         "外送": ["外送", "外送員", "司機", "配送", "配送員", "送貨", "隨車"],
         "門市": ["門市", "店員", "門市人員", "店到店", "智取店", "櫃檯"],
-        "製造/作業員": ["製造", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技", "電子", "設備", "品檢", "包裝"],
-        "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "物流", "堆高機", "進貨", "出貨"],
-        "餐飲/服務": ["餐飲", "服務", "廚房", "內場", "外場", "專櫃", "服飾", "洗碗", "助手"]
+        # 不收「設備」「包裝」：「設備人員」（蝦皮內勤的維修外勤）跟「電商物流
+        # 理貨包裝員」會被誤判成作業員，蝦皮類型反問因此多出一個點下去只看到
+        # 設備人員的「蝦皮製造/作業員」選項。
+        "製造/作業員": ["製造", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技", "電子", "品檢", "品保", "品管", "檢驗"],
+        "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "物流", "堆高機", "進貨", "出貨", "搬運"],
+        # 不收單獨的「服務」：「行業別＝服務業」的門市職缺會被誤判成餐飲。
+        "餐飲/服務": ["餐飲", "服務員", "服務生", "服務人員", "廚房", "內場", "外場", "專櫃", "服飾", "洗碗", "助手"]
     }
     return mapping.get(category_label, [])
 
@@ -597,7 +630,11 @@ def _vendor_core_name(vendor_name: str) -> str:
 KNOWN_BRANDS = {
     "蝦皮": ["蝦皮", "spx"],
     "momo": ["momo", "富邦", "富昇"],
-    "Coupang": ["coupang", "酷澎"],
+    # 「coupung」是 Notion 上真實存在的錯字廠商名稱，先收錄讓它比對得到。
+    "Coupang": ["coupang", "酷澎", "coupung"],
+    # 系統廠商名稱是「PChome理貨」，沒有括號可切出「PChome」，求職者打
+    # 「PChome」永遠比對不到。
+    "PChome": ["pchome", "網家"],
     # 「Uber」實測回報：Notion 上真實的系統廠商名稱是「UBER DRIECT」（同仁
     # 打字時把 DIRECT 打成 DRIECT）、「Uber(COSTCO)」、「uber 站所小幫手」
     # 這幾種各自不同的完整寫法，求職者只會打最簡短的「Uber」，
@@ -627,6 +664,15 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
     """動態從訊息辨識求職者詢問之特定廠商或品牌（嚴格排除行業別與疑問詞）[cite: 1]"""
     normalized = clean_text_for_search(text)
 
+    # 0. 先認知名品牌家族。實測：求職者點「蝦皮外送」「蝦皮門市」按鈕，原本
+    #    會先比對到系統廠商名稱「蝦皮外送(支援)」「蝦皮門市」，廠商被鎖成
+    #    「蝦皮外送」「蝦皮門市」這種帶類別字的名稱，下一句換問「那理貨呢」
+    #    就篩不到任何職缺。而且比對結果取決於 Notion 職缺的排列順序。廠商
+    #    一律記品牌本身（蝦皮），類別交給類別槽位管。
+    for brand_key, synonyms in KNOWN_BRANDS.items():
+        if any(syn in normalized and not _keyword_is_negated(normalized, syn) for syn in synonyms):
+            return brand_key
+
     # 1. 優先精準比對 Notion 資料庫中現有的所有系統廠商名稱（含核心名稱比對，
     #    避免同仁加註的內部後綴導致完整名稱永遠比對不到）[cite: 1]
     #    無論哪種比對方式命中，一律回傳「核心名稱」而不是那一筆職缺的完整廠商名稱：
@@ -636,23 +682,21 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
     #    的品牌篩選/評分都是拿 brand 去對已清理過括號的 _search_text 做字串比對，
     #    帶括號的完整名稱幾乎永遠比對不到，導致品牌保底機制形同虛設。回傳核心名稱
     #    才能讓同一品牌旗下所有地區的職缺都能被正確篩選/加分到。
+    #    同時命中好幾個廠商名稱時，取比對到的字串最長的那個（最精確），不取
+    #    Notion 列表裡剛好排在前面的那個。
     if active_jobs:
+        best_name, best_len = "", 0
         for j in active_jobs:
             v_name = str(j.get("系統廠商名稱") or "").strip()
             if v_name and len(v_name) >= 2:
                 v_core_name = _vendor_core_name(v_name)
                 v_clean = clean_text_for_search(v_name)
-                if v_clean and v_clean in normalized:
-                    return v_core_name
-
                 v_core_clean = clean_text_for_search(v_core_name)
-                if v_core_clean and len(v_core_clean) >= 2 and v_core_clean in normalized:
-                    return v_core_name
-
-    # 2. 常見知名廠商白名單[cite: 1]
-    for brand_key, synonyms in KNOWN_BRANDS.items():
-        if any(syn in normalized for syn in synonyms):
-            return brand_key
+                for candidate in (v_clean, v_core_clean):
+                    if candidate and len(candidate) >= 2 and candidate in normalized and len(candidate) > best_len:
+                        best_name, best_len = v_core_name, len(candidate)
+        if best_name:
+            return best_name
 
     # 3. 自然語言動態抽取[cite: 1]
     match = re.search(r'(?:有|想找|請問有|有沒有)\s*([a-zA-Z0-9\u4e00-\u9fa5]{2,8}?)\s*(?:嗎|的工作|職缺|廠|$)', text)
@@ -740,13 +784,31 @@ def _brand_matches_text(text: str, brand_label: str) -> bool:
     text = clean_text_for_search(text)
     if not brand_label:
         return True
-    if brand_label == "蝦皮":
-        return any(k in text for k in ["蝦皮", "spx"])
-    if brand_label == "momo":
-        return any(k in text for k in ["momo", "富邦", "富昇"])
-    if brand_label == "Coupang":
-        return any(k in text for k in ["coupang", "酷澎"])
+    if brand_label in KNOWN_BRANDS:
+        return any(k in text for k in KNOWN_BRANDS[brand_label])
     return clean_text_for_search(brand_label) in text
+
+
+def job_matches_brand(job: dict, brand_label: str) -> bool:
+    """只比對職缺自己的廠商/職缺名稱欄位，不比對含地區跟行銷文案的
+    _search_text。實測：廠商「新興(代招)」在新北五股，但 _search_text 比對
+    會把地址在高雄市新興區的其他廠商職缺也算成「新興」。"""
+    if not brand_label:
+        return True
+    fields = [job.get("系統廠商名稱"), job.get("職缺名稱"), job.get("職缺名稱(對外)"), job.get("_internal_title")]
+    brand_text = " ".join(str(f) for f in fields if f)
+    if not brand_text.strip():
+        brand_text = job.get("_search_text", "")
+    return _brand_matches_text(brand_text, brand_label)
+
+
+def detect_negated_brand(text: str) -> str:
+    """「不要蝦皮了」這種明確排除知名品牌的說法，回傳被排除的品牌。"""
+    normalized = clean_text_for_search(text)
+    for brand_key, synonyms in KNOWN_BRANDS.items():
+        if any(syn in normalized and _keyword_is_negated(normalized, syn) for syn in synonyms):
+            return brand_key
+    return ""
 
 def _category_matches_text(text: str, category_label: str) -> bool:
     keywords = category_search_keywords(category_label)

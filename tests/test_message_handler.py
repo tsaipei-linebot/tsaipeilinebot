@@ -2299,6 +2299,129 @@ class MultiTurnLockedCategoryPersistenceTests(unittest.TestCase):
         self.assertNotIn("美光(台中)_OP", titles_2)
 
 
+class MultiTurnRoundThreeHandlerFixTests(unittest.TestCase):
+    """第三輪多輪對話背景測試（4 個 agent、145 筆真實職缺、500 多段對話）
+    找到的對話層問題，全部用會保留 session 狀態的多輪測試重現。"""
+
+    _job = MultiTurnLockedCategoryPersistenceTests._job
+    _make_session = MultiTurnLockedCategoryPersistenceTests._make_session
+
+    @staticmethod
+    def _titles(mock_flex):
+        return [j["職缺名稱"] for j in mock_flex.call_args[0][0]] if mock_flex.called else []
+
+    @staticmethod
+    def _reply_text(api):
+        payload = api.reply_message.call_args[0][1]
+        return payload.text if isinstance(getattr(payload, "text", None), str) else payload[0].text
+
+    def _shopee_jobs(self):
+        return [
+            self._job("蝦皮外送(支援)", ["外送員"], "蝦皮外送(支援)", ["桃園市"], ["桃園市八德區"], "週領,匯款", "", "排休"),
+            self._job("蝦皮(威獅)(時薪)", ["倉儲人員"], "蝦皮(威獅)(時薪)", ["桃園市"], ["桃園市楊梅區"], "月領,週領", "", "週休"),
+            self._job("蝦皮門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市中壢區"], "月領,匯款", "", "週休"),
+        ]
+
+    def _micron_job(self):
+        return self._job("美光(桃園)_Porter", ["作業員", "搬運工"], "美光(桃園)", ["桃園市"], ["桃園市龜山區"], "月領,匯款", "交通車", "做二休二")
+
+    def test_category_switch_after_clicking_shopee_category_button_keeps_brand_family(self):
+        # 點「蝦皮外送」後廠商原本被記成「蝦皮外送」，下一句「那理貨呢」就篩不到。
+        run_turn = self._make_session(self._shopee_jobs())
+        _, mock_flex_1, _ = run_turn("蝦皮外送")
+        self.assertEqual(self._titles(mock_flex_1), ["蝦皮外送(支援)"])
+        mock_ai_2, mock_flex_2, _ = run_turn("那理貨呢")
+        mock_ai_2.assert_not_called()
+        self.assertEqual(self._titles(mock_flex_2), ["蝦皮(威獅)(時薪)"])
+
+    def test_switching_to_brand_without_locked_category_drops_that_category(self):
+        # 「蝦皮門市」→「美光有交通車嗎」原本拿美光＋門市去篩，誤答美光沒有交通車。
+        run_turn = self._make_session([self._shopee_jobs()[2], self._micron_job()])
+        run_turn("蝦皮門市有工作嗎")
+        mock_ai_2, mock_flex_2, _ = run_turn("美光有交通車嗎")
+        mock_ai_2.assert_not_called()
+        self.assertEqual(self._titles(mock_flex_2), ["美光(桃園)_Porter"])
+
+    def test_switching_to_brand_that_has_locked_category_keeps_it(self):
+        jobs = [
+            self._shopee_jobs()[0],
+            self._job("UBER DRIECT", ["外送員"], "UBER DRIECT", ["台北市"], ["台北市中正區"], "週領", "", "排休"),
+            self._job("uber 站所小幫手", ["行政人員"], "uber 站所小幫手", ["台北市"], ["台北市中正區"], "週領", "", "排休"),
+        ]
+        run_turn = self._make_session(jobs)
+        run_turn("蝦皮外送")
+        mock_ai_2, mock_flex_2, _ = run_turn("那Uber有週領的嗎")
+        mock_ai_2.assert_not_called()
+        self.assertEqual(self._titles(mock_flex_2), ["UBER DRIECT"])
+
+    def test_shopee_show_all_button_clears_locked_category(self):
+        run_turn = self._make_session(self._shopee_jobs())
+        run_turn("外送的工作")
+        run_turn(h.SHOPEE_CLARIFY_ALL_TEXT)
+        mock_ai_3, mock_flex_3, _ = run_turn("有週休的嗎")
+        mock_ai_3.assert_not_called()
+        self.assertEqual(set(self._titles(mock_flex_3)), {"蝦皮(威獅)(時薪)", "蝦皮門市"})
+
+    def test_service_word_in_benefit_question_does_not_switch_category(self):
+        jobs = [
+            self._micron_job(),
+            self._job("鼎王餐飲（時薪）", ["服務人員"], "鼎王", ["台中市"], ["台中市西屯區"], "月領", "", "排休"),
+        ]
+        run_turn = self._make_session(jobs)
+        run_turn("作業員的工作")
+        mock_ai_2, mock_flex_2, _ = run_turn("有交通車接送服務嗎")
+        mock_ai_2.assert_not_called()
+        self.assertEqual(self._titles(mock_flex_2), ["美光(桃園)_Porter"])
+
+    def test_asking_for_other_companies_releases_locked_brand(self):
+        jobs = [
+            self._job("momo(富邦/富昇）", ["倉儲人員"], "momo理貨員", ["桃園市"], ["桃園市楊梅區"], "日領,月領", "", "排休"),
+            self._job("瑪諾醫藥生技_倉儲", ["倉儲人員"], "瑪諾醫藥生技", ["新北市"], ["新北市新莊區"], "月領", "", "週休"),
+        ]
+        run_turn = self._make_session(jobs)
+        run_turn("momo的工作")
+        run_turn("那還有別家的嗎")
+        mock_ai_3, mock_flex_3, _ = run_turn("有週休的嗎")
+        mock_ai_3.assert_not_called()
+        self.assertEqual(self._titles(mock_flex_3), ["瑪諾醫藥生技_倉儲"])
+
+    def test_vendor_name_that_is_also_a_district_does_not_override_location(self):
+        # 廠商「新興(代招)」在新北五股，「新興」同時也是高雄市的行政區。
+        jobs = [
+            self._job("新興(代招)", ["作業員"], "新興(代招)", ["新北市"], ["新北市五股區"], "月領,匯款"),
+            self._job("薪航宅配", ["外送員"], "薪航宅配", ["高雄市"], ["高雄市新興區"], "週領,匯款"),
+        ]
+        run_turn = self._make_session(jobs)
+        run_turn("新北的工作")
+        mock_ai_2, mock_flex_2, _ = run_turn("新興有匯款的嗎")
+        mock_ai_2.assert_not_called()
+        self.assertEqual(self._titles(mock_flex_2), ["新興(代招)"])
+
+    def test_unknown_county_does_not_answer_with_other_regions(self):
+        jobs = [self._job("台北門市", ["門市人員"], "某門市", ["台北市"], ["台北市中正區"], "月領", "", "週休")]
+        run_turn = self._make_session(jobs)
+        mock_ai, mock_flex, api = run_turn("花蓮有週休二日的工作嗎")
+        mock_ai.assert_not_called()
+        mock_flex.assert_not_called()
+        self.assertIn("花蓮", self._reply_text(api))
+
+    def test_shopee_clarify_skipped_when_location_has_only_one_category(self):
+        run_turn = self._make_session(self._shopee_jobs())
+        mock_ai, mock_flex, _ = run_turn("蝦皮在楊梅有工作嗎")
+        mock_ai.assert_not_called()
+        self.assertEqual(self._titles(mock_flex), ["蝦皮(威獅)(時薪)"])
+
+    def test_no_match_reply_blames_the_empty_pool_not_the_pay_method(self):
+        jobs = [self._job("康寧(APL)_倉儲&堆高機", ["倉儲人員"], "康寧(APL)", ["台中市"], ["台中市西屯區"], "月領,週領", "", "做二休二")]
+        run_turn = self._make_session(jobs)
+        mock_ai, mock_flex, api = run_turn("康寧外送有週領的嗎")
+        mock_ai.assert_not_called()
+        mock_flex.assert_not_called()
+        reply = self._reply_text(api)
+        self.assertIn("康寧外送", reply)
+        self.assertNotIn("週領", reply)
+
+
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
     """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或
     類似的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德目前沒有蝦皮

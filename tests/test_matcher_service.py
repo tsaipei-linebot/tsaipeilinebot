@@ -785,5 +785,70 @@ class FindLeaveMatchedJobsTests(unittest.TestCase):
         self.assertEqual(jobs, [job])
 
 
+class MultiTurnRoundThreeMatcherFixTests(unittest.TestCase):
+    """第三輪多輪對話背景測試（4 個 agent、145 筆真實職缺）找到的比對層問題。"""
+
+    def test_double_weekly_pay_is_not_read_as_weekly(self):
+        self.assertEqual(m.detect_pay_method_label("有雙週領的嗎"), "雙週領")
+        job = {"職缺名稱": "A", "領薪方式": "週領,匯款"}
+        _, jobs = m.find_pay_method_matched_jobs("有雙週領的嗎", [job])
+        self.assertEqual(jobs, [])
+
+    def test_weekly_pay_query_still_matches_weekly_job(self):
+        job = {"職缺名稱": "A", "領薪方式": "月領,週領,匯款"}
+        label, jobs = m.find_pay_method_matched_jobs("可以週領嗎", [job])
+        self.assertEqual(label, "週領")
+        self.assertEqual(jobs, [job])
+
+    def test_jiekou_and_advance_pay_are_recognized(self):
+        self.assertEqual(m.detect_pay_method_label("可以用街口領嗎"), "街口")
+        self.assertEqual(m.detect_pay_method_label("可以預支薪水嗎"), "預支")
+
+    def test_negation_does_not_spill_into_next_clause(self):
+        # 「不要蝦皮了」的否定詞不該波及後面的「高雄」。
+        self.assertEqual(m.extract_current_target_location("那不要蝦皮了 高雄有什麼餐廳的兼職"), "高雄")
+
+    def test_chu_le_is_still_a_negation(self):
+        self.assertTrue(m._keyword_is_negated("除了外送都可以", "外送"))
+
+    def test_previously_missing_counties_are_recognized(self):
+        for county in ["花蓮", "台東", "南投", "雲林", "澎湖"]:
+            self.assertEqual(m.extract_current_target_location(f"{county}有工作嗎"), county)
+
+    def test_service_word_alone_does_not_trigger_food_service_category(self):
+        clean = m.clean_text_for_search("有交通車接送服務嗎")
+        self.assertEqual(m.detect_category_label(clean), "")
+        self.assertEqual(m.detect_category_label(m.clean_text_for_search("想找餐廳服務員")), "餐飲/服務")
+
+    def test_equipment_staff_is_not_counted_as_manufacturing(self):
+        job = {"職缺名稱(對外)": "【雙北基宜】知名企業設備人員", "職務類別": "設備人員"}
+        self.assertEqual(m.distinct_routable_categories_for_jobs([job]), [])
+
+    def test_packing_job_is_warehouse_not_manufacturing(self):
+        job = {"職缺名稱(對外)": "電商物流理貨包裝員", "職務類別": "理貨人員"}
+        self.assertEqual(m.distinct_routable_categories_for_jobs([job]), ["理貨/倉儲"])
+
+    def test_known_brand_family_wins_over_full_vendor_name(self):
+        # 點「蝦皮外送」按鈕時，廠商要記「蝦皮」，不是「蝦皮外送」。
+        jobs = [{"系統廠商名稱": "蝦皮外送(支援)"}, {"系統廠商名稱": "蝦皮門市"}]
+        self.assertEqual(m.detect_brand_label("蝦皮外送", jobs), "蝦皮")
+        self.assertEqual(m.detect_brand_label("蝦皮門市", jobs), "蝦皮")
+
+    def test_pchome_is_recognized(self):
+        jobs = [{"系統廠商名稱": "PChome理貨"}]
+        self.assertEqual(m.detect_brand_label("PChome林口倉還有在徵人嗎", jobs), "PChome")
+
+    def test_longest_vendor_match_wins_regardless_of_order(self):
+        jobs = [{"系統廠商名稱": "大立"}, {"系統廠商名稱": "大立光"}]
+        self.assertEqual(m.detect_brand_label("大立光有缺嗎", jobs), "大立光")
+
+    def test_job_matches_brand_ignores_location_text(self):
+        # 廠商「新興(代招)」不能比對到地址在高雄市新興區的其他廠商職缺。
+        other = {"系統廠商名稱": "薪航宅配", "職缺名稱": "薪航宅配", "_search_text": "薪航宅配高雄市新興區"}
+        target = {"系統廠商名稱": "新興(代招)", "職缺名稱": "新興(代招)", "_search_text": "新興代招新北市五股區"}
+        self.assertFalse(m.job_matches_brand(other, "新興"))
+        self.assertTrue(m.job_matches_brand(target, "新興"))
+
+
 if __name__ == "__main__":
     unittest.main()
