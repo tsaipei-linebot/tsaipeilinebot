@@ -23,7 +23,7 @@ from datetime import datetime
 from urllib.parse import parse_qsl
 
 from config import TAIPEI_TZ
-from delivery import rider_messages, rider_repository
+from delivery import group_notify, rider_messages, rider_repository
 
 
 def handle_rider_event(body: dict) -> list:
@@ -41,15 +41,13 @@ def handle_rider_event(body: dict) -> list:
     # 綁定狀態——不然任何人（不管有沒有綁定過）傳一句不相干的閒聊，都會
     # 收到「尚未完成綁定」這種文不對題的回覆，比完全不回覆更糟。
     #
-    # 位置訊息、純數字文字這兩種情況刻意額外要求「使用者剛做過對應的
-    # 前置動作」才算相關（2026-09-19 使用者反映任何位置分享/任何數字
-    # 文字都會觸發回覆，太容易誤觸發）：分享位置一定要先問過「查詢附近
-    # 單」或「瀏覽報班」其中一種，純數字一定要先點過「承接」按鈕，都有
-    # 10 分鐘的有效期限（RIDER_PENDING_CLAIM_TTL_SECONDS）。這裡用
+    # 位置訊息這種情況刻意額外要求「使用者剛做過對應的前置動作」才算相關
+    # （2026-09-19 使用者反映任何位置分享都會觸發回覆，太容易誤觸發）：
+    # 分享位置一定要先問過「查詢附近單」或「瀏覽報班」其中一種，有 10 分鐘
+    # 的有效期限（RIDER_PENDING_CLAIM_TTL_SECONDS）。這裡用
     # pop_awaiting_location()／pop_awaiting_shift_location() 而不是單純
     # 檢查有沒有暫存，是因為判斷完相關與否後就不需要再保留這個一次性的
-    # 暫存狀態；has_pending_claim() 則只是檢查、不清除，清除交給真的處理
-    # 這則訊息時的 pop_pending_claim() 做。
+    # 暫存狀態。
     #
     # 位置訊息可能同時符合「即時接單」跟「報班媒合」兩條線各自暫存中的
     # 前置狀態（例如騎士連續問了兩次都還沒分享位置）——理論上極少發生，
@@ -65,8 +63,6 @@ def handle_rider_event(body: dict) -> list:
         awaiting_order_location = rider_repository.pop_awaiting_location(user_id)
         awaiting_shift_location = rider_repository.pop_awaiting_shift_location(user_id)
         is_relevant = awaiting_order_location or awaiting_shift_location
-    elif text.isdigit():
-        is_relevant = rider_repository.has_pending_claim(user_id)
     else:
         is_relevant = False
     if not is_relevant:
@@ -81,7 +77,9 @@ def handle_rider_event(body: dict) -> list:
     if event_type == "postback":
         return _handle_postback(user_id, binding, body.get("postback_data") or "")
     if message_type == "location":
-        return _handle_location(body.get("latitude"), body.get("longitude"), awaiting_order_location, awaiting_shift_location)
+        return _handle_location(
+            user_id, body.get("latitude"), body.get("longitude"), awaiting_order_location, awaiting_shift_location
+        )
     if message_type == "text":
         return _handle_text(user_id, binding, text)
     return []
@@ -97,8 +95,13 @@ def _handle_postback(user_id: str, binding: dict, data: str) -> list:
         store = rider_repository.get_store_delivery(params.get("storeId", ""))
         if not store or store.get("status") != rider_repository.STORE_DELIVERY_STATUS_OPEN:
             return [rider_messages.text_message("這筆門市當日量已經不存在或已關閉，請重新查詢附近單。")]
-        rider_repository.set_pending_claim(user_id, store["id"])
-        return [rider_messages.prompt_claim_quantity_message(store)]
+        # 2026-09-22 改版：點「承接」直接完成，不再多問一次件數（原本會
+        # 先暫存 pending_claim、等騎士回一則純數字訊息才真的承接）。
+        rider_name = binding.get("name", "")
+        ok, message, info = rider_repository.claim_store_delivery(store["id"], user_id, rider_name)
+        if ok:
+            _notify_group_claimed(rider_name, info)
+        return [rider_messages.text_message(message)]
 
     if action == "SHIFT_LIST":
         if not _is_eligible_for_shift(binding):
@@ -114,12 +117,28 @@ def _handle_postback(user_id: str, binding: dict, data: str) -> list:
     return []
 
 
-def _handle_location(lat, lng, awaiting_order_location: bool, awaiting_shift_location: bool) -> list:
+def _notify_group_claimed(rider_name: str, info: dict) -> None:
+    """騎士承接成功時，同步推播一則到「配送組作業群組」（2026-09-22 新增，
+    沿用領車/還車通知同一條 delivery/group_notify.py 的 GAS 橋接，不需要
+    另外設定新的群組或 Token）。推播失敗只會回傳 False、不拋例外，騎士
+    那邊的承接結果不受影響。"""
+    info = info or {}
+    now = datetime.now(TAIPEI_TZ).strftime("%m/%d %H:%M")
+    text = (
+        f"🛵［即時接單］✅ {rider_name} 已承接「{info.get('store_name', '')}」\n"
+        f"承接時間：{now}\n"
+        f"這間門市還缺 {info.get('remaining_rider_slots', 0)} 位騎士"
+        f"（需求 {info.get('rider_capacity', 0)} 位）"
+    )
+    group_notify.notify_group(text)
+
+
+def _handle_location(user_id: str, lat, lng, awaiting_order_location: bool, awaiting_shift_location: bool) -> list:
     if lat is None or lng is None:
         return []
     if awaiting_order_location:
         today = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d")
-        stores = rider_repository.list_nearby_open_stores(float(lat), float(lng), today)
+        stores = rider_repository.list_nearby_open_stores(float(lat), float(lng), today, rider_id=user_id)
         if not stores:
             return [rider_messages.no_nearby_stores_message()]
         return [rider_messages.nearby_stores_carousel(stores)]
@@ -175,19 +194,6 @@ def _handle_text(user_id: str, binding: dict, text: str) -> list:
             return [rider_messages.not_eligible_for_shift_message()]
         registrations = rider_repository.list_registrations_by_rider(user_id)
         return [rider_messages.shift_registration_status_message(registrations)]
-
-    if text.isdigit():
-        store_id = rider_repository.pop_pending_claim(user_id)
-        if not store_id:
-            # 沒有暫存中的承接操作：可能是逾時、也可能只是騎士傳了一則
-            # 剛好是純數字的不相干訊息，兩種情況都用同一句話回覆即可。
-            return [rider_messages.claim_expired_message()]
-        quantity = int(text)
-        if quantity <= 0:
-            rider_repository.set_pending_claim(user_id, store_id)
-            return [rider_messages.invalid_quantity_message()]
-        _, message = rider_repository.claim_store_delivery(store_id, user_id, binding.get("name", ""), quantity)
-        return [rider_messages.text_message(message)]
 
     return []
 

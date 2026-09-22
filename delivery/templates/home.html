@@ -122,15 +122,29 @@
             </svg>
         </span>
         <h2>外送員接單媒合</h2>
-        <p class="hint">已登記合作的騎士在 LINE 私訊查詢附近門市貨量、自行承接，或瀏覽/報名報班時段，這裡管理門市當日可承接量、報班時段跟騎士名單</p>
+        <p class="hint">已登記合作的承攬騎士在 LINE 私訊查詢附近門市、直接承接，這裡管理門市當日量跟騎士名單</p>
         <div class="btn-list">
             <a class="btn btn-block" href="/delivery/rider/locations">即時接單地點管理</a>
             <a class="btn btn-block" href="/delivery/rider/store-deliveries">門市當日量管理</a>
-            <a class="btn btn-block" href="/delivery/rider/shift-locations">報班地點管理</a>
-            <a class="btn btn-block" href="/delivery/rider/shifts">報班時段管理</a>
             {% if user.role == "admin" %}
             <a class="btn btn-block" href="/delivery/rider/riders">騎士名單管理</a>
             {% endif %}
+        </div>
+    </section>
+
+    <section class="home-panel">
+        <span class="home-panel-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="17" rx="2"/>
+                <path d="M16 2v4M8 2v4M3 10h18"/>
+                <path d="M9 15l2 2 4-4"/>
+            </svg>
+        </span>
+        <h2>報班媒合</h2>
+        <p class="hint">已登記合作的雇傭騎士在 LINE 私訊瀏覽、報名附近的報班時段，這裡管理報班地點跟時段、審核報名名單</p>
+        <div class="btn-list">
+            <a class="btn btn-block" href="/delivery/rider/shift-locations">報班地點管理</a>
+            <a class="btn btn-block" href="/delivery/rider/shifts">報班時段管理</a>
         </div>
     </section>
 

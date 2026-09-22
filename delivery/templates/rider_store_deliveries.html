@@ -23,8 +23,11 @@
     <label>日期
         <input type="date" name="date" value="{{ filter_date }}" required>
     </label>
-    <label>當日可承接總量（件）
+    <label>當日量（件，只顯示給騎士參考，不是管控依據）
         <input type="number" name="total_quantity" min="1" required>
+    </label>
+    <label>需求騎士數量（位，這個才是管控依據，接滿就不再顯示給其他騎士）
+        <input type="number" name="rider_capacity" min="1" value="1" required>
     </label>
     <label>服務半徑（公里，騎士要在這個範圍內才看得到）
         <input type="number" name="radius_km" min="0.1" step="0.1" value="{{ default_radius_km }}">
@@ -62,22 +65,24 @@
 {% if items %}
 <table class="data-table">
     <thead>
-        <tr><th>門市名稱</th><th>總量</th><th>已承接</th><th>剩餘</th><th>服務半徑</th><th>狀態</th><th>修改</th><th>對帳</th></tr>
+        <tr><th>門市名稱</th><th>當日量（件）</th><th>需求騎士</th><th>已承接</th><th>還缺</th><th>服務半徑</th><th>狀態</th><th>修改</th><th>對帳</th></tr>
     </thead>
     <tbody>
         {% for item in items %}
         <tr>
             <td>{{ item.store_name }}</td>
             <td>{{ item.total_quantity }}</td>
-            <td>{{ item.claimed_quantity }}</td>
-            <td>{{ item.remaining_quantity }}</td>
+            <td>{{ item.rider_capacity }} 位</td>
+            <td>{{ item.claimed_rider_count }} 位</td>
+            <td>{{ item.remaining_rider_slots }} 位</td>
             <td>{{ item.radius_km or default_radius_km }} 公里</td>
             <td><span class="badge {{ 'badge-ok' if item.status == 'open' else 'badge-resigned' }}">{{ "開放中" if item.status == "open" else "已關閉" }}</span></td>
             <td>
                 <form method="post" action="/delivery/rider/store-deliveries/{{ item.id }}/quantity" style="display:inline">
                     <input type="hidden" name="date" value="{{ filter_date }}">
-                    <input type="number" name="total_quantity" min="1" value="{{ item.total_quantity }}" style="width:80px;">
-                    <button type="submit" class="btn btn-small">更新總量</button>
+                    <input type="number" name="total_quantity" min="1" value="{{ item.total_quantity }}" style="width:70px;" title="當日量（件）">
+                    <input type="number" name="rider_capacity" min="1" value="{{ item.rider_capacity }}" style="width:60px;" title="需求騎士數量（位）">
+                    <button type="submit" class="btn btn-small">更新</button>
                 </form>
                 <form method="post" action="/delivery/rider/store-deliveries/{{ item.id }}/status" style="display:inline">
                     <input type="hidden" name="date" value="{{ filter_date }}">

@@ -67,10 +67,13 @@ def prompt_share_location_for_shift_message() -> dict:
 
 
 def no_nearby_stores_message() -> dict:
-    return text_message("目前附近沒有開放中、還有剩餘量的門市貨量，請稍後再試。")
+    return text_message("目前附近沒有開放中、還缺騎士的門市貨量，請稍後再試。")
 
 
 def nearby_stores_carousel(stores: list) -> dict:
+    """2026-09-22 改版：卡片上的「當日量（件）」純粹是給騎士參考這間門市
+    大概有多少貨，真正的管控是「還缺幾位騎士」（見 rider_repository.py
+    的 DEFAULT_RIDER_CAPACITY 說明）。"""
     bubbles = []
     for store in stores[:MAX_CAROUSEL_BUBBLES]:
         distance_km = store.get("distance_km")
@@ -85,11 +88,22 @@ def nearby_stores_carousel(stores: list) -> dict:
                     {"type": "text", "text": distance_text, "size": "sm", "color": "#666666", "margin": "sm"},
                     {
                         "type": "text",
-                        "text": f"可承接量：{store.get('remaining_quantity', 0)} 件",
+                        "text": f"當日量：{store.get('total_quantity', 0)} 件",
+                        "size": "sm",
+                        "color": "#666666",
+                        "margin": "sm",
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"還缺 {store.get('remaining_rider_slots', 0)} 位騎士"
+                            f"（需求 {store.get('rider_capacity', 0)} 位）"
+                        ),
                         "size": "md",
                         "color": "#D32F2F",
                         "weight": "bold",
                         "margin": "sm",
+                        "wrap": True,
                     },
                 ],
             },
@@ -113,20 +127,6 @@ def nearby_stores_carousel(stores: list) -> dict:
         }
         bubbles.append(bubble)
     return {"type": "flex", "altText": f"為您找到 {len(bubbles)} 間附近有貨量的門市", "contents": {"type": "carousel", "contents": bubbles}}
-
-
-def prompt_claim_quantity_message(store: dict) -> dict:
-    return text_message(
-        f"「{store.get('store_name', '')}」目前剩餘可承接量 {store.get('remaining_quantity', 0)} 件，請直接回覆您要承接的件數（純數字）。"
-    )
-
-
-def claim_expired_message() -> dict:
-    return text_message("這次承接的操作已經逾時失效，請重新查詢附近單一次。")
-
-
-def invalid_quantity_message() -> dict:
-    return text_message("請輸入大於 0 的整數件數，例如：5")
 
 
 def no_open_shifts_message() -> dict:

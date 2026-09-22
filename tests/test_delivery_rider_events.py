@@ -162,43 +162,17 @@ class EligibilityGatingTests(_ActiveBindingMixin, unittest.TestCase):
         self.assertIn("報班媒合僅限雇傭", messages[0]["text"])
 
 
-class QuantityInputDispatchTests(_ActiveBindingMixin, unittest.TestCase):
-    """2026-09-19 使用者反映任何數字文字都被當成相關事件太容易誤觸發，
-    改成只有真的有暫存中的承接操作（has_pending_claim() 為 True）才算
-    相關，不然連 pop_pending_claim() 都不會呼叫、安靜略過。"""
+class DigitTextIsNoLongerRelevantTests(_ActiveBindingMixin, unittest.TestCase):
+    """2026-09-22 改版：承接不再需要回覆件數，純數字訊息已經不是這個功能
+    的一部分，應該完全安靜略過（不能再回「操作逾時」那種文不對題的訊息）。"""
 
-    def test_digit_text_without_pending_claim_stays_silent(self):
-        with mock.patch.object(rider_repository, "has_pending_claim", return_value=False):
-            with mock.patch.object(rider_repository, "pop_pending_claim") as mock_pop:
-                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "5"})
+    def test_digit_text_stays_silent(self):
+        with mock.patch.object(rider_repository, "claim_store_delivery") as mock_claim:
+            messages = rider_events.handle_rider_event(
+                {"userId": "U1", "type": "message", "message_type": "text", "text": "5"}
+            )
         self.assertEqual(messages, [])
-        mock_pop.assert_not_called()
-
-    def test_digit_text_with_pending_claim_calls_claim_store_delivery(self):
-        with mock.patch.object(rider_repository, "has_pending_claim", return_value=True):
-            with mock.patch.object(rider_repository, "pop_pending_claim", return_value="store1"):
-                with mock.patch.object(rider_repository, "claim_store_delivery", return_value=(True, "承接成功！")) as mock_claim:
-                    messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "5"})
-        mock_claim.assert_called_once_with("store1", "U1", "小明", 5)
-        self.assertIn("承接成功", messages[0]["text"])
-
-    def test_zero_quantity_re_prompts_without_clearing_pending_claim(self):
-        with mock.patch.object(rider_repository, "has_pending_claim", return_value=True):
-            with mock.patch.object(rider_repository, "pop_pending_claim", return_value="store1"):
-                with mock.patch.object(rider_repository, "set_pending_claim") as mock_set:
-                    with mock.patch.object(rider_repository, "claim_store_delivery") as mock_claim:
-                        messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "0"})
         mock_claim.assert_not_called()
-        mock_set.assert_called_once_with("U1", "store1")
-        self.assertIn("大於 0", messages[0]["text"])
-
-    def test_pending_claim_expired_between_peek_and_pop_gets_expired_message(self):
-        """防禦性邊界：has_pending_claim() 檢查通過後，pop_pending_claim()
-        才發現其實已經過期/被清掉——理論上極少發生，但保留這條路徑的行為。"""
-        with mock.patch.object(rider_repository, "has_pending_claim", return_value=True):
-            with mock.patch.object(rider_repository, "pop_pending_claim", return_value=""):
-                messages = rider_events.handle_rider_event({"userId": "U1", "type": "message", "message_type": "text", "text": "5"})
-        self.assertIn("逾時失效", messages[0]["text"])
 
 
 class LocationDispatchTests(_ActiveBindingMixin, unittest.TestCase):
@@ -231,14 +205,26 @@ class LocationDispatchTests(_ActiveBindingMixin, unittest.TestCase):
         self.assertIn("沒有開放中", messages[0]["text"])
 
     def test_location_message_with_nearby_stores_returns_carousel(self):
-        stores = [{"id": "s1", "store_name": "中和門市", "remaining_quantity": 5, "distance_km": 1.2}]
+        stores = [
+            {
+                "id": "s1",
+                "store_name": "中和門市",
+                "total_quantity": 30,
+                "rider_capacity": 3,
+                "remaining_rider_slots": 2,
+                "distance_km": 1.2,
+            }
+        ]
         with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=True):
             with mock.patch.object(rider_repository, "pop_awaiting_shift_location", return_value=False):
-                with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=stores):
+                with mock.patch.object(rider_repository, "list_nearby_open_stores", return_value=stores) as mock_list:
                     messages = rider_events.handle_rider_event(
                         {"userId": "U1", "type": "message", "message_type": "location", "latitude": 25.0, "longitude": 121.5}
                     )
         self.assertEqual(messages[0]["type"], "flex")
+        # 2026-09-22 新增：附近單查詢要帶這位騎士的 userId，才能把他自己
+        # 已經承接過的門市濾掉。
+        self.assertEqual(mock_list.call_args.kwargs["rider_id"], "U1")
 
     def test_location_message_with_no_nearby_shifts(self):
         with mock.patch.object(rider_repository, "pop_awaiting_location", return_value=False):
@@ -268,16 +254,50 @@ class LocationDispatchTests(_ActiveBindingMixin, unittest.TestCase):
 
 
 class PostbackDispatchTests(_ActiveBindingMixin, unittest.TestCase):
-    def test_claim_store_postback_sets_pending_claim_and_prompts_quantity(self):
-        store = {"id": "store1", "store_name": "中和門市", "status": "open", "remaining_quantity": 5}
+    """2026-09-22 改版：點「承接」直接完成，不再多問一次件數；承接成功
+    要同步推播一則到配送組作業群組。"""
+
+    _STORE = {"id": "store1", "store_name": "中和門市", "status": "open", "rider_capacity": 3}
+    _CLAIM_INFO = {
+        "store_name": "中和門市",
+        "rider_capacity": 3,
+        "claimed_rider_count": 2,
+        "remaining_rider_slots": 1,
+    }
+
+    def _claim_postback(self, claim_result):
         with mock.patch.object(rider_repository, "rider_feature_category", return_value="contract"):
-            with mock.patch.object(rider_repository, "get_store_delivery", return_value=store):
-                with mock.patch.object(rider_repository, "set_pending_claim") as mock_set:
-                    messages = rider_events.handle_rider_event(
-                        {"userId": "U1", "type": "postback", "postback_data": "action=CLAIM_STORE&storeId=store1"}
-                    )
-        mock_set.assert_called_once_with("U1", "store1")
-        self.assertIn("剩餘可承接量", messages[0]["text"])
+            with mock.patch.object(rider_repository, "get_store_delivery", return_value=self._STORE):
+                with mock.patch.object(
+                    rider_repository, "claim_store_delivery", return_value=claim_result
+                ) as mock_claim:
+                    with mock.patch.object(rider_events.group_notify, "notify_group") as mock_notify:
+                        messages = rider_events.handle_rider_event(
+                            {"userId": "U1", "type": "postback", "postback_data": "action=CLAIM_STORE&storeId=store1"}
+                        )
+        return messages, mock_claim, mock_notify
+
+    def test_claim_store_postback_claims_immediately(self):
+        messages, mock_claim, _ = self._claim_postback(
+            (True, "✅ 已登記承攬請前往配送\n門市：中和門市", self._CLAIM_INFO)
+        )
+        mock_claim.assert_called_once_with("store1", "U1", "小明")
+        self.assertIn("已登記承攬請前往配送", messages[0]["text"])
+
+    def test_successful_claim_notifies_delivery_group(self):
+        _, _, mock_notify = self._claim_postback(
+            (True, "✅ 已登記承攬請前往配送\n門市：中和門市", self._CLAIM_INFO)
+        )
+        mock_notify.assert_called_once()
+        text = mock_notify.call_args.args[0]
+        self.assertIn("小明", text)
+        self.assertIn("中和門市", text)
+        self.assertIn("還缺 1 位騎士", text)
+
+    def test_failed_claim_does_not_notify_group(self):
+        messages, _, mock_notify = self._claim_postback((False, "這間門市需要的騎士人數已經額滿，請改承接其他門市。", None))
+        mock_notify.assert_not_called()
+        self.assertIn("額滿", messages[0]["text"])
 
     def test_claim_store_postback_for_closed_store(self):
         with mock.patch.object(rider_repository, "rider_feature_category", return_value="contract"):

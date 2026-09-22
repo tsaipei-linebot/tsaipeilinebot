@@ -45,6 +45,21 @@ RIDER_STATUSES = [
 STORE_DELIVERY_STATUS_OPEN = "open"
 STORE_DELIVERY_STATUS_CLOSED = "closed"
 
+# 門市當日量的管控依據（2026-09-22 改版）：原本是用「總件數 vs 已承接
+# 件數」管控（騎士點承接後要再回一則訊息輸入自己要接幾件），使用者確認
+# 實際作業上不需要騎士報件數，改成**只看「需求騎士數量」**：騎士點一下
+# 「承接」就直接完成，一位騎士佔一個名額，名額滿了這筆門市當日量就不再
+# 出現在其他騎士的清單上。
+#
+# `total_quantity`（當日量幾件）欄位保留，但**只是顯示給騎士參考的資訊**，
+# 不再是管控依據，也不再累加 `claimed_quantity`（那個欄位留著只是為了
+# 舊資料還看得懂，新的承接不會再寫它）。
+#
+# 舊資料（改版前建立、沒有 rider_capacity 欄位的門市當日量）一律視為
+# 需求 1 位騎士——門市當日量本來就是每天各自獨立的資料，隔天就過期，
+# 不需要寫遷移腳本回頭補這個欄位。
+DEFAULT_RIDER_CAPACITY = 1
+
 SHIFT_STATUS_OPEN = "open"
 SHIFT_STATUS_CLOSED = "closed"
 
@@ -160,47 +175,6 @@ def set_rider_status(user_id: str, status: str) -> bool:
         return False
     ref.update({"status": status, "updated_at": time.time()})
     return True
-
-
-def set_pending_claim(user_id: str, store_id: str) -> None:
-    """騎士點了「承接」但還沒輸入件數，暫存他正要承接哪一筆門市當日量。"""
-    rider_bindings_ref().document(user_id).update(
-        {"pending_claim": {"store_id": store_id, "set_at": time.time()}}
-    )
-
-
-def pop_pending_claim(user_id: str) -> str:
-    """取出目前暫存的「正要承接哪一筆」並清掉。沒有暫存、或暫存已經超過
-    RIDER_PENDING_CLAIM_TTL_SECONDS 都回傳空字串——避免騎士點了「承接」後
-    放著不理，很久之後才傳一則不相干的數字訊息被誤當成件數輸入。"""
-    ref = rider_bindings_ref().document(user_id)
-    snapshot = ref.get()
-    if not snapshot.exists:
-        return ""
-    pending = (snapshot.to_dict() or {}).get("pending_claim") or {}
-    store_id = pending.get("store_id") or ""
-    set_at = pending.get("set_at") or 0
-    if not store_id:
-        return ""
-    ref.update({"pending_claim": None})
-    if (time.time() - set_at) > RIDER_PENDING_CLAIM_TTL_SECONDS:
-        return ""
-    return store_id
-
-
-def has_pending_claim(user_id: str) -> bool:
-    """只檢查有沒有暫存中的承接操作，不清掉暫存狀態（真的處理這則訊息時
-    才由 pop_pending_claim() 清掉）。給 rider_events.py 判斷「這則純數字
-    訊息看起來是不是真的在回覆承接件數」用——2026-09-19 使用者反映任何
-    數字文字都會被當成相關事件太容易誤觸發，改成只有真的點過「承接」
-    按鈕、還在有效期限內，才算數。"""
-    binding = get_rider_binding(user_id)
-    if not binding:
-        return False
-    pending = binding.get("pending_claim") or {}
-    store_id = pending.get("store_id") or ""
-    set_at = pending.get("set_at") or 0
-    return bool(store_id) and (time.time() - set_at) <= RIDER_PENDING_CLAIM_TTL_SECONDS
 
 
 def set_awaiting_location(user_id: str) -> None:
@@ -378,6 +352,7 @@ def create_store_delivery(
     lng: float,
     date_str: str,
     total_quantity: int,
+    rider_capacity: int,
     created_by: str,
     radius_km: float = RIDER_DEFAULT_SEARCH_RADIUS_KM,
 ) -> str:
@@ -389,7 +364,14 @@ def create_store_delivery(
             "lng": lng,
             "date": date_str,
             "total_quantity": total_quantity,
-            "claimed_quantity": 0,
+            "rider_capacity": rider_capacity or DEFAULT_RIDER_CAPACITY,
+            # 已經承接的騎士 LINE userId，直接存在門市當日量這份文件裡
+            # （不是另外查 rider_claims）：承接的 transaction 只讀這一份
+            # 文件就能同時判斷「名額滿了沒」跟「這位騎士是不是已經接過
+            # 這間了」，不需要在 transaction 裡再跑一次 collection 查詢。
+            # rider_claims 那邊照樣會留一筆完整紀錄（含姓名/時間）給後台
+            # 對帳用。
+            "claimed_rider_ids": [],
             "radius_km": radius_km or RIDER_DEFAULT_SEARCH_RADIUS_KM,
             "source": "manual",
             "status": STORE_DELIVERY_STATUS_OPEN,
@@ -402,14 +384,25 @@ def create_store_delivery(
     return ref.id
 
 
+def _decorate_store_delivery(data: dict) -> dict:
+    """補上畫面/訊息要用、但不直接存在文件裡的衍生欄位。舊資料沒有
+    rider_capacity／claimed_rider_ids 時分別視為「需求 1 位」跟「還沒有人
+    承接」（見 DEFAULT_RIDER_CAPACITY 的說明）。"""
+    capacity = data.get("rider_capacity") or DEFAULT_RIDER_CAPACITY
+    claimed_count = len(data.get("claimed_rider_ids") or [])
+    data["rider_capacity"] = capacity
+    data["claimed_rider_count"] = claimed_count
+    data["remaining_rider_slots"] = max(capacity - claimed_count, 0)
+    return data
+
+
 def get_store_delivery(store_id: str):
     snapshot = rider_store_deliveries_ref().document(store_id).get()
     if not snapshot.exists:
         return None
     data = snapshot.to_dict() or {}
     data["id"] = snapshot.id
-    data["remaining_quantity"] = (data.get("total_quantity") or 0) - (data.get("claimed_quantity") or 0)
-    return data
+    return _decorate_store_delivery(data)
 
 
 def list_store_deliveries(date_str: str = "") -> list:
@@ -421,17 +414,26 @@ def list_store_deliveries(date_str: str = "") -> list:
     for snapshot in query.stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
-        data["remaining_quantity"] = (data.get("total_quantity") or 0) - (data.get("claimed_quantity") or 0)
-        items.append(data)
+        items.append(_decorate_store_delivery(data))
     items.sort(key=lambda d: d.get("created_at") or 0, reverse=True)
     return items
 
 
-def update_store_delivery_quantity(store_id: str, total_quantity: int, updated_by: str) -> bool:
+def update_store_delivery_quantities(store_id: str, total_quantity: int, rider_capacity: int, updated_by: str) -> bool:
+    """後台修改這筆門市當日量的「當日量（件）」跟「需求騎士數量」。需求
+    騎士數量調小到比已經承接的人數還少時不會踢掉任何人，只是後續不會再
+    有人接得到（remaining_rider_slots 會是 0）。"""
     ref = rider_store_deliveries_ref().document(store_id)
     if not ref.get().exists:
         return False
-    ref.update({"total_quantity": total_quantity, "updated_by": updated_by, "updated_at": time.time()})
+    ref.update(
+        {
+            "total_quantity": total_quantity,
+            "rider_capacity": rider_capacity,
+            "updated_by": updated_by,
+            "updated_at": time.time(),
+        }
+    )
     return True
 
 
@@ -445,19 +447,26 @@ def set_store_delivery_status(store_id: str, status: str, updated_by: str) -> bo
     return True
 
 
-def list_nearby_open_stores(lat: float, lng: float, date_str: str, limit: int = 8) -> list:
-    """騎士查詢附近單：當日開放中、還有剩餘量、而且在這筆門市自己設定的服務
-    半徑（radius_km，同仁開這筆門市當日量時可以自行調整，預設
+def list_nearby_open_stores(lat: float, lng: float, date_str: str, rider_id: str = "", limit: int = 8) -> list:
+    """騎士查詢附近單：當日開放中、騎士名額還沒滿、而且在這筆門市自己設定的
+    服務半徑（radius_km，同仁開這筆門市當日量時可以自行調整，預設
     RIDER_DEFAULT_SEARCH_RADIUS_KM）以內的門市，依距離由近到遠排序，最多
     列出 `limit` 間。算不出距離的門市（理論上不會發生，門市當日量建立時
     一定會有經緯度）不套用半徑限制，一律視為符合，避免資料異常時整筆
-    憑空消失。"""
+    憑空消失。
+
+    帶 rider_id 時，會把這位騎士已經承接過的門市直接濾掉——重複承接本來
+    就會被 _evaluate_claim() 擋下，先不要列出來比較不會讓騎士白點一次
+    才看到錯誤訊息。"""
     results = []
     query = rider_store_deliveries_ref().where("date", "==", date_str).where("status", "==", STORE_DELIVERY_STATUS_OPEN)
     for snapshot in query.stream():
         data = snapshot.to_dict() or {}
-        remaining = (data.get("total_quantity") or 0) - (data.get("claimed_quantity") or 0)
-        if remaining <= 0:
+        claimed_ids = data.get("claimed_rider_ids") or []
+        if rider_id and rider_id in claimed_ids:
+            continue
+        capacity = data.get("rider_capacity") or DEFAULT_RIDER_CAPACITY
+        if len(claimed_ids) >= capacity:
             continue
         store_lat, store_lng = data.get("lat"), data.get("lng")
         distance_km = None
@@ -470,7 +479,9 @@ def list_nearby_open_stores(lat: float, lng: float, date_str: str, limit: int = 
             {
                 "id": snapshot.id,
                 "store_name": data.get("store_name", ""),
-                "remaining_quantity": remaining,
+                "total_quantity": data.get("total_quantity") or 0,
+                "rider_capacity": capacity,
+                "remaining_rider_slots": capacity - len(claimed_ids),
                 "distance_km": distance_km,
             }
         )
@@ -489,26 +500,33 @@ def list_claims(store_id: str) -> list:
     return items
 
 
-def _evaluate_claim(store_data: dict, quantity: int):
-    """純邏輯：目前這筆門市當日量的資料 + 騎士要承接的件數，決定接不接受。
-    回傳 (是否接受, 給騎士的訊息, 接受時 claimed_quantity 應更新成的值)。"""
-    if quantity <= 0:
-        return False, "承接件數要是大於 0 的整數，請重新輸入。", None
+def _evaluate_claim(store_data: dict, rider_id: str):
+    """純邏輯：目前這筆門市當日量的資料 + 要承接的騎士，決定接不接受。
+    回傳 (是否接受, 給騎士的訊息, 接受後 claimed_rider_ids 應更新成的值)。
+
+    2026-09-22 改版：不再比對件數，只看騎士名額（見 DEFAULT_RIDER_CAPACITY
+    的說明）。同一位騎士對同一筆門市當日量重複承接會被擋下，不會重複
+    佔掉名額。"""
     if store_data.get("status") != STORE_DELIVERY_STATUS_OPEN:
         return False, "這筆門市當日量已經關閉，無法承接。", None
-    claimed = store_data.get("claimed_quantity") or 0
-    total = store_data.get("total_quantity") or 0
-    remaining = total - claimed
-    if quantity > remaining:
-        return False, f"目前剩餘可承接量只有 {remaining} 件，請重新輸入不超過這個數字的件數。", None
-    return True, "", claimed + quantity
+    claimed_ids = list(store_data.get("claimed_rider_ids") or [])
+    if rider_id in claimed_ids:
+        return False, "您已經承接過這間門市了，請直接前往配送。", None
+    capacity = store_data.get("rider_capacity") or DEFAULT_RIDER_CAPACITY
+    if len(claimed_ids) >= capacity:
+        return False, "這間門市需要的騎士人數已經額滿，請改承接其他門市。", None
+    return True, "", claimed_ids + [rider_id]
 
 
-def claim_store_delivery(store_id: str, rider_id: str, rider_name: str, quantity: int):
+def claim_store_delivery(store_id: str, rider_id: str, rider_name: str):
     """在單一 transaction 內完成「讀取門市當日量 → 用 _evaluate_claim() 決定
-    接不接受 → 接受的話才更新 claimed_quantity、寫入一筆 claims 紀錄」，確保
-    兩位騎士幾乎同時承接同一筆門市當日量時不會一起超放。回傳 (是否成功,
-    給騎士的訊息)。"""
+    接不接受 → 接受的話才把這位騎士加進 claimed_rider_ids、寫入一筆 claims
+    紀錄」，確保兩位騎士幾乎同時承接同一筆門市當日量時不會一起超收。
+
+    回傳 (是否成功, 給騎士的訊息, 承接結果資訊)。第三個值只有成功時才有
+    內容（dict：store_name／rider_capacity／claimed_rider_count／
+    remaining_rider_slots），給呼叫端推播配送群組通知用（見
+    rider_events.py）。"""
     store_ref = rider_store_deliveries_ref().document(store_id)
     claim_ref = rider_claims_ref().document()
     transaction = get_db().transaction()
@@ -517,12 +535,12 @@ def claim_store_delivery(store_id: str, rider_id: str, rider_name: str, quantity
     def _txn(transaction):
         snapshot = store_ref.get(transaction=transaction)
         if not snapshot.exists:
-            return False, "找不到這筆門市當日量，可能已經被下架。"
+            return False, "找不到這筆門市當日量，可能已經被下架。", None
         store_data = snapshot.to_dict() or {}
-        ok, message, new_claimed = _evaluate_claim(store_data, quantity)
+        ok, message, new_claimed_ids = _evaluate_claim(store_data, rider_id)
         if not ok:
-            return False, message
-        transaction.update(store_ref, {"claimed_quantity": new_claimed, "updated_at": time.time()})
+            return False, message, None
+        transaction.update(store_ref, {"claimed_rider_ids": new_claimed_ids, "updated_at": time.time()})
         transaction.set(
             claim_ref,
             {
@@ -530,13 +548,19 @@ def claim_store_delivery(store_id: str, rider_id: str, rider_name: str, quantity
                 "store_name": store_data.get("store_name", ""),
                 "rider_id": rider_id,
                 "rider_name": rider_name,
-                "quantity": quantity,
                 "status": "active",
                 "claimed_at": time.time(),
             },
         )
         store_name = store_data.get("store_name", "")
-        return True, f"承接成功！{store_name} {quantity} 件，已經記錄在您的名下。"
+        capacity = store_data.get("rider_capacity") or DEFAULT_RIDER_CAPACITY
+        info = {
+            "store_name": store_name,
+            "rider_capacity": capacity,
+            "claimed_rider_count": len(new_claimed_ids),
+            "remaining_rider_slots": max(capacity - len(new_claimed_ids), 0),
+        }
+        return True, f"✅ 已登記承攬請前往配送\n門市：{store_name}", info
 
     return _txn(transaction)
 

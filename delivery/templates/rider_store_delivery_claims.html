@@ -4,19 +4,18 @@
 {% block content %}
 <h1 class="page-title">{{ store.store_name if store else "找不到這筆門市當日量" }} - 承接紀錄</h1>
 {% if store %}
-<p class="hint">日期：{{ store.date }}｜總量：{{ store.total_quantity }}｜已承接：{{ store.claimed_quantity }}｜剩餘：{{ store.remaining_quantity }}</p>
+<p class="hint">日期：{{ store.date }}｜當日量：{{ store.total_quantity }} 件｜需求騎士：{{ store.rider_capacity }} 位｜已承接：{{ store.claimed_rider_count }} 位｜還缺：{{ store.remaining_rider_slots }} 位</p>
 {% endif %}
 
 {% if claims %}
 <table class="data-table">
     <thead>
-        <tr><th>騎士姓名</th><th>承接件數</th><th>承接時間</th></tr>
+        <tr><th>騎士姓名</th><th>承接時間</th></tr>
     </thead>
     <tbody>
         {% for claim in claims %}
         <tr>
             <td>{{ claim.rider_name }}</td>
-            <td>{{ claim.quantity }}</td>
             <td>{{ claim.claimed_at_display }}</td>
         </tr>
         {% endfor %}

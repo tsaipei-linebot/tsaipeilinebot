@@ -145,6 +145,7 @@ def create_rider_store_delivery(
     location_id: str = Form(...),
     date: str = Form(...),
     total_quantity: str = Form(...),
+    rider_capacity: str = Form(...),
     radius_km: str = Form(""),
     redirect=Depends(login_required),
 ):
@@ -160,34 +161,60 @@ def create_rider_store_delivery(
         quantity_value = int(total_quantity)
     except ValueError:
         return RedirectResponse(
-            url=f"/delivery/rider/store-deliveries?date={date}&error=可承接量請輸入正確的數字", status_code=303
+            url=f"/delivery/rider/store-deliveries?date={date}&error=當日量請輸入正確的數字", status_code=303
         )
     if quantity_value <= 0:
         return RedirectResponse(
-            url=f"/delivery/rider/store-deliveries?date={date}&error=可承接量要大於 0", status_code=303
+            url=f"/delivery/rider/store-deliveries?date={date}&error=當日量要大於 0", status_code=303
+        )
+    try:
+        capacity_value = int(rider_capacity)
+    except ValueError:
+        return RedirectResponse(
+            url=f"/delivery/rider/store-deliveries?date={date}&error=需求騎士數量請輸入正確的數字", status_code=303
+        )
+    if capacity_value <= 0:
+        return RedirectResponse(
+            url=f"/delivery/rider/store-deliveries?date={date}&error=需求騎士數量要大於 0", status_code=303
         )
     radius_value, radius_error = _parse_radius_km(radius_km)
     if radius_error:
         return RedirectResponse(url=f"/delivery/rider/store-deliveries?date={date}&error={radius_error}", status_code=303)
     account = current_user(request)
     rider_repository.create_store_delivery(
-        location["name"], location["lat"], location["lng"], date, quantity_value, account["username"], radius_km=radius_value
+        location["name"],
+        location["lat"],
+        location["lng"],
+        date,
+        quantity_value,
+        capacity_value,
+        account["username"],
+        radius_km=radius_value,
     )
     return RedirectResponse(url=f"/delivery/rider/store-deliveries?date={date}", status_code=303)
 
 
 @router.post("/rider/store-deliveries/{store_id}/quantity")
 def update_rider_store_delivery_quantity(
-    store_id: str, request: Request, total_quantity: str = Form(...), date: str = Form(""), redirect=Depends(login_required)
+    store_id: str,
+    request: Request,
+    total_quantity: str = Form(...),
+    rider_capacity: str = Form(...),
+    date: str = Form(""),
+    redirect=Depends(login_required),
 ):
     if redirect:
         return redirect
     account = current_user(request)
     try:
         quantity_value = int(total_quantity)
-        rider_repository.update_store_delivery_quantity(store_id, quantity_value, account["username"])
+        capacity_value = int(rider_capacity)
     except ValueError:
-        pass
+        return RedirectResponse(url=f"/delivery/rider/store-deliveries?date={date}", status_code=303)
+    if quantity_value > 0 and capacity_value > 0:
+        rider_repository.update_store_delivery_quantities(
+            store_id, quantity_value, capacity_value, account["username"]
+        )
     return RedirectResponse(url=f"/delivery/rider/store-deliveries?date={date}", status_code=303)
 
 
