@@ -123,6 +123,22 @@ class CreateAnnouncementTests(unittest.TestCase):
         self.assertAlmostEqual(payload["expires_at"] - payload["created_at"], 1 * 86400, delta=2)
 
 
+class UpdateAnnouncementTitleTests(unittest.TestCase):
+    def test_updates_title_and_content(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True))
+        with mock.patch.object(platform_announcements, "announcements_ref", return_value=fake_collection):
+            result = platform_announcements.update_announcement_title("a", "新標題", "新內文")
+        self.assertTrue(result)
+        fake_doc_ref.update.assert_called_once_with({"title": "新標題", "content": "新內文"})
+
+    def test_returns_false_when_missing(self):
+        fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(False))
+        with mock.patch.object(platform_announcements, "announcements_ref", return_value=fake_collection):
+            result = platform_announcements.update_announcement_title("missing", "標題", "內文")
+        self.assertFalse(result)
+        fake_doc_ref.update.assert_not_called()
+
+
 class SetAnnouncementActiveTests(unittest.TestCase):
     def test_updates_active_flag(self):
         fake_collection, fake_doc_ref = _fake_collection(_fake_doc_snapshot(True))
