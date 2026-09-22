@@ -407,6 +407,24 @@ WHEEL_TYPES = [
 WHEEL_TYPE_MAP = {w["code"]: w["name"] for w in WHEEL_TYPES}
 DEFAULT_WHEEL_TYPE = "three_wheel"
 
+# ==========================================
+# UD 廠商車輛領車/還車自動同步到材霈自己維護的「三輪車」Google Sheet
+# （2026-09-22 新增，跟使用者討論確認的設計，見
+# delivery/ud_vehicle_sheet_sync.py 的完整說明）。
+# ==========================================
+
+# 這份試算表需要分享「編輯者」權限給 Cloud Run 服務帳戶才寫得進去（跟
+# services/salesdev_sheet_service.py 是同一個服務帳戶，權限分開分享）。
+UD_VEHICLE_SHEET_ID = os.getenv("UD_VEHICLE_SHEET_ID", "11bN718SeTpOmomDkNO6ht_DiAM9Nj2y_54irASY5Wmw")
+
+# 目標分頁的 gid（不是分頁名稱），從試算表網址 `...#gid=1971778587` 這段
+# 抓到的。用 gid 定位分頁比用分頁名稱字串比對穩定——分頁改名字、或名稱裡
+# 全形/半形括號打法不一致（這個系統之前在部門名稱比對就踩過一樣的雷，見
+# platform_accounts.normalize_department() 的說明）都不會影響。**這個值
+# 只有在這個分頁被整個刪掉重建（不是改名，是真的刪掉）時才會變，需要
+# 工程師改這裡重新部署，一般改名稱/搬動欄位順序都不用動這裡。**
+UD_VEHICLE_SHEET_GID = 1971778587
+
 # 服務區域（車輛實際派駐/服務的縣市）：給「一鍵整理車輛狀況」報告（見
 # delivery/vehicle_status_report.py）分區統計用。2026-09-14 新增時是寫死
 # 在這裡的固定清單，2026-09-18 改成主管可以自行在網頁上新增/停用的動態
