@@ -366,15 +366,13 @@ def build_benefit_keyword_index(active_jobs: list) -> dict:
     填上福利關鍵字，系統下一次讀取職缺資料就自動認得，不需要改程式碼。"""
     index = {}
     for job in active_jobs:
-        benefit_field = str(job.get("福利") or "").strip()
-        if not benefit_field:
-            continue
-        for token in re.split(r'[,，、\s]+', benefit_field):
-            token = token.strip()
-            if not token:
-                continue
+        for token in _job_benefit_tokens(job):
             index.setdefault(token, []).append(job)
     return index
+
+
+def _job_benefit_tokens(job: dict) -> list:
+    return [t.strip() for t in re.split(r'[,，、\s]+', str(job.get("福利") or "")) if t.strip()]
 
 
 def find_benefit_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
@@ -460,10 +458,8 @@ def find_pay_method_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
     label = detect_pay_method_label(raw_msg)
     if not label:
         return "", []
-    label_clean = clean_text_for_search(label)
     # 逐一比對欄位裡的每個選項，不用子字串：避免「週領」命中「雙週領」。
-    matched = [j for j in active_jobs if label_clean in _job_pay_method_tokens(j)]
-    return label, matched
+    return label, filter_jobs_by_pay_label(active_jobs, label)
 
 
 # 班別同義詞清單：獨立成模組常數，讓 extract_shift_preference 跟 _tokenize_search_terms
@@ -492,8 +488,12 @@ def extract_leave_preference(text: str) -> str:
     clean = clean_text_for_search(text)
     if any(k in clean for k in ["週休", "周休", "見紅休", "固定休六日", "休六日", "休假日", "休雙休"]):
         return "週休二日"
-    if any(k in clean for k in ["四休二", "4休2", "作四休二", "做四休二", "四班二輪", "做二休二", "2休2"]):
-        return "四休二"
+    # 做四休二跟做二休二是不同的班表（使用者 2026-09-23 決定分開），原本
+    # 都歸成同一類，問「做四休二」會推薦做二休二的美光職缺。
+    if any(k in clean for k in ["四休二", "4休2", "作四休二", "做四休二"]):
+        return "做四休二"
+    if any(k in clean for k in ["做二休二", "作二休二", "二休二", "2休2", "四班二輪"]):
+        return "做二休二"
     if any(k in clean for k in ["排休", "輪休", "排班休", "月休八天", "月休8天"]):
         return "排休"
     return ""
@@ -536,8 +536,56 @@ def find_leave_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
     label = extract_leave_preference(raw_msg)
     if not label:
         return "", []
-    matched = [j for j in active_jobs if label in _classify_all_leave_labels(j.get("休假方式") or "")]
-    return label, matched
+    return label, filter_jobs_by_leave_label(active_jobs, label)
+
+
+# 下面三個「依標籤篩選」的函式，給跨輪記住的休假/發薪/福利條件用：
+# 條件是上一輪講的，這一句話裡已經沒有那個詞，不能再從訊息重新判斷。
+def filter_jobs_by_leave_label(jobs: list, label: str) -> list:
+    return [j for j in jobs if label in _classify_all_leave_labels(j.get("休假方式") or "")]
+
+
+def filter_jobs_by_pay_label(jobs: list, label: str) -> list:
+    label_clean = clean_text_for_search(label)
+    return [j for j in jobs if label_clean in _job_pay_method_tokens(j)]
+
+
+def filter_jobs_by_benefit_label(jobs: list, label: str) -> list:
+    return [j for j in jobs if label in _job_benefit_tokens(j)]
+
+
+# 「都可以」要清掉哪一項（使用者 2026-09-23 決定：只清句子裡提到的那一項，
+# 沒講清楚是哪一項時只清類型/廠商、保留地區）。例如「班別都可以啦」只清
+# 班別，不能像原本一樣連地區、類型、廠商一起清掉。
+_SCOPED_BROADEN_DIMENSION_WORDS = {
+    "location": ["地區", "地點", "區域", "哪裡"],
+    "category": ["類型", "類別", "職種", "工作內容", "什麼工作", "什麼職缺"],
+    "brand": ["廠商", "公司", "品牌"],
+    "shift": ["班別", "時段", "早晚班", "上班時間"],
+    "leave": ["休假方式", "休假制度", "休假"],
+    "pay": ["發薪方式", "領薪方式", "發薪", "領薪"],
+    "benefit": ["福利"],
+    "secondary_all": ["其他條件"],
+}
+_BROADEN_SUFFIXES = ["都可以", "都行", "都好", "不限", "隨便", "沒差", "無所謂", "都ok"]
+
+
+def detect_scoped_broaden_dimensions(clean_input: str) -> set:
+    dims = set()
+    for dim, words in _SCOPED_BROADEN_DIMENSION_WORDS.items():
+        for word in words:
+            if f"不限{word}" in clean_input or any(f"{word}{suffix}" in clean_input for suffix in _BROADEN_SUFFIXES):
+                dims.add(dim)
+                break
+    if "secondary_all" in dims:
+        dims.discard("secondary_all")
+        dims.update({"leave", "pay", "benefit"})
+    return dims
+
+
+def text_mentions_pay_label(text: str, label: str) -> bool:
+    clean = clean_text_for_search(text)
+    return any(clean_text_for_search(syn) in clean for syn in PAY_METHOD_SYNONYMS.get(label, [label]))
 
 def extract_numeric_salary_preference(text: str) -> dict:
     """解析文字中的具體數值型薪資需求（例如：時薪200以上、月薪4萬以上）[cite: 1]"""

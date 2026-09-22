@@ -30,9 +30,11 @@ from services.matcher_service import (
     detect_negated_location, detect_negated_category, has_recognizable_category_or_brand_keyword,
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match,
     find_county_level_alternative_jobs, find_same_county_district_labels,
-    resolve_county_for_location, find_benefit_matched_jobs, find_pay_method_matched_jobs,
-    distinct_routable_categories_for_jobs, find_leave_matched_jobs,
-    job_matches_brand, detect_negated_brand,
+    resolve_county_for_location, find_benefit_matched_jobs, detect_pay_method_label,
+    distinct_routable_categories_for_jobs,
+    job_matches_brand, detect_negated_brand, detect_scoped_broaden_dimensions,
+    filter_jobs_by_leave_label, filter_jobs_by_pay_label, filter_jobs_by_benefit_label,
+    text_mentions_pay_label,
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -394,24 +396,42 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 答非所問。
         is_negative = has_negative_intent(raw_msg)
 
-        # 「都可以」「隨便」「都好」這種泛用表態語氣，講的通常是「我很有彈性」，
-        # 不是特別針對地區/類別/廠商哪一個維度──跟真人招募專員的理解一樣，
-        # 使用者說「都可以」，一般是指全部都可以，不是恰好只有其中一個維度
-        # 可以。這份清單同時餵給地區/類別/廠商三處的「明確表示不限」判斷，
-        # 一次講出來就會把三個維度一起解鎖，不用使用者逐一分開講。刻意不放
-        # 「不限」這種太短的詞單獨進來──「不限地區」「不限廠商」都會被子字串
-        # 誤觸發成三個維度一起清空，所以「不限」只留在各自維度專屬的完整詞組裡。
+        # 「都可以」要清掉哪一項（使用者 2026-09-23 決定）：句子裡指明了哪一項
+        # （「班別都可以」「休假方式都可以」）就只清那一項；只說「都可以」、
+        # 這句話也沒有講到任何其他條件時，只清類型跟廠商、保留地區。原本三個
+        # 維度一律一起清，「我在三重找工作」→「都可以」會變成推全台職缺，
+        # 「班別都可以啦」會連類型都清掉。刻意不放「不限」這種太短的詞單獨
+        # 進來──「不限地區」「不限廠商」各自有維度專屬的判斷。
         generic_broaden_keywords = [
             "都可以", "都可以喔", "都好", "都ok", "隨便", "無所謂", "沒差",
             "什麼都行", "什麼都可以", "什麼都好", "都行",
         ]
-
-        explicit_any_location = any(k in clean_input for k in generic_broaden_keywords + [
-            "不限地區", "不限地點", "哪裡都", "全台", "全區", "不挑地區", "不挑地點",
-        ])
+        scoped_broaden_dims = detect_scoped_broaden_dimensions(clean_input)
 
         extracted_loc = extract_current_target_location(raw_msg, "", active_jobs)
         negated_loc = detect_negated_location(raw_msg, active_jobs)
+        detected_category_this_turn = detect_category_label(clean_input)
+        detected_brand_this_turn = detect_brand_label(raw_msg, active_jobs)
+        this_turn_shift = extract_shift_preference(raw_msg)
+        # 這一句話本身講到的休假/發薪/福利條件（否定語氣不算）。福利關鍵字
+        # 固定用全部職缺判斷有沒有講到（見步驟 1b 的說明）。
+        this_turn_leave = extract_leave_preference(raw_msg) if not is_negative else ""
+        this_turn_pay = detect_pay_method_label(raw_msg) if not is_negative else ""
+        this_turn_benefit = find_benefit_matched_jobs(raw_msg, active_jobs)[0] if not is_negative else ""
+
+        _mentions_specific_condition = bool(
+            extracted_loc or detected_category_this_turn or detected_brand_this_turn or this_turn_shift
+            or this_turn_leave or this_turn_pay or this_turn_benefit
+        )
+        is_generic_broaden = (
+            any(k in clean_input for k in generic_broaden_keywords)
+            and not scoped_broaden_dims
+            and not _mentions_specific_condition
+        )
+
+        explicit_any_location = "location" in scoped_broaden_dims or any(k in clean_input for k in [
+            "不限地區", "不限地點", "哪裡都", "全台", "全區", "不挑地區", "不挑地點",
+        ])
 
         if extracted_loc:
             current_location = extracted_loc
@@ -424,16 +444,34 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             current_location = user_slots.get("location", "")
             location_slot_update = ""
 
-        detected_shift = extract_shift_preference(raw_msg) or user_slots.get("shift", "")
-        detected_leave = extract_leave_preference(raw_msg) or user_slots.get("leave", "")
+        if this_turn_shift:
+            shift_slot_update = this_turn_shift
+        elif "shift" in scoped_broaden_dims:
+            shift_slot_update = CLEAR_SLOT
+        else:
+            shift_slot_update = ""
 
-        detected_category_from_text = detect_category_label(clean_input)
+        # 休假/發薪/福利條件跟地區一樣記住到求職者改口為止（使用者 2026-09-23
+        # 決定）。原本只看當句，「桃園有日領的嗎」→「有交通車的嗎」第二句就
+        # 不再篩日領，全資料庫自動比對測到這是出錯最多的一項。
+        def _secondary_slot(dim, this_turn_value, mentions_locked):
+            locked = user_slots.get(dim, "")
+            if this_turn_value:
+                return this_turn_value, this_turn_value
+            if dim in scoped_broaden_dims or (is_negative and locked and mentions_locked(locked)):
+                return (CLEAR_SLOT if locked else ""), ""
+            return "", locked
+
+        leave_slot_update, effective_leave = _secondary_slot(
+            "leave", this_turn_leave, lambda locked: extract_leave_preference(raw_msg) == locked)
+        pay_slot_update, effective_pay = _secondary_slot(
+            "pay", this_turn_pay, lambda locked: text_mentions_pay_label(raw_msg, locked))
+        benefit_slot_update, effective_benefit = _secondary_slot(
+            "benefit", this_turn_benefit, lambda locked: locked in raw_msg)
+
+        detected_category_from_text = detected_category_this_turn
         negated_category = detect_negated_category(clean_input)
-        # 類別原本只有「否定掉目前鎖定的那個類別」（例如「除了外送」）才會清空，
-        # 沒有像地區/廠商一樣的「明確表示不限」出口——使用者鎖定「門市」之後，
-        # 講「不限類型」「什麼工作都可以」這種泛用表態，原本完全沒有辦法清空，
-        # 現在補上跟地區/廠商一致的機制。
-        explicit_any_category = any(k in clean_input for k in generic_broaden_keywords + [
+        explicit_any_category = "category" in scoped_broaden_dims or is_generic_broaden or any(k in clean_input for k in [
             "不限類型", "不限工作類型", "不限職缺類型", "不限職種", "不挑工作", "不挑職缺",
             "什麼工作都可以", "什麼職缺都可以", "什麼類型都可以",
         ])
@@ -459,11 +497,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 這種自然的追問地區情境時，蝦皮這個條件整個消失，變成拿「不限廠商的
         # 門市」去查八德，而不是使用者真正想問的「蝦皮在八德有沒有」，導致
         # 回覆牛頭不對馬嘴（見 HANDOFF.md 案例）。
-        explicit_any_brand = any(k in clean_input for k in generic_broaden_keywords + [
+        explicit_any_brand = "brand" in scoped_broaden_dims or is_generic_broaden or any(k in clean_input for k in [
             "不限廠商", "不限品牌", "不限公司", "其他廠商", "別的廠商", "換一家", "不挑廠商",
             "別家", "其他家", "別間", "別的公司", "其他公司",
         ])
-        detected_brand_this_turn = detect_brand_label(raw_msg, active_jobs)
         negated_brand = detect_negated_brand(raw_msg)
         if detected_brand_this_turn:
             detected_brand = detected_brand_this_turn
@@ -502,10 +539,24 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             user_id,
             location=location_slot_update,
             category=category_slot_update,
-            shift=detected_shift,
-            leave=detected_leave,
-            brand=brand_slot_update
+            shift=shift_slot_update,
+            leave=leave_slot_update,
+            brand=brand_slot_update,
+            pay=pay_slot_update,
+            benefit=benefit_slot_update,
         )
+
+        def _apply_label_filters(jobs, skip=None):
+            """套用目前生效的休假/福利/發薪方式條件（這句話講的，或上一輪記住
+            的）；skip 可以指定跳過某一項不篩，供「放寬其中一項還找不找得到」
+            的判斷使用。"""
+            if effective_leave and skip != "leave":
+                jobs = filter_jobs_by_leave_label(jobs, effective_leave)
+            if effective_benefit and skip != "benefit":
+                jobs = filter_jobs_by_benefit_label(jobs, effective_benefit)
+            if effective_pay and skip != "pay":
+                jobs = filter_jobs_by_pay_label(jobs, effective_pay)
+            return jobs
 
         # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截[cite: 6] ----------------
         show_all_keywords = [
@@ -516,27 +567,22 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 統一意圖判斷來源：改用 matcher_service 集中維護的 CATEGORY_KEYWORDS/KNOWN_BRANDS
         # （has_recognizable_category_or_brand_keyword），取代原本這裡另外維護、
         # 覆蓋範圍不完整的手動白名單（原本漏掉「理貨」「餐飲」等類別）。
+        # 只看「這句話本身」有沒有指定廠商/類別：上一輪鎖定的廠商/類別不再
+        # 擋住「都給我看看」，改成在鎖定的範圍內全部列出（使用者 2026-09-23
+        # 決定；原本鎖定條件後講「都給我看看」一律落到 AI）。
         has_specific_intent = bool(
-            detected_brand
-            or detected_category_from_text
+            detected_brand_this_turn
+            or detected_category_this_turn
             or has_recognizable_category_or_brand_keyword(clean_input)
         )
-        is_show_all = any(k in clean_input for k in show_all_keywords) and not has_specific_intent and not is_negative
+        is_show_all = (
+            any(k in clean_input for k in show_all_keywords)
+            and not has_specific_intent
+            and not is_negative
+            and not scoped_broaden_dims
+        )
 
         if is_show_all:
-            matched_show_all = []
-            for j in active_jobs:
-                # 地區比對要用 _location_search_text（只含縣市/行政區），不能用
-                # _search_text（含自由文字，可能因為地址/文案剛好提到地名而誤判，
-                # 見 notion_service.py 的欄位說明）。
-                loc_text = j.get("_location_search_text", "")
-                if current_location:
-                    loc_clean = current_location.replace("台", "臺")
-                    if current_location in loc_text or loc_clean in loc_text:
-                        matched_show_all.append(j)
-                else:
-                    matched_show_all.append(j)
-
             # current_slots 是上面 update_user_slots() 寫回後直接拿到的最新合併結果，
             # 這裡不用再花一次 Firestore 讀取重新查一次一模一樣的資料（原本這裡另外
             # 呼叫 get_user_slots() 是多餘的網路來回，也有極小機率讀到跟這輪計算不
@@ -544,25 +590,40 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _known_category_for_filter = current_slots.get("category", "")
             _brand_for_filter = current_slots.get("brand", "")
 
+            # 地區比對要用 _location_search_text（只含縣市/行政區），不能用
+            # _search_text（含自由文字，可能因為地址/文案剛好提到地名而誤判，
+            # 見 notion_service.py 的欄位說明）。
+            matched_show_all = list(active_jobs)
+            if current_location:
+                loc_clean = current_location.replace("台", "臺")
+                matched_show_all = [j for j in matched_show_all if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
             if _known_category_for_filter and _known_category_for_filter != "不限":
-                matched_show_all = filter_jobs_by_category_tiered(
-                    matched_show_all,
-                    _known_category_for_filter,
-                    _brand_for_filter,
-                )
+                matched_show_all = filter_jobs_by_category_tiered(matched_show_all, _known_category_for_filter, _brand_for_filter)
+            if _brand_for_filter:
+                matched_show_all = [j for j in matched_show_all if job_matches_brand(j, _brand_for_filter)]
+            matched_show_all = _apply_label_filters(matched_show_all)
 
-            if not matched_show_all:
-                if current_location:
-                    loc_clean = current_location.replace("台", "臺")
-                    matched_show_all = [j for j in active_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
-                if not matched_show_all:
-                    matched_show_all = active_jobs[:5]
+            _show_all_scope = [s for s in [
+                current_location, _brand_for_filter,
+                _known_category_for_filter if _known_category_for_filter != "不限" else "",
+                effective_leave, effective_pay, effective_benefit,
+            ] if s]
+            _show_all_scope_text = f"符合「{'、'.join(_show_all_scope)}」" if _show_all_scope else ""
 
             append_user_history(user_id, "求職者", raw_msg)
             if matched_show_all:
-                reply_text = f"沒問題！沛沛馬上為您整理{current_location if current_location else ''}目前招募中的熱門職缺，歡迎點擊查看詳細說明或線上應徵喔 😊"
+                reply_text = f"沒問題！沛沛馬上為您整理{_show_all_scope_text}目前招募中的熱門職缺，歡迎點擊查看詳細說明或線上應徵喔 😊"
                 append_user_history(user_id, "招募顧問沛沛", reply_text)
                 target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, current_location)])
+            elif active_jobs and _show_all_scope:
+                # 鎖定的範圍內真的沒有職缺：老實講出是哪些條件，讓求職者自己決定
+                # 要不要放寬，不再像原本一樣悄悄改推全台前 5 筆職缺。
+                reply_text = f"不好意思，目前沒有{_show_all_scope_text}的職缺 🙏 要不要放寬一些條件，讓沛沛幫您再找找看呢？"
+                append_user_history(user_id, "招募顧問沛沛", reply_text)
+                _show_all_buttons = [QuickReplyButton(action=MessageAction(label="🔄 清空條件重新找", text="清空條件"))]
+                if effective_leave or effective_pay or effective_benefit:
+                    _show_all_buttons.append(QuickReplyButton(action=MessageAction(label="👀 其他條件都可以", text="其他條件都可以")))
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reply_text, quick_reply=QuickReply(items=_show_all_buttons)))
             else:
                 # active_jobs 本身是空的（例如 Notion 職缺暫時全部停招，或剛好讀取失敗
                 # 沿用了空的快取）——這時候完全沒有職缺可以組成 Flex 卡片,LINE 的
@@ -758,10 +819,17 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 有沒有公司車的工作」，因為蝦皮門市本身福利欄位是空的，"公司車" 就
         # 完全沒被偵測到）。用 active_jobs 判斷「有沒有講到」，實際篩選仍然
         # 只套用在候選池上（見下方 _apply_secondary_filters），兩者不衝突。
-        _leave_label, _ = find_leave_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
-        _benefit_label, _ = find_benefit_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
-        _pay_label, _ = find_pay_method_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
-        _has_secondary_intent = bool(_leave_label or _benefit_label or _pay_label)
+        #
+        # 真正拿來篩選的是「目前生效」的條件（這句話講的，或上一輪記住的，
+        # 見步驟 0-3）；但要不要進入這套直達篩選，只看「這句話本身」有沒有
+        # 講到休假/福利/發薪方式（或明確放寬其中一項，例如放寬按鈕送回來的
+        # 「休假方式都可以」）——不然記住了日領之後，連「薪水怎麼算」這種
+        # FAQ 問題都會被攔下來改推職缺。
+        _leave_label, _benefit_label, _pay_label = effective_leave, effective_benefit, effective_pay
+        _has_secondary_intent = bool(
+            this_turn_leave or this_turn_benefit or this_turn_pay
+            or scoped_broaden_dims & {"leave", "benefit", "pay"}
+        )
 
         # ---------------- 沒有再提類別關鍵字時，沿用上一輪鎖定的廠商/類別 ----------------
         # 用多輪對話背景測試才找得到的真實 bug（4 個 agent 各自獨立測到同一個
@@ -849,17 +917,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         if _has_pool_intent or _has_secondary_intent:
             _effective_pool = _pool if _has_pool_intent else active_jobs
 
-            def _apply_secondary_filters(jobs, skip=None):
-                """依序套用休假方式/福利/發薪方式篩選（只套用這輪訊息裡真的
-                偵測到的那幾項）；skip 可以指定跳過某一項不篩，供「放寬其中
-                一項還找不找得到」的判斷使用。"""
-                if _leave_label and skip != "leave":
-                    _, jobs = find_leave_matched_jobs(raw_msg, jobs)
-                if _benefit_label and skip != "benefit":
-                    _, jobs = find_benefit_matched_jobs(raw_msg, jobs)
-                if _pay_label and skip != "pay":
-                    _, jobs = find_pay_method_matched_jobs(raw_msg, jobs)
-                return jobs
+            _apply_secondary_filters = _apply_label_filters
 
             def _secondary_desc_parts():
                 parts = []
@@ -941,7 +999,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             # 這一項就真的找得到職缺」的選項，不問放寬了也沒用的條件。發薪方式
             # 涉及金錢、原則上不特別鼓勵放寬，但這裡仍一視同仁地檢查、交給
             # 求職者自己決定，不由程式碼替他決定「這項不能問」。
-            if _has_secondary_intent:
+            # 上一輪記住的條件也算：「理貨的工作」這句沒講日領，但記住的日領
+            # 讓結果篩到 0 筆時，一樣要問要不要放寬，不能落到 AI。
+            if _leave_label or _benefit_label or _pay_label:
                 _dimensions = [
                     ("leave", "休假方式", _leave_label),
                     ("benefit", "福利", _benefit_label),
@@ -964,18 +1024,22 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                     relax_buttons = []
                     for dim, name, label in _relaxable:
                         _kept = [_remaining_keywords[d] for d, _, _ in _dimensions if d != dim and _remaining_keywords[d]]
-                        _reconstructed = " ".join(filter(None, [_pool_query_phrase, current_location] + _kept))
+                        # 條件會跨輪記住，所以按鈕文字要明講「X都可以」把放寬的
+                        # 那一項清掉，不能只是不提——不然記住的條件還在，按下去
+                        # 會得到一模一樣的反問。這句話本身也會被判斷成「有講到
+                        # 條件」，不會因為只剩地區/廠商就落到 AI。
+                        _reconstructed = " ".join(filter(None, [_pool_query_phrase, current_location] + _kept + [f"{name}都可以"]))
                         _reconstructed_texts.add(_reconstructed)
                         relax_buttons.append(QuickReplyButton(action=MessageAction(
                             label=f"{_relax_emoji[dim]} {name}可以彈性",
                             text=_reconstructed,
                         )))
 
-                    # 保底選項：全部次要條件都放寬、只看廠商/類別/地區。跟上面
-                    # 某個單一放寬按鈕重組出來的文字剛好一樣時（例如這輪只講了
-                    # 一項次要條件，放寬那一項就等於全部放寬），不重複列一次。
-                    _catchall_text = " ".join(filter(None, [_pool_query_phrase, current_location])) or "都給我看看"
-                    if _loc_filtered and _catchall_text not in _reconstructed_texts:
+                    # 保底選項：休假/福利/發薪方式全部放寬、只看廠商/類別/地區。
+                    # 只有一項條件時，放寬那一項就等於全部放寬，不重複列一次。
+                    _active_secondary_count = sum(1 for _, _, label in _dimensions if label)
+                    _catchall_text = " ".join(filter(None, [_pool_query_phrase, current_location, "其他條件都可以"]))
+                    if _loc_filtered and _active_secondary_count > 1:
                         relax_buttons.append(QuickReplyButton(action=MessageAction(label="👀 都可以，看看其他", text=_catchall_text)))
 
                     target_line_bot_api.reply_message(reply_token, TextSendMessage(
@@ -1258,6 +1322,9 @@ def _compute_ai_decision_messages(
             _known_condition_parts.append(f"工作類型={_slot_category}")
         if _slot_brand:
             _known_condition_parts.append(f"廠商={_slot_brand}")
+        for _slot_key, _slot_name in [("leave", "休假方式"), ("pay", "發薪方式"), ("benefit", "福利")]:
+            if _current_slots_for_candidates.get(_slot_key):
+                _known_condition_parts.append(f"{_slot_name}={_current_slots_for_candidates[_slot_key]}")
         known_conditions_text = "、".join(_known_condition_parts) if _known_condition_parts else "（目前尚未鎖定任何條件）"
 
         ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的線上招募顧問「沛沛」。

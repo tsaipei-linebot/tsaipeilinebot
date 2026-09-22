@@ -434,9 +434,9 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         }
         old_slots = dict(location="", category="", shift="", leave="", brand="蝦皮")
 
-        def _merge_slots(user_id, location="", category="", shift="", leave="", brand=""):
+        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit=""):
             merged = dict(old_slots)
-            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand)]:
+            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit)]:
                 if value == h.CLEAR_SLOT:
                     merged[key] = ""
                 elif value:
@@ -1348,7 +1348,7 @@ class ExpandedBroadenPhraseTests(unittest.TestCase):
         _, kwargs = mock_update_slots.call_args
         self.assertEqual(kwargs.get("category"), h.CLEAR_SLOT)
 
-    def test_generic_broaden_phrase_clears_all_three_dimensions_at_once(self):
+    def test_generic_broaden_phrase_clears_category_and_brand_but_keeps_location(self):
         # 「都可以」這種泛用表態，講出來時應該同時解鎖地區/類別/廠商，
         # 不用使用者逐一分開講「不限地區」「不限類型」「不限廠商」。
         persisted_slots = self._base_slots(location="新莊", category="門市", brand="蝦皮")
@@ -1367,7 +1367,9 @@ class ExpandedBroadenPhraseTests(unittest.TestCase):
             h.process_user_message(event, line_bot_api)
 
         _, kwargs = mock_update_slots.call_args
-        self.assertEqual(kwargs.get("location"), h.CLEAR_SLOT)
+        # 使用者 2026-09-23 決定：只說「都可以」時只清類型跟廠商、保留地區
+        # （原本連地區一起清，「我在三重找工作」→「都可以」會變成推全台職缺）。
+        self.assertEqual(kwargs.get("location"), "")
         self.assertEqual(kwargs.get("category"), h.CLEAR_SLOT)
         self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
 
@@ -1890,7 +1892,8 @@ class CompoundSecondaryFilterTests(unittest.TestCase):
         self.assertIn("週休二日", reply_msg.text)
         self.assertIn("公司車", reply_msg.text)
         button_texts = {b.action.text for b in reply_msg.quick_reply.items}
-        self.assertEqual(button_texts, {"蝦皮 公司車", "蝦皮 週休二日", "蝦皮"})
+        # 條件會跨輪記住，按鈕文字要明講把放寬的那一項清掉（「X都可以」）。
+        self.assertEqual(button_texts, {"蝦皮 公司車 休假方式都可以", "蝦皮 週休二日 福利都可以", "蝦皮 其他條件都可以"})
 
     def test_relaxing_leave_shows_job_matching_remaining_benefit_condition(self):
         jobs = self._shopee_jobs()
@@ -2200,11 +2203,11 @@ class MultiTurnLockedCategoryPersistenceTests(unittest.TestCase):
     def _make_session(self, jobs):
         """建立一個真正會保留槽位/對話紀錄狀態的多輪測試環境，不是每輪都
         重置——跟真實 LINE 對話一樣，上一輪鎖定的槽位要能沿用到下一輪。"""
-        session_slots = dict(location="", category="", shift="", leave="", brand="")
+        session_slots = dict(location="", category="", shift="", leave="", brand="", pay="", benefit="")
         history = []
 
-        def _merge_slots(user_id, location="", category="", shift="", leave="", brand=""):
-            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand)]:
+        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit=""):
+            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit)]:
                 if value == h.CLEAR_SLOT:
                     session_slots[key] = ""
                 elif value:
@@ -2420,6 +2423,118 @@ class MultiTurnRoundThreeHandlerFixTests(unittest.TestCase):
         reply = self._reply_text(api)
         self.assertIn("康寧外送", reply)
         self.assertNotIn("週領", reply)
+
+
+class MultiTurnUserDesignDecisionTests(unittest.TestCase):
+    """使用者 2026-09-23 看完第三輪多輪對話測試報告後決定的四項設計：
+    1. 休假/發薪/福利條件跟地區一樣記住到求職者改口為止。
+    2. 「都可以」只清句子裡提到的那一項；沒講是哪一項時只清類型跟廠商、保留地區。
+    3. 已鎖定條件時講「都給我看看」，在鎖定的範圍內全部列出。
+    4. 做四休二跟做二休二分開。"""
+
+    _job = MultiTurnLockedCategoryPersistenceTests._job
+    _make_session = MultiTurnLockedCategoryPersistenceTests._make_session
+    _titles = staticmethod(MultiTurnRoundThreeHandlerFixTests._titles)
+    _reply_text = staticmethod(MultiTurnRoundThreeHandlerFixTests._reply_text)
+
+    def _taoyuan_jobs(self):
+        return [
+            self._job("A日領倉", ["倉儲人員"], "甲公司", ["桃園市"], ["桃園市楊梅區"], "日領,月領", "", "排休"),
+            self._job("B交通車廠", ["作業員"], "乙公司", ["桃園市"], ["桃園市龜山區"], "月領", "交通車", "做二休二"),
+            self._job("C日領交通車倉", ["倉儲人員"], "丙公司", ["桃園市"], ["桃園市蘆竹區"], "日領", "交通車", "排休"),
+            self._job("D新北門市", ["門市人員"], "丁公司", ["新北市"], ["新北市三重區"], "月領", "", "週休"),
+        ]
+
+    def test_pay_condition_is_remembered_into_next_turn(self):
+        run_turn = self._make_session(self._taoyuan_jobs())
+        run_turn("桃園有日領的嗎")
+        mock_ai, mock_flex, _ = run_turn("有交通車的嗎")
+        mock_ai.assert_not_called()
+        self.assertEqual(self._titles(mock_flex), ["C日領交通車倉"])
+
+    def test_remembered_pay_condition_applies_to_location_follow_up(self):
+        run_turn = self._make_session(self._taoyuan_jobs())
+        run_turn("理貨 有日領的嗎")
+        mock_ai, mock_flex, _ = run_turn("蘆竹呢")
+        mock_ai.assert_not_called()
+        self.assertEqual(self._titles(mock_flex), ["C日領交通車倉"])
+
+    def test_remembered_condition_does_not_hijack_faq_question(self):
+        run_turn = self._make_session(self._taoyuan_jobs())
+        run_turn("有日領的嗎")
+        mock_ai, mock_flex, _ = run_turn("薪水怎麼算")
+        mock_ai.assert_called_once()
+        mock_flex.assert_not_called()
+
+    def test_negating_remembered_pay_clears_it(self):
+        run_turn = self._make_session(self._taoyuan_jobs())
+        run_turn("桃園有日領的嗎")
+        run_turn("不要日領的")
+        mock_ai, mock_flex, _ = run_turn("都給我看看")
+        mock_ai.assert_not_called()
+        self.assertIn("B交通車廠", self._titles(mock_flex))
+
+    def test_every_relax_button_resolves_without_repeating_the_question(self):
+        # 條件會跨輪記住後，放寬按鈕要真的把那一項清掉，按下去不能又得到
+        # 一模一樣的反問。
+        jobs = [
+            self._job("蝦皮外送三輪雇傭", ["外送員"], "蝦皮三輪雇傭", ["桃園市"], ["桃園市桃園區"], "週領,匯款,月領", "公司車", "排休"),
+            self._job("蝦皮門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市桃園區"], "月領,匯款", "", "週休"),
+        ]
+        first_run = self._make_session(jobs)
+        _, _, api = first_run("蝦皮想要週休二日、有公司車的工作")
+        first_question = self._reply_text(api)
+        button_texts = [b.action.text for b in api.reply_message.call_args[0][1].quick_reply.items]
+        self.assertEqual(len(button_texts), 3)
+        for button_text in button_texts:
+            run_turn = self._make_session(jobs)
+            run_turn("蝦皮想要週休二日、有公司車的工作")
+            mock_ai, mock_flex, api_2 = run_turn(button_text)
+            mock_ai.assert_not_called()
+            self.assertTrue(mock_flex.called, button_text)
+            self.assertNotEqual(self._reply_text(api_2), first_question)
+
+    def test_bare_all_ok_keeps_location(self):
+        run_turn = self._make_session(self._taoyuan_jobs())
+        run_turn("我在三重想找工作")
+        mock_ai, mock_flex, _ = run_turn("都可以")
+        mock_ai.assert_not_called()
+        self.assertEqual(self._titles(mock_flex), ["D新北門市"])
+
+    def test_scoped_all_ok_only_clears_that_dimension(self):
+        jobs = self._taoyuan_jobs() + [
+            self._job("E桃園門市", ["門市人員"], "戊公司", ["桃園市"], ["桃園市中壢區"], "月領", "", "週休"),
+        ]
+        run_turn = self._make_session(jobs)
+        run_turn("門市的工作")
+        run_turn("班別都可以啦")
+        mock_ai, mock_flex, _ = run_turn("有週休的嗎")
+        mock_ai.assert_not_called()
+        self.assertEqual(set(self._titles(mock_flex)), {"D新北門市", "E桃園門市"})
+
+    def test_show_all_lists_everything_within_locked_scope(self):
+        jobs = self._taoyuan_jobs() + [
+            self._job("蝦皮門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市中壢區"], "月領", "", "週休"),
+        ]
+        run_turn = self._make_session(jobs)
+        run_turn("蝦皮門市有工作嗎")
+        mock_ai, mock_flex, _ = run_turn("都給我看看")
+        mock_ai.assert_not_called()
+        self.assertEqual(self._titles(mock_flex), ["蝦皮門市"])
+
+    def test_show_all_applies_condition_in_same_sentence(self):
+        run_turn = self._make_session(self._taoyuan_jobs())
+        mock_ai, mock_flex, _ = run_turn("我住桃園 想找日領的工作 什麼都可以做")
+        mock_ai.assert_not_called()
+        self.assertEqual(set(self._titles(mock_flex)), {"A日領倉", "C日領交通車倉"})
+
+    def test_show_all_with_empty_locked_scope_says_so_honestly(self):
+        run_turn = self._make_session(self._taoyuan_jobs())
+        run_turn("桃園有週休的嗎")
+        mock_ai, mock_flex, api = run_turn("都給我看看")
+        mock_ai.assert_not_called()
+        mock_flex.assert_not_called()
+        self.assertIn("週休二日", self._reply_text(api))
 
 
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
