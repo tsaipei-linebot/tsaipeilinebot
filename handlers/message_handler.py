@@ -31,7 +31,8 @@ from services.matcher_service import (
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match,
     find_county_level_alternative_jobs, find_same_county_district_labels,
     resolve_county_for_location, find_benefit_matched_jobs, find_pay_method_matched_jobs,
-    distinct_routable_categories_for_jobs, find_leave_matched_jobs
+    distinct_routable_categories_for_jobs, find_leave_matched_jobs,
+    job_matches_brand, detect_negated_brand,
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -443,7 +444,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             # 使用者明確排除掉目前鎖定的類別（例如「除了外送」）→ 清空，這輪查詢也不再沿用被排除的舊類別
             category_slot_update = CLEAR_SLOT
             detected_category_from_text = ""
-        elif explicit_any_category:
+        elif explicit_any_category or raw_msg.strip() == SHOPEE_CLARIFY_ALL_TEXT:
+            # 「蝦皮全部類型都看看」按鈕本身就是「類型不限」：沒清掉的話，之前
+            # 鎖定的類別會一直留著，下一句問福利時只在舊類別裡找、誤答沒有。
             category_slot_update = CLEAR_SLOT if user_slots.get("category", "") else ""
             detected_category_from_text = ""
         else:
@@ -458,17 +461,42 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 回覆牛頭不對馬嘴（見 HANDOFF.md 案例）。
         explicit_any_brand = any(k in clean_input for k in generic_broaden_keywords + [
             "不限廠商", "不限品牌", "不限公司", "其他廠商", "別的廠商", "換一家", "不挑廠商",
+            "別家", "其他家", "別間", "別的公司", "其他公司",
         ])
         detected_brand_this_turn = detect_brand_label(raw_msg, active_jobs)
+        negated_brand = detect_negated_brand(raw_msg)
         if detected_brand_this_turn:
             detected_brand = detected_brand_this_turn
             brand_slot_update = detected_brand_this_turn
-        elif explicit_any_brand:
+        elif explicit_any_brand or (negated_brand and negated_brand == user_slots.get("brand", "")):
             detected_brand = ""
             brand_slot_update = CLEAR_SLOT if user_slots.get("brand", "") else ""
         else:
             brand_slot_update = ""
             detected_brand = user_slots.get("brand", "")
+
+        # 廠商名稱剛好也是地名（例如廠商「新興(代招)」vs 高雄市新興區）時，
+        # 這句話講的是廠商，不能把它當成新地區、蓋掉原本鎖定的地區。
+        if extracted_loc and detected_brand_this_turn and clean_text_for_search(extracted_loc) in clean_text_for_search(detected_brand_this_turn):
+            extracted_loc = ""
+            current_location = user_slots.get("location", "")
+            location_slot_update = ""
+
+        # 換了廠商、這句話又沒提到類別時，上一輪鎖定的類別只在新廠商真的有
+        # 這個類別的職缺時才沿用。實測：「蝦皮門市有工作嗎」→「美光有交通車
+        # 嗎」，原本會拿「美光」＋「門市」去篩，篩成空的，誤答美光沒有交通車。
+        # 「蝦皮外送」→「那Uber呢」則維持外送（Uber 也有外送職缺）。
+        _previous_brand = user_slots.get("brand", "")
+        if (
+            detected_brand_this_turn
+            and detected_brand_this_turn != _previous_brand
+            and category_slot_update == ""
+            and detected_category_from_text
+        ):
+            _new_brand_jobs = [j for j in active_jobs if job_matches_brand(j, detected_brand_this_turn)]
+            if not filter_jobs_by_category_tiered(_new_brand_jobs, detected_category_from_text):
+                category_slot_update = CLEAR_SLOT
+                detected_category_from_text = ""
 
         current_slots = update_user_slots(
             user_id,
@@ -645,8 +673,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 類別原本完全沒有依廠商窄化，實測回報「Uber外送的工作」會混進
                 # 蝦皮的外送職缺；「momo外送的工作」（momo根本沒有外送職缺）也會
                 # 混進蝦皮/Uber 的職缺，沒有任何提示這不是使用者指定的廠商。
-                _brand_clean_for_intent = clean_text_for_search(detected_brand)
-                _pool = [j for j in _pool if _brand_clean_for_intent in j.get("_search_text", "")]
+                _pool = [j for j in _pool if job_matches_brand(j, detected_brand)]
             _pool_desc = _brand_plus_suffix(detected_brand, "外送")
             _pool_query_phrase = _pool_desc
 
@@ -661,7 +688,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _pool_query_phrase = _pool_desc
 
         elif is_momo_intent:
-            _pool = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["momo", "富邦", "富昇"])]
+            _pool = [j for j in active_jobs if job_matches_brand(j, "momo")]
             _pool_desc = "momo"
             _pool_query_phrase = "momo"
 
@@ -675,8 +702,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # brand_label 也完全不會用到、等於沒篩選——這裡另外手動篩
                 # 一次，避免求職者指定廠商（例如「蝦皮理貨」）時混進其他
                 # 廠商的職缺，答非所問。
-                _brand_clean_for_intent = clean_text_for_search(detected_brand)
-                _pool = [j for j in _pool if _brand_clean_for_intent in j.get("_search_text", "")]
+                _pool = [j for j in _pool if job_matches_brand(j, detected_brand)]
             _pool_desc = _brand_plus_suffix(detected_brand, _category_label_for_intent)
             _pool_query_phrase = _brand_plus_suffix(detected_brand, "理貨" if is_warehouse_intent else "作業員")
 
@@ -686,13 +712,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 跟理貨/倉儲、製造/作業員同一個原因：job_matches_category_filter()
                 # 的 brand_label 參數對「餐飲/服務」這個類別一樣不會生效，這裡
                 # 另外手動篩一次。
-                _brand_clean_for_intent = clean_text_for_search(detected_brand)
-                _pool = [j for j in _pool if _brand_clean_for_intent in j.get("_search_text", "")]
+                _pool = [j for j in _pool if job_matches_brand(j, detected_brand)]
             _pool_desc = _brand_plus_suffix(detected_brand, "餐飲/服務")
             _pool_query_phrase = _pool_desc
 
         elif is_shopee_intent:
-            _pool = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["蝦皮", "spx"])]
+            _pool = [j for j in active_jobs if job_matches_brand(j, "蝦皮")]
             _pool_desc = "蝦皮"
             _pool_query_phrase = "蝦皮"
 
@@ -767,8 +792,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             else:
                 _pool = list(active_jobs)
             if detected_brand:
-                _brand_clean_for_pool = clean_text_for_search(detected_brand)
-                _pool = [j for j in _pool if _brand_clean_for_pool in j.get("_search_text", "")]
+                _pool = [j for j in _pool if job_matches_brand(j, detected_brand)]
             _pool_desc = _brand_plus_suffix(detected_brand, _locked_category_for_secondary) if _locked_category_for_secondary else detected_brand
             _pool_query_phrase = _pool_desc
 
@@ -786,10 +810,18 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # （SHOPEE_CLARIFY_ALL_TEXT，完全由我們自己的按鈕控制、不是猜使用者
         # 打字）時，一律直接顯示全部，不再重新判斷要不要問，避免卡在無限循環。
         if is_shopee_intent and not _has_secondary_intent and raw_msg.strip() != SHOPEE_CLARIFY_ALL_TEXT:
-            _shopee_known_categories = distinct_routable_categories_for_jobs(_pool)
+            # 已經鎖定地區時，只列出這個地區真的有的類型——原本會列出全台的
+            # 類型，求職者點了之後才發現該地區根本沒有。這個地區完全沒有蝦皮
+            # 職缺時不問，交給下面步驟 1c 的同縣市退讓建議處理。
+            _shopee_scope = _pool
+            if current_location:
+                _shopee_loc_clean = current_location.replace("台", "臺")
+                _shopee_scope = [j for j in _pool if current_location in j.get("_location_search_text", "") or _shopee_loc_clean in j.get("_location_search_text", "")]
+            _shopee_known_categories = distinct_routable_categories_for_jobs(_shopee_scope) if _shopee_scope else []
             if len(_shopee_known_categories) >= 2:
                 _shopee_category_emoji = {"外送": "🚚", "門市": "🏬", "理貨/倉儲": "📦", "製造/作業員": "🏭", "餐飲/服務": "🍽️"}
-                clarify_reply = f"蝦皮目前有{'、'.join(_shopee_known_categories)}這幾種職缺在招募，請問您想看哪一種呢？😊"
+                _shopee_where = f"在{current_location}" if current_location else ""
+                clarify_reply = f"蝦皮{_shopee_where}目前有{'、'.join(_shopee_known_categories)}這幾種職缺在招募，請問您想看哪一種呢？😊"
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", clarify_reply)
                 shopee_clarify_buttons = [
@@ -872,15 +904,24 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 if county_alt_jobs:
                     county_name = resolve_county_for_location(current_location, active_jobs)
                     district_labels = find_same_county_district_labels(county_alt_jobs, current_location, active_jobs)
-                    _desc_for_county = _pool_desc if _has_pool_intent else "、".join(_secondary_desc_parts())
+                    # 描述要同時講出候選池跟次要條件：實測「楊梅蝦皮有公司車的嗎」
+                    # 原本回「楊梅目前沒有明確列出的蝦皮職缺」，但楊梅其實有蝦皮
+                    # 職缺，缺的是公司車。
+                    _sec_desc_for_county = "、".join(_secondary_desc_parts())
+                    if _has_pool_intent and _sec_desc_for_county:
+                        _desc_for_county = f"符合{_sec_desc_for_county}的{_pool_desc}"
+                    elif _has_pool_intent:
+                        _desc_for_county = _pool_desc
+                    else:
+                        _desc_for_county = f"符合{_sec_desc_for_county}的"
                     if district_labels:
                         fallback_reply_text = (
-                            f"「{current_location}」目前沒有明確列出的{_desc_for_county}職缺，"
+                            f"「{current_location}」目前沒有明確列出{_desc_for_county}職缺，"
                             f"不過{county_name}的{'、'.join(district_labels)}有相關職缺，要不要參考看看呢？😊"
                         )
                     else:
                         fallback_reply_text = (
-                            f"「{current_location}」目前沒有明確列出的{_desc_for_county}職缺，"
+                            f"「{current_location}」目前沒有明確列出{_desc_for_county}職缺，"
                             f"不過同樣在{county_name}還有相關職缺，要不要參考看看呢？😊"
                         )
                     append_user_history(user_id, "求職者", raw_msg)
@@ -950,8 +991,21 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 完全沒有辦法放寬出結果 → 老實告知目前沒有符合的職缺，不落到
                 # AI 決策保底流程（避免 AI 從自由文字裡硬湊答案，見 HANDOFF.md
                 # 日領誤判案例）。
+                # 回覆要講出真正卡住的條件：實測候選池本身（廠商＋類別）就是
+                # 空的，或是地區根本沒有職缺時，原本一律說成「沒有符合月領」，
+                # 讓求職者以為是發薪方式的問題。
                 _desc = "、".join(_secondary_desc_parts())
-                no_match_reply = f"不好意思，沛沛目前查詢到的職缺中，暫時沒有符合{_desc}的喔 🙏 要不要告訴沛沛您想找哪個地區或哪種工作，幫您看看還有沒有其他合適的職缺呢？"
+                _scope_bits = [b for b in [current_location, _pool_desc if _has_pool_intent else ""] if b]
+                _scope = "的".join(_scope_bits)
+                if _has_pool_intent and not _effective_pool:
+                    _no_match_reason = f"目前沒有{_pool_desc}的職缺"
+                elif not _loc_filtered:
+                    _no_match_reason = f"目前沒有{_scope}的職缺"
+                elif _scope:
+                    _no_match_reason = f"{_scope}的職缺中，暫時沒有符合{_desc}的"
+                else:
+                    _no_match_reason = f"目前查詢到的職缺中，暫時沒有符合{_desc}的"
+                no_match_reply = f"不好意思，沛沛{_no_match_reason}喔 🙏 要不要告訴沛沛您想找哪個地區或哪種工作，幫您看看還有沒有其他合適的職缺呢？"
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", no_match_reply)
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(
