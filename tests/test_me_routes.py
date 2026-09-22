@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -36,6 +37,69 @@ class MeRoutingSmokeTests(unittest.TestCase):
         resp = self.client.post("/me/salary-repayment/new", data={"name": "李小華"}, follow_redirects=False)
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/me")
+
+    def test_resend_email_redirects_to_login_when_not_authenticated(self):
+        """補寄信（2026-09-22 新增）路由一樣先過登入檢查。"""
+        resp = self.client.post("/me/salary-repayment/SAL-1/resend-email", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/me")
+
+
+class ResendSalaryRepaymentEmailSubmitTests(unittest.TestCase):
+    """resend_salary_repayment_email_submit()（2026-09-22 新增）：伺服器端
+    再次確認這個帳號看不看得到這筆紀錄，不能只靠前端不顯示按鈕——就算有人
+    直接組網址呼叫這個路由，看不到的紀錄一樣會被擋下。"""
+
+    class _FakeSession(dict):
+        def get(self, key, default=None):
+            return dict.get(self, key, default)
+
+    class _FakeRequest:
+        def __init__(self, user):
+            self.session = ResendSalaryRepaymentEmailSubmitTests._FakeSession({"user": user})
+
+    def _account(self):
+        return {"username": "alice", "name": "王小明", "is_platform_admin": False}
+
+    def test_record_not_visible_to_account_is_rejected_without_calling_gas(self):
+        with mock.patch.object(me_routes, "get_my_repayment_records", return_value=([], None)):
+            with mock.patch.object(me_routes, "resend_salary_repayment_email") as mock_resend:
+                result = me_routes.resend_salary_repayment_email_submit(
+                    "SAL-1", self._FakeRequest(self._account()), redirect=None
+                )
+        mock_resend.assert_not_called()
+        self.assertEqual(result.status_code, 303)
+        self.assertIn("resend_error", result.headers["location"])
+
+    def test_visible_record_triggers_resend_and_redirects_on_success(self):
+        records = [{"補款單號": "SAL-1", "審核狀態": "已核准"}]
+        with mock.patch.object(me_routes, "get_my_repayment_records", return_value=(records, None)):
+            with mock.patch.object(
+                me_routes, "resend_salary_repayment_email",
+                return_value={"status": "success", "message": "已重新寄送通知信至：a@b.com"},
+            ) as mock_resend:
+                result = me_routes.resend_salary_repayment_email_submit(
+                    "SAL-1", self._FakeRequest(self._account()), redirect=None
+                )
+        mock_resend.assert_called_once_with("SAL-1")
+        self.assertEqual(result.status_code, 303)
+        self.assertIn("resend_ok", result.headers["location"])
+
+    def test_visible_record_gas_failure_redirects_with_error(self):
+        records = [{"補款單號": "SAL-1", "審核狀態": "已核准"}]
+        with mock.patch.object(me_routes, "get_my_repayment_records", return_value=(records, None)):
+            with mock.patch.object(
+                me_routes, "resend_salary_repayment_email",
+                return_value={"status": "error", "message": "沒有配置任何有效的收件人信箱"},
+            ):
+                result = me_routes.resend_salary_repayment_email_submit(
+                    "SAL-1", self._FakeRequest(self._account()), redirect=None
+                )
+        self.assertEqual(result.status_code, 303)
+        from urllib.parse import unquote
+
+        self.assertIn("resend_error", result.headers["location"])
+        self.assertIn("收件人信箱", unquote(result.headers["location"]))
 
 
 class RequireLoginDependencyTests(unittest.TestCase):

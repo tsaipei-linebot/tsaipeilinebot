@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -111,6 +112,56 @@ class ResolveApproverNameTests(unittest.TestCase):
 
     def test_blank_approver_returns_empty_string(self):
         self.assertEqual(svc._resolve_approver_name({"核准主管": ""}, {}), "")
+
+
+class HasFinanceAccessTests(unittest.TestCase):
+    """財務部專區（2026-09-22 新增）的權限判斷：跟人資部門/桃園所/高雄所
+    同一套「部門字串比對」做法。"""
+
+    def test_no_account_returns_false(self):
+        self.assertFalse(svc.has_finance_access(None))
+
+    def test_platform_admin_always_has_access(self):
+        self.assertTrue(svc.has_finance_access({"is_platform_admin": True, "department": ""}))
+
+    def test_matching_department_has_access(self):
+        self.assertTrue(svc.has_finance_access({"is_platform_admin": False, "department": "財務部"}))
+
+    def test_other_department_has_no_access(self):
+        self.assertFalse(svc.has_finance_access({"is_platform_admin": False, "department": "新北所"}))
+
+
+class GetAllApprovedRepaymentRecordsTests(unittest.TestCase):
+    """財務部專區（2026-09-22 新增）：不套用 get_my_repayment_records() 的
+    可見範圍篩選，改成只留「審核狀態＝已核准」的紀錄。"""
+
+    def test_returns_friendly_error_when_sheet_id_not_configured(self):
+        original = svc.SALARY_REPAYMENT_SHEET_ID
+        svc.SALARY_REPAYMENT_SHEET_ID = ""
+        try:
+            records, error = svc.get_all_approved_repayment_records()
+        finally:
+            svc.SALARY_REPAYMENT_SHEET_ID = original
+        self.assertEqual(records, [])
+        self.assertIn("SALARY_REPAYMENT_SHEET_ID", error)
+
+    def test_only_approved_records_included_and_sorted_newest_first(self):
+        org_rows = []
+        record_rows = [
+            {"申請人姓名": "王小明", "審核狀態": "已核准", "申請時間": "2026-09-10", "核准主管": ""},
+            {"申請人姓名": "李小華", "審核狀態": "尚未審核", "申請時間": "2026-09-11", "核准主管": ""},
+            {"申請人姓名": "陳大文", "審核狀態": "已核准", "申請時間": "2026-09-15", "核准主管": ""},
+        ]
+        with mock.patch.object(svc, "_fetch_sheet_rows", return_value=(org_rows, record_rows, None)):
+            records, error = svc.get_all_approved_repayment_records()
+        self.assertIsNone(error)
+        self.assertEqual([r["申請人姓名"] for r in records], ["陳大文", "王小明"])
+
+    def test_propagates_fetch_error(self):
+        with mock.patch.object(svc, "_fetch_sheet_rows", return_value=([], [], "讀取失敗")):
+            records, error = svc.get_all_approved_repayment_records()
+        self.assertEqual(records, [])
+        self.assertEqual(error, "讀取失敗")
 
 
 class GetMyRepaymentRecordsTests(unittest.TestCase):

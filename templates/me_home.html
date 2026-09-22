@@ -19,6 +19,13 @@
 </p>
 {% endif %}
 
+{% if resend_ok %}
+<p class="success">通知信已重新寄出。</p>
+{% endif %}
+{% if resend_error %}
+<p class="warning">補寄信失敗：{{ resend_error }}</p>
+{% endif %}
+
 <h2 class="section-title">薪資補款紀錄</h2>
 <p><a href="/me/salary-repayment/new" class="btn btn-primary">+ 送出新的薪資補款申請</a></p>
 {% if salary_repayment_error %}
@@ -32,12 +39,21 @@
         <thead>
             <tr>
                 {% for col in salary_repayment_columns %}<th>{{ col }}</th>{% endfor %}
+                <th></th>
             </tr>
         </thead>
         <tbody>
             {% for record in salary_repayment_records %}
             <tr>
                 {% for col in salary_repayment_columns %}<td>{{ record.get(col, "") }}</td>{% endfor %}
+                <td>
+                    {% if record.get("審核狀態") == "已核准" %}
+                    <form method="post" action="/me/salary-repayment/{{ record.get('補款單號', '') }}/resend-email" style="display:inline"
+                          onsubmit="return confirm('確定要重新寄送這筆補款通知信嗎？')">
+                        <button type="submit" class="btn btn-small">補寄信</button>
+                    </form>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>

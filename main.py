@@ -21,6 +21,7 @@ import department_routes
 import dispatch_contract_routes
 import dispatch_routes
 import dispatch_webhook_routes
+import finance_routes
 import job_listing_routes
 import project_contract_routes
 import login_routes
@@ -115,6 +116,10 @@ app.include_router(dispatch_routes.router)
 # 每個所各自獨立的 LINE Channel（跟招募機器人、管理部各自獨立），見
 # dispatch_line.py 開頭說明。
 app.include_router(dispatch_webhook_routes.router)
+# /finance：財務部專區（2026-09-22 新增），沒有自己的模組代碼，能不能
+# 看到照「部門」判斷（見 services/salary_repayment_service.py 開頭
+# 說明），跟 /dispatch/{site} 一樣直接掛在根 app。
+app.include_router(finance_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，

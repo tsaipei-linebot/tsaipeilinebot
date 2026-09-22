@@ -24,6 +24,7 @@ from dispatch_sites import list_sites
 from platform_announcements import ANNOUNCEMENT_DEFAULT_DAYS
 from platform_templating import templates
 from services.dispatch_service import has_dispatch_access
+from services.salary_repayment_service import has_finance_access
 
 router = APIRouter()
 
@@ -147,6 +148,19 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
                     "help_href": "",
                 }
             )
+
+    # 財務部專區（2026-09-22 新增）：一樣不掛進 platform_accounts.MODULES，
+    # 照部門判斷（見 services/salary_repayment_service.has_finance_access()
+    # 開頭說明）。
+    if has_finance_access(account):
+        cards.append(
+            {
+                "name": "財務部專區",
+                "description": "查看所有已核准的薪資補款紀錄，依日期區間下載存查用 PDF",
+                "href": "/finance",
+                "help_href": "",
+            }
+        )
     return templates.TemplateResponse(
         request,
         "portal_home.html",

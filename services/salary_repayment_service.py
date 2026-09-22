@@ -45,6 +45,20 @@ DISPLAY_COLUMNS = [
 ]
 
 
+FINANCE_DEPARTMENT = "財務部"
+
+
+def has_finance_access(account: dict) -> bool:
+    """財務部專區（/finance，2026-09-22 新增）的權限判斷：全平台管理員，
+    或帳號部門是「財務部」，才看得到卡片／進得去頁面——跟人資部門/
+    桃園所/高雄所同一套「部門字串比對」做法。"""
+    if not account:
+        return False
+    if account.get("is_platform_admin"):
+        return True
+    return account.get("department") == FINANCE_DEPARTMENT
+
+
 def _get_sheets_service():
     from google.auth import default as google_auth_default
     from googleapiclient.discovery import build
@@ -117,12 +131,12 @@ def _resolve_approver_name(record: dict, line_id_name_lookup: dict) -> str:
     return line_id_name_lookup.get(line_id, line_id)
 
 
-def get_my_repayment_records(viewer_name: str):
-    """回傳 (records, error)。records 是 viewer_name 看得到的補款紀錄列表
-    （已經把「核准主管」從 LINE ID 換成姓名、依申請時間新到舊排序）；讀取
-    失敗時 records 是空列表，error 是可以直接顯示在畫面上的中文說明。"""
+def _fetch_sheet_rows():
+    """回傳 (org_rows, record_rows, error)——把兩個分頁的原始資料抓下來，
+    給 get_my_repayment_records()／get_all_approved_repayment_records()
+    共用，避免兩邊各自重複一份幾乎一樣的 Sheets API 呼叫跟錯誤處理。"""
     if not SALARY_REPAYMENT_SHEET_ID:
-        return [], "尚未設定 SALARY_REPAYMENT_SHEET_ID，請聯絡系統管理員設定。"
+        return [], [], "尚未設定 SALARY_REPAYMENT_SHEET_ID，請聯絡系統管理員設定。"
 
     from googleapiclient.errors import HttpError
 
@@ -137,16 +151,26 @@ def get_my_repayment_records(viewer_name: str):
         ).execute()
     except HttpError as e:
         if e.resp.status == 403:
-            return [], _SERVICE_ACCOUNT_HINT
+            return [], [], _SERVICE_ACCOUNT_HINT
         if e.resp.status == 404:
-            return [], "找不到這份 Google Sheet 或指定的分頁，請確認 config.py 的分頁名稱設定是否正確。"
-        return [], f"讀取 Google Sheet 時發生錯誤：{e}"
+            return [], [], "找不到這份 Google Sheet 或指定的分頁，請確認 config.py 的分頁名稱設定是否正確。"
+        return [], [], f"讀取 Google Sheet 時發生錯誤：{e}"
     except Exception as e:
-        return [], f"讀取 Google Sheet 時發生錯誤：{e}"
+        return [], [], f"讀取 Google Sheet 時發生錯誤：{e}"
 
     value_ranges = result.get("valueRanges", [])
     org_rows = rows_to_dicts(value_ranges[0].get("values", [])) if len(value_ranges) > 0 else []
     record_rows = rows_to_dicts(value_ranges[1].get("values", [])) if len(value_ranges) > 1 else []
+    return org_rows, record_rows, None
+
+
+def get_my_repayment_records(viewer_name: str):
+    """回傳 (records, error)。records 是 viewer_name 看得到的補款紀錄列表
+    （已經把「核准主管」從 LINE ID 換成姓名、依申請時間新到舊排序）；讀取
+    失敗時 records 是空列表，error 是可以直接顯示在畫面上的中文說明。"""
+    org_rows, record_rows, error = _fetch_sheet_rows()
+    if error:
+        return [], error
 
     manager_lookup = build_manager_lookup_from_accounts(platform_accounts.list_accounts())
     line_id_name_lookup = build_line_id_name_lookup(org_rows)
@@ -157,3 +181,24 @@ def get_my_repayment_records(viewer_name: str):
     visible.sort(key=lambda r: r.get("申請時間", ""), reverse=True)
 
     return visible, None
+
+
+# 2026-09-22 新增：財務部專區用，不分申請人/主管，回傳「所有」已核准的
+# 補款紀錄（退回的紀錄 GAS 那邊本來就會直接從試算表刪除，不會留在這裡；
+# 尚未審核的財務不需要看到，只看確定要撥款的）。
+def get_all_approved_repayment_records():
+    """回傳 (records, error)，records 依申請時間新到舊排序，已核准的補款
+    紀錄，不套用 get_my_repayment_records() 那套「申請人本人或其主管」的
+    可見範圍篩選。"""
+    org_rows, record_rows, error = _fetch_sheet_rows()
+    if error:
+        return [], error
+
+    line_id_name_lookup = build_line_id_name_lookup(org_rows)
+
+    approved = [r for r in record_rows if (r.get("審核狀態") or "").strip() == "已核准"]
+    for record in approved:
+        record["核准主管"] = _resolve_approver_name(record, line_id_name_lookup)
+    approved.sort(key=lambda r: r.get("申請時間", ""), reverse=True)
+
+    return approved, None

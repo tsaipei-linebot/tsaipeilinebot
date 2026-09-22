@@ -192,6 +192,13 @@ SALARY_REPAYMENT_RECORDS_SHEET_NAME = os.getenv("SALARY_REPAYMENT_RECORDS_SHEET_
 # 不會讓同仁誤以為送出成功了。
 JOB_PORTAL_GAS_WEBAPP_URL = os.getenv("JOB_PORTAL_GAS_WEBAPP_URL", "")
 
+# 「補寄信」（/me 薪資補款紀錄）跟「財務部專區」批次匯出 PDF
+# （2026-09-22 新增，見 HANDOFF.md）都會動到既有資料（重寄通知信、批次
+# 讀取全部已核准補款紀錄），不是像 SUBMIT_SALARY 那樣的公開表單送出，
+# 呼叫 GAS 那支 Web App 時要帶這組共用密鑰（對應 GAS 那邊「指令碼屬性」
+# 的 ADMIN_API_SECRET，兩邊要設成同一個值），GAS 沒收到對的密鑰一律拒絕。
+JOB_PORTAL_ADMIN_API_SECRET = os.getenv("JOB_PORTAL_ADMIN_API_SECRET", "")
+
 # ==========================================
 # 12. 每日健康報告／FAQ 週報（監控與告警機制，見 HANDOFF.md）
 # 只有一個機制：Cloud Scheduler 每天呼叫一次 /internal/daily-report/run。
