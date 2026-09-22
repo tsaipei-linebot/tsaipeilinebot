@@ -62,10 +62,13 @@ def _account_can_claim_department(viewer_account: dict, vendor) -> bool:
         return False
     if not platform_accounts.is_manager_rank(viewer_account.get("rank", "")):
         return False
-    department = viewer_account.get("department") or ""
+    department = platform_accounts.normalize_department(viewer_account.get("department"))
     if not department:
         return False
-    return department in (vendor.get("service_departments") or [])
+    normalized_service_departments = {
+        platform_accounts.normalize_department(d) for d in (vendor.get("service_departments") or [])
+    }
+    return department in normalized_service_departments
 
 
 def can_view_via_vendor_department(viewer_account: dict, vendor_id: str, vendor_lookup: dict) -> bool:
@@ -115,10 +118,13 @@ def viewer_can_link_contract_vendor(viewer_account: dict, vendor_id: str, vendor
     vendor = vendor_lookup.get(vendor_id)
     if not vendor:
         return False
-    department = viewer_account.get("department") or ""
+    department = platform_accounts.normalize_department(viewer_account.get("department"))
     if not department:
         return False
-    return department in (vendor.get("service_departments") or [])
+    normalized_service_departments = {
+        platform_accounts.normalize_department(d) for d in (vendor.get("service_departments") or [])
+    }
+    return department in normalized_service_departments
 
 
 def viewer_has_any_department_access(viewer_account: dict, vendor_lookup: dict) -> bool:
@@ -129,10 +135,13 @@ def viewer_has_any_department_access(viewer_account: dict, vendor_lookup: dict) 
         return True
     if not platform_accounts.is_manager_rank(viewer_account.get("rank", "")):
         return False
-    department = viewer_account.get("department") or ""
+    department = platform_accounts.normalize_department(viewer_account.get("department"))
     if not department:
         return False
-    return any(department in (v.get("service_departments") or []) for v in vendor_lookup.values())
+    return any(
+        department in {platform_accounts.normalize_department(d) for d in (v.get("service_departments") or [])}
+        for v in vendor_lookup.values()
+    )
 
 
 def visible_client_contract_records(records: list, viewer_account: dict, vendor_lookup: dict) -> list:

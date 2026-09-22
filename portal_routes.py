@@ -20,12 +20,21 @@ from fastapi.responses import JSONResponse, RedirectResponse
 import job_portal_sso
 import platform_accounts
 import platform_announcements
+from delivery.auth import has_delivery_access
 from dispatch_sites import list_sites
 from hr import insurance_repository as insurance_repo
 from platform_announcements import ANNOUNCEMENT_DEFAULT_DAYS
 from platform_templating import templates
 from services.dispatch_service import has_dispatch_access
 from services.salary_repayment_service import has_finance_access
+
+# 這 3 個部門的加退保入口已經併進各自原本就有的系統卡片（新北所(配送組)→
+# 配送部系統首頁、桃園所/高雄所→各自的派遣媒合專區首頁，2026-09-22 使用者
+# 確認的設計），不再另外顯示獨立的「{部門}專區」卡片，避免同一個部門
+# 同仁的畫面上出現兩張功能重疊的卡片。
+_INSURANCE_MERGED_ELSEWHERE_DEPARTMENTS = {
+    platform_accounts.normalize_department(d) for d in ("新北所(配送組)", "桃園所", "高雄所")
+}
 
 router = APIRouter()
 
@@ -121,7 +130,14 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
     account = platform_accounts.current_account(request)
     cards = []
     for module in platform_accounts.MODULES:
-        if not platform_accounts.has_module_access(account, module["code"]):
+        # 配送部（module code "delivery"）2026-09-22 起改成「模組打勾 or
+        # 部門是新北所(配送組)」兩者符合其一即可，跟其餘模組維持純模組
+        # 打勾判斷不一樣，見 delivery/auth.py 的 has_delivery_access() 說明。
+        if module["code"] == "delivery":
+            allowed = has_delivery_access(account)
+        else:
+            allowed = platform_accounts.has_module_access(account, module["code"])
+        if not allowed:
             continue
         info = _MODULE_CARD_INFO.get(module["code"], {})
         cards.append(
@@ -150,27 +166,35 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
                 }
             )
 
-    # 每日加退保（2026-09-22 新增部門卡片）：原本設計是 7 個上傳部門的
-    # 同仁都要先勾「人資專區」模組權限才看得到卡片、才能進去操作，但
-    # 使用者事後確認這不是原本討論的設計——「人資專區」應該只給人資
-    # 收彙總資料用，7 個部門各自應該有自己的卡片，靠帳號的部門字串就能
-    # 直接進去做加退保，不需要另外開通模組權限（跟桃園所/高雄所專區、
-    # 財務部專區同一種「不掛模組、照部門判斷」的做法）。一個帳號的
-    # `department` 只會對到 0 或 1 個上傳部門，所以這裡最多加一張卡片，
-    # 不用像 dispatch 那樣跑迴圈。
+    # 每日加退保（2026-09-22 新增部門卡片，同日稍晚再調整成跟其他部門
+    # 一致的「{部門}專區」命名）：7 個上傳部門靠帳號的部門字串就能直接
+    # 進去做加退保，不需要另外開通模組權限（跟桃園所/高雄所專區、財務部
+    # 專區同一種「不掛模組、照部門判斷」的做法）。一個帳號的 `department`
+    # 只會對到 0 或 1 個上傳部門，所以這裡最多加一張卡片，不用像 dispatch
+    # 那樣跑迴圈。
+    #
+    # 新北所(配送組)/桃園所/高雄所這 3 個部門原本各自就有其他系統（配送部
+    # 系統／派遣媒合專區），使用者確認不要重複顯示兩張卡片，改成把加退保
+    # 併進那些系統自己的首頁當成一個按鈕（見 delivery/templates/home.html、
+    # templates/dispatch_home.html），這裡只給「沒有其他系統」的部門顯示
+    # 獨立卡片。
     #
     # 刻意不比照桃園所/高雄所/財務部卡片讓全平台管理員每個部門都看得到：
     # `/hr/insurance/upload` 這支路由是直接讀帳號自己的 `department` 決定
     # 要看哪個部門的資料，不像 `/dispatch/{所別代碼}` 那樣網址本身就帶了
-    # 所別，管理員自己的部門通常是空的，硬要顯示 7 張卡片點進去只會被
+    # 所別，管理員自己的部門通常是空的，硬要顯示卡片點進去只會被
     # `can_upload()` 擋下來、變成看得到但點不進去的空卡片。管理員本來就
     # 能從「人資專區」→「每日加退彙總」看到全部部門的彙整資料，不需要
-    # 額外顯示這 7 張卡片。
-    if insurance_repo.can_upload(account):
+    # 額外顯示這些卡片。
+    if (
+        insurance_repo.can_upload(account)
+        and platform_accounts.normalize_department(account.get("department"))
+        not in _INSURANCE_MERGED_ELSEWHERE_DEPARTMENTS
+    ):
         department = account.get("department") or ""
         cards.append(
             {
-                "name": f"{department} 加退保",
+                "name": f"{department}專區",
                 "description": "上傳每日加退保 Excel、查詢自己部門的上傳紀錄",
                 "href": "/hr/insurance/upload",
                 "help_href": "",

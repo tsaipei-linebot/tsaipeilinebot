@@ -398,5 +398,31 @@ class AuthenticateLockoutIntegrationTests(unittest.TestCase):
         mock_record.assert_not_called()
 
 
+class NormalizeDepartmentTests(unittest.TestCase):
+    """normalize_department()（2026-09-22 新增）：部門字串比對前先把全形
+    括號轉成半形，避免同一個部門名稱因為打字習慣不同（全形「（）」vs
+    半形「()」）造成比對失敗——這個情況畫面上完全看不出差異，使用者
+    自己抓不出來，見這個函式在 platform_accounts.py 開頭的說明。"""
+
+    def test_fullwidth_parens_converted_to_halfwidth(self):
+        self.assertEqual(platform_accounts.normalize_department("新北所（配送組）"), "新北所(配送組)")
+
+    def test_halfwidth_parens_unchanged(self):
+        self.assertEqual(platform_accounts.normalize_department("新北所(配送組)"), "新北所(配送組)")
+
+    def test_mixed_fullwidth_and_halfwidth_both_normalize_the_same(self):
+        a = platform_accounts.normalize_department("台北所（派遣組)")
+        b = platform_accounts.normalize_department("台北所(派遣組）")
+        self.assertEqual(a, b)
+        self.assertEqual(a, "台北所(派遣組)")
+
+    def test_none_and_empty_string_return_empty_string(self):
+        self.assertEqual(platform_accounts.normalize_department(None), "")
+        self.assertEqual(platform_accounts.normalize_department(""), "")
+
+    def test_other_characters_unaffected(self):
+        self.assertEqual(platform_accounts.normalize_department("財務部"), "財務部")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -63,6 +63,13 @@ class CanViewViaVendorDepartmentTests(unittest.TestCase):
         lookup = {"v1": {"service_departments": []}}
         self.assertFalse(contract_summary_service.can_view_via_vendor_department(_manager("業務一部"), "v1", lookup))
 
+    def test_fullwidth_parens_in_account_department_still_matches(self):
+        """2026-09-22 新增：部門名稱裡的括號一邊全形一邊半形也要比對得到
+        ——見 platform_accounts.normalize_department() 的說明。"""
+        lookup = {"v1": {"service_departments": ["新北所(配送組)"]}}
+        manager = _manager("新北所（配送組）")
+        self.assertTrue(contract_summary_service.can_view_via_vendor_department(manager, "v1", lookup))
+
 
 class CanViewViaVendorDepartmentSingleTests(unittest.TestCase):
     def test_platform_admin_always_true_without_querying(self):

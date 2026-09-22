@@ -33,18 +33,23 @@ E-learning 這幾種檔案（2026-09-22 使用者確認之後如果需要再另�
 """
 import time
 
+import platform_accounts
 from hr.config import INSURANCE_COLLECTOR_DEPARTMENT, INSURANCE_UPLOAD_DEPARTMENTS
 from hr.db import insurance_day_locks_ref, insurance_uploads_ref
 
+_NORMALIZED_UPLOAD_DEPARTMENTS = {platform_accounts.normalize_department(d) for d in INSURANCE_UPLOAD_DEPARTMENTS}
+
 
 def can_upload(account: dict) -> bool:
-    return (account.get("department") or "") in INSURANCE_UPLOAD_DEPARTMENTS
+    return platform_accounts.normalize_department(account.get("department")) in _NORMALIZED_UPLOAD_DEPARTMENTS
 
 
 def is_collector(account: dict) -> bool:
     if account.get("is_platform_admin"):
         return True
-    return (account.get("department") or "") == INSURANCE_COLLECTOR_DEPARTMENT
+    return platform_accounts.normalize_department(account.get("department")) == platform_accounts.normalize_department(
+        INSURANCE_COLLECTOR_DEPARTMENT
+    )
 
 
 def has_insurance_access(account: dict) -> bool:

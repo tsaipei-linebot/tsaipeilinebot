@@ -115,6 +115,27 @@ class RequireAccessDependencyTests(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class DispatchHomeInsurancePanelTests(unittest.TestCase):
+    """dispatch_home()：2026-09-22 新增 show_insurance_panel 這個 context
+    變數，決定要不要在派遣媒合專區首頁多顯示「每日加退保」功能區塊（見
+    templates/dispatch_home.html），判斷邏輯直接沿用
+    hr.insurance_repository.can_upload()——桃園所/高雄所帳號的部門字串
+    剛好就是加退保的 7 個上傳部門之一，會顯示；其他所之後如果部門名稱
+    不在那份清單裡，就不會顯示。"""
+
+    def test_shows_for_taoyuan_department(self):
+        with mock.patch.object(dispatch_routes, "templates") as mock_templates:
+            dispatch_routes.dispatch_home(SITE, _FakeRequest(_taoyuan_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertTrue(context["show_insurance_panel"])
+
+    def test_shows_for_kaohsiung_department(self):
+        with mock.patch.object(dispatch_routes, "templates") as mock_templates:
+            dispatch_routes.dispatch_home("kaohsiung", _FakeRequest(_kaohsiung_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertTrue(context["show_insurance_panel"])
+
+
 class CreatePersonnelRouteTests(unittest.TestCase):
     """新增人員路由：姓名/電話缺一不可，資格複選（checkbox）用
     form.getlist() 讀，跟合作方式管理「適用廠商」checkbox 是同一種做法。"""

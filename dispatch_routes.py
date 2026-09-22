@@ -14,6 +14,7 @@ import platform_accounts
 from config import TAIPEI_TZ
 from dispatch_line import push_message
 from dispatch_sites import get_site
+from hr import insurance_repository as insurance_repo
 from platform_templating import templates
 from services.dispatch_service import (
     QUALIFICATION_MAP,
@@ -76,7 +77,12 @@ def _template_context(site: str, request: Request, **extra) -> dict:
 def dispatch_home(site: str, request: Request, redirect=Depends(_require_access)):
     if redirect:
         return redirect
-    return templates.TemplateResponse(request, "dispatch_home.html", _template_context(site, request))
+    account = platform_accounts.current_account(request)
+    return templates.TemplateResponse(
+        request,
+        "dispatch_home.html",
+        _template_context(site, request, show_insurance_panel=insurance_repo.can_upload(account)),
+    )
 
 
 # ==========================================

@@ -248,7 +248,7 @@ class PortalHomeHelpLinkTests(unittest.TestCase):
     def test_all_modules_have_help_href(self):
         cards = self._cards()
         expected = {
-            "新北所(配送組)系統": "/delivery/help",
+            "新北所(配送組)專區": "/delivery/help",
             "管理部": "/management/help",
             "人資專區": "/hr/help",
             "少凱業務開發專區": "/salesdev/help",
@@ -329,11 +329,16 @@ class PortalHomeFinanceCardTests(unittest.TestCase):
 
 
 class PortalHomeInsuranceCardTests(unittest.TestCase):
-    """每日加退保部門卡片（2026-09-22 新增，跟使用者確認設計後從「人資
-    專區」底下拆出來）：跟財務部/桃園所/高雄所同一套「部門字串比對」
-    權限來源，但刻意不給全平台管理員例外——見 portal_routes.py 這段的
-    說明，管理員自己的部門通常是空的，這張卡片點進去是靠帳號自己的
-    department 決定要看哪個部門，硬顯示只會變成點不進去的空卡片。"""
+    """每日加退保部門卡片（2026-09-22 新增，同日稍晚再改成跟使用者確認的
+    「{部門}專區」命名，並把新北所(配送組)/桃園所/高雄所這 3 個原本就有
+    其他系統的部門併掉獨立卡片，見 portal_routes.py 這段的說明）：跟
+    財務部/桃園所/高雄所同一套「部門字串比對」權限來源，但刻意不給全
+    平台管理員例外——管理員自己的部門通常是空的，這張卡片點進去是靠
+    帳號自己的 department 決定要看哪個部門，硬顯示只會變成點不進去的
+    空卡片。用 href 判斷是不是這張獨立卡片，不是用卡片名稱後綴，因為
+    「專區」這個後綴現在其他卡片（delivery/dispatch）也會用到。"""
+
+    _INSURANCE_HREF = "/hr/insurance/upload"
 
     def _cards(self, account):
         with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=[]):
@@ -342,34 +347,64 @@ class PortalHomeInsuranceCardTests(unittest.TestCase):
         context = mock_templates.TemplateResponse.call_args[0][2]
         return {c["name"]: c for c in context["cards"]}
 
-    def test_shows_for_upload_department(self):
-        account = {"username": "dora", "name": "Dora", "department": "桃園所", "is_platform_admin": False, "modules": []}
+    def _insurance_card_names(self, cards):
+        return [name for name, card in cards.items() if card["href"] == self._INSURANCE_HREF]
+
+    def test_shows_for_upload_department_without_other_system(self):
+        account = {"username": "gina", "name": "Gina", "department": "台北所(派遣組)", "is_platform_admin": False, "modules": []}
         cards = self._cards(account)
-        self.assertIn("桃園所 加退保", cards)
-        self.assertEqual(cards["桃園所 加退保"]["href"], "/hr/insurance/upload")
+        self.assertIn("台北所(派遣組)專區", cards)
+        self.assertEqual(cards["台北所(派遣組)專區"]["href"], self._INSURANCE_HREF)
 
     def test_shows_for_department_with_parentheses(self):
-        account = {"username": "fay", "name": "Fay", "department": "新北所(配送組)", "is_platform_admin": False, "modules": []}
+        account = {"username": "ivy", "name": "Ivy", "department": "台北所(國際組)", "is_platform_admin": False, "modules": []}
         cards = self._cards(account)
-        self.assertIn("新北所(配送組) 加退保", cards)
+        self.assertIn("台北所(國際組)專區", cards)
 
     def test_hidden_for_unrelated_department(self):
         account = {"username": "bob", "name": "Bob", "department": "新北所", "is_platform_admin": False, "modules": []}
         cards = self._cards(account)
-        self.assertEqual([name for name in cards if name.endswith("加退保")], [])
+        self.assertEqual(self._insurance_card_names(cards), [])
 
     def test_hidden_for_insurance_collector_department(self):
         """人資部門自己不算「上傳部門」，不會多一張加退保卡片——他們是
         走「人資專區」進去看彙總，不是走部門卡片上傳。"""
         account = {"username": "hana", "name": "Hana", "department": "人資部門", "is_platform_admin": False, "modules": []}
         cards = self._cards(account)
-        self.assertEqual([name for name in cards if name.endswith("加退保")], [])
+        self.assertEqual(self._insurance_card_names(cards), [])
 
     def test_not_shown_for_platform_admin(self):
-        """刻意跟桃園所/高雄所/財務部卡片不同：管理員不會看到 7 張部門
-        卡片（見上面 class docstring 的說明）。"""
+        """刻意跟桃園所/高雄所/財務部卡片不同：管理員不會看到部門卡片
+        （見上面 class docstring 的說明）。"""
         cards = self._cards(_admin_account())
-        self.assertEqual([name for name in cards if name.endswith("加退保")], [])
+        self.assertEqual(self._insurance_card_names(cards), [])
+
+    def test_taoyuan_department_shows_dispatch_card_not_standalone_insurance_card(self):
+        """桃園所這個上傳部門已經有自己的派遣媒合專區卡片，加退保併進
+        那張卡片裡當一個按鈕（見 templates/dispatch_home.html），/portal
+        不會多顯示一張獨立的「桃園所專區」加退保卡片。"""
+        account = {"username": "dora", "name": "Dora", "department": "桃園所", "is_platform_admin": False, "modules": []}
+        cards = self._cards(account)
+        self.assertIn("桃園所專區", cards)
+        self.assertEqual(cards["桃園所專區"]["href"], "/dispatch/taoyuan")
+        self.assertEqual(self._insurance_card_names(cards), [])
+
+    def test_kaohsiung_department_shows_dispatch_card_not_standalone_insurance_card(self):
+        account = {"username": "carol", "name": "Carol", "department": "高雄所", "is_platform_admin": False, "modules": []}
+        cards = self._cards(account)
+        self.assertIn("高雄所專區", cards)
+        self.assertEqual(cards["高雄所專區"]["href"], "/dispatch/kaohsiung")
+        self.assertEqual(self._insurance_card_names(cards), [])
+
+    def test_delivery_department_shows_delivery_card_not_standalone_insurance_card(self):
+        """新北所(配送組)同樣併進配送部系統首頁的按鈕，不是獨立卡片；
+        帳號沒有勾「新北所(配送組)專區」模組權限，靠部門字串也能看到
+        （見 delivery/auth.py 的 has_delivery_access()）。"""
+        account = {"username": "fay", "name": "Fay", "department": "新北所(配送組)", "is_platform_admin": False, "modules": []}
+        cards = self._cards(account)
+        self.assertIn("新北所(配送組)專區", cards)
+        self.assertEqual(cards["新北所(配送組)專區"]["href"], "/delivery/login")
+        self.assertEqual(self._insurance_card_names(cards), [])
 
 
 class AnnouncementAdminRoutesTests(unittest.TestCase):

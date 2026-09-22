@@ -73,12 +73,16 @@ MODULE_ROLE_MAP = {r["code"]: r["name"] for r in MODULE_ROLES}
 
 # 目前平台掛載的部門模組。之後每加一個新部門，只要在這裡多加一筆，帳號
 # 權限管理頁面（/accounts）就會自動多一欄可以勾選，不用再改權限邏輯本身。
-# 「新北所(配送組)系統」2026-09-12 之前叫「配送部系統」，因為要對應到
+# 「新北所(配送組)專區」這個顯示名稱改過兩次：2026-09-12 之前叫「配送部
+# 系統」，當時改成「新北所(配送組)系統」對應
 # `platform_departments.py` 部門主檔裡「新北所(配送組)」這個正式部門
-# 名稱而改名——模組代碼 `delivery`、網址 `/delivery/...` 都沒有變，純粹
-# 是這裡顯示給使用者看的名稱。
+# 名稱；2026-09-22 再改成「…專區」，跟桃園所專區/高雄所專區/財務部專區
+# 這些「不掛模組、照部門判斷」的卡片統一命名（`delivery` 模組本身這次也
+# 改成「模組打勾 or 部門字串」兩者符合其一即可，見 delivery/auth.py 的
+# `has_delivery_access()`）。模組代碼 `delivery`、網址 `/delivery/...`
+# 從頭到尾都沒有變，純粹是這裡顯示給使用者看的名稱。
 MODULES = [
-    {"code": "delivery", "name": "新北所(配送組)系統"},
+    {"code": "delivery", "name": "新北所(配送組)專區"},
     {"code": "management", "name": "管理部"},
     {"code": "hr", "name": "人資專區"},
     {"code": "salesdev", "name": "少凱業務開發專區"},
@@ -400,6 +404,22 @@ def module_role(account: dict, module_code: str):
 
 def has_module_access(account: dict, module_code: str) -> bool:
     return module_role(account, module_code) is not None
+
+
+# 財務部/桃園所/高雄所/加退保/配送部這幾個「不掛模組、照帳號 department
+# 字串直接比對」的權限判斷（見 services/dispatch_service.py、
+# services/salary_repayment_service.py、hr/insurance_repository.py、
+# delivery/auth.py 各自的說明），全部都是完全比對，不是模糊比對——2026-09-22
+# 使用者主動提出：部門名稱裡的括號如果一邊是全形「（）」一邊是半形
+# 「()」，字串就不會相等，畫面上看起來會跟「沒有權限」一模一樣，同仁
+# 完全看不出差異、也不會有任何錯誤訊息可以查。這裡統一在比對前先把全形
+# 括號轉成半形，不管 `/departments` 部門主檔或帳號的 department 欄位當初
+# 是用哪種括號打的，都能正確比對到——只轉括號，不動其他字元。
+_FULLWIDTH_PAREN_TRANSLATION = str.maketrans("（）", "()")
+
+
+def normalize_department(department) -> str:
+    return (department or "").translate(_FULLWIDTH_PAREN_TRANSLATION)
 
 
 def current_account(request: Request):
