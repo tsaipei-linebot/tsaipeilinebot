@@ -620,8 +620,15 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 pub_t = str(j.get("職缺名稱(對外)", "")).lower()
                 if any(k in cat for k in ["外送", "司機", "配送"]) or any(k in int_t for k in ["外送", "司機", "配送"]) or any(k in pub_t for k in ["外送", "司機", "配送"]):
                     _pool.append(j)
-            _pool_desc = "外送"
-            _pool_query_phrase = "外送"
+            if detected_brand:
+                # 跟理貨/倉儲、製造/作業員分支（見下方）同一個原因需要補上：外送
+                # 類別原本完全沒有依廠商窄化，實測回報「Uber外送的工作」會混進
+                # 蝦皮的外送職缺；「momo外送的工作」（momo根本沒有外送職缺）也會
+                # 混進蝦皮/Uber 的職缺，沒有任何提示這不是使用者指定的廠商。
+                _brand_clean_for_intent = clean_text_for_search(detected_brand)
+                _pool = [j for j in _pool if _brand_clean_for_intent in j.get("_search_text", "")]
+            _pool_desc = f"{detected_brand}外送" if detected_brand else "外送"
+            _pool_query_phrase = _pool_desc
 
         elif is_store_intent:
             # 改用 detected_brand（這輪偵測到的，或延續前一輪鎖定的廠商），
@@ -669,9 +676,13 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 return "warehouse"
             if is_manufacturing_intent:
                 return "manufacturing"
-            return "shopee"
+            if is_shopee_intent:
+                return "shopee"
+            # 六個類別關鍵字都沒命中，卻仍然有候選池的情況，只會是下面步驟 1b
+            # 補上的「只有廠商名稱、沒有類別關鍵字」分支（_is_bare_brand_pool_intent）。
+            return "brand_only"
 
-        _has_pool_intent = bool(is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_shopee_intent)
+        _has_category_pool_intent = bool(is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_shopee_intent)
 
         # ---------------- 步驟 1b：偵測休假方式／福利／發薪方式關鍵字 ----------------
         # 這三項疊加在廠商/類別「候選池」之上一起判斷（見上方步驟 1a）：不管
@@ -679,13 +690,40 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 不能像過去那樣「廠商/類別攔截先搶到就不再檢查福利/發薪方式/休假
         # 方式」（使用者實測回報「蝦皮有公司車的工作嗎」：蝦皮橫跨多種類型、
         # 直接跳去問「想看哪一種類型」，完全沒理會「公司車」這個條件）。
-        # 沒有命中廠商/類別時，這三項改成直接對全部 active_jobs 判斷，
-        # 沿用福利/發薪方式攔截原本就有的行為。
-        _secondary_pool_source = _pool if _has_pool_intent else active_jobs
-        _leave_label, _ = find_leave_matched_jobs(raw_msg, _secondary_pool_source) if not is_negative else ("", [])
-        _benefit_label, _ = find_benefit_matched_jobs(raw_msg, _secondary_pool_source) if not is_negative else ("", [])
-        _pay_label, _ = find_pay_method_matched_jobs(raw_msg, _secondary_pool_source) if not is_negative else ("", [])
+        # 這裡刻意固定用 active_jobs（全部職缺）判斷有沒有講到這幾項關鍵字，
+        # 不能用候選池——實測發現：福利關鍵字清單是動態從職缺資料的「福利」
+        # 欄位長出來的（見 build_benefit_keyword_index()），如果候選池先窄化
+        # 到只剩一兩筆、剛好那幾筆福利欄位是空的，"公司車" 這種真實存在（只是
+        # 不在這個窄化池子裡）的關鍵字就會完全辨識不到，導致條件被整個當成
+        # 沒說過，不會落到後面「查無/放寬」的正確流程（真實案例：「蝦皮門市
+        # 有沒有公司車的工作」，因為蝦皮門市本身福利欄位是空的，"公司車" 就
+        # 完全沒被偵測到）。用 active_jobs 判斷「有沒有講到」，實際篩選仍然
+        # 只套用在候選池上（見下方 _apply_secondary_filters），兩者不衝突。
+        _leave_label, _ = find_leave_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
+        _benefit_label, _ = find_benefit_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
+        _pay_label, _ = find_pay_method_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
         _has_secondary_intent = bool(_leave_label or _benefit_label or _pay_label)
+
+        # ---------------- 只有廠商名稱、沒有類別關鍵字時的候選池補救 ----------------
+        # 六個既有分支都要靠類別關鍵字（作業員/門市/外送/理貨…，或 momo/蝦皮
+        # 這兩個寫死的品牌）才會建立候選池。求職者只講了廠商名稱（例如「康寧」
+        # 「惠特科技」，detect_brand_label() 認得、但不是這六個分支的觸發詞）、
+        # 同時又問了休假/福利/發薪方式時，原本 _has_pool_intent 會是 False，
+        # 候選池整個退回 active_jobs，等於廠商條件被丟掉——真實案例：「惠特
+        # 科技週領的工作」「康寧有週休二日的工作嗎」都會混進其他廠商的職缺，
+        # 而且系統還很有把握地直接回覆，不會說查無這家公司資料。
+        #
+        # 這裡刻意只在「同時偵測到次要條件」時才啟用這個候選池，單純講廠商
+        # 名稱、沒有其他資訊時（例如只打「康寧」），維持原本會落到 AI 決策的
+        # 既有行為不變，不擴大這次修正的範圍。
+        _is_bare_brand_pool_intent = bool(detected_brand) and not _has_category_pool_intent and _has_secondary_intent and not is_negative
+        if _is_bare_brand_pool_intent:
+            _brand_clean_for_pool = clean_text_for_search(detected_brand)
+            _pool = [j for j in active_jobs if _brand_clean_for_pool in j.get("_search_text", "")]
+            _pool_desc = detected_brand
+            _pool_query_phrase = detected_brand
+
+        _has_pool_intent = _has_category_pool_intent or _is_bare_brand_pool_intent
 
         # ---------------- 蝦皮職缺類型反問 ----------------
         # 使用者反映：蝦皮同時橫跨外送/門市/理貨倉儲等好幾種職缺類型，求職者
@@ -766,7 +804,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(_fully_filtered[:4], user_id, current_location)])
                 log_ai_decision_event(
                     path="direct_intercept", intercept_type=_resolve_intercept_type() if _has_pool_intent else "secondary_filter",
-                    matched_brand="momo" if is_momo_intent else ("蝦皮" if is_shopee_intent else ""),
+                    matched_brand=detected_brand,
                     latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
                 )
                 return
@@ -801,7 +839,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                     target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text), create_job_flex_card(county_alt_jobs[:4], user_id, "", same_county_scope=county_name)])
                     log_ai_decision_event(
                         path="direct_intercept", intercept_type=f"{_resolve_intercept_type() if _has_pool_intent else 'secondary_filter'}_county_fallback",
-                        matched_brand="momo" if is_momo_intent else ("蝦皮" if is_shopee_intent else ""),
+                        matched_brand=detected_brand,
                         latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
                     )
                     return
