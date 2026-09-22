@@ -1499,6 +1499,133 @@ class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
         self.assertIn(momo_job, matched_jobs_arg)
 
 
+class WarehouseManufacturingShopeeDirectInterceptTests(unittest.TestCase):
+    """使用者實測回報（每日/週報告「建議新增的職缺關鍵字」）：理貨/倉儲、
+    製造/作業員、蝦皮這三個類別/廠商長期高頻被問（單週最高分別 281 次、
+    96 次、195 次），卻完全沒有精準工種直達攔截，每次都要真的呼叫一次
+    Gemini，加重 Vertex AI 併發雪崩效應。比照既有的外送/門市/momo，新增
+    這三個直達攔截。"""
+
+    def _warehouse_job(self):
+        return {
+            "職缺名稱": "理貨倉管專員", "_internal_title": "理貨倉管專員",
+            "_parsed_title": "理貨倉管專員", "職缺名稱(對外)": "理貨倉管專員",
+            "_job_category": "理貨/倉儲", "職務類別": "理貨/倉儲",
+            "系統廠商名稱": "美光",
+            "_search_text": "理貨倉管專員理貨倉儲",
+            "_location_search_text": "台北市",
+        }
+
+    def _manufacturing_job(self):
+        return {
+            "職缺名稱": "製造業作業員", "_internal_title": "製造業作業員",
+            "_parsed_title": "製造業作業員", "職缺名稱(對外)": "製造業作業員",
+            "_job_category": "製造/作業員", "職務類別": "製造/作業員",
+            "系統廠商名稱": "美光",
+            "_search_text": "製造業作業員產線組裝",
+            "_location_search_text": "台北市",
+        }
+
+    def _shopee_job(self):
+        return {
+            "職缺名稱": "蝦皮外送三輪雇傭", "_internal_title": "蝦皮外送三輪雇傭",
+            "_parsed_title": "蝦皮外送三輪雇傭", "職缺名稱(對外)": "蝦皮外送三輪雇傭",
+            "_job_category": "外送", "職務類別": "外送", "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮外送三輪雇傭",
+            "_location_search_text": "台北市",
+        }
+
+    def _run(self, msg, jobs, user_id):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = user_id
+        event.message.text = msg
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=jobs), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+        return mock_ai_decision, mock_flex_card
+
+    def test_warehouse_keyword_directly_recommends_without_calling_ai(self):
+        job = self._warehouse_job()
+        mock_ai, mock_flex = self._run("理貨倉儲的工作", [job], "test-warehouse-direct")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        self.assertIn(job, mock_flex.call_args[0][0])
+
+    def test_manufacturing_keyword_directly_recommends_without_calling_ai(self):
+        job = self._manufacturing_job()
+        mock_ai, mock_flex = self._run("製造業作業員的工作", [job], "test-manufacturing-direct")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        self.assertIn(job, mock_flex.call_args[0][0])
+
+    def test_bare_shopee_mention_directly_recommends_without_calling_ai(self):
+        job = self._shopee_job()
+        mock_ai, mock_flex = self._run("蝦皮有工作嗎", [job], "test-shopee-direct")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        self.assertIn(job, mock_flex.call_args[0][0])
+
+    def test_shopee_plus_store_combo_still_routes_to_store_not_shopee(self):
+        # 「蝦皮門市」組合已經由既有的門市分支（含品牌篩選）處理，不該被新的
+        # 純蝦皮攔截搶走——這裡用一筆只有理貨/倉儲職缺（沒有門市職缺）的資料，
+        # 驗證「蝦皮門市」問法不會誤配對到不相關的理貨/倉儲職缺，也不會被
+        # 誤判成 shopee 直達攔截找到職缺，而是照原本邏輯落到 AI 決策。
+        warehouse_job = self._warehouse_job()
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-shopee-store-combo"
+        event.message.text = "蝦皮門市有工作嗎"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[warehouse_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+    def test_negated_warehouse_mention_falls_through_to_ai(self):
+        job = self._warehouse_job()
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-warehouse-negated"
+        event.message.text = "不要理貨倉儲的工作"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
     """使用者提出的新功能：真人派遣專員跟求職者對話時，通常會推薦鄰近或
     類似的工作——例如求職者問「蝦皮門市 八德有缺嗎」，八德目前沒有蝦皮

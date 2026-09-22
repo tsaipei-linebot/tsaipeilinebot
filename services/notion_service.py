@@ -346,9 +346,52 @@ def _is_duplicate_faq_question(question_text: str, existing_titles: list, min_ma
     return False
 
 
+# ==========================================
+# FAQ 候選清單過濾：這份清單每週會原樣列在推播到 LINE 群組的報告裡，
+# 使用者實測回報發現裡面混進了兩類不該出現的內容：
+# 1. 求職者告知姓名/電話（例如確認履歷用），這是正常的私訊內容，卻被當成
+#    「FAQ候選問句」原封不動列進每週推播給整個群組看的報告，等於把求職者
+#    個資外洩到報告裡。
+# 2. 廣告/詐騙訊息（賣文旦、直播詐騙連結、旅行社廣告等），這些訊息因為
+#    AI 判斷不出對應的職缺/FAQ（action 落到 UNKNOWN_FAQ 或 NO_MATCH），
+#    被一併記錄成「候選問句」，灌爆審核清單、也污染報告內容。
+#
+# 這裡刻意只影響 append_unresolved_faq_to_notion()（FAQ候選清單，同仁每週
+# 審核、且會出現在報告裡）這一個寫入路徑，不能影響
+# append_unresolved_question_for_followup()（求職者提問追蹤，招募專員用來
+# 回頭找到本人手動回覆）——即使內容含姓名/電話，招募專員也必須完整看到
+# 才能找到人，這是這個資料庫存在的目的，不能被這裡的過濾邏輯連帶擋掉。
+# ==========================================
+_FAQ_CANDIDATE_PHONE_PATTERN = re.compile(r'09\d{2}[-\s]?\d{3}[-\s]?\d{3}')
+_FAQ_CANDIDATE_URL_PATTERN = re.compile(r'https?://\S+')
+# 過長的內容通常是廣告文案（例如整段商品介紹），不是真的 FAQ 問題——
+# 實測回報的廣告訊息普遍遠超過這個長度，真正的 FAQ 問題幾乎不會這麼長。
+_FAQ_CANDIDATE_MAX_LENGTH = 150
+
+
+def _looks_unsuitable_for_faq_candidate(text: str) -> bool:
+    """判斷這句話適不適合被記錄進『FAQ候選清單』：含電話號碼、含網址連結、
+    或內容過長（疑似廣告文案）都視為不適合。"""
+    if not text:
+        return True
+    if _FAQ_CANDIDATE_PHONE_PATTERN.search(text):
+        return True
+    if _FAQ_CANDIDATE_URL_PATTERN.search(text):
+        return True
+    if len(text.strip()) > _FAQ_CANDIDATE_MAX_LENGTH:
+        return True
+    return False
+
+
 def append_unresolved_faq_to_notion(question_text: str) -> bool:
-    """將未收錄問題寫入 Notion FAQ 資料庫的『問題/關鍵字』欄位（寫入前先去重）"""
+    """將未收錄問題寫入 Notion FAQ 資料庫的『問題/關鍵字』欄位（寫入前先去重、
+    並過濾掉含電話/網址/過長廣告文案的內容，見上方 _looks_unsuitable_for_faq_candidate()
+    說明）"""
     if not NOTION_API_KEY or not NOTION_FAQ_DB_ID or not question_text:
+        return False
+
+    if _looks_unsuitable_for_faq_candidate(question_text):
+        print(f"[Notion FAQ 候選過濾] 內容疑似含電話/連結/過長廣告文案，不寫入候選清單: 「{question_text[:30]}...」")
         return False
 
     existing_titles = _fetch_all_faq_question_titles()

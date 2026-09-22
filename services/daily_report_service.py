@@ -14,8 +14,11 @@ from services.notion_service import fetch_pending_faq_candidates
 
 # 已經有專屬「精準工種直達攔截」的類別/廠商（見 handlers/message_handler.py），
 # 這些不該出現在「建議新增的職缺關鍵字」清單裡——就算被問很多次，捷徑早就有了。
-DIRECT_INTERCEPT_CATEGORIES = {"外送", "門市"}
-DIRECT_INTERCEPT_BRANDS = {"momo"}
+# 理貨/倉儲、製造/作業員、蝦皮是實測報告連續多週高頻出現在這份清單裡才補上的
+# （見 HANDOFF.md），新增直達攔截後同步從這裡移除，避免捷徑早就有了還一直
+# 被誤判成「缺口」。
+DIRECT_INTERCEPT_CATEGORIES = {"外送", "門市", "理貨/倉儲", "製造/作業員"}
+DIRECT_INTERCEPT_BRANDS = {"momo", "蝦皮"}
 
 
 # ==========================================

@@ -549,6 +549,22 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         is_delivery_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["外送"]) and not is_negative
         is_store_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["門市"]) and not is_delivery_intent and not is_negative
         is_momo_intent = any(k in clean_input for k in KNOWN_BRANDS["momo"]) and not is_negative
+        # 使用者實測回報（每日/週報告的「建議新增的職缺關鍵字」）：理貨/倉儲、
+        # 製造/作業員這兩個類別長期高頻被問（單週最高分別 281 次、96 次），
+        # 卻完全沒有精準工種直達攔截，每次都要真的呼叫一次 Gemini 才能回答，
+        # 加重 Vertex AI 併發雪崩效應（見 HANDOFF.md 延遲問題）。比照外送/門市，
+        # 新增這兩個類別的直達攔截。
+        is_warehouse_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["理貨/倉儲"]) and not (is_delivery_intent or is_store_intent) and not is_negative
+        is_manufacturing_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["製造/作業員"]) and not (is_delivery_intent or is_store_intent or is_warehouse_intent) and not is_negative
+        # 「蝦皮」這個廠商同樣長期高頻被問（單週最高 195 次）卻沒有直達攔截——
+        # 跟 momo 不同的是，蝦皮同時有門市/外送等職缺，已經被「門市」分支
+        # （含品牌篩選）處理，這裡刻意只在沒有命中任何類別關鍵字時才當成
+        # 「純問蝦皮」直達攔截，避免跟門市分支互搶。
+        is_shopee_intent = (
+            any(k in clean_input for k in KNOWN_BRANDS["蝦皮"])
+            and not (is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent)
+            and not is_negative
+        )
 
         # 追問地區延續前一輪已鎖定的類別/廠商：例如先問「蝦皮門市有嗎」，接著
         # 只問「八德有缺嗎」——這句話本身沒有再提到門市/外送/momo等關鍵字，
@@ -560,13 +576,19 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 「有抓到地名」，避免把「發薪日是什麼時候」這種抓不到地名的 FAQ 類問題
         # 也一起誤攔進來。
         is_bare_location_followup = bool(extracted_loc) and not has_recognizable_category_or_brand_keyword(clean_input) and not is_negative
-        if is_bare_location_followup and not (is_delivery_intent or is_store_intent or is_momo_intent):
+        if is_bare_location_followup and not (is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_shopee_intent):
             if detected_category_from_text == "外送":
                 is_delivery_intent = True
             elif detected_category_from_text == "門市":
                 is_store_intent = True
+            elif detected_category_from_text == "理貨/倉儲":
+                is_warehouse_intent = True
+            elif detected_category_from_text == "製造/作業員":
+                is_manufacturing_intent = True
             elif detected_brand == "momo":
                 is_momo_intent = True
+            elif detected_brand == "蝦皮":
+                is_shopee_intent = True
 
         direct_matches = []
         # 這三個分支各自的「類別/廠商比對通過、但還沒篩地區」候選池，供地區
@@ -636,15 +658,51 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _category_matched_jobs_for_fallback = momo_jobs
             _category_desc_for_fallback = "momo"
 
+        elif is_warehouse_intent or is_manufacturing_intent:
+            _category_label_for_intent = "理貨/倉儲" if is_warehouse_intent else "製造/作業員"
+            _location_jobs = []
+            for j in active_jobs:
+                if current_location:
+                    loc_clean = current_location.replace("台", "臺")
+                    if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", ""):
+                        _location_jobs.append(j)
+                else:
+                    _location_jobs.append(j)
+            direct_matches = filter_jobs_by_category_tiered(_location_jobs, _category_label_for_intent)
+            _category_matched_jobs_for_fallback = filter_jobs_by_category_tiered(active_jobs, _category_label_for_intent)
+            _category_desc_for_fallback = _category_label_for_intent
+
+        elif is_shopee_intent:
+            shopee_jobs = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["蝦皮", "spx"])]
+            if current_location:
+                loc_clean = current_location.replace("台", "臺")
+                direct_matches = [j for j in shopee_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
+            else:
+                direct_matches = shopee_jobs
+            _category_matched_jobs_for_fallback = shopee_jobs
+            _category_desc_for_fallback = "蝦皮"
+
+        def _resolve_intercept_type():
+            if is_delivery_intent:
+                return "delivery"
+            if is_store_intent:
+                return "store"
+            if is_momo_intent:
+                return "momo"
+            if is_warehouse_intent:
+                return "warehouse"
+            if is_manufacturing_intent:
+                return "manufacturing"
+            return "shopee"
+
         if direct_matches:
             reply_text = f"有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
             append_user_history(user_id, "求職者", raw_msg)
             append_user_history(user_id, "招募顧問沛沛", reply_text)
             target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(direct_matches[:4], user_id, current_location)])
-            _intercept_type = "delivery" if is_delivery_intent else ("store" if is_store_intent else "momo")
             log_ai_decision_event(
-                path="direct_intercept", intercept_type=_intercept_type,
-                matched_brand="momo" if is_momo_intent else "",
+                path="direct_intercept", intercept_type=_resolve_intercept_type(),
+                matched_brand="momo" if is_momo_intent else ("蝦皮" if is_shopee_intent else ""),
                 latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
             )
             return
@@ -755,10 +813,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", fallback_reply_text)
                 target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text), create_job_flex_card(county_alt_jobs[:4], user_id, "", same_county_scope=county_name)])
-                _intercept_type = "delivery" if is_delivery_intent else ("store" if is_store_intent else "momo")
                 log_ai_decision_event(
-                    path="direct_intercept", intercept_type=f"{_intercept_type}_county_fallback",
-                    matched_brand="momo" if is_momo_intent else "",
+                    path="direct_intercept", intercept_type=f"{_resolve_intercept_type()}_county_fallback",
+                    matched_brand="momo" if is_momo_intent else ("蝦皮" if is_shopee_intent else ""),
                     latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
                 )
                 return
