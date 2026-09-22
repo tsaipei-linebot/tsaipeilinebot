@@ -8080,8 +8080,32 @@ unittest discover -s tests -p "test_*.py"`）1921 個全數通過。
    不需要等 LINE 帳號申請好就能先用；只有「LINE 綁定＋人員在 LINE 上
    查詢/報名＋審核推播」這幾項需要等上面 1-3 步驟做完才會動起來。
 
-**進度（2026-09-22 使用者回報）**：桃園所這組 LINE 帳號的申請/環境變數/
-Webhook URL 都已經設定完成。**高雄所還沒設定**，上面 1-3 步驟還要做。
+**進度（2026-09-22 使用者回報，兩所都已完成，Verify 都成功）**：
+
+- **桃園所**：一開始 Webhook 收到 LINE 打過來的請求回 404，查 Cloud Run
+  的 HTTP 請求 log（`gcloud logging read
+  'resource.type="cloud_run_revision" resource.labels.service_name=
+  "recruitment-bot" httpRequest.requestUrl:"dispatch"' --limit 20
+  --format="table(timestamp,httpRequest.requestMethod,httpRequest.status,
+  httpRequest.requestUrl)"`）才發現 LINE 實際打的是這次重構前的舊網址
+  `/taoyuan-dispatch/line/callback`——使用者是在重構部署上線「之前」就
+  設定過 Webhook URL，重構上線後舊網址失效，改成新網址
+  `/dispatch/taoyuan/line/callback` 後 Verify 成功。**這是本來就預期
+  會發生的過渡期問題，不是這次的新 bug**，只是提醒之後如果還有沒切換
+  過網址的舊設定，同樣的排查方式（查 HTTP 請求 log）可以很快定位。
+- **高雄所**：Webhook 一直回 503，查 Cloud Run 環境變數（`gcloud run
+  services describe recruitment-bot --region asia-east1
+  --format="value(spec.template.spec.containers[0].env)" | tr ';' '\n'
+  | grep KAOHSIUNG`）發現 `KAOHSIUNG_DISPATCH_LINE_CHANNEL_ACCESS_TOKEN`
+  有設定到，但 `KAOHSIUNG_DISPATCH_LINE_CHANNEL_SECRET` 完全沒設定
+  進去（第一次跑 `gcloud run services update --update-env-vars` 時兩個
+  變數用逗號隔開，猜測是逗號或引號哪裡沒跑對，只有第一個生效）。補上
+  `KAOHSIUNG_DISPATCH_LINE_CHANNEL_SECRET` 後 Verify 成功。**這裡有個
+  值得記住的排查方式**：503（`dispatch_line.py` 的
+  `WebhookHandler(_secret) if _secret else None`）是靠 secret 建立的，
+  跟 access token 有沒有設定無關，所以下次遇到「LINE 綁定/webhook 一直
+  503」，第一步就是查 `_SECRET` 這個環境變數有沒有真的設定到，不是查
+  access token。
 
 新增測試：`tests/test_dispatch_sites.py`（所別設定清單）、
 `tests/test_dispatch_service.py`（取代
