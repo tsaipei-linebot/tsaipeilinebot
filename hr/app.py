@@ -9,6 +9,7 @@ from hr.routes import (
     health_check_routes,
     home_routes,
     incident_routes,
+    insurance_routes,
     license_routes,
     reminder_routes,
     training_routes,
@@ -39,3 +40,4 @@ hr_app.include_router(license_routes.router)
 hr_app.include_router(training_routes.router)
 hr_app.include_router(file_routes.router)
 hr_app.include_router(reminder_routes.router)
+hr_app.include_router(insurance_routes.router)

@@ -71,3 +71,25 @@ HR_INCIDENT_REMINDER_SECRET = os.getenv("HR_INCIDENT_REMINDER_SECRET", "")
 HR_LICENSE_REMINDER_SECRET = os.getenv("HR_LICENSE_REMINDER_SECRET", "")
 LICENSE_REMINDER_DAYS_AHEAD = 30
 LICENSE_REMINDER_RESEND_INTERVAL_DAYS = 7
+
+# ==========================================
+# 每日加退保彙總（2026-09-22 新增）
+# 各部門每天上傳加退保 Excel，人資彙整、收單、下載成一份總表。詳見
+# hr/insurance_repository.py 開頭的完整設計說明跟 HANDOFF.md 的討論記錄。
+# ==========================================
+# 開放上傳加退保 Excel 的部門，跟 scripts/seed_departments.py 建立的部門
+# 主檔名稱要完全一致（部門是存字串比對，不是外鍵，見
+# platform_departments.py 開頭的說明）。
+INSURANCE_UPLOAD_DEPARTMENTS = [
+    "台北所(派遣組)",
+    "台北所(國際組)",
+    "新北所(派遣組)",
+    "新北所(配送組)",
+    "桃園所",
+    "台中所",
+    "高雄所",
+]
+# 人資（彙總/收單/下載）身份的判斷依據——使用者自己到 /departments、
+# /accounts 建立這個部門並指派給負責的同仁，這裡只認這個字串（全平台
+# 管理員永遠視同人資身份，見 insurance_repository.is_collector()）。
+INSURANCE_COLLECTOR_DEPARTMENT = "人資部門"

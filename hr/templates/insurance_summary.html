@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}每日加退彙總 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">每日加退彙總</h1>
+
+<form method="get" action="/hr/insurance/summary" class="filter-bar">
+    <label>選擇日期
+        <input type="date" name="work_date" value="{{ work_date }}" onchange="this.form.submit()">
+    </label>
+</form>
+
+<p>
+    {% if closed %}
+    <span class="badge badge-ok">今日已收單</span>
+    {% else %}
+    <form method="post" action="/hr/insurance/summary/close" style="display:inline">
+        <input type="hidden" name="work_date" value="{{ work_date }}">
+        <button type="submit" class="btn btn-primary" onclick="return confirm('確定要收單嗎？收單後這 7 個部門今天就不能再上傳了。')">收單</button>
+    </form>
+    {% endif %}
+    <a class="btn" href="/hr/insurance/download">下載彙總檔案</a>
+    <a class="btn" href="/hr/insurance/history">查詢全部歷史紀錄</a>
+</p>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>部門</th>
+            <th>今日上傳狀態</th>
+            <th>檔名</th>
+            <th>上傳人</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>{{ row.department }}</td>
+            <td>{% if row.upload %}已上傳{% else %}未上傳{% endif %}</td>
+            <td>{{ row.upload.filename if row.upload else "-" }}</td>
+            <td>{{ row.upload.uploaded_by_name if row.upload else "-" }}</td>
+            <td>{% if row.upload %}<a href="/hr/files/{{ row.upload.blob_path }}">下載</a>{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<p class="back-link"><a href="/hr/">&larr; 回主頁</a></p>
+{% endblock %}

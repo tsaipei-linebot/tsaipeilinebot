@@ -7873,3 +7873,102 @@ python -m scripts.fix_legacy_announcement_titles
 規劃邏輯）、`tests/test_platform_announcements.py`
 （`UpdateAnnouncementTitleTests`）。全部測試（`python3 -m unittest
 discover -s tests -p "test_*.py"`）1856 個全數通過。
+
+## 人資專區：每日加退保彙總（2026-09-22 新增）
+
+各部門（台北所(派遣組)/台北所(國際組)/新北所(派遣組)/新北所(配送組)/
+桃園所/台中所/高雄所）每天要傳加退保 Excel 給人資，人資收到後統整成
+一份彙總資料再作業。新增 `/hr/insurance`：這 7 個部門上傳自己的加退保
+Excel，人資（部門欄位設定成「人資部門」的帳號）彙整、收單、下載成一份
+總表。跟使用者在對話中逐項討論確認的規劃，重點摘要如下（完整討論過程
+見這次 PR 的對話紀錄，不重複列在這裡）：
+
+### 權限模型
+
+**不是走 hr 模組原本的 admin/staff 兩層**（`hr/auth.py` 那套跟公司職級
+掛勾的判斷），改成比照 `services/contract_summary_service.py` 的作法，
+直接看帳號的 `department` 字串（`hr/insurance_repository.py`）：
+
+- `hr.config.INSURANCE_UPLOAD_DEPARTMENTS`（7 個部門字串，跟
+  `scripts/seed_departments.py` 建立的部門主檔名稱要完全一致）的帳號可以
+  上傳/查自己部門的歷史紀錄。
+- 部門是 `hr.config.INSURANCE_COLLECTOR_DEPARTMENT`（字串「人資部門」）
+  的帳號，或全平台管理員，是「人資」身份，可以看全部歷史、收單、下載。
+- 兩種身份都不是的 hr 模組帳號，`/hr/insurance` 系列頁面一律導回
+  `/hr/`，首頁也不會出現「每日加退保」卡片。
+
+### 上傳 / 收單 / 歷史查詢
+
+- 上傳只存檔案本身（沿用 `hr/storage.py` 既有的 GCS 上傳機制，blob 路徑
+  前綴 `hr/insurance/`），**不解析 Excel 內容存進 Firestore**——跟
+  `hr/repository.py` 其他彙整功能同一種做法，下載彙總表時才即時讀取
+  每個部門的原始檔案組表（見下面「下載彙總表」）。
+- 同一個部門、同一天重複上傳＝直接覆蓋，不比對 Excel 內容裡的資料列
+  （2026-09-22 使用者明確選擇的簡化做法）——Firestore 文件 id 固定是
+  「日期__部門」，重傳就是覆寫同一筆文件，舊檔案在 GCS 上會變成孤兒
+  （不影響功能，不主動清理）。
+- 人資收單（`hr_insurance_day_locks` 一天一筆）只鎖住那 7 個部門，人資
+  自己不受限，收單後仍可以補傳/覆蓋任一部門那天的資料。
+- 部門同仁只能查自己部門的歷史（`/hr/insurance/history`）；人資可以看
+  全部部門、全部日期，並依部門/日期區間篩選。
+
+### 下載彙總表（`hr/insurance_excel.py`）
+
+人資在 `/hr/insurance/download` 選一個日期區間（選同一天就是只下載那
+天），系統即時讀取區間內各部門已上傳的原始檔案（固定 11 欄格式：編號/
+廠商/班別/姓名/身分證/勞保加保日期/勞保退保日期/勞保追退日期/健保加保
+月份/眷屬健保/備註），攤平成使用者原本「全區域加退保紀錄表」格式的一份
+Excel（編號/投保單位/廠商/部門店家/姓名/身分證字號/投保日/出生年月日/
+勞退追退日期/班次級距/備註/招募人員）：
+
+- **投保單位／出生年月日／班次級距／招募人員這四欄，系統完全沒有資料
+  來源**（討論時盤點過整個 codebase，`platform_companies.py` 公司主檔
+  沒有「廠商→保單位」的對照，也沒有任何地方存同仁的出生年月日或招募人
+  員），2026-09-22 使用者確認直接留空，人資下載後自己手動補上，**不是
+  漏做**。「部門/店家」這欄來源檔案完全沒有對應資料，改填「這份資料是
+  哪個部門傳的」（上傳時的部門名稱），是目前系統唯一有意義可填的資訊。
+- 「投保日」是唯一能自動組出來的欄位：把「勞保加保日期」「勞保退保
+  日期」轉成民國格式接起來（例：「115.09.19當天加退」／「…加保」／
+  「…退保」），跟使用者原本範例檔案的寫法一致；日期解析不出來的話原封
+  不動把原始文字接起來，不會整欄空白。
+- 某個部門的檔案讀不到（GCS 找不到、格式解析失敗）就跳過那個部門，不會
+  讓整份彙總表下載失敗。
+- 防 Excel 公式注入沿用 `services/contract_summary_excel.py` 同一套
+  防呆邏輯（自由文字開頭是 `=`/`+`/`-`/`@` 的補前導單引號）。
+
+**這次範圍不含** UC加退保／蝦皮假日班加退保／材霈_離店與實習通報／
+E-learning 這幾種檔案（2026-09-22 使用者確認過，之後有需要再另外處理，
+目前這幾種檔案完全不能上傳到這個功能）。
+
+### 使用者需要知道的事——這次需要手動設定一件事
+
+**新增「人資部門」這個部門**，才能指定誰是「人資」身份：
+
+1. 用全平台管理員帳號登入，到 `/departments` 新增一個部門，名稱打
+   `人資部門`（要跟這四個字完全一樣，多一個空格或打錯字都不會被系統
+   認得）。
+2. 到 `/accounts`，把負責彙整加退保的人資同仁帳號的「部門」欄位改選成
+   剛新增的「人資部門」，記得該帳號要有「人資專區」模組的權限，才能
+   登入 `/hr/` 看到「每日加退保」卡片。
+3. 完成後，那位同仁登入人資專區首頁就會看到「每日加退保」卡片，點進去
+   會直接進「每日加退彙總」頁面（收單/下載/查全部歷史都在這裡）；7 個
+   部門原本負責上傳資料的同仁，只要帳號的「部門」欄位本來就是那 7 個
+   名稱之一，不用另外設定，登入人資專區就會看到「每日加退保」卡片，
+   點進去是上傳表單。
+4. 不用額外設定環境變數、不用重新部署（部署會在合併這個 PR 到 main 後
+   自動觸發，跟平常一樣）。
+
+新增 `hr/insurance_repository.py`（權限判斷/Firestore CRUD）、
+`hr/insurance_excel.py`（讀取部門檔案/組彙總表 Excel）、
+`hr/routes/insurance_routes.py`、四份新樣板
+（`insurance_upload.html`/`insurance_history.html`/
+`insurance_summary.html`/`insurance_download.html`），`hr/db.py` 新增
+`hr_insurance_uploads`/`hr_insurance_day_locks` 兩個 collection，
+`hr/config.py` 新增 `INSURANCE_UPLOAD_DEPARTMENTS`/
+`INSURANCE_COLLECTOR_DEPARTMENT`，`hr/app.py` 掛載新路由，
+`hr/templates/home.html`／`help.html` 補上入口跟使用說明。
+
+新增測試：`tests/test_hr_insurance.py`（權限判斷、Firestore CRUD、日期
+民國格式轉換、Excel 讀取/攤平組表的完整涵蓋）、`tests/test_hr_routes.py`
+（新路由未登入一律導去登入頁的 smoke test）。全部測試（`python3 -m
+unittest discover -s tests -p "test_*.py"`）1921 個全數通過。

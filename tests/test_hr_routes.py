@@ -48,6 +48,23 @@ class HrRoutingSmokeTests(unittest.TestCase):
     def test_trainings_page_redirects_to_login_when_not_authenticated(self):
         self._assert_redirects_to_login("/hr/trainings")
 
+    def test_insurance_home_redirects_to_login_when_not_authenticated(self):
+        """每日加退保（2026-09-22 新增）跟其他功能一樣先過 login_required，
+        沒登入一律導去登入頁，不會洩漏這個功能存在與否。"""
+        self._assert_redirects_to_login("/hr/insurance")
+
+    def test_insurance_upload_page_redirects_to_login_when_not_authenticated(self):
+        self._assert_redirects_to_login("/hr/insurance/upload")
+
+    def test_insurance_history_page_redirects_to_login_when_not_authenticated(self):
+        self._assert_redirects_to_login("/hr/insurance/history")
+
+    def test_insurance_summary_page_redirects_to_login_when_not_authenticated(self):
+        self._assert_redirects_to_login("/hr/insurance/summary")
+
+    def test_insurance_download_page_redirects_to_login_when_not_authenticated(self):
+        self._assert_redirects_to_login("/hr/insurance/download")
+
     def test_login_page_renders(self):
         resp = self.client.get("/hr/login")
         self.assertEqual(resp.status_code, 200)
