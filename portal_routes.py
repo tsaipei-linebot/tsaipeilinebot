@@ -20,9 +20,10 @@ from fastapi.responses import JSONResponse, RedirectResponse
 import job_portal_sso
 import platform_accounts
 import platform_announcements
+from dispatch_sites import list_sites
 from platform_announcements import ANNOUNCEMENT_DEFAULT_DAYS
 from platform_templating import templates
-from services.taoyuan_dispatch_service import has_taoyuan_access
+from services.dispatch_service import has_dispatch_access
 
 router = APIRouter()
 
@@ -129,19 +130,23 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
                 "help_href": info.get("help_href", ""),
             }
         )
-    # 桃園所專區（2026-09-21 新增）：不掛進 platform_accounts.MODULES，
-    # 能不能看到照「部門」判斷（見 services/taoyuan_dispatch_service.py
-    # 開頭說明），不是模組權限勾選，所以這裡另外判斷、另外加一張卡片，
-    # 跟上面那個迴圈分開。
-    if has_taoyuan_access(account):
-        cards.append(
-            {
-                "name": "桃園所專區",
-                "description": "桃園所派遣人員/地點管理（第一階段：需求媒合功能陸續上線中）",
-                "href": "/taoyuan-dispatch",
-                "help_href": "",
-            }
-        )
+    # 多所派遣媒合（2026-09-21 新增桃園所，2026-09-22 重構成多所共用＋
+    # 新增高雄所）：不掛進 platform_accounts.MODULES，能不能看到照「部門」
+    # 判斷（見 services/dispatch_service.py／dispatch_sites.py 開頭說明），
+    # 不是模組權限勾選，所以這裡另外判斷、另外加卡片，跟上面那個迴圈
+    # 分開。依所別清單的順序，帳號的部門符合哪個所就加那張卡片——一個
+    # 帳號通常只會對應到一個所，但迴圈寫法天生就支援全平台管理員這種
+    # 「每個所都看得到」的例外情況。
+    for site in list_sites():
+        if has_dispatch_access(account, site["code"]):
+            cards.append(
+                {
+                    "name": f"{site['name']}專區",
+                    "description": f"{site['name']}派遣人員/地點管理、需求時段媒合",
+                    "href": f"/dispatch/{site['code']}",
+                    "help_href": "",
+                }
+            )
     return templates.TemplateResponse(
         request,
         "portal_home.html",

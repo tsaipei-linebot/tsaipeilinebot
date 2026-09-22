@@ -262,9 +262,10 @@ class PortalHomeHelpLinkTests(unittest.TestCase):
             self.assertEqual(cards[name]["help_href"], help_href, name)
 
 
-class PortalHomeTaoyuanDispatchCardTests(unittest.TestCase):
-    """桃園所專區卡片（2026-09-21 新增）：不掛進 platform_accounts.MODULES，
-    照部門判斷是否顯示，跟其他模組卡片的權限來源不一樣，另外測。"""
+class PortalHomeDispatchSiteCardTests(unittest.TestCase):
+    """多所派遣媒合卡片（2026-09-21 新增桃園所，2026-09-22 重構成多所
+    共用＋新增高雄所）：不掛進 platform_accounts.MODULES，照部門判斷是否
+    顯示，跟其他模組卡片的權限來源不一樣，另外測。"""
 
     def _cards(self, account):
         with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=[]):
@@ -277,16 +278,27 @@ class PortalHomeTaoyuanDispatchCardTests(unittest.TestCase):
         account = {"username": "alice", "name": "Alice", "department": "桃園所", "is_platform_admin": False, "modules": []}
         cards = self._cards(account)
         self.assertIn("桃園所專區", cards)
-        self.assertEqual(cards["桃園所專區"]["href"], "/taoyuan-dispatch")
+        self.assertEqual(cards["桃園所專區"]["href"], "/dispatch/taoyuan")
+        self.assertNotIn("高雄所專區", cards)
+
+    def test_shows_for_kaohsiung_department(self):
+        account = {"username": "carol", "name": "Carol", "department": "高雄所", "is_platform_admin": False, "modules": []}
+        cards = self._cards(account)
+        self.assertIn("高雄所專區", cards)
+        self.assertEqual(cards["高雄所專區"]["href"], "/dispatch/kaohsiung")
+        self.assertNotIn("桃園所專區", cards)
 
     def test_hidden_for_other_department(self):
         account = {"username": "bob", "name": "Bob", "department": "新北所", "is_platform_admin": False, "modules": []}
         cards = self._cards(account)
         self.assertNotIn("桃園所專區", cards)
+        self.assertNotIn("高雄所專區", cards)
 
     def test_shown_for_platform_admin_regardless_of_department(self):
+        """全平台管理員每個所都看得到，不是只挑一個。"""
         cards = self._cards(_admin_account())
         self.assertIn("桃園所專區", cards)
+        self.assertIn("高雄所專區", cards)
 
 
 class AnnouncementAdminRoutesTests(unittest.TestCase):

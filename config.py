@@ -44,12 +44,13 @@ LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 TEST_LINE_CHANNEL_ACCESS_TOKEN = os.getenv("TEST_LINE_CHANNEL_ACCESS_TOKEN", LINE_CHANNEL_ACCESS_TOKEN)
 TEST_LINE_CHANNEL_SECRET = os.getenv("TEST_LINE_CHANNEL_SECRET", LINE_CHANNEL_SECRET)
 
-# 桃園所派遣專屬的 LINE 官方帳號（2026-09-21 新增，桃園所專區 Phase 2）：
-# 跟上面招募機器人、跟 management/config.py 的管理部帳號都是完全獨立的
-# 第三個 Channel，沒有預設值可以回退——沒設定時 taoyuan_dispatch_line.py
-# 會直接停用這個 webhook（回 503），不會拖垮其他子系統。
-TAOYUAN_DISPATCH_LINE_CHANNEL_ACCESS_TOKEN = os.getenv("TAOYUAN_DISPATCH_LINE_CHANNEL_ACCESS_TOKEN")
-TAOYUAN_DISPATCH_LINE_CHANNEL_SECRET = os.getenv("TAOYUAN_DISPATCH_LINE_CHANNEL_SECRET")
+# 多所派遣媒合（桃園所/高雄所…）各所專屬 LINE 官方帳號的 Channel
+# Token/Secret 環境變數名稱，2026-09-22 重構成多所共用架構後改成集中在
+# dispatch_sites.py 那份「所別清單」裡登記，dispatch_line.py 直接依那份
+# 清單裡的名稱用 os.getenv() 讀取，不在這裡逐一列成常數——之後新增所別
+# 只要在 dispatch_sites.py 加一筆設定＋在 Cloud Run 設對應的環境變數，
+# 不用改這支檔案。沒設定的所，那個所的 webhook 會直接停用（回 503），
+# 不會拖垮其他所或其他子系統。
 
 # ==========================================
 # 2. 金鑰與 Notion 資料庫 ID

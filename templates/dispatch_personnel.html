@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}桃園所人員管理 - 材霈有限公司{% endblock %}
+{% block title %}{{ site_name }}人員管理 - 材霈有限公司{% endblock %}
 {% block content %}
-<h1 class="page-title">桃園所人員管理</h1>
+<h1 class="page-title">{{ site_name }}人員管理</h1>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
 <h2 class="section-title">新增人員</h2>
-<form method="post" action="/taoyuan-dispatch/personnel/new" class="form-stack form-narrow">
+<form method="post" action="/dispatch/{{ site }}/personnel/new" class="form-stack form-narrow">
     <label>姓名
         <input type="text" name="name" required>
     </label>
@@ -27,8 +27,8 @@
     上傳 CSV 檔案（UTF-8 或 Big5 皆可），欄位需包含「姓名」「電話」，「人員資格」為選填（填中文名稱或代碼，
     多個用頓號或逗號分隔，例如「理貨、作業員」）。已存在相同「姓名+電話」的人員會自動略過，不會重複建立。
 </p>
-<p><a href="/taoyuan-dispatch/personnel/import/template.csv">下載範例 CSV 範本</a></p>
-<form method="post" action="/taoyuan-dispatch/personnel/import" enctype="multipart/form-data" class="inline-form">
+<p><a href="/dispatch/{{ site }}/personnel/import/template.csv">下載範例 CSV 範本</a></p>
+<form method="post" action="/dispatch/{{ site }}/personnel/import" enctype="multipart/form-data" class="inline-form">
     <input type="file" name="file" accept=".csv,text/csv" required>
     <button type="submit" class="btn btn-primary">上傳並匯入</button>
 </form>
@@ -65,7 +65,7 @@
         {% for p in personnel %}
         <tr>
             <td>
-                <form method="post" action="/taoyuan-dispatch/personnel/{{ p.id }}/edit" style="display:flex; gap:6px; align-items:center;">
+                <form method="post" action="/dispatch/{{ site }}/personnel/{{ p.id }}/edit" style="display:flex; gap:6px; align-items:center;">
                     <input type="text" name="name" value="{{ p.name }}" style="width:90px;">
                     <input type="text" name="phone" value="{{ p.phone }}" style="width:110px;">
                     {% for q in qualifications %}
@@ -81,7 +81,7 @@
             </td>
             <td><span class="badge {{ 'badge-ok' if p.active else 'badge-resigned' }}">{{ "啟用" if p.active else "停用" }}</span></td>
             <td>
-                <form method="post" action="/taoyuan-dispatch/personnel/{{ p.id }}/active" style="display:inline">
+                <form method="post" action="/dispatch/{{ site }}/personnel/{{ p.id }}/active" style="display:inline">
                     <input type="hidden" name="active" value="{{ '0' if p.active else '1' }}">
                     <button type="submit" class="btn btn-small {{ 'btn-danger' if p.active else '' }}">{{ "停用" if p.active else "啟用" }}</button>
                 </form>
@@ -94,5 +94,5 @@
 <p class="empty">目前還沒有任何人員。</p>
 {% endif %}
 
-<p class="back-link"><a href="/taoyuan-dispatch">&larr; 回桃園所專區</a></p>
+<p class="back-link"><a href="/dispatch/{{ site }}">&larr; 回{{ site_name }}專區</a></p>
 {% endblock %}
