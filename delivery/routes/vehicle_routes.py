@@ -166,6 +166,7 @@ def create_vehicle_submit(
     vendor: str = Form(...),
     wheel_type: str = Form(DEFAULT_WHEEL_TYPE),
     service_area: str = Form(...),
+    site: str = Form(""),
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -179,7 +180,7 @@ def create_vehicle_submit(
     elif not repository.get_vehicle_service_area(service_area):
         error = "服務區域請重新選擇。"
     elif not repository.create_vehicle(
-        vehicle_no, vendor, user["username"], wheel_type=wheel_type, service_area=service_area
+        vehicle_no, vendor, user["username"], wheel_type=wheel_type, service_area=service_area, site=site
     ):
         error = "這個車號已經存在，請確認後再新增。"
 
@@ -305,6 +306,14 @@ def update_vehicle_service_area(
     if redirect:
         return redirect
     repository.set_vehicle_service_area(vehicle_no, service_area)
+    return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
+
+
+@router.post("/vehicles/{vehicle_no}/site")
+def update_vehicle_site(vehicle_no: str, request: Request, site: str = Form(""), redirect=Depends(login_required)):
+    if redirect:
+        return redirect
+    repository.set_vehicle_site(vehicle_no, site)
     return RedirectResponse(url=f"/delivery/vehicles/{vehicle_no}", status_code=303)
 
 

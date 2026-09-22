@@ -7,6 +7,7 @@
     廠商：{{ vendor_name }}
     輪別：{{ wheel_type_map.get(vehicle.wheel_type, vehicle.wheel_type) }}
     服務區域：{{ service_area_map.get(vehicle.service_area, "未設定") }}
+    站所：{{ vehicle.site or "未設定" }}
     狀態：<span class="badge {{ 'badge-ok' if vehicle.status == 'available' else ('badge-missing' if vehicle.status == 'maintenance' else 'badge-pending') }}">{{ vehicle_status_map.get(vehicle.status, vehicle.status) }}</span>
     目前使用人：{{ vehicle.current_holder or "-" }}
     目前使用人電話：{% if rider_phone and not vehicle.current_holder_phone %}<span title="車輛主檔沒有填電話，這是依人員資料反查到的號碼">{{ rider_phone }}</span>{% else %}{{ rider_phone or "-" }}{% endif %}
@@ -53,6 +54,11 @@
         {% endfor %}
     </select>
     <button type="submit" class="btn">更新服務區域</button>
+</form>
+
+<form method="post" action="/delivery/vehicles/{{ vehicle.vehicle_no }}/site" class="inline-form" style="display:inline-block; margin-bottom:20px; margin-left:10px;">
+    <input type="text" name="site" value="{{ vehicle.site }}" placeholder="站所">
+    <button type="submit" class="btn">更新站所</button>
 </form>
 
 <h2 class="section-title">手動補登事件</h2>

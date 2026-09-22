@@ -1288,11 +1288,13 @@ def create_vehicle(
     created_by: str,
     wheel_type: str = DEFAULT_WHEEL_TYPE,
     service_area: str = "",
+    site: str = "",
 ) -> bool:
     """新增車輛，車號當文件 ID、全公司唯一。已經存在就回傳 False、不會覆蓋
     既有資料；成功新增回傳 True。wheel_type 沒特別指定時預設三輪；
     service_area 沒有通用預設值，沒特別指定就存空字串（見 config.py 的
-    說明，報告裡會歸類到「未分區」）。"""
+    說明，報告裡會歸類到「未分區」）。site（站所，2026-09-22 新增）是
+    自由文字，不像 service_area 是固定清單，沒填就存空字串。"""
     vehicle_no = _normalize_vehicle_no(vehicle_no)
     ref = vehicles_ref().document(vehicle_no)
     if ref.get().exists:
@@ -1303,6 +1305,7 @@ def create_vehicle(
             "vendor": vendor,
             "wheel_type": wheel_type or DEFAULT_WHEEL_TYPE,
             "service_area": service_area,
+            "site": (site or "").strip(),
             "status": DEFAULT_VEHICLE_STATUS,
             "current_holder": "",
             "current_location": "",
@@ -1326,6 +1329,7 @@ def get_vehicle(vehicle_no: str):
     # config.py 的說明）。
     data.setdefault("wheel_type", DEFAULT_WHEEL_TYPE)
     data.setdefault("service_area", "")
+    data.setdefault("site", "")
     data.setdefault("current_holder_phone", "")
     data.setdefault("current_note", "")
     return data
@@ -1372,6 +1376,7 @@ def list_vehicles(
         data["vehicle_no"] = snapshot.id
         data.setdefault("wheel_type", DEFAULT_WHEEL_TYPE)
         data.setdefault("service_area", "")
+        data.setdefault("site", "")
         data.setdefault("current_holder_phone", "")
         data.setdefault("current_note", "")
         if vehicle_matches_filters(
@@ -1509,6 +1514,18 @@ def set_vehicle_service_area(vehicle_no: str, service_area: str) -> bool:
     if not ref.get().exists:
         return False
     ref.update({"service_area": service_area})
+    return True
+
+
+def set_vehicle_site(vehicle_no: str, site: str) -> bool:
+    """網頁上手動設定/修正車輛的站所（2026-09-22 新增）。跟服務區域不同，
+    這是自由文字、不是固定清單，同仁自己打字，不需要檢查合法性——比照
+    current_note 這類自由文字欄位。車輛不存在回傳 False、不會寫入。"""
+    vehicle_no = _normalize_vehicle_no(vehicle_no)
+    ref = vehicles_ref().document(vehicle_no)
+    if not ref.get().exists:
+        return False
+    ref.update({"site": (site or "").strip()})
     return True
 
 
@@ -1663,7 +1680,60 @@ def record_vehicle_event(
             "last_event_at": now,
         }
     )
+
+    if vendor == "ud":
+        _sync_ud_vehicle_sheet(
+            vehicle_no=vehicle_no,
+            service_area=vehicle.get("service_area", ""),
+            site=vehicle.get("site", ""),
+            personnel_name=personnel_name,
+            phone=phone,
+            status=new_status,
+            location=location,
+            event_type=event_type,
+            event_date=event_date,
+            note=note,
+        )
+
     return True, ""
+
+
+def _sync_ud_vehicle_sheet(
+    vehicle_no: str,
+    service_area: str,
+    site: str,
+    personnel_name: str,
+    phone: str,
+    status: str,
+    location: str,
+    event_type: str,
+    event_date: str,
+    note: str,
+) -> None:
+    """record_vehicle_event() 只在 vendor == "ud" 時才會呼叫這裡，把這筆
+    領車/還車事件同步寫一列到材霈自己維護的「三輪車」試算表（2026-09-22
+    新增，見 delivery/ud_vehicle_sheet_sync.py 的完整說明）。延後 import
+    ud_vehicle_sheet_sync（需要 googleapiclient），避免這個功能還沒用到
+    的環境（例如單元測試）也要具備這個依賴才能匯入 repository.py。任何
+    失敗都只印 log、不往外拋例外，不會讓領車/還車本身失敗。"""
+    try:
+        from delivery import ud_vehicle_sheet_sync
+
+        area = get_vehicle_service_area(service_area)
+        ud_vehicle_sheet_sync.sync_vehicle_event(
+            service_area_name=area["name"] if area else "",
+            vehicle_no=vehicle_no,
+            personnel_name=personnel_name,
+            phone=phone,
+            site=site,
+            status_name=VEHICLE_STATUS_MAP.get(status, status),
+            location=location,
+            event_type=event_type,
+            event_date=event_date,
+            note=note,
+        )
+    except Exception as e:
+        print(f"[UD車輛同步] 觸發同步時發生未預期錯誤：{e}")
 
 
 def get_vehicle_event(event_id: str):
