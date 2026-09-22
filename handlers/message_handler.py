@@ -190,12 +190,28 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             "全部重來", "整個重來", "從頭來", "從頭開始", "重新來過", "砍掉重練", "清空重來",
             "重新設定條件", "全部條件清空", "條件全部清掉",
         ]
+        # 上面這份清單是逐字完整比對，實測回報案例：使用者傳「清除所有條件」，
+        # 跟清單裡的「清除條件」只差中間「所有」兩個字，完全比對不到——沒有
+        # 走到下面 clear_user_slots()，槽位其實沒被清空，但一路往下掉到 AI
+        # 決策後，AI 自己生成的回覆卻說「已經為您清除了所有查詢條件」（AI
+        # 只是照著使用者的語氣回話，並不知道背後的槽位根本沒有真的被清掉），
+        # 讓使用者誤以為清除成功，下一輪問答又被還沒清乾淨的舊條件誤導。
+        # 這份清單只能窮舉「已知」的講法，使用者（或 AI 自己在快速回覆按鈕
+        # 上生成的文字）換一種清單沒收錄的說法，就會重演同樣的問題。改成
+        # 多一層寬鬆判斷：只要訊息裡「同時」出現「條件」兩個字，跟清除/清空/
+        # 重設/重來/重新/重頭/從頭其中任一個動作詞，不要求兩者緊連在一起，
+        # 一樣視為全域重置意圖，涵蓋「清除所有條件」「清空全部條件」這類
+        # 原本沒收錄、但語意明確的講法。
+        _reset_action_words = ["清除", "清空", "重設", "重來", "重新", "重頭", "從頭"]
+        is_full_reset_request = any(k in raw_msg for k in full_reset_keywords) or (
+            "條件" in raw_msg and any(w in raw_msg for w in _reset_action_words)
+        )
         single_dimension_keywords = [
             "換個條件", "換一個條件", "改個條件", "換條件", "改條件", "換一下條件",
             "調整條件", "改一下條件", "換個項目", "改個項目",
         ]
 
-        if any(k in raw_msg for k in full_reset_keywords):
+        if is_full_reset_request:
             clear_user_slots(user_id)
             reset_reply = "好的！沛沛已經為您清空先前的搜尋條件囉 😊\n\n請問您目前希望在哪個地區找工作？想找早班還是夜班呢？"
             append_user_history(user_id, "求職者", raw_msg)
