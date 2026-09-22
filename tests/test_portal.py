@@ -301,6 +301,33 @@ class PortalHomeDispatchSiteCardTests(unittest.TestCase):
         self.assertIn("高雄所專區", cards)
 
 
+class PortalHomeFinanceCardTests(unittest.TestCase):
+    """財務部專區卡片（2026-09-22 新增）：跟人資部門/桃園所/高雄所同一套
+    「部門字串比對」權限來源，另外測。"""
+
+    def _cards(self, account):
+        with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=[]):
+            with mock.patch.object(portal_routes, "templates") as mock_templates:
+                portal_routes.portal_home(_FakeRequest(account), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        return {c["name"]: c for c in context["cards"]}
+
+    def test_shows_for_finance_department(self):
+        account = {"username": "carol", "name": "Carol", "department": "財務部", "is_platform_admin": False, "modules": []}
+        cards = self._cards(account)
+        self.assertIn("財務部專區", cards)
+        self.assertEqual(cards["財務部專區"]["href"], "/finance")
+
+    def test_hidden_for_other_department(self):
+        account = {"username": "bob", "name": "Bob", "department": "新北所", "is_platform_admin": False, "modules": []}
+        cards = self._cards(account)
+        self.assertNotIn("財務部專區", cards)
+
+    def test_shown_for_platform_admin_regardless_of_department(self):
+        cards = self._cards(_admin_account())
+        self.assertIn("財務部專區", cards)
+
+
 class AnnouncementAdminRoutesTests(unittest.TestCase):
     """公告管理路由（限全平台管理員）：直接呼叫路由函式，跳過
     require_platform_admin 依賴（redirect=None 等同已通過檢查），

@@ -23,6 +23,7 @@ from services.salary_repayment_submit_service import (
     IS_CLAIMABLE_OPTIONS,
     PAY_TYPE_OPTIONS,
     build_payload,
+    resend_salary_repayment_email,
     submit_salary_repayment,
     validate_taiwan_id,
 )
@@ -42,7 +43,14 @@ def _require_login(request: Request):
 
 
 @router.get("/me")
-def my_zone(request: Request, submitted: str = "", submit_unknown: str = "", redirect=Depends(_require_login)):
+def my_zone(
+    request: Request,
+    submitted: str = "",
+    submit_unknown: str = "",
+    resend_ok: str = "",
+    resend_error: str = "",
+    redirect=Depends(_require_login),
+):
     if redirect:
         return redirect
     account = platform_accounts.current_account(request)
@@ -57,7 +65,31 @@ def my_zone(request: Request, submitted: str = "", submit_unknown: str = "", red
             "salary_repayment_error": error,
             "submitted_salary_id": submitted,
             "submit_unknown": submit_unknown,
+            "resend_ok": resend_ok,
+            "resend_error": resend_error,
         },
+    )
+
+
+@router.post("/me/salary-repayment/{salary_id}/resend-email")
+def resend_salary_repayment_email_submit(salary_id: str, request: Request, redirect=Depends(_require_login)):
+    """補寄信（2026-09-22 新增）：只允許補寄「這個帳號本來就看得到」的
+    紀錄——跟畫面上按鈕只在看得到的紀錄旁邊顯示是同一個權限範圍，這裡
+    在伺服器端再次確認一次，不能只靠前端不顯示按鈕就當作夠安全（例如
+    有人直接組網址呼叫這個路由）。GAS 那邊也會再確認一次這筆單子目前
+    是不是「已核准」狀態，兩邊各自把關。"""
+    if redirect:
+        return redirect
+    account = platform_accounts.current_account(request)
+    records, error = get_my_repayment_records(account["name"])
+    if error or not any(r.get("補款單號") == salary_id for r in records):
+        return RedirectResponse(url="/me?resend_error=找不到這筆紀錄，或您沒有權限操作。", status_code=303)
+
+    result = resend_salary_repayment_email(salary_id)
+    if result.get("status") == "success":
+        return RedirectResponse(url="/me?resend_ok=1", status_code=303)
+    return RedirectResponse(
+        url=f"/me?resend_error={result.get('message') or '補寄信失敗，請稍後再試。'}", status_code=303
     )
 
 

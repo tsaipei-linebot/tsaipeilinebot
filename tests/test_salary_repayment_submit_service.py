@@ -196,5 +196,115 @@ class SubmitSalaryRepaymentTests(unittest.TestCase):
         self.assertIn("LINE", result["message"])
 
 
+class ResendSalaryRepaymentEmailTests(unittest.TestCase):
+    """resend_salary_repayment_email()（2026-09-22 新增，補寄信功能）呼叫
+    GAS 的 RESEND_SALARY_EMAIL 端點——跟 submit_salary_repayment() 不同，
+    這裡逾時/看不懂回應直接當失敗處理（不用 status="unknown" 那套特殊
+    處理，因為補寄信不是「有副作用、重送會造成重複資料」的操作）。"""
+
+    def test_not_configured_url_returns_error_without_network_call(self):
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", ""):
+            with mock.patch.object(submit_service.requests, "post") as mock_post:
+                result = submit_service.resend_salary_repayment_email("SAL-1")
+        mock_post.assert_not_called()
+        self.assertEqual(result["status"], "error")
+        self.assertIn("JOB_PORTAL_GAS_WEBAPP_URL", result["message"])
+
+    def test_not_configured_secret_returns_error_without_network_call(self):
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(submit_service, "JOB_PORTAL_ADMIN_API_SECRET", ""):
+                with mock.patch.object(submit_service.requests, "post") as mock_post:
+                    result = submit_service.resend_salary_repayment_email("SAL-1")
+        mock_post.assert_not_called()
+        self.assertEqual(result["status"], "error")
+        self.assertIn("JOB_PORTAL_ADMIN_API_SECRET", result["message"])
+
+    def test_sends_salary_id_and_secret_in_payload(self):
+        fake_response = mock.Mock(status_code=200)
+        fake_response.json.return_value = {"status": "success", "message": "已重新寄送通知信至：a@b.com"}
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(submit_service, "JOB_PORTAL_ADMIN_API_SECRET", "secret123"):
+                with mock.patch.object(submit_service.requests, "post", return_value=fake_response) as mock_post:
+                    result = submit_service.resend_salary_repayment_email("SAL-1")
+        sent_payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(sent_payload["type"], "RESEND_SALARY_EMAIL")
+        self.assertEqual(sent_payload["salary_id"], "SAL-1")
+        self.assertEqual(sent_payload["admin_secret"], "secret123")
+        self.assertEqual(result["status"], "success")
+
+    def test_network_error_returns_error_dict(self):
+        import requests as requests_module
+
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(submit_service, "JOB_PORTAL_ADMIN_API_SECRET", "secret123"):
+                with mock.patch.object(
+                    submit_service.requests, "post", side_effect=requests_module.ConnectionError("boom")
+                ):
+                    result = submit_service.resend_salary_repayment_email("SAL-1")
+        self.assertEqual(result["status"], "error")
+
+    def test_gas_failure_message_passed_through(self):
+        fake_response = mock.Mock(status_code=200)
+        fake_response.json.return_value = {"status": "error", "message": "這筆補款單目前狀態是「尚未審核」"}
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(submit_service, "JOB_PORTAL_ADMIN_API_SECRET", "secret123"):
+                with mock.patch.object(submit_service.requests, "post", return_value=fake_response):
+                    result = submit_service.resend_salary_repayment_email("SAL-1")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("尚未審核", result["message"])
+
+
+class ExportApprovedSalaryPdfsZipTests(unittest.TestCase):
+    """export_approved_salary_pdfs_zip()（2026-09-22 新增，財務部專區批次
+    下載）呼叫 GAS 的 EXPORT_SALARY_PDFS 端點，成功時回應帶 base64 編碼的
+    ZIP 檔案內容。"""
+
+    def test_not_configured_url_returns_error_without_network_call(self):
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", ""):
+            with mock.patch.object(submit_service.requests, "post") as mock_post:
+                result = submit_service.export_approved_salary_pdfs_zip("2026-09-01", "2026-09-30")
+        mock_post.assert_not_called()
+        self.assertEqual(result["status"], "error")
+
+    def test_sends_date_range_and_secret_in_payload(self):
+        fake_response = mock.Mock(status_code=200)
+        fake_response.json.return_value = {
+            "status": "success", "filename": "薪資補款存查單.zip", "base64": "ZmFrZQ==", "count": 2,
+        }
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(submit_service, "JOB_PORTAL_ADMIN_API_SECRET", "secret123"):
+                with mock.patch.object(submit_service.requests, "post", return_value=fake_response) as mock_post:
+                    result = submit_service.export_approved_salary_pdfs_zip("2026-09-01", "2026-09-30")
+        sent_payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(sent_payload["type"], "EXPORT_SALARY_PDFS")
+        self.assertEqual(sent_payload["start_date"], "2026-09-01")
+        self.assertEqual(sent_payload["end_date"], "2026-09-30")
+        self.assertEqual(sent_payload["admin_secret"], "secret123")
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["base64"], "ZmFrZQ==")
+
+    def test_timeout_returns_error_with_helpful_message(self):
+        import requests as requests_module
+
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(submit_service, "JOB_PORTAL_ADMIN_API_SECRET", "secret123"):
+                with mock.patch.object(
+                    submit_service.requests, "post", side_effect=requests_module.Timeout("boom")
+                ):
+                    result = submit_service.export_approved_salary_pdfs_zip("2026-09-01", "2026-09-30")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("逾時", result["message"])
+
+    def test_no_records_message_passed_through(self):
+        fake_response = mock.Mock(status_code=200)
+        fake_response.json.return_value = {"status": "error", "message": "這個日期區間內沒有已核准的補款紀錄。"}
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(submit_service, "JOB_PORTAL_ADMIN_API_SECRET", "secret123"):
+                with mock.patch.object(submit_service.requests, "post", return_value=fake_response):
+                    result = submit_service.export_approved_salary_pdfs_zip("2026-09-01", "2026-09-30")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("沒有已核准", result["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

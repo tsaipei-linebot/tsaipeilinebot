@@ -8079,3 +8079,139 @@ unittest discover -s tests -p "test_*.py"`）1921 個全數通過。
 `PortalHomeTaoyuanDispatchCardTests`，新增高雄所卡片測試）。全部測試
 （`python3 -m unittest discover -s tests -p "test_*.py"`）1945 個全數
 通過。
+
+## 新增 `job-portal-gas-project` repo：「職缺維護系統」GAS 程式碼正式接上版控（2026-09-22）
+
+使用者反映薪資補款單已核准、但同仁沒收到通知信，追查後發現：「職缺
+維護系統」背後那支 Google Apps Script（`Project_Salary.gs` 等檔案）**一
+直沒有對應的 git repo**，只存在 Apps Script 編輯器裡，Claude 完全看不到
+程式碼、也沒辦法幫忙除錯，每次都要使用者手動貼程式碼片段出來才能討論。
+
+**這件事跟「要不要把 GAS 邏輯整個搬進這個 repo（方案 B）」是兩件獨立的
+事**——接上版控只是讓 Claude 能直接讀/改現有 GAS 程式碼，不代表決定要
+把邏輯搬過來重寫，兩者可以分開推進。
+
+使用者比照 `delivery-gas-project` repo 當初的做法，用 `clasp` 把現有
+Apps Script 專案的程式碼抓下來、推上新建的
+`tsaipei-linebot/job-portal-gas-project` repo（`clasp clone` 直接拉現有
+專案，不是重新建立一個新的 GAS 專案）。這個 repo 底下有
+`程式碼.js`（主程式：`CONFIG`、`doGet`/`doPost` 路由、同仁 LINE 帳號
+綁定）、`Project_Salary.js`（薪資補款）、`Project_Job.js`（職缺維護）、
+`Project_BatchEnhance.js`（批次 AI 潤飾）、`ProjectWorkflowService.js`
+（專案合約）。
+
+新增 `.github/workflows/clasp-push.yml`，跟 `delivery-gas-project` 同一套
+做法（合併到 `main` 後自動 `clasp push`）。**這次還沒確認這個 Apps
+Script 專案的 Web App 部署是「@HEAD」還是「固定版本」**——
+`delivery-gas-project` 當初踩過「固定版本部署，光 push 不會生效，要另外
+`clasp deploy -i <deployment id>`」這個雷（見上面「CI/CD 自動部署」章節
+的踩雷記錄），這次尚未確認，所以 workflow 目前只有 `clasp push --force`
+這一步。使用者需要在有登入這個 Apps Script 專案權限的環境執行
+`clasp deployments` 確認，如果看到固定版本的部署（deployment id 開頭
+`AKfycb...`，不是 `@HEAD`），要回來請 Claude 補上 `clasp deploy -i ...`
+那一步，不然以後改完程式碼、CI 顯示綠色勾勾，但正式環境其實沒有真的
+更新，會很難排查。
+
+**使用者需要手動處理的事（讓自動部署真的能運作）**：
+```bash
+npm install -g @google/clasp   # 如果 Cloud Shell 還沒裝過
+clasp login --no-localhost
+```
+用平常登入這個 Apps Script 專案的 Google 帳號完成授權後：
+```bash
+cat ~/.clasprc.json | base64 -w 0
+```
+把印出來的內容複製，到
+`https://github.com/tsaipei-linebot/job-portal-gas-project/settings/secrets/actions`
+新增一個叫 `CLASPRC_JSON` 的 repository secret，貼上剛剛的內容——步驟
+細節跟 `delivery-gas-project` 當初的設定完全一樣，見上面「CI/CD 自動
+部署」章節。
+
+## 修正薪資補款「已核准但沒收到信」+ 新增「補寄信」＋「財務部專區」（2026-09-22）
+
+### 根本原因：GAS 端寄信不誠實
+
+`job-portal-gas-project` 的 `Project_Salary.js`，主管在 LINE 按下「核准」
+後，原本不管 `EmailService.sendSalaryCompensationReport()` 這一步實際
+成功還是失敗，回覆給主管/申請人/其他主管的三則 LINE 訊息**永遠**都說
+「已自動寄出」——寄信失敗（例如財會/主管/申請人信箱湊不出一個有效
+email、`GmailApp.sendEmail()` 本身拋例外，例如 Gmail 每日寄信額度用完）
+只會印進 `console.error`/`console.warn`，只有主動去 Apps Script 編輯器
+「執行項目」才看得到，沒有人會知道要去查。
+
+**修正**：`EmailService.sendSalaryCompensationReport()` 改成回傳
+`{success, message, recipients}`，`SalaryWorkflowService.
+handleSalaryPostback()` 三則 LINE 訊息都照實反映真正結果，寄信失敗時
+提示同仁可以用材霈平台的「補寄信」功能重試。
+
+### 新增「補寄信」按鈕（/me 薪資補款紀錄）
+
+- `job-portal-gas-project` 新增 `doPost` 分支 `RESEND_SALARY_EMAIL`：帶
+  `salary_id`，重新抓這筆紀錄（要是「已核准」狀態才會真的補寄，其他
+  狀態直接回錯誤訊息）、再呼叫一次 `sendSalaryCompensationReport()`。
+- `tsaipeilinebot` 的 `/me` 薪資補款紀錄表格，每筆「審核狀態＝已核准」
+  的紀錄旁邊多一顆「補寄信」按鈕，按下去先跳瀏覽器確認視窗防呆
+  （`onsubmit="return confirm(...)"`，跟桃園所/高雄所收單按鈕同一種
+  做法）。權限沿用「申請人本人或其主管才看得到這筆紀錄」的既有範圍
+  （`services/salary_repayment_service.get_my_repayment_records()`）——
+  `me_routes.resend_salary_repayment_email_submit()` 在伺服器端再次確認
+  這個帳號看不看得到這筆紀錄才會真的呼叫 GAS，不是只靠前端不顯示按鈕，
+  避免有人直接組網址繞過。
+
+### 新增「財務部專區」（/finance）
+
+- 權限：帳號部門＝財務部（或全平台管理員），跟人資部門/桃園所/高雄所
+  同一套「部門字串比對」做法（見
+  `services/salary_repayment_service.has_finance_access()`）；「財務部」
+  這個部門名稱本來就在 `scripts/seed_departments.py` 的既有清單裡，
+  不用另外新增部門，指派帳號到 `/accounts` 把部門改成「財務部」即可。
+- 頁面顯示**所有**「已核准」的薪資補款紀錄（不分申請人/主管，
+  `services/salary_repayment_service.get_all_approved_repayment_records()`）
+  ——「已退回」的紀錄 GAS 那邊本來就會直接刪除、不會留在試算表；
+  「尚未審核」的財務不需要看到，只看確定要撥款的，2026-09-22 使用者
+  明確確認。
+- 選起訖日期區間（依「申請日」欄位篩選——唯一保證每筆都有填的日期
+  欄位，付款日期是選填），按下載，`job-portal-gas-project` 新增
+  `doPost` 分支 `EXPORT_SALARY_PDFS`：把區間內所有已核准紀錄各自用
+  `EmailService.buildSalaryPdfBlob()`（**跟核准信附件同一份排版邏輯**，
+  沒有另外重刻一份）產生 PDF，全部用 `Utilities.zip()` 打包成一個 ZIP、
+  base64 編碼後回傳；`tsaipeilinebot` 解碼後直接當附件回給瀏覽器下載，
+  使用者點一次拿到一個 ZIP，裡面每筆各自一份 PDF。
+
+### 新增的內部端點都要驗證共用密鑰
+
+`RESEND_SALARY_EMAIL`／`EXPORT_SALARY_PDFS` 這兩個新端點會動到既有資料
+（重寄信、批次讀取全部已核准紀錄），不是像 `SUBMIT_SALARY` 那種公開
+表單（只靠蜜罐擋機器人）——沿用 GAS 既有的 `ADMIN_API_SECRET`（原本只
+保護 `doGet` 管理端查詢），新增 `isValidAdminApiSecretFromBody()` 給
+`doPost` 用（密鑰放在 JSON body 的 `admin_secret` 欄位，不是網址參數）。
+
+**使用者需要手動處理的事**：
+1. 到 `job-portal-gas-project` 這個 Apps Script 專案的「指令碼屬性」
+   確認已經有 `ADMIN_API_SECRET`（如果之前 `doGet` 管理端查詢功能就有
+   在用，應該已經設定過；沒有的話新增一個，值是一段不外流的隨機亂碼
+   字串）。
+2. 到 `tsaipeilinebot` 的 Cloud Run 服務 `recruitment-bot` 新增環境變數
+   `JOB_PORTAL_ADMIN_API_SECRET`，**值要跟上面 `ADMIN_API_SECRET` 完全
+   一樣**：
+   ```bash
+   gcloud run services update recruitment-bot \
+     --region asia-east1 \
+     --update-env-vars JOB_PORTAL_ADMIN_API_SECRET="貼上跟 ADMIN_API_SECRET 一樣的值"
+   ```
+3. 到 `/departments`（全平台管理員帳號）確認「財務部」這個部門存在
+   （應該已經在，`scripts/seed_departments.py` 原始清單就有），到
+   `/accounts` 把負責的財務同仁帳號部門改成「財務部」。
+4. 合併 `job-portal-gas-project` 的 PR 後，如果自動部署（`clasp push`）
+   還沒設定好（見上一節），要先手動 `clasp push` 一次，不然新增的兩個
+   端點不會真的生效。
+
+新增測試：`tests/test_salary_repayment_service.py` 的
+`HasFinanceAccessTests`／`GetAllApprovedRepaymentRecordsTests`、
+`tests/test_salary_repayment_submit_service.py` 的
+`ResendSalaryRepaymentEmailTests`／`ExportApprovedSalaryPdfsZipTests`、
+`tests/test_me_routes.py` 的 `ResendSalaryRepaymentEmailSubmitTests`
+（含伺服器端權限二次確認的測試）、新增 `tests/test_finance_routes.py`、
+`tests/test_portal.py` 的 `PortalHomeFinanceCardTests`。全部測試
+（`python3 -m unittest discover -s tests -p "test_*.py"`）1977 個全數
+通過。

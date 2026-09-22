@@ -18,6 +18,7 @@ import re
 
 import requests
 
+from config import JOB_PORTAL_ADMIN_API_SECRET
 from config import JOB_PORTAL_GAS_WEBAPP_URL as GAS_WEBAPP_URL
 
 _REQUEST_TIMEOUT_SECONDS = 30
@@ -183,4 +184,71 @@ def submit_salary_repayment(payload: dict) -> dict:
         return {"status": "unknown", "message": _AMBIGUOUS_OUTCOME_MESSAGE}
     if not isinstance(data, dict) or "status" not in data:
         return {"status": "unknown", "message": _AMBIGUOUS_OUTCOME_MESSAGE}
+    return data
+
+
+# 2026-09-22 新增：「補寄信」（核准後寄信失敗時，同仁可以在網頁上手動
+# 重新觸發，不用聯絡工程師）。跟 submit_salary_repayment() 不一樣，這裡
+# 不是「送出申請」這種有副作用、重送會造成重複資料的操作——頂多重寄
+# 一次通知信，所以逾時/看不懂回應時直接當失敗處理即可，不需要
+# submit_salary_repayment() 那套「status=unknown」的特殊處理。
+def resend_salary_repayment_email(salary_id: str) -> dict:
+    """回傳 GAS RESEND_SALARY_EMAIL 端點的回應 dict（至少有 "status" 跟
+    "message"）。GAS 那邊會再次確認這筆補款單是否為「已核准」狀態，材霈
+    平台這邊呼叫端（me_routes.py）另外還會先確認這個帳號看不看得到這筆
+    紀錄，兩邊各自把關，不只靠其中一邊。"""
+    if not GAS_WEBAPP_URL:
+        return {"status": "error", "message": "尚未設定 JOB_PORTAL_GAS_WEBAPP_URL 環境變數，請聯絡系統管理員設定後再試一次。"}
+    if not JOB_PORTAL_ADMIN_API_SECRET:
+        return {"status": "error", "message": "尚未設定 JOB_PORTAL_ADMIN_API_SECRET 環境變數，請聯絡系統管理員設定後再試一次。"}
+    payload = {"type": "RESEND_SALARY_EMAIL", "admin_secret": JOB_PORTAL_ADMIN_API_SECRET, "salary_id": salary_id}
+    try:
+        response = requests.post(GAS_WEBAPP_URL, json=payload, timeout=_REQUEST_TIMEOUT_SECONDS)
+    except requests.RequestException as e:
+        return {"status": "error", "message": f"連線到職缺維護系統失敗，請稍後再試：{e}"}
+    try:
+        data = response.json()
+    except ValueError:
+        return {"status": "error", "message": "職缺維護系統回應內容無法解析，請稍後再試一次。"}
+    if not isinstance(data, dict) or "status" not in data:
+        return {"status": "error", "message": "職缺維護系統回應內容無法解析，請稍後再試一次。"}
+    return data
+
+
+# 2026-09-22 新增：財務部專區（/finance）批次下載 PDF。跟上面兩個函式
+# 不一樣的地方是回應內容除了 status/message，成功時還會帶 base64 編碼過
+# 的 ZIP 檔案內容（呼叫端 finance_routes.py 解碼後直接回給瀏覽器下載），
+# 逾時給的下限比其他兩個端點長，因為 GAS 那邊要現場產生每一筆 PDF
+# （Google Docs 服務組版 → 匯出 PDF），紀錄筆數多的話比單純寫入/查詢慢
+# 不少。
+_EXPORT_REQUEST_TIMEOUT_SECONDS = 120
+
+
+def export_approved_salary_pdfs_zip(start_date: str, end_date: str) -> dict:
+    """回傳 GAS EXPORT_SALARY_PDFS 端點的回應 dict。成功時至少有
+    "status"="success"、"filename"、"base64"（ZIP 檔案內容）；失敗時
+    "status" 不是 "success"，"message" 是可以直接顯示給使用者看的中文
+    說明。"""
+    if not GAS_WEBAPP_URL:
+        return {"status": "error", "message": "尚未設定 JOB_PORTAL_GAS_WEBAPP_URL 環境變數，請聯絡系統管理員設定後再試一次。"}
+    if not JOB_PORTAL_ADMIN_API_SECRET:
+        return {"status": "error", "message": "尚未設定 JOB_PORTAL_ADMIN_API_SECRET 環境變數，請聯絡系統管理員設定後再試一次。"}
+    payload = {
+        "type": "EXPORT_SALARY_PDFS",
+        "admin_secret": JOB_PORTAL_ADMIN_API_SECRET,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    try:
+        response = requests.post(GAS_WEBAPP_URL, json=payload, timeout=_EXPORT_REQUEST_TIMEOUT_SECONDS)
+    except requests.Timeout:
+        return {"status": "error", "message": "職缺維護系統回應逾時，可能是這個區間紀錄筆數較多，請稍後再試一次。"}
+    except requests.RequestException as e:
+        return {"status": "error", "message": f"連線到職缺維護系統失敗，請稍後再試：{e}"}
+    try:
+        data = response.json()
+    except ValueError:
+        return {"status": "error", "message": "職缺維護系統回應內容無法解析，請稍後再試一次。"}
+    if not isinstance(data, dict) or "status" not in data:
+        return {"status": "error", "message": "職缺維護系統回應內容無法解析，請稍後再試一次。"}
     return data
