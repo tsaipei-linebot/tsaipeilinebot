@@ -7232,6 +7232,8 @@ unittest discover -s tests -p "test_*.py"`）1636 個全數通過。
 既有的門市當日量資料跟已經建立好的報班時段（這些紀錄本身各自存了自己
 的地點名稱/經緯度快照，不受這次拆分影響）。
 
+**（2026-09-22 使用者回報已重新登記完成。）**
+
 `tests/test_delivery_rider_locations.py` 改寫成涵蓋兩組獨立函式跟
 路由（含一筆「建立報班時段不會誤用即時接單地點清單」的防呆測試），
 新增 `tests/test_delivery_rider_routes.py` 的 `/rider/shift-locations`
@@ -7341,7 +7343,8 @@ sync`（共用既有的 `RIDER_WEBHOOK_SECRET`，不需要新密鑰），給
    `PERSONNEL_EMPLOYEE_NO_SYNC_URL`（見該 repo HANDOFF.md），執行一次
    `syncPersonnelEmployeeNo()`，把既有蝦皮系列人員的工號補進人員名冊；
    執行紀錄列出來的「同名同姓」「查無此人」需要另外手動到人員名冊核對
-   補上。
+   補上。**（2026-09-22 使用者回報已執行；執行紀錄列出的同名同姓/查無
+   此人名單，麻煩之後找時間到人員名冊逐筆核對補上工號。）**
 3. 之後新報到的人員，工號在建立人員名冊資料時一起填即可，不需要再跑
    搬移腳本。
 
