@@ -199,18 +199,37 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 上生成的文字）換一種清單沒收錄的說法，就會重演同樣的問題。改成
         # 多一層寬鬆判斷：只要訊息裡「同時」出現「條件」兩個字，跟清除/清空/
         # 重設/重來/重新/重頭/從頭其中任一個動作詞，不要求兩者緊連在一起，
-        # 一樣視為全域重置意圖，涵蓋「清除所有條件」「清空全部條件」這類
-        # 原本沒收錄、但語意明確的講法。
+        # 一樣視為「疑似」全域重置意圖，涵蓋「清除所有條件」「清空全部條件」
+        # 這類原本沒收錄、但語意明確的講法。
+        #
+        # 這份寬鬆判斷上線後接續發現：「條件」在求職情境裡常常是指「應徵/錄取
+        # 條件」（工作的門檻要求），不是「沛沛記住的搜尋篩選條件」，兩者意思
+        # 完全不同，程式沒辦法單靠字面分辨；「重新」又是極常見的字，隨便一句
+        # 「應徵條件是什麼？可以重新說明一下嗎」都會被誤判成要清空搜尋條件。
+        # 這裡先排除幾個明確在講「工作門檻」而非「搜尋條件」的固定詞組，減少
+        # 干擾，但不強求排除清單本身要多完整——因為關鍵字/排除字永遠列不完，
+        # 真正的防呆改成下面「先確認、使用者按下確認按鈕才真的清空」這一步：
+        # 就算這裡誤判，也只是多問一句「是不是要清空」，不會真的清掉使用者
+        # 已經鎖定的條件，不必為了追求關鍵字判斷的精準度而窮舉所有講法。
+        _reset_exclude_phrases = ["應徵條件", "錄取條件", "符合條件", "門檻條件", "任職條件", "工作條件"]
         _reset_action_words = ["清除", "清空", "重設", "重來", "重新", "重頭", "從頭"]
-        is_full_reset_request = any(k in raw_msg for k in full_reset_keywords) or (
-            "條件" in raw_msg and any(w in raw_msg for w in _reset_action_words)
+        looks_like_full_reset_request = not any(p in raw_msg for p in _reset_exclude_phrases) and (
+            any(k in raw_msg for k in full_reset_keywords)
+            or ("條件" in raw_msg and any(w in raw_msg for w in _reset_action_words))
         )
         single_dimension_keywords = [
             "換個條件", "換一個條件", "改個條件", "換條件", "改條件", "換一下條件",
             "調整條件", "改一下條件", "換個項目", "改個項目",
         ]
 
-        if is_full_reset_request:
+        # 全域重置的確認按鈕固定文字——這兩句是我們自己在快速回覆按鈕上放的
+        # 完整字串，刻意不含「條件」這個字，即使使用者剛好也是自己手動打出
+        # 一模一樣的句子，也不會被下面 looks_like_full_reset_request 這個
+        # 寬鬆判斷攔下來要求「再確認一次」，不會形成問了確認又卡住的迴圈。
+        RESET_CONFIRM_TEXT = "對，全部清空"
+        RESET_DECLINE_TEXT = "不是，我是問別的"
+
+        if raw_msg.strip() == RESET_CONFIRM_TEXT:
             clear_user_slots(user_id)
             reset_reply = "好的！沛沛已經為您清空先前的搜尋條件囉 😊\n\n請問您目前希望在哪個地區找工作？想找早班還是夜班呢？"
             append_user_history(user_id, "求職者", raw_msg)
@@ -223,6 +242,28 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
             ])
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=reset_reply, quick_reply=quick_reply))
+            return
+
+        if raw_msg.strip() == RESET_DECLINE_TEXT:
+            decline_reply = "好的，不好意思打擾了！請問您想問什麼呢？😊"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", decline_reply)
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=decline_reply))
+            return
+
+        if looks_like_full_reset_request:
+            # 判斷關鍵字只能窮舉「已知」的講法，猜錯的代價如果是「直接清空」
+            # 就會真的清掉使用者已經鎖定的條件；改成先反問確認，猜錯的代價
+            # 降到只是多問一句、使用者按「不是」就能繼續原本想問的事，不會
+            # 動到任何資料——不需要為了追求關鍵字判斷的精準度而窮舉所有講法。
+            confirm_reply = "請問您是想清空目前鎖定的所有搜尋條件、重新開始找工作嗎？😊"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", confirm_reply)
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="✅ 對，全部清空", text=RESET_CONFIRM_TEXT)),
+                QuickReplyButton(action=MessageAction(label="❌ 不是，問別的", text=RESET_DECLINE_TEXT)),
+            ])
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=confirm_reply, quick_reply=quick_reply))
             return
 
         if any(k in raw_msg for k in single_dimension_keywords):

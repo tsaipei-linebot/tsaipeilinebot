@@ -895,12 +895,21 @@ class FullResetKeywordCoverageTests(unittest.TestCase):
     清單裡的「清除條件」只差中間「所有」兩個字，完全比對不到——沒有真的
     呼叫 clear_user_slots()，但一路掉到 AI 決策後，AI 自己生成的回覆卻說
     「已經為您清除了所有查詢條件」，讓使用者誤以為清除成功，下一輪問答
-    又被還沒清乾淨的舊條件誤導。修正後改成「訊息裡同時出現『條件』兩個字，
-    跟清除/清空/重設/重來/重新/重頭/從頭其中任一個動作詞（不要求緊連在
-    一起）」也視為全域重置意圖，這裡驗證確實有真的呼叫 clear_user_slots()、
-    回覆的是固定的清除成功文案，不是讓 AI 自由發揮。"""
+    又被還沒清乾淨的舊條件誤導。
 
-    def _assert_triggers_real_reset(self, raw_text):
+    第一版修正改成「訊息裡同時出現『條件』兩個字，跟清除/清空/重設/重來/
+    重新/重頭/從頭其中任一個動作詞（不要求緊連在一起）」也視為全域重置
+    意圖，直接呼叫 clear_user_slots()。但接續發現這個寬鬆判斷太寬——「條件」
+    在求職情境裡常常是指「應徵/錄取條件」（工作門檻），不是「搜尋篩選
+    條件」，「應徵條件是什麼？可以重新說明一下嗎」這類完全無關的問法也會
+    被誤判、真的把使用者的搜尋條件清空。
+
+    第二版改成兩步驟：疑似重置意圖只先反問確認，使用者按下確認按鈕（帶
+    固定文字 RESET_CONFIRM_TEXT）才真的呼叫 clear_user_slots()——就算判斷
+    誤觸發，代價只是多問一句、使用者按「不是」就能繼續原本想問的事，不會
+    真的動到任何資料，不需要為了追求關鍵字判斷的精準度而窮舉所有講法。"""
+
+    def _assert_asks_for_confirmation(self, raw_text):
         event = MagicMock()
         event.reply_token = "valid-reply-token"
         event.source.user_id = f"test-user-reset-{raw_text}"
@@ -916,20 +925,23 @@ class FullResetKeywordCoverageTests(unittest.TestCase):
              patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
             h.process_user_message(event, line_bot_api)
 
-        mock_clear_slots.assert_called_once_with(f"test-user-reset-{raw_text}")
+        # 疑似重置意圖這一輪不該真的清空，只能先反問確認
+        mock_clear_slots.assert_not_called()
         mock_ai_decision.assert_not_called()
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertIn("已經為您清空先前的搜尋條件", args[1].text)
+        self.assertIn("是想清空目前鎖定的所有搜尋條件", args[1].text)
+        button_texts = [btn.action.text for btn in args[1].quick_reply.items]
+        self.assertIn("對，全部清空", button_texts)
 
-    def test_previously_uncovered_phrasing_now_triggers_real_reset(self):
-        self._assert_triggers_real_reset("清除所有條件")
+    def test_previously_uncovered_phrasing_now_asks_for_confirmation(self):
+        self._assert_asks_for_confirmation("清除所有條件")
 
-    def test_another_previously_uncovered_phrasing_also_triggers_real_reset(self):
-        self._assert_triggers_real_reset("清空全部條件")
+    def test_another_previously_uncovered_phrasing_also_asks_for_confirmation(self):
+        self._assert_asks_for_confirmation("清空全部條件")
 
-    def test_original_exact_phrase_still_works(self):
-        self._assert_triggers_real_reset("清除條件")
+    def test_original_exact_phrase_still_asks_for_confirmation(self):
+        self._assert_asks_for_confirmation("清除條件")
 
     def test_message_with_condition_word_but_no_action_word_does_not_trigger_reset(self):
         # 只提到「條件」，但沒有清除/清空/重設之類的動作詞，不該誤判成重置
@@ -955,6 +967,79 @@ class FullResetKeywordCoverageTests(unittest.TestCase):
         mock_clear_slots.assert_not_called()
         args, _ = line_bot_api.reply_message.call_args
         self.assertEqual(args[1], control_message)
+
+    def test_job_eligibility_condition_question_does_not_ask_for_confirmation(self):
+        # 實測回報的疑慮：「條件」常常是指「應徵/錄取條件」（工作門檻），
+        # 不是搜尋篩選條件，這類問法不該被誤判成想清空搜尋條件、打斷使用者
+        # 原本想問的事。
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-eligibility-condition"
+        event.message.text = "這份工作的應徵條件是什麼？可以重新說明一下嗎？"
+        line_bot_api = MagicMock()
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.update_user_slots", return_value=dict(location="", category="", shift="", leave="", brand="")), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.clear_user_slots") as mock_clear_slots, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        mock_clear_slots.assert_not_called()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+
+class ResetConfirmationExactMatchTests(unittest.TestCase):
+    """驗證確認按鈕的兩個固定文字：按下「對，全部清空」才真的呼叫
+    clear_user_slots()；按下「不是，我是問別的」則什麼都不清空、禮貌收尾。"""
+
+    def test_confirm_button_text_triggers_real_reset(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-confirm-reset"
+        event.message.text = "對，全部清空"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.clear_user_slots") as mock_clear_slots, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+
+        mock_clear_slots.assert_called_once_with("test-user-confirm-reset")
+        mock_ai_decision.assert_not_called()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("已經為您清空先前的搜尋條件", args[1].text)
+
+    def test_decline_button_text_does_not_reset_and_does_not_ask_again(self):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-decline-reset"
+        event.message.text = "不是，我是問別的"
+        line_bot_api = MagicMock()
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.clear_user_slots") as mock_clear_slots, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+
+        mock_clear_slots.assert_not_called()
+        mock_ai_decision.assert_not_called()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("請問您想問什麼呢", args[1].text)
 
 
 class DirectInterceptHistoryTests(unittest.TestCase):
