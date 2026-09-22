@@ -564,13 +564,20 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 新增這兩個類別的直達攔截。
         is_warehouse_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["理貨/倉儲"]) and not (is_delivery_intent or is_store_intent) and not is_negative
         is_manufacturing_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["製造/作業員"]) and not (is_delivery_intent or is_store_intent or is_warehouse_intent) and not is_negative
+        # 背景測試用真實 Notion 資料找到的問題：「餐飲/服務」類別完全沒有專屬
+        # 候選池分支（外送/門市/理貨倉儲/製造作業員都有）。求職者問「餐飲類的
+        # 工作有交通車的嗎」這種「類別 + 福利/發薪方式/休假方式」合併問法、
+        # 又沒有指定廠商時，候選池會整個退回 active_jobs，混進完全不相關的
+        # 職缺（實測案例：推薦了美光的半導體廠作業員職缺）。比照理貨/倉儲、
+        # 製造/作業員補上這個類別的候選池分支。
+        is_food_service_intent = any(k in clean_input for k in CATEGORY_KEYWORDS["餐飲/服務"]) and not (is_delivery_intent or is_store_intent or is_warehouse_intent or is_manufacturing_intent) and not is_negative
         # 「蝦皮」這個廠商同樣長期高頻被問（單週最高 195 次）卻沒有直達攔截——
         # 跟 momo 不同的是，蝦皮同時有門市/外送等職缺，已經被「門市」分支
         # （含品牌篩選）處理，這裡刻意只在沒有命中任何類別關鍵字時才當成
         # 「純問蝦皮」直達攔截，避免跟門市分支互搶。
         is_shopee_intent = (
             any(k in clean_input for k in KNOWN_BRANDS["蝦皮"])
-            and not (is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent)
+            and not (is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_food_service_intent)
             and not is_negative
         )
 
@@ -584,7 +591,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 「有抓到地名」，避免把「發薪日是什麼時候」這種抓不到地名的 FAQ 類問題
         # 也一起誤攔進來。
         is_bare_location_followup = bool(extracted_loc) and not has_recognizable_category_or_brand_keyword(clean_input) and not is_negative
-        if is_bare_location_followup and not (is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_shopee_intent):
+        if is_bare_location_followup and not (is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_shopee_intent or is_food_service_intent):
             if detected_category_from_text == "外送":
                 is_delivery_intent = True
             elif detected_category_from_text == "門市":
@@ -593,6 +600,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 is_warehouse_intent = True
             elif detected_category_from_text == "製造/作業員":
                 is_manufacturing_intent = True
+            elif detected_category_from_text == "餐飲/服務":
+                is_food_service_intent = True
             elif detected_brand == "momo":
                 is_momo_intent = True
             elif detected_brand == "蝦皮":
@@ -609,6 +618,17 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 文字用——只要把這個詞、地區、還沒被放寬的其他關鍵字組成一句話，
         # 重新送進這個函式就能自然命中同一個候選池，不需要另外寫路由邏輯，
         # 跟蝦皮反問／全域重置確認是同一種「按鈕文字完全自己控制」的精神。
+        def _brand_plus_suffix(brand: str, suffix: str) -> str:
+            """組合廠商名稱跟類別字尾當候選池描述文字/按鈕重組文字。實測回報：
+            如果 detected_brand 剛好命中的是「完整職缺廠商名稱」（例如某筆
+            職缺的系統廠商名稱本身就叫「蝦皮門市」），detect_brand_label()
+            優先比對完整廠商名稱、回傳的就是這個完整名稱，直接接上類別字尾
+            會變成「蝦皮門市門市」這種重複字樣。這裡檢查字尾是不是已經包含
+            在廠商名稱裡，包含就不重複接一次。"""
+            if not brand:
+                return suffix
+            return brand if suffix in brand else f"{brand}{suffix}"
+
         _pool = []
         _pool_desc = ""
         _pool_query_phrase = ""
@@ -627,7 +647,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 混進蝦皮/Uber 的職缺，沒有任何提示這不是使用者指定的廠商。
                 _brand_clean_for_intent = clean_text_for_search(detected_brand)
                 _pool = [j for j in _pool if _brand_clean_for_intent in j.get("_search_text", "")]
-            _pool_desc = f"{detected_brand}外送" if detected_brand else "外送"
+            _pool_desc = _brand_plus_suffix(detected_brand, "外送")
             _pool_query_phrase = _pool_desc
 
         elif is_store_intent:
@@ -637,7 +657,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             # 蝦皮這個廠商條件，不會變成查「不限廠商的門市」。
             _store_brand = detected_brand
             _pool = filter_jobs_by_category_tiered(active_jobs, "門市", _store_brand)
-            _pool_desc = f"{_store_brand}門市" if _store_brand else "門市"
+            _pool_desc = _brand_plus_suffix(_store_brand, "門市")
             _pool_query_phrase = _pool_desc
 
         elif is_momo_intent:
@@ -657,8 +677,19 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 廠商的職缺，答非所問。
                 _brand_clean_for_intent = clean_text_for_search(detected_brand)
                 _pool = [j for j in _pool if _brand_clean_for_intent in j.get("_search_text", "")]
-            _pool_desc = f"{detected_brand}{_category_label_for_intent}" if detected_brand else _category_label_for_intent
-            _pool_query_phrase = f"{detected_brand}{'理貨' if is_warehouse_intent else '作業員'}" if detected_brand else ("理貨" if is_warehouse_intent else "作業員")
+            _pool_desc = _brand_plus_suffix(detected_brand, _category_label_for_intent)
+            _pool_query_phrase = _brand_plus_suffix(detected_brand, "理貨" if is_warehouse_intent else "作業員")
+
+        elif is_food_service_intent:
+            _pool = filter_jobs_by_category_tiered(active_jobs, "餐飲/服務")
+            if detected_brand:
+                # 跟理貨/倉儲、製造/作業員同一個原因：job_matches_category_filter()
+                # 的 brand_label 參數對「餐飲/服務」這個類別一樣不會生效，這裡
+                # 另外手動篩一次。
+                _brand_clean_for_intent = clean_text_for_search(detected_brand)
+                _pool = [j for j in _pool if _brand_clean_for_intent in j.get("_search_text", "")]
+            _pool_desc = _brand_plus_suffix(detected_brand, "餐飲/服務")
+            _pool_query_phrase = _pool_desc
 
         elif is_shopee_intent:
             _pool = [j for j in active_jobs if any(k in j.get("_search_text", "") for k in ["蝦皮", "spx"])]
@@ -676,13 +707,16 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 return "warehouse"
             if is_manufacturing_intent:
                 return "manufacturing"
+            if is_food_service_intent:
+                return "food_service"
             if is_shopee_intent:
                 return "shopee"
-            # 六個類別關鍵字都沒命中，卻仍然有候選池的情況，只會是下面步驟 1b
-            # 補上的「只有廠商名稱、沒有類別關鍵字」分支（_is_bare_brand_pool_intent）。
+            # 七個類別/品牌關鍵字都沒命中，卻仍然有候選池的情況，只會是下面
+            # 步驟 1b 補上的「只有廠商名稱、沒有類別關鍵字」分支
+            # （_is_bare_brand_pool_intent）。
             return "brand_only"
 
-        _has_category_pool_intent = bool(is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_shopee_intent)
+        _has_category_pool_intent = bool(is_delivery_intent or is_store_intent or is_momo_intent or is_warehouse_intent or is_manufacturing_intent or is_food_service_intent or is_shopee_intent)
 
         # ---------------- 步驟 1b：偵測休假方式／福利／發薪方式關鍵字 ----------------
         # 這三項疊加在廠商/類別「候選池」之上一起判斷（見上方步驟 1a）：不管
@@ -739,7 +773,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         if is_shopee_intent and not _has_secondary_intent and raw_msg.strip() != SHOPEE_CLARIFY_ALL_TEXT:
             _shopee_known_categories = distinct_routable_categories_for_jobs(_pool)
             if len(_shopee_known_categories) >= 2:
-                _shopee_category_emoji = {"外送": "🚚", "門市": "🏬", "理貨/倉儲": "📦", "製造/作業員": "🏭"}
+                _shopee_category_emoji = {"外送": "🚚", "門市": "🏬", "理貨/倉儲": "📦", "製造/作業員": "🏭", "餐飲/服務": "🍽️"}
                 clarify_reply = f"蝦皮目前有{'、'.join(_shopee_known_categories)}這幾種職缺在招募，請問您想看哪一種呢？😊"
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", clarify_reply)
