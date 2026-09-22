@@ -1,10 +1,21 @@
 """每日加退保彙總（2026-09-22 新增，/hr/insurance）。權限判斷不是走
 hr.auth 的 admin/staff 兩層，是比對帳號的 `department` 字串（見
-`hr/insurance_repository.py` 開頭的說明）——所以每個路由都先過
-`login_required`（要有 hr 模組權限），再另外手動判斷這個帳號是「7 個
-上傳部門之一」還是「人資」，不是這兩者就導回 /hr/，跟
-`hr/routes/license_routes.py` 等既有路由「拿到 redirect 就先擋」的寫法
-一致。
+`hr/insurance_repository.py` 開頭的說明）。
+
+**2026-09-22 跟使用者確認設計後拆成兩種登入門檻**（原本這裡所有路由都
+先過 `login_required`，要求帳號勾了「人資專區」這個模組權限才能進來，
+但 7 個上傳部門的同仁本來就不該需要那個模組權限——他們不需要、也不該
+看到意外通報/體檢報告/員工關懷這些人資才看得到的功能）：
+- **上傳／查歷史／首頁自動導向**（`_require_login`）：只要有登入即可，
+  不用勾「人資專區」，靠 `repo.can_upload()`／`repo.is_collector()` 這層
+  部門字串比對把關實際能看到什麼——`/portal` 現在會依帳號的部門直接給
+  一張「{部門} 加退保」卡片（見 `portal_routes.py`），點進來就是走這幾
+  支路由，不會先經過人資模組的登入頁。
+- **彙總／收單／下載**（`login_required`，維持不變）：這幾頁是給人資
+  （`INSURANCE_COLLECTOR_DEPARTMENT`）或全平台管理員收所有部門彙整資料
+  用的，人資同仁本來就需要「人資專區」模組權限才能用意外通報等其他
+  功能，這裡沿用同一個權限沒有額外負擔，維持原本「先過人資模組登入」
+  的寫法不變。
 """
 import datetime
 from urllib.parse import quote
@@ -12,6 +23,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 
+import platform_accounts
 from file_type_sniff import is_allowed_upload
 from hr import insurance_repository as repo
 from hr.auth import current_user, login_required
@@ -27,9 +39,20 @@ def _today() -> str:
     return datetime.date.today().isoformat()
 
 
+def _require_login(request: Request):
+    """比照 `dispatch_routes.py`／`finance_routes.py` 的做法：只確認有
+    登入，不要求任何模組權限——沒登入導回根層級的 `/login`（不是
+    `/hr/login`，因為打這幾支路由的同仁不一定有「人資專區」模組權限，
+    導去人資模組自己的登入頁登入完也還是會被模組權限擋下來），`next`
+    帶原本要去的網址，登入完直接回到原本要看的頁面。"""
+    if not platform_accounts.current_account(request):
+        return RedirectResponse(url=f"/login?next={request.url.path}", status_code=303)
+    return None
+
+
 def _access_redirect(user: dict):
     if not repo.has_insurance_access(user):
-        return RedirectResponse(url="/hr/", status_code=303)
+        return RedirectResponse(url="/portal", status_code=303)
     return None
 
 
@@ -46,7 +69,7 @@ async def _read_upload_file(file: UploadFile):
 
 
 @router.get("/insurance")
-def insurance_home(request: Request, redirect=Depends(login_required)):
+def insurance_home(request: Request, redirect=Depends(_require_login)):
     if redirect:
         return redirect
     user = current_user(request)
@@ -59,12 +82,12 @@ def insurance_home(request: Request, redirect=Depends(login_required)):
 
 
 @router.get("/insurance/upload")
-def upload_page(request: Request, work_date: str = "", redirect=Depends(login_required)):
+def upload_page(request: Request, work_date: str = "", redirect=Depends(_require_login)):
     if redirect:
         return redirect
     user = current_user(request)
     if not repo.can_upload(user):
-        return RedirectResponse(url="/hr/", status_code=303)
+        return RedirectResponse(url="/portal", status_code=303)
     department = user.get("department") or ""
     work_date = work_date or _today()
     return templates.TemplateResponse(
@@ -86,13 +109,13 @@ async def upload_submit(
     request: Request,
     work_date: str = Form(...),
     file: UploadFile = File(None),
-    redirect=Depends(login_required),
+    redirect=Depends(_require_login),
 ):
     if redirect:
         return redirect
     user = current_user(request)
     if not repo.can_upload(user):
-        return RedirectResponse(url="/hr/", status_code=303)
+        return RedirectResponse(url="/portal", status_code=303)
     department = user.get("department") or ""
 
     def _render_error(message: str):
@@ -129,7 +152,7 @@ async def upload_submit(
 
 
 @router.get("/insurance/history")
-def history_page(request: Request, department: str = "", start_date: str = "", end_date: str = "", redirect=Depends(login_required)):
+def history_page(request: Request, department: str = "", start_date: str = "", end_date: str = "", redirect=Depends(_require_login)):
     if redirect:
         return redirect
     user = current_user(request)
