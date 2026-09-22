@@ -698,5 +698,42 @@ class FindPayMethodMatchedJobsTests(unittest.TestCase):
         self.assertEqual(jobs, [])
 
 
+class DistinctRoutableCategoriesForJobsTests(unittest.TestCase):
+    """供「蝦皮職缺類型反問」使用：只統計有專屬直達攔截的類別（外送/門市/
+    理貨倉儲/製造作業員），依 DIRECT_INTERCEPT_ROUTABLE_CATEGORIES 的順序
+    回傳；沒有專屬直達攔截的類別（例如人資專員）不該被算進來，避免反問
+    了卻沒有對應按鈕可以精準路由。
+
+    刻意不用「設備人員」當作「沒有專屬直達攔截」的範例——那個字串剛好會
+    命中 category_search_keywords()「製造/作業員」清單裡的「設備」關鍵字
+    （見 job_matches_category_filter() 的既有行為），改用完全不會跟任何
+    已知類別關鍵字重疊的「人資專員」。"""
+
+    def _job(self, category):
+        return {"職缺名稱(對外)": f"測試{category}職缺", "職務類別": category}
+
+    def test_single_category_returns_one_label(self):
+        jobs = [self._job("外送")]
+        self.assertEqual(m.distinct_routable_categories_for_jobs(jobs), ["外送"])
+
+    def test_multiple_categories_returned_in_fixed_order(self):
+        jobs = [self._job("製造/作業員"), self._job("外送"), self._job("門市")]
+        self.assertEqual(
+            m.distinct_routable_categories_for_jobs(jobs),
+            ["外送", "門市", "製造/作業員"],
+        )
+
+    def test_unroutable_category_is_excluded(self):
+        jobs = [self._job("人資專員")]
+        self.assertEqual(m.distinct_routable_categories_for_jobs(jobs), [])
+
+    def test_mixed_routable_and_unroutable_only_returns_routable(self):
+        jobs = [self._job("外送"), self._job("人資專員")]
+        self.assertEqual(m.distinct_routable_categories_for_jobs(jobs), ["外送"])
+
+    def test_empty_jobs_returns_empty_list(self):
+        self.assertEqual(m.distinct_routable_categories_for_jobs([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
