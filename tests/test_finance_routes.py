@@ -50,6 +50,13 @@ class FinanceRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/finance")
 
+    def test_help_redirects_to_login_when_not_authenticated(self):
+        """使用說明頁（2026-09-22 新增）走跟主頁同一組 _require_access，
+        跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組權限判斷。"""
+        resp = self.client.get("/finance/help", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+        self.assertEqual(resp.headers["location"], "/login?next=/finance")
+
 
 class RequireAccessDependencyTests(unittest.TestCase):
     """_require_access()：沒登入導去登入頁；登入了但部門不是財務部（也不是
@@ -120,6 +127,16 @@ class FinanceExportPdfRouteTests(unittest.TestCase):
         self.assertEqual(result.body, zip_bytes)
         self.assertEqual(result.media_type, "application/zip")
         self.assertIn("attachment", result.headers["content-disposition"])
+
+
+class FinanceHelpPageTests(unittest.TestCase):
+    def test_renders_help_template_with_user_context(self):
+        account = _finance_account()
+        with mock.patch.object(finance_routes, "templates") as mock_templates:
+            finance_routes.finance_help_page(_FakeRequest(account), redirect=None)
+        args = mock_templates.TemplateResponse.call_args[0]
+        self.assertEqual(args[1], "finance_help.html")
+        self.assertEqual(args[2]["user"]["username"], "carol")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ site_name }}專區使用說明 - 材霈有限公司{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ site_name }}專區使用說明</h1>
+<p class="hint">
+    這裡整理{{ site_name }}派遣媒合目前所有功能的操作方式。系統每次上線新功能或調整既有功能，
+    這頁都會同步更新，不用擔心看到過時的說明。
+</p>
+
+<div class="help-nav">
+    <a class="btn btn-small" href="#overview">系統總覽</a>
+    <a class="btn btn-small" href="#personnel">人員管理</a>
+    <a class="btn btn-small" href="#locations">地點管理</a>
+    <a class="btn btn-small" href="#postings">需求時段管理</a>
+    <a class="btn btn-small" href="#line">LINE 指令（人員用）</a>
+    <a class="btn btn-small" href="#insurance">每日加退保</a>
+</div>
+
+<section id="overview" class="help-section">
+    <h2>系統總覽</h2>
+    <p class="hint">帳號部門是「{{ site_name }}」（或全平台管理員）才看得到這個卡片、進得去這個頁面，不用另外開通模組權限。網頁這邊是後台管理，人員實際查詢需求/報名是在 LINE 官方帳號裡用文字指令操作。</p>
+</section>
+
+<section id="personnel" class="help-section">
+    <h2>人員管理</h2>
+    <ul>
+        <li>維護派遣人員姓名、電話、人員資格（理貨/作業員/餐飲有體檢/餐飲無體檢）</li>
+        <li>可以手動新增，也可以用 CSV 批次匯入</li>
+        <li>人員要先在這裡有資料，才能在 LINE 上用「綁定+姓名+電話」綁定身分</li>
+    </ul>
+</section>
+
+<section id="locations" class="help-section">
+    <h2>地點管理</h2>
+    <ul>
+        <li>維護{{ site_name }}的服務地點清單，可以手動新增或 CSV 批次匯入</li>
+        <li>開需求時段時會從這份清單挑地點，不用每次手動輸入</li>
+    </ul>
+</section>
+
+<section id="postings" class="help-section">
+    <h2>需求時段管理</h2>
+    <ul>
+        <li>開需求：選地點、填時段、需要的人數跟人員資格</li>
+        <li>人員在 LINE 上傳「需求列表」會看到符合自己資格的需求，傳「報名 代碼」報名</li>
+        <li>在「查看報名名單」頁面手動核准/駁回，核准/駁回會直接推播 LINE 訊息通知人員</li>
+    </ul>
+</section>
+
+<section id="line" class="help-section">
+    <h2>LINE 指令（人員用）</h2>
+    <p class="hint">人員在{{ site_name }}的 LINE 官方帳號私訊以下固定指令，系統不會用 AI 猜意圖，指令打錯會回覆操作說明。</p>
+    <ul>
+        <li><strong>綁定+姓名+電話</strong>：第一次使用要先綁定身分，例如「綁定+王小明+0912345678」——姓名電話要跟人員管理裡的資料一致才能綁定成功</li>
+        <li><strong>需求列表</strong>：查看目前開放報名、符合自己人員資格的需求</li>
+        <li><strong>報名 代碼</strong>：報名需求列表裡的某一筆，例如「報名 A1B2C3」</li>
+        <li><strong>我的報名</strong>：查詢自己報名紀錄的審核狀態</li>
+    </ul>
+</section>
+
+<section id="insurance" class="help-section">
+    <h2>每日加退保</h2>
+    <p class="hint">首頁的「每日加退保」卡片只有部門是「{{ site_name }}」的帳號才看得到——這是跟人資彙整每天加退保 Excel 的功能，不用另外勾任何模組權限，帳號部門對了就能用。</p>
+    <ul>
+        <li><strong>上傳</strong>：選日期，上傳當天的加退保 Excel；同一天再傳一次會直接蓋掉前一份，不是累加</li>
+        <li><strong>查歷史</strong>：只能查自己部門的歷史上傳紀錄</li>
+        <li>人資收單後，當天就不能再上傳，需要補傳請聯絡人資</li>
+        <li>完整的加退保功能說明見「每日加退保」頁面自己的使用說明</li>
+    </ul>
+</section>
+
+<p class="hint">
+    操作上有疑問，或發現系統跟實際狀況對不起來，請聯絡系統管理窗口。
+</p>
+
+<p class="back-link"><a href="/dispatch/{{ site }}">&larr; 回{{ site_name }}專區主頁</a></p>
+{% endblock %}

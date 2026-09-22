@@ -8425,3 +8425,51 @@ staff）。
 `tests/test_report_accounts_for_rank_setup.py`／`tests/test_portal.py`
 既有測試跟著 `delivery` 模組顯示名稱改名同步更新。全部測試（`python3
 -m unittest discover -s tests -p "test_*.py"`）2016 個全數通過。
+
+## 補齊財務部專區／派遣媒合專區／加退保的使用說明頁（2026-09-22）
+
+使用者發現這幾天新增的功能（財務部專區、桃園所/高雄所派遣媒合、加退保
+部門卡片）都沒有「使用說明」入口——這幾個都是照財務部/桃園所/高雄所/
+加退保「不掛模組、照部門判斷」那套做法新增的卡片，`help_href` 一直是
+空字串，跟其他 8 個掛在 `platform_accounts.MODULES` 的模組（一開始就有
+`help_href` 這個欄位設計）比起來是明顯的落差。
+
+### 新增的使用說明頁
+
+- **`/finance/help`**（`finance_routes.finance_help_page`）：跟 `/finance`
+  首頁同一組 `_require_access`（部門是財務部或全平台管理員）。新增
+  `templates/finance_help.html`。
+- **`/dispatch/{site}/help`**（`dispatch_routes.dispatch_help_page`）：跟
+  `/dispatch/{site}` 首頁同一組 `_require_access`，內容涵蓋人員/地點/
+  需求時段管理、LINE 指令（綁定/需求列表/報名/我的報名）、還有這次併
+  進去的每日加退保按鈕。新增 `templates/dispatch_help.html`（依
+  `site_name` 動態代入文字，兩個所共用同一份樣板）。這是派遣媒合這個
+  功能從桃園所 Phase 1 上線以來第一次有使用說明頁。
+- **`/hr/insurance/help`**（`hr.routes.insurance_routes.insurance_help_page`）：
+  **刻意獨立於 `/hr/help` 之外**，跟加退保上傳/查歷史那幾支路由同一組
+  `_require_login`（只要登入，不用「人資專區」模組權限）——如果直接
+  連去 `/hr/help`，沒有人資模組權限的部門帳號會被那邊的 `login_required`
+  擋下來，等於使用說明按鈕點了進不去，重蹈加退保入口之前踩過的問題。
+  內容只寫部門同仁需要的部分（上傳/查歷史），人資才需要的收單/下載
+  彙總維持只留在 `/hr/help`。新增 `hr/templates/insurance_help.html`。
+- `delivery/templates/help.html` 補上「每日加退保」這個新按鈕的說明
+  段落（跟外送員接單媒合那次一樣的補法，之前只有這次漏掉）。
+
+### `/portal` 卡片的 `help_href` 補齊
+
+`portal_routes.py`：桃園所/高雄所專區卡片的 `help_href` 補上
+`/dispatch/{site}/help`，財務部專區卡片補上 `/finance/help`，7 個
+加退保部門卡片（沒有其他系統的那 4 個）補上 `/hr/insurance/help`。
+
+**這次不需要任何手動設定**，合併後自動部署即可生效。
+
+新增/更新測試：`tests/test_finance_routes.py` 新增 `FinanceHelpPageTests`
+＋未登入導向測試，`tests/test_dispatch_routes.py` 新增
+`DispatchHelpPageTests`＋未登入導向測試，`tests/test_hr_routes.py` 新增
+`InsuranceHelpPageTests`＋未登入導向測試，`tests/test_portal.py` 的
+`PortalHomeHelpLinkTests` 補上桃園所/高雄所/財務部三個 `help_href` 斷言、
+新增 `test_insurance_department_card_has_help_href`。另外手動用 Jinja2
+直接 render 三份新樣板＋`delivery/templates/help.html` 確認語法沒問題
+（樣板本身不會被單元測試真的渲染，只有 mock 過 `templates` 物件）。全部
+測試（`python3 -m unittest discover -s tests -p "test_*.py"`）2024 個
+全數通過。

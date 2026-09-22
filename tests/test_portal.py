@@ -257,9 +257,24 @@ class PortalHomeHelpLinkTests(unittest.TestCase):
             "小雞點數自費申請": "/chicken-points/help",
             "派遣契約產生器": "/dispatch-contracts/help",
             "合約產生器": "/client-contracts/help",
+            "桃園所專區": "/dispatch/taoyuan/help",
+            "高雄所專區": "/dispatch/kaohsiung/help",
+            "財務部專區": "/finance/help",
         }
         for name, help_href in expected.items():
             self.assertEqual(cards[name]["help_href"], help_href, name)
+
+    def test_insurance_department_card_has_help_href(self):
+        """全平台管理員不會看到 7 個部門的獨立加退保卡片（見
+        PortalHomeInsuranceCardTests 的說明），要用真的符合部門的帳號
+        才測得到這張卡片的 help_href。"""
+        with mock.patch.object(portal_routes.platform_announcements, "list_active_announcements", return_value=[]):
+            with mock.patch.object(portal_routes, "templates") as mock_templates:
+                account = {"username": "gina", "name": "Gina", "department": "台北所(派遣組)", "is_platform_admin": False, "modules": []}
+                portal_routes.portal_home(_FakeRequest(account), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        cards = {c["name"]: c for c in context["cards"]}
+        self.assertEqual(cards["台北所(派遣組)專區"]["help_href"], "/hr/insurance/help")
 
 
 class PortalHomeDispatchSiteCardTests(unittest.TestCase):

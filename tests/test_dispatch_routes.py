@@ -80,6 +80,12 @@ class DispatchRoutingSmokeTests(unittest.TestCase):
         resp = self.client.get("/dispatch/taoyuan/postings/post1/registrations", follow_redirects=False)
         self.assertEqual(resp.status_code, 303)
 
+    def test_help_page_redirects_to_login_when_not_authenticated(self):
+        """使用說明頁（2026-09-22 新增）走跟主頁同一組 _require_access，
+        跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組權限判斷。"""
+        resp = self.client.get("/dispatch/taoyuan/help", follow_redirects=False)
+        self.assertEqual(resp.status_code, 303)
+
 
 class RequireAccessDependencyTests(unittest.TestCase):
     """_require_access()：所別代碼不存在導回 /portal；沒登入導去登入頁；
@@ -134,6 +140,16 @@ class DispatchHomeInsurancePanelTests(unittest.TestCase):
             dispatch_routes.dispatch_home("kaohsiung", _FakeRequest(_kaohsiung_account()), redirect=None)
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertTrue(context["show_insurance_panel"])
+
+
+class DispatchHelpPageTests(unittest.TestCase):
+    def test_renders_help_template_with_site_context(self):
+        with mock.patch.object(dispatch_routes, "templates") as mock_templates:
+            dispatch_routes.dispatch_help_page(SITE, _FakeRequest(_taoyuan_account()), redirect=None)
+        args = mock_templates.TemplateResponse.call_args[0]
+        self.assertEqual(args[1], "dispatch_help.html")
+        self.assertEqual(args[2]["site"], SITE)
+        self.assertEqual(args[2]["site_name"], "桃園所")
 
 
 class CreatePersonnelRouteTests(unittest.TestCase):

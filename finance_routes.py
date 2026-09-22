@@ -55,6 +55,13 @@ def finance_home(request: Request, redirect=Depends(_require_access)):
     return templates.TemplateResponse(request, "finance_home.html", _home_context(request))
 
 
+@router.get("/finance/help")
+def finance_help_page(request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    return templates.TemplateResponse(request, "finance_help.html", {"user": platform_accounts.current_account(request)})
+
+
 @router.post("/finance/export-pdf")
 def finance_export_pdf(
     request: Request, start_date: str = Form(...), end_date: str = Form(...), redirect=Depends(_require_access)
