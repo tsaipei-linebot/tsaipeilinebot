@@ -1984,5 +1984,137 @@ class BenefitKeywordDirectInterceptTests(unittest.TestCase):
         self.assertEqual(args[1], control_message)
 
 
+class PayMethodKeywordDirectInterceptTests(unittest.TestCase):
+    """使用者實測回報：求職者問「台北日領工作」，被推薦了「領薪方式」欄位
+    其實是「週領,匯款,月領,現金」（沒有日領）的職缺，因為 AI 把職缺行銷
+    文案（「精華亮點」）裡的「薪資當日結算」誤判成「日領」。改成跟福利
+    關鍵字攔截同一種精神——求職者問到發薪方式時，直接比對結構化的
+    「領薪方式」欄位，完全不交給 AI 判斷（使用者明確要求：發薪方式判斷
+    不能有任何 AI 自行延伸推論的風險）。"""
+
+    def _job(self, **overrides):
+        job = {
+            "職缺名稱": "蝦皮外送三輪雇傭-大型宅配店", "_internal_title": "蝦皮外送三輪雇傭-大型宅配店",
+            "_parsed_title": "蝦皮外送三輪雇傭-大型宅配店", "職缺名稱(對外)": "蝦皮外送三輪雇傭-大型宅配店",
+            "_job_category": "外送", "職務類別": "外送",
+            "系統廠商名稱": "蝦皮",
+            "_search_text": "蝦皮外送三輪雇傭大型宅配店薪資採當日結算時薪或件酬取最高計算",
+            "_location_search_text": "台北市",
+            "領薪方式": "週領,匯款,月領,現金",
+            "精華亮點": "公司提供三輪車，享勞健保與電話費補助，薪資當日結算，多點可選輕鬆賺！",
+        }
+        job.update(overrides)
+        return job
+
+    def test_marketing_text_mentioning_same_day_settlement_is_not_recommended_for_daily_pay(self):
+        # 這是使用者實測回報的確切案例：這筆職缺不該出現在「日領」的推薦結果裡。
+        shopee_job = self._job()
+        daily_pay_job = self._job(
+            職缺名稱="測試日領外送員",
+            _internal_title="測試日領外送員", _parsed_title="測試日領外送員",
+            領薪方式="日領,現金", 精華亮點="",
+        )
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-daily-pay-keyword"
+        event.message.text = "台北日領工作"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[shopee_job, daily_pay_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_called_once()
+        matched_jobs_arg = mock_flex_card.call_args[0][0]
+        self.assertIn(daily_pay_job, matched_jobs_arg)
+        self.assertNotIn(shopee_job, matched_jobs_arg)
+
+    def test_pay_method_keyword_with_no_matching_job_replies_honestly_without_ai(self):
+        # 命中「日領」關鍵字，但系統裡目前完全沒有職缺勾選日領時，要直接
+        # 誠實回覆「目前沒有」，不能落到 AI 決策保底流程重蹈覆轍。
+        shopee_job = self._job()
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-daily-pay-no-match"
+        event.message.text = "台北日領工作"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[shopee_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as mock_ai_decision:
+            h.process_user_message(event, line_bot_api)
+
+        mock_ai_decision.assert_not_called()
+        mock_flex_card.assert_not_called()
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("日領", args[1].text)
+        self.assertIn("沒有", args[1].text)
+
+    def test_negated_pay_method_falls_through_to_ai(self):
+        shopee_job = self._job()
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-daily-pay-negated"
+        event.message.text = "不要日領的工作"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[shopee_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+    def test_no_pay_method_keyword_falls_through_to_ai(self):
+        shopee_job = self._job()
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-no-pay-method-keyword"
+        event.message.text = "台北的工作"
+        line_bot_api = MagicMock()
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
+
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[shopee_job]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
+            h.process_user_message(event, line_bot_api)
+
+        line_bot_api.reply_message.assert_called_once()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1], control_message)
+
+
 if __name__ == "__main__":
     unittest.main()
