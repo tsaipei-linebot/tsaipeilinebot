@@ -1568,6 +1568,42 @@ class WarehouseManufacturingShopeeDirectInterceptTests(unittest.TestCase):
         mock_flex.assert_called_once()
         self.assertIn(job, mock_flex.call_args[0][0])
 
+    def _other_vendor_warehouse_job(self):
+        job = self._warehouse_job()
+        job = {**job}
+        job["職缺名稱"] = "訊聯生技理貨倉管"
+        job["_internal_title"] = "訊聯生技理貨倉管"
+        job["_parsed_title"] = "訊聯生技理貨倉管"
+        job["職缺名稱(對外)"] = "訊聯生技理貨倉管"
+        job["系統廠商名稱"] = "訊聯生技"
+        job["_search_text"] = "訊聯生技理貨倉管理貨倉儲"
+        return job
+
+    def test_warehouse_intent_with_brand_narrows_to_that_brand_only(self):
+        # 實測回報：job_matches_category_filter() 的 brand_label 參數只對
+        # 「門市」類別生效，理貨/倉儲、製造/作業員這兩個類別即使傳了
+        # brand_label 也完全不會篩選——求職者問「蝦皮理貨的工作」時，原本
+        # 會把其他廠商的理貨/倉儲職缺也混進來，答非所問。
+        shopee_job = {**self._warehouse_job(), "系統廠商名稱": "蝦皮", "_search_text": "蝦皮物流理貨員理貨倉儲"}
+        other_vendor_job = self._other_vendor_warehouse_job()
+        mock_ai, mock_flex = self._run("蝦皮理貨的工作", [shopee_job, other_vendor_job], "test-warehouse-brand-narrow")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        shown = mock_flex.call_args[0][0]
+        self.assertIn(shopee_job, shown)
+        self.assertNotIn(other_vendor_job, shown)
+
+    def test_warehouse_intent_without_brand_still_shows_all_vendors(self):
+        # 沒有指定廠商時不該受這次修正影響，維持原本涵蓋所有廠商的行為。
+        shopee_job = {**self._warehouse_job(), "系統廠商名稱": "蝦皮", "_search_text": "蝦皮物流理貨員理貨倉儲"}
+        other_vendor_job = self._other_vendor_warehouse_job()
+        mock_ai, mock_flex = self._run("理貨的工作", [shopee_job, other_vendor_job], "test-warehouse-no-brand")
+        mock_ai.assert_not_called()
+        mock_flex.assert_called_once()
+        shown = mock_flex.call_args[0][0]
+        self.assertIn(shopee_job, shown)
+        self.assertIn(other_vendor_job, shown)
+
     def test_bare_shopee_mention_directly_recommends_without_calling_ai(self):
         job = self._shopee_job()
         mock_ai, mock_flex = self._run("蝦皮有工作嗎", [job], "test-shopee-direct")

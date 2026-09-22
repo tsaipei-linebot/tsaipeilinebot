@@ -397,6 +397,12 @@
     - **驗證**：實測「蝦皮有工作嗎」在蝦皮同時有外送+門市職缺時，正確送出反問（不呼叫 AI、不顯示卡片）；按下「全部類型都看看」正確直接顯示全部（含沒有專屬按鈕的類型）、不會又跳回反問；按下「蝦皮外送」正確只顯示外送職缺；蝦皮只有一種類型在招時正確跳過反問直接顯示。
     - **新增測試**：`tests/test_matcher_service.py` 新增 `DistinctRoutableCategoriesForJobsTests`；`tests/test_message_handler.py` 新增 `ShopeeCategoryClarifyTests`（混合類型觸發反問、單一類型直接顯示、只有不可路由類型時直接顯示、不可路由類型不單獨給按鈕但仍算進全部看看、點選特定類型精準路由、全部看看不會卡在無限循環）。
     - **全部測試通過**：`python3 -m unittest discover -s tests` 共 2049 個測試，OK。
+60. **使用者請 Claude 用模擬對話驗證第 58、59 項的調整，過程中抓到一個真實回歸並修正**：用最新已部署的程式碼模擬了一批貼近真實回報內容的對話（蝦皮多類型混雜、發薪方式、福利、否定語氣、多輪追問等），18 組情境裡有 17 組完全符合預期，抓到 1 個真的問題：
+    - **問題**：`job_matches_category_filter()` 的 `brand_label` 參數**只有在 `category_label == "門市"` 時才會真的拿來篩選**（見函式內部的特例判斷），「理貨/倉儲」「製造/作業員」這兩個類別即使傳了 `brand_label` 也完全不會用到、等於沒篩選。第 58 項新增這兩個直達攔截時沿用了這個函式，卻沒發現這個限制，導致求職者問「蝦皮理貨的工作」時，會把其他廠商的理貨/倉儲職缺也一起混進來，答非所問。
+    - **修正**：`handlers/message_handler.py` 的 `is_warehouse_intent`／`is_manufacturing_intent` 分支，在 `filter_jobs_by_category_tiered()` 篩完類別+地區後，另外用 `detected_brand` 手動再篩一次（比對 `_search_text` 欄位），不依賴 `job_matches_category_filter()` 的 `brand_label` 參數（該參數對這兩個類別本來就是死的）。沒有指定廠商時（`detected_brand` 為空）維持原本涵蓋所有廠商的行為，不受影響。
+    - **附帶發現（非 bug，既有限制，先記錄不處理）**：測試「訊聯理貨的工作」時，因為求職者只打了廠商簡稱「訊聯」（完整廠商名稱是「訊聯生技」），沒有被辨識出來、沒有篩選生效——這是 `detect_brand_label()` 本來就有的設計（要求打出完整或接近完整的廠商名稱，避免簡稱誤判成別的廠商），全部既有的廠商相關攔截（含門市）都是同一套規則，不是這次改動造成的，也不只影響新加的這兩個類別。如果之後同仁反映求職者常用簡稱問廠商、命中率不夠，可以再另外討論。
+    - **新增測試**：`tests/test_message_handler.py` 新增 `test_warehouse_intent_with_brand_narrows_to_that_brand_only`、`test_warehouse_intent_without_brand_still_shows_all_vendors`。
+    - **全部測試通過**：`python3 -m unittest discover -s tests` 共 2051 個測試，OK。
 
 ## 目前所有檔案的狀態
 
