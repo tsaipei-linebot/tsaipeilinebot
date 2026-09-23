@@ -1470,6 +1470,89 @@ class PlainShortcutQueryTests(unittest.TestCase):
             self.assertFalse(is_plain_shortcut_query(text, jobs), text)
 
 
+class LocationRequiredBeforeCardsTests(unittest.TestCase):
+    """一定要先問到地區才給職缺卡片（使用者 2026-09-23 決定，HANDOFF.md 第 85 項）。
+    兩個保護：說不限地區算回答了；沛沛最近問過地區就不再重複問。"""
+
+    def _momo_job(self):
+        return {
+            "職缺名稱": "粉色電商理貨員", "_internal_title": "粉色電商理貨員", "_parsed_title": "粉色電商理貨員",
+            "職缺名稱(對外)": "粉色電商理貨員", "_job_category": "倉儲人員", "職務類別": "倉儲人員",
+            "系統廠商名稱": "momo", "_search_text": "momo電商理貨員桃園倉儲", "_location_search_text": "桃園市",
+        }
+
+    def _run(self, text, history=None, slots=None):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-location-required"
+        event.message.text = text
+        line_bot_api = MagicMock()
+        slots = slots or dict(location="", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="AI 決策的控制組回覆")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[self._momo_job()]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=history or []), \
+             patch("handlers.message_handler.get_user_slots", return_value=slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=slots), \
+             patch("services.matcher_service.get_user_slots", return_value=slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card", return_value="FLEX_CARD") as mock_flex_card, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message) as mock_ai:
+            h.process_user_message(event, line_bot_api)
+        return mock_flex_card, mock_ai, line_bot_api
+
+    def test_already_asked_location_does_not_ask_again(self):
+        # 沛沛剛問過地區，求職者回的話程式認不出地名：不再重複問，照原本的流程給卡片
+        history = [{"role": "招募顧問沛沛", "text": "請問您方便在【哪個地區】上班呢？（例如板橋、新莊、桃園等）"}]
+        mock_flex_card, _, _ = self._run("有momo的職缺嗎", history=history)
+        mock_flex_card.assert_called_once()
+
+    def test_reset_greeting_does_not_count_as_asked(self):
+        # 清空條件後的開場白也提到地區，但求職者回「夜班工作」沒講地區，還是要問一次
+        history = [{"role": "招募顧問沛沛", "text": "好的！沛沛已經為您清空先前的搜尋條件囉 😊\n\n請問您目前希望在哪個地區找工作？想找早班還是夜班呢？"}]
+        mock_flex_card, _, line_bot_api = self._run("有momo的職缺嗎", history=history)
+        mock_flex_card.assert_not_called()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("哪個地區", args[1].text)
+
+    def test_ai_is_told_to_ask_location_only_when_missing(self):
+        _, mock_ai, _ = self._run("夜班工作")
+        self.assertTrue(mock_ai.call_args[0][-1])
+        _, mock_ai, _ = self._run("夜班工作", slots=dict(location="桃園", category="", shift="", leave="", brand=""))
+        self.assertFalse(mock_ai.call_args[0][-1])
+
+    def test_ai_recommend_without_location_becomes_location_question(self):
+        job = self._momo_job()
+        fake_decision = json.dumps({"action": "RECOMMEND", "reply": "推薦", "ids": [0], "buttons": []})
+        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        with patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
+             patch("services.matcher_service.get_user_slots", return_value=empty_slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[job]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]), \
+             patch("handlers.message_handler.create_job_flex_card", return_value="FLEX_CARD") as mock_flex_card:
+            message = h._compute_ai_decision_messages(
+                "test-user", "夜班工作", [job], [], "", "", None, empty_slots, None, True)
+        mock_flex_card.assert_not_called()
+        self.assertIn("哪個地區", message.text)
+        self.assertIn("還不知道地區時先問地區", mock_query.call_args[0][0])
+
+    def test_ai_prompt_has_no_location_rule_when_location_known(self):
+        job = self._momo_job()
+        fake_decision = json.dumps({"action": "RECOMMEND", "reply": "推薦", "ids": [0], "buttons": []})
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[job]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]), \
+             patch("handlers.message_handler.create_job_flex_card", return_value="FLEX_CARD") as mock_flex_card:
+            h._compute_ai_decision_messages("test-user", "桃園夜班", [job], [], "桃園", "", None, {}, None, False)
+        mock_flex_card.assert_called_once()
+        self.assertNotIn("還不知道地區時先問地區", mock_query.call_args[0][0])
+
+
 class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
     """momo 分支原本有一段「這個地區沒有 momo 職缺時，退讓顯示全部 momo
     職缺」的既有機制。這個退讓不管是延續前一輪脈絡、還是使用者這句話本身
@@ -1545,10 +1628,9 @@ class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
         args, _ = line_bot_api.reply_message.call_args
         self.assertEqual(args[1], control_message)
 
-    def test_momo_with_no_location_specified_still_shows_all_momo_jobs(self):
-        # 使用者根本沒指定地區時（例如單純問「有momo的職缺嗎」），不算「找不到
-        # 就退讓」，這種情境本來就該顯示全部 momo 職缺，不受這次拿掉退讓機制
-        # 影響。
+    def test_momo_with_no_location_asks_location_first(self):
+        # 原本沒指定地區時會直接列出全部 momo 職缺；使用者 2026-09-23 決定一定要先
+        # 問到地區才給卡片（HANDOFF.md 第 85 項），所以改成先問地區。
         momo_job = self._momo_job_in_taoyuan_only()
         event = MagicMock()
         event.reply_token = "valid-reply-token"
@@ -1562,14 +1644,15 @@ class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
              patch("handlers.message_handler.get_user_history", return_value=[]), \
              patch("handlers.message_handler.get_user_slots", return_value=empty_slots), \
              patch("handlers.message_handler.update_user_slots", return_value=dict(empty_slots, brand="momo")), \
+             patch("services.matcher_service.get_user_slots", return_value=dict(empty_slots, brand="momo")), \
              patch("handlers.message_handler.append_user_history"), \
              patch("handlers.message_handler._is_staffed_hours", return_value=False), \
              patch("handlers.message_handler.create_job_flex_card") as mock_flex_card:
             h.process_user_message(event, line_bot_api)
 
-        mock_flex_card.assert_called_once()
-        matched_jobs_arg = mock_flex_card.call_args[0][0]
-        self.assertIn(momo_job, matched_jobs_arg)
+        mock_flex_card.assert_not_called()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("哪個地區", args[1].text)
 
 
 class CountyLevelFallbackRecommendationTests(unittest.TestCase):
@@ -1934,7 +2017,8 @@ class BenefitKeywordDirectInterceptTests(unittest.TestCase):
         event.source.user_id = "test-user-benefit-keyword"
         event.message.text = "有公司車嗎"
         line_bot_api = MagicMock()
-        empty_slots = dict(location="", category="", shift="", leave="", brand="")
+        # 已經知道地區（第 85 項：還不知道地區會先問地區，不給卡片）
+        empty_slots = dict(location="桃園", category="", shift="", leave="", brand="")
 
         with patch("handlers.message_handler.fetch_jobs_data", return_value=[benefit_job, unrelated_job]), \
              patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
@@ -1961,7 +2045,8 @@ class BenefitKeywordDirectInterceptTests(unittest.TestCase):
             event.source.user_id = f"test-user-benefit-{msg}"
             event.message.text = msg
             line_bot_api = MagicMock()
-            empty_slots = dict(location="", category="", shift="", leave="", brand="")
+            # 已經知道地區（第 85 項：還不知道地區會先問地區，不給卡片）
+            empty_slots = dict(location="桃園", category="", shift="", leave="", brand="")
 
             with patch("handlers.message_handler.fetch_jobs_data", return_value=[benefit_job]), \
                  patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
