@@ -583,8 +583,8 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         coop = {"id": "two_wheel_contract", "name": "二輪承攬"}
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_info",
-                return_value={"cooperation_type": coop, "phone": ""},
+                vehicle_routes.repository, "build_vehicle_rider_info_lookup",
+                return_value=lambda _vehicle: {"cooperation_type": coop, "phone": ""},
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -604,7 +604,7 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
 
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_info", side_effect=fake_resolve
+                vehicle_routes.repository, "build_vehicle_rider_info_lookup", return_value=fake_resolve
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -619,8 +619,8 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         vehicles = [self._vehicle("ERV-1")]
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_info",
-                return_value={"cooperation_type": None, "phone": ""},
+                vehicle_routes.repository, "build_vehicle_rider_info_lookup",
+                return_value=lambda _vehicle: {"cooperation_type": None, "phone": ""},
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -635,8 +635,8 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         vehicles = [self._vehicle("ERV-1")]
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_info",
-                return_value={"cooperation_type": None, "phone": ""},
+                vehicle_routes.repository, "build_vehicle_rider_info_lookup",
+                return_value=lambda _vehicle: {"cooperation_type": None, "phone": ""},
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -649,8 +649,8 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         vehicles = [self._vehicle("ERV-1", current_holder_phone="")]
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_info",
-                return_value={"cooperation_type": None, "phone": "0987654321"},
+                vehicle_routes.repository, "build_vehicle_rider_info_lookup",
+                return_value=lambda _vehicle: {"cooperation_type": None, "phone": "0987654321"},
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -663,8 +663,8 @@ class VehicleListRiderCooperationTypeTests(unittest.TestCase):
         vehicles = [self._vehicle("ERV-1", current_holder_phone="0912345678")]
         with mock.patch.object(vehicle_routes.repository, "list_vehicles", return_value=vehicles):
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_info",
-                return_value={"cooperation_type": None, "phone": "0987654321"},
+                vehicle_routes.repository, "build_vehicle_rider_info_lookup",
+                return_value=lambda _vehicle: {"cooperation_type": None, "phone": "0987654321"},
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
@@ -799,8 +799,8 @@ class VehicleListEmptyStateContextTests(unittest.TestCase):
             vehicle_routes.repository, "list_vehicles", side_effect=list_vehicles_side_effect
         ) as mock_list:
             with mock.patch.object(
-                vehicle_routes.repository, "resolve_vehicle_rider_info",
-                return_value={"cooperation_type": None, "phone": ""},
+                vehicle_routes.repository, "build_vehicle_rider_info_lookup",
+                return_value=lambda _vehicle: {"cooperation_type": None, "phone": ""},
             ):
                 with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
                     with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):

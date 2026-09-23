@@ -428,13 +428,34 @@ def update_rider_shift_registration_status(
 # 騎士名單管理（啟用/停用）——限管理員
 # ==========================================
 @router.get("/rider/riders")
-def rider_riders_page(request: Request, redirect=Depends(admin_required)):
+def rider_riders_page(
+    request: Request, employee_id: str = "", name: str = "", redirect=Depends(admin_required)
+):
     if redirect:
         return redirect
-    riders = rider_repository.list_riders()
-    for rider in riders:
-        rider["feature_category"] = rider_repository.rider_feature_category(rider)
-    return templates.TemplateResponse(request, "rider_riders.html", {"user": current_user(request), "riders": riders})
+    all_riders = rider_repository.list_riders()
+    # 2026-09-23 效能修正：原本每位騎士各呼叫一次 rider_feature_category()，
+    # 一位騎士 2 趟 Firestore，N 位就是 2N 趟序列往返，人越多頁面越慢
+    # （使用者回報「這一頁點進來都要等很久」）。改成先建一次對照表（共 2 趟），
+    # 之後每位騎士都是查記憶體，判斷規則完全不變。
+    category_by_employee_no = rider_repository.build_rider_category_map()
+    for rider in all_riders:
+        rider["feature_category"] = category_by_employee_no.get((rider.get("employee_id") or "").strip(), "")
+    riders = [
+        rider for rider in all_riders
+        if rider_repository.rider_matches_filters(rider, employee_id, name)
+    ]
+    return templates.TemplateResponse(
+        request,
+        "rider_riders.html",
+        {
+            "user": current_user(request),
+            "riders": riders,
+            "has_any_rider": bool(all_riders),
+            "filter_employee_id": employee_id,
+            "filter_name": name,
+        },
+    )
 
 
 @router.post("/rider/riders/{user_id}/status")

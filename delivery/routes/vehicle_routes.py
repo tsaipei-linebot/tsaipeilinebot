@@ -47,8 +47,13 @@ def vehicle_list(
     # 其他篩選條件後）的車輛都反查完，才能套用騎手身份篩選。手機號碼
     # 只有車輛主檔自己的 current_holder_phone 是空的時候才會用反查結果
     # 當備援顯示值，不會覆蓋車輛主檔本來就有填的電話。
+    # 2026-09-23 效能修正：原本每台車各呼叫一次 resolve_vehicle_rider_info()，
+    # 一台車 2 趟 Firestore，N 台車就是 2N 趟序列往返，車越多越慢（使用者
+    # 回報「車輛管理點進來也是偏慢」）。改成整份清單先建一次對照表（共 2 趟），
+    # 之後每台車都是查記憶體，比對規則完全不變。
+    resolve_rider_info = repository.build_vehicle_rider_info_lookup()
     for v in vehicles:
-        rider_info = repository.resolve_vehicle_rider_info(v)
+        rider_info = resolve_rider_info(v)
         v["rider_cooperation_type"] = rider_info["cooperation_type"]
         v["rider_phone"] = v.get("current_holder_phone") or rider_info["phone"]
     if cooperation_type:

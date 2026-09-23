@@ -5,6 +5,15 @@
 <h1 class="page-title">騎士名單管理</h1>
 <p class="hint">停用後，這位騎士的 LINE 帳號即時接單／報班媒合這兩個功能都會被擋下，並收到「目前無法使用這項功能」的回覆。名單來自 LINE「綁定+工號+姓名」私訊自動同步，不能在這裡新增；工號/姓名打錯字可以直接在下面編輯後按「儲存」，效果跟騎士自己重新私訊綁定一次完全一樣，不用請騎士重傳。「合作身份」是即時查人員名冊算出來的，承攬才能用即時接單、雇傭才能用報班媒合；顯示「未對應」代表工號在人員名冊裡找不到，或合作方式還沒設定承攬/雇傭分類，請到<a href="/delivery/vendor/shopee">人員名冊</a>核對工號、或到<a href="/delivery/cooperation-types">合作方式管理</a>補上分類。</p>
 
+<form method="get" action="/delivery/rider/riders" class="filter-bar">
+    <input type="text" name="employee_id" value="{{ filter_employee_id }}" placeholder="搜尋工號（打後幾碼就可以）">
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
+    <button type="submit" class="btn">搜尋</button>
+    {% if filter_employee_id or filter_name %}
+    <a class="btn" href="/delivery/rider/riders">清除篩選</a>
+    {% endif %}
+</form>
+
 {% if riders %}
 <table class="data-table">
     <thead>
@@ -15,8 +24,8 @@
         <tr>
             <td>
                 <form method="post" action="/delivery/rider/riders/{{ rider.user_id }}/edit" style="display:flex; gap:6px; align-items:center;">
-                    <input type="text" name="employee_id" value="{{ rider.employee_id }}" placeholder="工號" style="width:90px;">
-                    <input type="text" name="name" value="{{ rider.name }}" placeholder="姓名" style="width:90px;">
+                    <input type="text" name="employee_id" value="{{ rider.employee_id }}" placeholder="工號" style="width:280px;">
+                    <input type="text" name="name" value="{{ rider.name }}" placeholder="姓名" style="width:110px;">
                     <button type="submit" class="btn btn-small">儲存</button>
                 </form>
             </td>
@@ -38,7 +47,19 @@
     </tbody>
 </table>
 {% else %}
-<p class="empty">目前還沒有任何騎士完成綁定。</p>
+<div class="empty-state">
+    {% if not has_any_rider %}
+    <div class="empty-state-title">目前還沒有任何騎士完成綁定</div>
+    <p class="empty-state-text">騎士要自己在 LINE 私訊「綁定+工號+姓名」，完成後才會出現在這份名單，沒辦法在這裡手動新增。</p>
+    {% else %}
+    <div class="empty-state-title">🔍 找不到符合的騎士</div>
+    <p class="empty-state-text">
+        找不到{% if filter_employee_id %}工號包含<strong>「{{ filter_employee_id }}」</strong>{% endif %}{% if filter_employee_id and filter_name %}、{% endif %}{% if filter_name %}姓名包含<strong>「{{ filter_name }}」</strong>{% endif %}的騎士。
+    </p>
+    <p class="empty-state-text">請確認有沒有打錯字，或按下面的按鈕看全部騎士。</p>
+    <p class="empty-state-actions"><a class="btn btn-primary" href="/delivery/rider/riders">清除篩選，顯示全部騎士</a></p>
+    {% endif %}
+</div>
 {% endif %}
 
 <p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
