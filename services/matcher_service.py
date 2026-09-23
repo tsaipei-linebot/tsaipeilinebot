@@ -572,7 +572,7 @@ def extract_shift_preference(text: str) -> str:
     return labels[0] if labels else ""
 
 
-def _job_shift_labels(job: dict) -> set:
+def job_shift_labels(job: dict) -> set:
     labels = set()
     for token in re.split(r'[,，、\s()（）]+', str(job.get("班別") or "")):
         if token.strip():
@@ -654,7 +654,7 @@ def filter_jobs_by_benefit_label(jobs: list, label: str) -> list:
 
 def filter_jobs_by_shift_label(jobs: list, label: str) -> list:
     wanted = set(label.split("|"))
-    return [j for j in jobs if wanted & _job_shift_labels(j)]
+    return [j for j in jobs if wanted & job_shift_labels(j)]
 
 
 def detect_benefit_labels(raw_msg: str, active_jobs: list, negated: bool = False) -> list:
@@ -1187,7 +1187,7 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
     # 「假日班」的「日」會被當成早班加分。班別可能是「早班|晚班」多個值。
     shift_slot = slots.get("shift", "")
     if shift_slot and shift_slot != "不限":
-        if set(shift_slot.split("|")) & _job_shift_labels(job):
+        if set(shift_slot.split("|")) & job_shift_labels(job):
             score += 40
 
     # 5. 休假制度加減分[cite: 1]
@@ -1235,6 +1235,17 @@ def build_ai_job_candidates(active_jobs: list, query_text: str, current_location
         return []
 
     slots = slots or {}
+    # 記住的班別/休假/發薪/福利條件先篩一次再排序：原本只當成加減分，AI
+    # 拿到的候選清單還是混著不符合的職缺，會推薦不是日領的職缺給講過要日領
+    # 的求職者。某一項篩完是空的就不篩那一項，留給 AI 判斷怎麼退讓推薦。
+    for key, label_filter in [
+        ("shift", filter_jobs_by_shift_label), ("leave", filter_jobs_by_leave_label),
+        ("pay", filter_jobs_by_pay_label), ("benefit", filter_jobs_by_benefit_label),
+    ]:
+        if slots.get(key):
+            narrowed = label_filter(active_jobs, slots[key])
+            if narrowed:
+                active_jobs = narrowed
     scored = [(_score_job_for_ai(job, query_text, current_location, slots), idx, job) for idx, job in enumerate(active_jobs)]
     scored.sort(key=lambda x: (-x[0], x[1]))
     positive = [item for item in scored if item[0] > 0]
