@@ -13,6 +13,7 @@
 
 可以加參數比較 Gemini「先想一想」的額度（越大越準、也越慢）：
     ~/peipei-venv/bin/python scripts/eval_understanding.py --thinking 512
+在 Claude 的雲端環境：有設環境變數 PEIPEI_TEST_GEMINI_API_KEY（AI Studio 的鑰匙）時自動改用它。
 只跑某幾題（題目名稱包含這段字）：
     ~/peipei-venv/bin/python scripts/eval_understanding.py --only 地區
 """
@@ -26,7 +27,16 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import services.ai_service as ai_service  # noqa: E402
 from services.understanding_service import understand_message, drop_county_before_district  # noqa: E402
+
+# Claude 的雲端測試環境沒有 GCP 權限，改用 AI Studio 的 Gemini 鑰匙（環境變數
+# PEIPEI_TEST_GEMINI_API_KEY，只給測試用，線上的沛沛照樣用 Cloud Run 的 Vertex AI）。
+# 兩邊是同一個 Gemini 模型；有設這個鑰匙就用鑰匙，沒設（Cloud Shell）照舊用 Vertex AI。
+_TEST_KEY = os.getenv("PEIPEI_TEST_GEMINI_API_KEY", "").strip()
+if _TEST_KEY:
+    from google import genai  # noqa: E402
+    ai_service.ai_client = genai.Client(api_key=_TEST_KEY)
 
 CASES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "understanding_eval_cases.json")
 _KEEP_FULL = {"新竹縣", "新竹市", "嘉義縣", "嘉義市"}
