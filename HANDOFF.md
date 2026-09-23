@@ -669,6 +669,14 @@
     - **準確率考試**：`scripts/eval_understanding.py` 拿 `scripts/understanding_eval_cases.json`（第四～八輪整理出來的 88 句）問真正的 Gemini，印出通過率跟每句等幾秒。沙盒環境沒有 GCP 權限不能呼叫 Gemini，要在 Cloud Shell 跑（指令寫在腳本開頭）。之後每次改 prompt 都重跑一次。
     - **新增測試**：`tests/test_message_handler.py::AiUnderstandingTests`（14 個，用假的需求單測程式負責的部分：標準句子一定解讀成一樣的條件、分流、檢查、精準命中的邊界）。開關預設關閉，原本 2430 個測試全部照舊通過。
     - **第一次準確率考試結果**（使用者 2026-09-23 在 Cloud Shell 跑，thinking=0）：通過 86／88 題（98%），每題中位數 1.0 秒、最慢的 5% 約 2 秒；有一題剛好碰到 Gemini 排隊等了 66 秒（正式上線時超過 6 秒就照原本的流程處理，不會讓求職者等）。沒通過的兩題已修：「有小夜班嗎」被當成問問題（prompt 補上「問有沒有這種條件的職缺也是找工作」）、「新竹竹北」填成新竹跟竹北兩個（prompt 補上規則，程式也會在句子裡縣市緊接著行政區時拿掉縣市，`drop_county_before_district()`）。
+    - **第二次考試（大題庫）**（2026-09-23，使用者在 Cloud Shell 跑）：單句考題擴充到 523 題（`scripts/understanding_eval_cases.json`，7 個 agent 分類撰寫、`scripts/validate_eval_cases.py` 檢查格式），通過 462 題（88%）；新增多輪對話考試 `scripts/eval_conversations.py`＋203 段劇本（`scripts/conversation_eval_cases.json`，803 輪），同一段對話用原本流程（off）跟開 AI（on）各跑一次：off 整段全對 136/203、on 169/203（單輪 81%→92%），變好 45 段、變差 12 段。依結果修正：
+      - prompt 重寫：「不要A要B」兩個都要填、沒講的不要加（晚上≠大夜、每天拿≠現金、以前的經歷不是條件）、只填這句有講的、「X也可以／也沒關係」是加上去、「X不要了／可以不要」是放寬、回答沛沛選擇題的對應、類型直接列出程式認得的職務詞（`_category_words()`）、薪資只在講了月薪/時薪＋數字才填。
+      - 需求單新增 `exclude_worktype`（「不要兼職」）；地區整理 `drop_county_before_district()` 改成「新竹東區」合成一個（同名區）、記住的縣市被 AI 重填時拿掉。
+      - 問了沒有的職務且有講地區（「台中有保全嗎」）：先說沒有，記住地區，列那個地區有的類型。
+      - 意圖是問問題／閒聊時，AI 回答不能順便推職缺卡片（`_compute_ai_decision_messages(answer_only=True)`）。
+      - 「門市要輪班嗎」這種「要…嗎」的問句不算精準命中，交給 AI。
+      - 第一句就只說「都可以」：先問想從哪個地區或類型開始，不再直接列出全部職缺。
+      - 考試評分：同名區要比對縣市、AI 重填沒變的條件不算錯、「台中西屯」這種連寫認得。
     - **上線步驟**：① 合併（開關是 off，不會有任何變化）→ ② Cloud Shell 跑準確率考試，把結果給 Claude 調整 → ③ 開 `shadow` 一兩天看 log → ④ 改 `on`。
 
 ## 目前所有檔案的狀態

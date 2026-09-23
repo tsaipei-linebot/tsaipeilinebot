@@ -4451,6 +4451,47 @@ class AiUnderstandingTests(_RoundFourSessionMixin, unittest.TestCase):
         # 職缺資料裡沒有的區也要認得（考試是在沒有職缺資料的情況下跑）
         self.assertEqual(us.drop_county_before_district(["新竹", "竹北"], "新竹竹北的工作"), ["竹北"])
 
+    def test_unsupported_role_with_location_says_no_and_keeps_location(self):
+        result = self._say_ai("桃園有保全的工作嗎", self._form(locations=["桃園"], unsupported_roles=["保全"]))
+        self.assertIn("沒有「保全」", result["text"])
+        self.assertEqual(self.session_slots["location"], "桃園")
+        self.assertIn("理貨/倉儲的工作", result["buttons"])
+        self.assertNotIn("製造/作業員的工作", result["buttons"])  # 桃園沒有作業員職缺
+
+    def test_answer_only_turns_recommend_into_plain_answer(self):
+        ai_json = json.dumps({"action": "RECOMMEND", "reply": "有冷氣的職缺在這裡", "buttons": [], "ids": [0]})
+        with patch("handlers.message_handler.query_gemini_ai", return_value=ai_json) as ask, \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card") as flex, \
+             patch("handlers.message_handler._remember_shown"):
+            result = h._compute_ai_decision_messages(
+                "u1", "那邊有冷氣嗎", self._jobs(), [], "桃園", "", {}, {"location": "桃園"}, None, True)
+        self.assertIsInstance(result, h.TextSendMessage)
+        flex.assert_not_called()
+        self.assertIn("不能用 \"RECOMMEND\"", ask.call_args[0][0])
+
+    def test_first_message_any_asks_where_to_start(self):
+        result = self._say("都可以")
+        self.assertIn("哪個地區", result["text"])
+        self.assertEqual(result["titles"], [])
+
+    def test_exclude_worktype_is_rendered_and_understood(self):
+        form = us.validate_form(self._form(exclude_worktype="兼職"), self._jobs())
+        self.assertEqual(us.render_canonical_text(form), "不要兼職")
+        self._say("桃園 理貨")
+        self._say("不要兼職")
+        self.assertIn("worktype:兼職", self.session_slots["exclude"])
+
+    def test_county_district_pairs_are_tidied(self):
+        self.assertEqual(us.drop_county_before_district(["新竹", "東區"], "新竹東區的門市"), ["新竹東區"])
+        self.assertEqual(us.drop_county_before_district(["台北", "大安區"], "大安區可以嗎"), ["大安區"])
+        self.assertEqual(us.drop_county_before_district(["桃園", "中壢"], "桃園或中壢"), ["桃園", "中壢"])
+
+    def test_questions_about_job_details_are_not_precise(self):
+        jobs = self._jobs()
+        self.assertFalse(us.is_precise_hit("理貨要輪班嗎", jobs))
+        self.assertTrue(us.is_precise_hit("有輪班的嗎", jobs))
+
     def test_precise_hit_boundaries(self):
         jobs = self._jobs()
         for text in ["桃園", "桃園 理貨", "中壢理貨的工作", "夜班", "日領", "不要大夜班", "班別都可以", "桃園或新竹", "有桃園的工作嗎？"]:

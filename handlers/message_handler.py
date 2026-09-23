@@ -787,6 +787,19 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             # 問換班別、問要不要放寬時回「都可以」，類型被清掉、意思整個反過來）。
             _last_prompt = _last_bot_text(history)
             _slots_for_any = get_user_slots(user_id) if re.search(r"[?？]|拿掉一些條件", _last_prompt) else {}
+            if not _last_prompt and not any(v for k, v in get_user_slots(user_id).items() if k != "shown"):
+                # 第一句就說「都可以」：不知道要找什麼，原本直接列出全部 143 筆（第一次多輪考試）
+                _start_reply = "好的 😊 想先從哪個地區或哪一種工作開始看呢？"
+                append_user_history(user_id, "求職者", raw_msg)
+                append_user_history(user_id, "招募顧問沛沛", _start_reply)
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                    text=_start_reply,
+                    quick_reply=QuickReply(items=[
+                        QuickReplyButton(action=MessageAction(label=f"📍 {loc}", text=f"{loc}的工作"))
+                        for loc in ("台北", "新北", "桃園", "台中", "高雄")
+                    ] + [QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))]),
+                ))
+                return
             _any_buttons = [
                 QuickReplyButton(action=MessageAction(label=f"{emoji} {name}都可以", text=f"{name}都可以"))
                 for key, emoji, name in _SLOT_BROADEN_NAMES
@@ -1338,7 +1351,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
             return
 
-        def _answer_with_ai_decision(current_location, history_text, current_slots, detected_category_from_text, detected_brand):
+        def _answer_with_ai_decision(current_location, history_text, current_slots, detected_category_from_text, detected_brand, answer_only=False):
             """步驟 2 的內容：交給 AI 決策回覆（限時同步等待，逾時改背景 push）。AI 需求單判斷是
             「問問題／閒聊」時（步驟 0-2b）也直接走這裡，不經過條件判斷。"""
             append_user_history(user_id, "求職者", raw_msg)
@@ -1353,7 +1366,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             future = _AI_DECISION_EXECUTOR.submit(
                 _compute_ai_decision_messages,
                 user_id, raw_msg, active_jobs, faq_list, current_location, history_text, log_ctx,
-                current_slots, target_line_bot_api,
+                current_slots, target_line_bot_api, answer_only,
             )
             try:
                 messages = future.result(timeout=AI_DECISION_SYNC_TIMEOUT_SECONDS)
@@ -1436,16 +1449,21 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                     latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
                 )
                 return
-            if _intent == "找工作" and _canonical:
-                _log_form("canonical", _canonical)
-                raw_msg = _canonical
-            elif _intent == "找工作" and _form["unsupported_roles"]:
-                _log_form("unsupported")
+            if _intent == "找工作" and _form["unsupported_roles"] and not _form["categories"]:
+                # 「台中有保全嗎」：先老實說沒有，記住台中（其他條件照舊），列台中有的類型
+                # （第一次多輪考試：原本有地區就直接當成「台中的工作」，沒說沒有）
+                _log_form("unsupported", _canonical)
                 _roles = "、".join(_form["unsupported_roles"][:3])
-                _available = distinct_routable_categories_for_jobs(active_jobs)
+                _scope_jobs = list(active_jobs)
+                if _form["locations"]:
+                    _loc_value = extract_current_target_location("或".join(_form["locations"]), "", active_jobs)
+                    if _loc_value:
+                        update_user_slots(user_id, location=_loc_value, shown=CLEAR_SLOT)
+                        _scope_jobs = [j for j in active_jobs if any(job_matches_location(j, part) for part in _loc_value.split("|"))] or _scope_jobs
+                _available = distinct_routable_categories_for_jobs(_scope_jobs)
                 unsupported_reply = (
                     f"不好意思，沛沛這邊目前沒有「{_roles}」相關的職缺 🙏"
-                    + (f"\n\n目前有{'、'.join(_available)}這幾種類型，要不要看看呢？😊" if _available else "")
+                    + (f"\n\n{'、'.join(_form['locations']) + '目前' if _form['locations'] else '目前'}有{'、'.join(_available)}這幾種類型，要不要看看呢？😊" if _available else "")
                 )
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", unsupported_reply)
@@ -1457,6 +1475,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                     ]) if _available else None,
                 ))
                 return
+            if _intent == "找工作" and _canonical:
+                _log_form("canonical", _canonical)
+                raw_msg = _canonical
             elif _intent in ("問問題", "閒聊"):
                 _log_form("answer")
                 _question_slots = get_user_slots(user_id)
@@ -1479,6 +1500,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                     _question_slots.get("location", ""),
                     "\n".join([f"{item['role']}: {item['text']}" for item in history[-6:]]),
                     _question_slots, _question_slots.get("category", ""), _question_slots.get("brand", ""),
+                    answer_only=True,
                 )
                 return
             else:
@@ -3258,6 +3280,7 @@ def _compute_ai_decision_messages(
     log_ctx: dict = None,
     known_slots: dict = None,
     target_line_bot_api: LineBotApi = None,
+    answer_only: bool = False,
 ):
     """執行真正耗時的 AI 決策（候選集合建構 + Gemini 呼叫 + 解析），是
     process_user_message() 步驟 2 原本的內容搬過來的。這個函式故意只負責「算出
@@ -3403,6 +3426,10 @@ def _compute_ai_decision_messages(
 - buttons：字串陣列，3-5 個相關快速回覆按鈕文字（action 為 "ASK"/"UNKNOWN_FAQ"/"NO_MATCH" 時才需要，"RECOMMEND" 給空陣列即可）
 - ids：整數陣列，符合或退讓推薦的職缺數字 ID（只有 action 為 "RECOMMEND" 時才需要，例如 [0] 或 [0, 1]，其他 action 給空陣列即可）
 """
+        if answer_only:
+            # AI 需求單判斷這句是在問問題或聊天（第 81 項）：只回答，不要順便推職缺卡片
+            # （第一次多輪考試：「那邊有冷氣嗎」「我媽住高雄」都列出了新的職缺）
+            ai_prompt += "\n\n【這一句只要回答】求職者這句是在問問題或聊天，不是要找新的職缺：action 不能用 \"RECOMMEND\"，照 FAQ 回答用 \"ASK\"，FAQ 沒收錄用 \"UNKNOWN_FAQ\"。"
 
         ai_output = query_gemini_ai(ai_prompt, response_schema=AI_DECISION_SCHEMA)
         print(f"[Gemini 決策輸出]:\n{ai_output}\n")
@@ -3443,6 +3470,11 @@ def _compute_ai_decision_messages(
                 QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
             ])
             return TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons))
+
+        elif action == "RECOMMEND" and answer_only:
+            reply_text = ai_reply_text or "想了解的話可以點職缺卡片上的「了解詳細內容」喔 😊"
+            append_user_history(user_id, "招募顧問沛沛", reply_text)
+            return TextSendMessage(text=reply_text)
 
         elif action == "RECOMMEND":
             reply_text = ai_reply_text or "太棒了！沛沛為您推薦以下符合需求的職缺："

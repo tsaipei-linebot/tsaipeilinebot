@@ -84,6 +84,35 @@ def _ambiguous_districts():
 _AMBIGUOUS = _ambiguous_districts()
 
 
+def _district_cores():
+    from services.job_listing_submit_service import TAIWAN_CITY_DISTRICTS
+    cores = set()
+    for county, districts in TAIWAN_CITY_DISTRICTS.items():
+        for full in districts:
+            core = full[len(county):] if full.startswith(county) else full
+            cores.add(core[:-1] if len(core) > 2 else core)
+    return cores
+
+
+_DISTRICT_CORES = _district_cores()
+_SLOT_OF = {"locations": "location", "categories": "category", "shifts": "shift", "leaves": "leave",
+            "pays": "pay", "worktype": "worktype", "brand": "brand"}
+
+
+def _same_as_remembered(case, form, field) -> bool:
+    """AI 把「沒有要改」的條件照原樣再填一次（記住桃園，AI 又填桃園）：結果跟留空一樣，不算錯。"""
+    slot = _SLOT_OF.get(field)
+    remembered = str((case.get("slots") or {}).get(slot) or "")
+    if not slot or not remembered:
+        return False
+    got = form.get(field)
+    if field == "locations":
+        return {_norm_place(v) for v in got or []} == {_norm_place(v) for v in remembered.split("|")}
+    if isinstance(got, list):
+        return bool(got) and set(got) == set(remembered.split("|"))
+    return bool(got) and got == remembered
+
+
 def _norm_place(value: str) -> str:
     v = str(value).replace("臺", "台").strip()
     m = re.match(r"^(..[縣市])(.+[區鄉鎮市])$", v)
@@ -91,8 +120,9 @@ def _norm_place(value: str) -> str:
     if m:
         county, v = m.group(1), m.group(2)
     else:
-        m2 = re.match(r"^(台北|新北|桃園|台中|台南|高雄|基隆|新竹|嘉義)(.+區)$", v)
-        if m2:
+        # 「台中西屯」「台南永康」「新竹東區」：縣市簡稱＋區名連寫
+        m2 = re.match(r"^(台北|新北|桃園|台中|台南|高雄|基隆|新竹|嘉義|苗栗|彰化|南投|雲林|屏東|宜蘭|花蓮|台東|澎湖)(.{2,4})$", v)
+        if m2 and (m2.group(2) in _DISTRICT_CORES or m2.group(2)[:-1] in _DISTRICT_CORES):
             county, v = m2.group(1), m2.group(2)
     if v in _KEEP_FULL:
         return v[:2]
@@ -158,6 +188,8 @@ def check(case: dict, form: dict) -> list:
     if case.get("intent_not") and form["intent"] in case["intent_not"]:
         problems.append(f"intent 不應該是 {form['intent']}")
     for field, expected in (case.get("expect") or {}).items():
+        if expected in ([], "") and _same_as_remembered(case, form, field):
+            continue
         if field == "brand":
             if not _brand_match(form.get("brand"), expected):
                 problems.append(f"brand={form.get('brand')!r}，應該是 {expected!r}")
