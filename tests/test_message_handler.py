@@ -3757,5 +3757,91 @@ class MultiTurnRoundFiveFlowTests(_RoundFourSessionMixin, unittest.TestCase):
         self.assertIn("「桃園理貨早班」", r["text"])
 
 
+class MultiTurnRoundSixUnderstandingTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第六輪多輪對話測試第一批：不同求職者的說話方式。"""
+
+    def _jobs(self):
+        return [
+            self._job("桃園理貨日領", ["理貨人員"], "甲物流", ["桃園市"], ["桃園市中壢區"], "日領", "交通車", "排休", "早班"),
+            self._job("桃園理貨週領", ["理貨人員"], "乙物流", ["桃園市"], ["桃園市楊梅區"], "週領", "", "週休二日", "夜班"),
+            self._job("桃園門市", ["門市人員"], "丙門市", ["桃園市"], ["桃園市中壢區"], "月領", "", "週休二日", "早班,晚班"),
+            self._job("桃園作業員", ["作業員"], "丁科技", ["桃園市"], ["桃園市龜山區"], "月領", "交通車", "週休二日", "日班,夜班"),
+        ]
+
+    def test_if_not_x_then_y_adds_instead_of_excluding(self):
+        self._say("桃園日領的工作")
+        self._say("日領沒有的話週領也行")
+        self.assertEqual(self.session_slots["pay"], "日領|週領")
+        self.assertEqual(self.session_slots["exclude"], "")
+
+    def test_relax_prompt_does_not_change_slots_and_yes_answers_it(self):
+        self._say("桃園交通車的工作")
+        r = self._say("沒有交通車也沒關係")
+        self.assertIn("拿掉", r["text"])
+        self.assertEqual(self.session_slots["benefit"], "交通車")
+        self.assertEqual(self.session_slots["exclude"], "")
+        self._say("好")
+        self.assertEqual(self.session_slots["benefit"], "")
+
+    def test_negation_after_a_space(self):
+        self._say("桃園理貨的工作")
+        r = self._say("夜班 不要")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(r["titles"], ["桃園理貨日領"])
+
+    def test_career_change_uses_the_new_category(self):
+        self._say("我以前做外送 現在想找門市")
+        self.assertEqual(self.session_slots["category"], "門市")
+
+    def test_any_answers_the_location_question(self):
+        self._say("理貨的工作")
+        self.session_slots["location"] = ""
+        self.history.append({"role": "招募顧問沛沛", "text": "符合「理貨/倉儲」的職缺分布在好幾個縣市，請問您想在哪個地區工作呢？😊"})
+        self._say("都可以")
+        self.assertEqual(self.session_slots["location"], h.ANY_LOCATION)
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+
+    def test_typed_answer_to_rules_or_jobs(self):
+        r = self._say("可以預支嗎")
+        self.assertIn("想了解預支的規定", r["buttons"])
+        self._say("找職缺")
+        self.assertEqual(self.session_slots["pay"], "預支")
+
+    def test_faq_answer_comes_before_the_clarify_question(self):
+        self.faqs = [{"question": "可以預支薪水嗎？", "answer": "[預支規定]"}, {"question": "週領是禮拜幾發？", "answer": "[週領規定]"}]
+        r = self._say("可以預支薪水嗎？")
+        self.assertEqual(r["text"], "[預支規定]")
+        r = self._say("想了解週領的規定")
+        self.assertEqual(r["text"], "[週領規定]")
+
+    def test_busy_time_statement_asks_first(self):
+        r = self._say("我白天要顧小孩")
+        self.assertIn("晚班", r["text"])
+        self.assertEqual(r["buttons"], ["晚班的工作", "大夜班的工作", h.RESET_DECLINE_TEXT])
+        self.assertEqual(self.session_slots["shift"], "")
+
+    def test_busy_time_with_a_real_request_keeps_the_request(self):
+        self._say("桃園的工作")
+        self._say("早班就好 我晚上睡得早")
+        self.assertEqual(self.session_slots["shift"], "早班")
+
+    def test_statement_about_someone_else_asks_first(self):
+        r = self._say("我老公是司機")
+        self.assertIn("外送", r["text"])
+        self.assertEqual(self.session_slots["category"], "")
+
+    def test_question_about_the_company_is_not_a_condition(self):
+        r = self._say("你們假日有上班嗎")
+        self.assertTrue(r["ai"])
+        self.assertEqual(self.session_slots["shift"], "")
+
+    def test_fuzzy_change_request(self):
+        self._say("桃園理貨的工作")
+        r = self._say("好 我想換地區")
+        # 這組資料只有桃園，沒有別的地區可以換；重點是不會落到 AI
+        self.assertFalse(r["ai"])
+        self.assertIn("地區", r["text"])
+
+
 if __name__ == "__main__":
     unittest.main()

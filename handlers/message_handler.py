@@ -70,6 +70,9 @@ CHANGE_SHIFT_TEXT = "我想換班別"
 CHANGE_CATEGORY_TEXT = "我想換工作類型"
 APPLY_TEXT = "我要應徵"
 BRAND_CHOICE_SUFFIX = "這家廠商的工作"
+# 全域重置確認按鈕的固定文字（見步驟 0-0A）
+RESET_CONFIRM_TEXT = "對，全部清空"
+RESET_DECLINE_TEXT = "不是，我是問別的"
 # 「清空條件重新找」按鈕：按了就直接清空，不用再確認一次（求職者已經明確按了
 # 清空的按鈕；打字講「清空條件」這種可能誤判的說法才需要再確認）。
 RESET_DIRECT_TEXT = "清空條件重新找"
@@ -79,6 +82,99 @@ _APPLY_URL_RE = re.compile(r"立即填寫線上履歷：\s*(\S+)")
 # 一次最多顯示幾張職缺卡片（步驟 1c）。結果比這個多、又分散在好幾個縣市
 # 時，先問地區，不然求職者看到的前幾張可能都不在他能去的地方。
 _CARD_LIMIT = 4
+
+
+# ---------------- 簡短回覆對應到沛沛上一句的問題（第六輪測試）----------------
+# 沛沛問「想在哪個地區工作呢」時回「都可以」、問「要把這個條件拿掉嗎」時回
+# 「好」、問「了解規定還是找職缺」時回「找職缺」：原本都不知道是在回答哪一題，
+# 「都可以」清掉類型推全台職缺，「好」「找職缺」落到 AI、條件沒改。改成換成
+# 按鈕送出的那句固定文字再處理。
+_ANY_REPLY_WORDS = ("都可以", "隨便", "都好", "都行", "無所謂", "沒差", "都ok", "不限", "都沒關係")
+_YES_REPLY_WORDS = {"好", "好的", "好啊", "好喔", "對", "對的", "對啊", "可以", "要", "嗯", "嗯嗯", "是", "拿掉", "要拿掉", "ok", "沒問題", "好呀"}
+_NO_REPLY_WORDS = {"不要", "不用", "保留", "不", "不是", "不拿掉", "先不要", "留著", "不用了", "免了"}
+
+
+def _last_bot_text(history: list) -> str:
+    for item in reversed(history or []):
+        if item.get("role") == "招募顧問沛沛":
+            return str(item.get("text", ""))
+    return ""
+
+
+def _rewrite_reply_to_last_prompt(raw_msg: str, history: list) -> str:
+    """把「都可以」「好」「找職缺」這種短回覆換成上一句問題的按鈕文字；
+    對不上就回傳空字串（照原本的流程處理）。"""
+    last = _last_bot_text(history)
+    msg = clean_text_for_search(raw_msg)
+    if not last or not msg or len(msg) > 6:
+        return ""
+    is_any = any(w in msg for w in _ANY_REPLY_WORDS)
+    is_yes = msg in _YES_REPLY_WORDS
+    is_no = msg in _NO_REPLY_WORDS
+    if "請問您想在哪個地區工作呢" in last and is_any:
+        return "地區都可以"
+    if "這幾種職缺在招募，請問您想看哪一種" in last and is_any:
+        return SHOPEE_CLARIFY_ALL_TEXT
+    if "這幾種職缺，請問您想看哪一種呢" in last and is_any:
+        return "類型都可以"
+    if "這個條件拿掉嗎" in last:
+        if is_yes or is_any:
+            names = [name for name, _ in re.findall(r"「([^：」]+)：([^」]+)」", last)]
+            return " ".join(f"{name}都可以" for name in names) if names else ""
+        if is_no:
+            return KEEP_CONDITIONS_TEXT
+    if ("的相關規定，還是想找有" in last) or ("的工作內容，還是想找" in last) or ("要幫您找" in last and "的工作嗎" in last):
+        quoted = list(dict.fromkeys(re.findall(r"「([^」]+)」", last)))
+        wants_jobs = is_yes or msg in {"找職缺", "職缺", "找工作", "找", "工作", "要找", "找職缺的", "找看看"}
+        wants_info = msg in {"規定", "了解", "了解規定", "問規定", "內容", "工作內容", "想了解"}
+        if quoted and wants_jobs:
+            return f"有{'、'.join(quoted)}的工作嗎"
+        if quoted and wants_info and "要幫您找" not in last:
+            suffix = "的工作內容" if "工作內容" in last else "的規定"
+            return f"{INFO_INTENT_PREFIX}{'、'.join(quoted)}{suffix}"
+        if is_no and "要幫您找" in last:
+            return RESET_DECLINE_TEXT
+    if "請問您是想清空目前鎖定的所有搜尋條件" in last:
+        if is_yes:
+            return RESET_CONFIRM_TEXT
+        if is_no:
+            return RESET_DECLINE_TEXT
+    return ""
+
+
+# 「換地區」的各種講法（第六輪測試：「好 我想換地區」「那我想換個地區」原本
+# 只認得按鈕的那一句）
+_CHANGE_REQUEST_WORDS = {
+    "location": ("換地區", "換個地區", "換地點", "換個地點", "換區域", "換別的地區", "換縣市"),
+    "shift": ("換班別", "換個班別", "換時段", "換個時段"),
+    "category": ("換工作類型", "換類型", "換個類型", "換職缺類型", "換個工作類型"),
+}
+
+# 聊天時講到的條件字眼（使用者 2026-09-23 第六輪決定：像在聊天時先問一下）
+_BUSY_TIME_PATTERNS = [
+    # (句型, 講到的時段, 建議的選項)
+    (re.compile(r"(白天|早上|上午)(我)?(要|得|有|在|不方便|沒空|沒辦法|上課|上班|顧|接送)"), "早班", ["晚班", "大夜班"]),
+    (re.compile(r"(晚上|夜裡|半夜)(我)?(要|得|有|在|不方便|沒空|沒辦法|上課|顧|睡)"), "晚班", ["早班"]),
+    (re.compile(r"(假日|週末|周末|六日)(我)?(要|得|有|在|不方便|沒空|沒辦法|上課|顧|老公|老婆)"), "假日班", ["週休二日"]),
+]
+_STATEMENT_MARKERS = (
+    "我老公", "我先生", "我老婆", "我太太", "我媽", "我爸", "我朋友", "我小孩", "我女兒", "我兒子",
+    "我之前", "我以前", "以前做", "之前做", "做過", "之前在", "以前在", "很急", "急需", "缺錢", "急用",
+)
+_URGENT_MARKERS = ("很急", "急需", "缺錢", "急用")
+_DEMAND_MARKERS = ("想找", "要找", "幫我找", "想做", "想要", "有沒有", "就好", "可以嗎", "有嗎", "的工作", "職缺", "轉到", "轉去", "轉行", "現在想", "想轉", "找")
+
+
+def _intent_tail(raw_msg: str) -> str:
+    """「想從餐飲轉到工廠」「我以前做外送 現在想找門市」：講以前做過的、別人
+    做的，後面才是想找的。有這種說法時只看最後一個「想找／轉到」後面的部分
+    （第六輪測試：原本記成以前的類型）。"""
+    if not any(m in raw_msg for m in _STATEMENT_MARKERS + ("從",)):
+        return raw_msg
+    positions = [raw_msg.rfind(m) + len(m) for m in ("想找", "要找", "想做", "轉到", "轉去", "轉行", "現在想", "想轉", "想要") if m in raw_msg]
+    if not positions:
+        return raw_msg
+    return raw_msg[max(positions):]
 
 
 _CATEGORY_EMOJI = {
@@ -270,6 +366,16 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
     try:
         active_jobs = fetch_jobs_data()
         faq_list = fetch_faqs_data()
+        # 對話紀錄提前讀：簡短回覆要看沛沛上一句問了什麼。讀不到時當成沒有
+        # 紀錄，不能讓職缺詳情、合規說明這些不需要紀錄的回覆跟著失敗。
+        try:
+            history = get_user_history(user_id)
+        except Exception:
+            print(f"[對話紀錄讀取失敗，當成沒有紀錄]: {traceback.format_exc()}")
+            history = []
+        _rewritten = _rewrite_reply_to_last_prompt(raw_msg, history)
+        if _rewritten:
+            raw_msg = _rewritten
 
         # ---------------- 步驟 0-0A：槽位主動重置攔截 ----------------
         # 「真的想全部重來」跟「只想換一個條件」拆成兩種情境分開處理：
@@ -317,8 +423,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 完整字串，刻意不含「條件」這個字，即使使用者剛好也是自己手動打出
         # 一模一樣的句子，也不會被下面 looks_like_full_reset_request 這個
         # 寬鬆判斷攔下來要求「再確認一次」，不會形成問了確認又卡住的迴圈。
-        RESET_CONFIRM_TEXT = "對，全部清空"
-        RESET_DECLINE_TEXT = "不是，我是問別的"
 
         if raw_msg.strip() in (RESET_CONFIRM_TEXT, RESET_DIRECT_TEXT):
             clear_user_slots(user_id)
@@ -475,7 +579,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             return
 
         # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋（含否定詞感知：能區分「不要 A」跟「想要 B」）[cite: 6] ----------------
-        history = get_user_history(user_id)
         history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history[-6:]])
         user_slots = get_user_slots(user_id)
         clean_input = clean_text_for_search(raw_msg)
@@ -506,7 +609,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         clause_input = clause_clean_text(raw_msg)
         # 「理貨或門市都可以」兩個都算（使用者 2026-09-23 第五輪決定），存成
         # 「理貨/倉儲|門市」；沒有「或／跟」連起來時取先講的那個。
-        _category_mentions = detect_category_labels(clause_input)
+        _intent_text = _intent_tail(raw_msg)
+        _category_mentions = detect_category_labels(clause_clean_text(_intent_text))
         detected_category_this_turn = _category_mentions[0] if _category_mentions else ""
         if len(_category_mentions) > 1 and any(c in clean_input for c in ("或", "跟", "和", "還是", "都可以", "都行")):
             detected_category_this_turn = "|".join(_category_mentions)
@@ -518,9 +622,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         _benefit_keywords = [k for k in build_benefit_keyword_index(active_jobs or []) if len(k) >= 2]
         # 廠商名稱本身帶班別字樣時（有一筆廠商叫「M打烊班」），講廠商名稱不等於
         # 講了班別：把廠商名稱拿掉再找班別/休假/發薪/福利（第五輪按鈕爬蟲測到）。
-        _label_source = raw_msg
+        _label_source = _intent_text
         if detected_brand_this_turn:
-            _label_source = re.sub(re.escape(detected_brand_this_turn), " ", raw_msg, flags=re.IGNORECASE)
+            _label_source = re.sub(re.escape(detected_brand_this_turn), " ", _label_source, flags=re.IGNORECASE)
         this_turn_labels = {
             "shift": extract_shift_labels(_label_source),
             "leave": extract_leave_labels(_label_source),
@@ -585,7 +689,29 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 {"category": [detected_category_this_turn]} if detected_category_this_turn
                 else {"brand": [detected_brand_this_turn]}
             )
-        if is_info_request or pending_intent_clarify:
+        # 聊天時講到的條件字眼先問一下（使用者 2026-09-23 第六輪決定）：
+        # 「我白天要顧小孩」講的是白天沒空，不是要早班；「我老公是司機」
+        # 「我現在很急需要現金」不一定是在找外送、找現金領的工作。
+        pending_statement_ask = []
+        if not is_info_request and not pending_intent_clarify:
+            _busy_hits = [(said, options) for pattern, said, options in _BUSY_TIME_PATTERNS if pattern.search(raw_msg)]
+            for _said, _ in _busy_hits:
+                this_turn_labels["shift"] = [l for l in this_turn_labels["shift"] if l != _said]
+            _still_asking_for_something = bool(
+                any(this_turn_labels.values()) or extracted_loc or detected_category_this_turn or detected_brand_this_turn
+            )
+            if _busy_hits and not _still_asking_for_something:
+                pending_statement_ask = list(dict.fromkeys(opt for _, opts in _busy_hits for opt in opts))
+            elif (
+                any(m in raw_msg for m in _STATEMENT_MARKERS) and not any(m in raw_msg for m in _DEMAND_MARKERS)
+                and (any(this_turn_labels.values()) or detected_category_this_turn)
+            ):
+                pending_statement_ask = [detected_category_this_turn] if detected_category_this_turn else []
+                pending_statement_ask += [l for labels in this_turn_labels.values() for l in labels]
+                if any(m in raw_msg for m in _URGENT_MARKERS) and "日領" not in pending_statement_ask:
+                    pending_statement_ask.append("日領")
+
+        if is_info_request or pending_intent_clarify or pending_statement_ask:
             # 還沒確定是在找工作：這句話講到的條件一律先不記（原本類型跟廠商
             # 會被當成「都可以」偷偷清掉）。
             this_turn_labels = {dim: [] for dim in this_turn_labels}
@@ -617,7 +743,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         _mentions_specific_condition = bool(
             extracted_loc or detected_category_this_turn or detected_brand_this_turn
             or any(this_turn_labels.values()) or any(negated_labels.values()) or relax_dims
-            or bool(relaxed_labels) or bool(pending_intent_clarify) or is_info_request
+            or bool(relaxed_labels) or bool(pending_intent_clarify) or is_info_request or bool(pending_statement_ask)
         )
         is_generic_broaden = (
             any(k in clean_input for k in generic_broaden_keywords)
@@ -962,6 +1088,66 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             )
             return
 
+        def _faq_for_this_message():
+            """FAQ 裡有標準答案就直接用（第六輪測試：「可以預支薪水嗎？」一字不差
+            是 FAQ 的問題，原本卻先問「了解規定還是找職缺」）。按了「了解規定」
+            送回來的「想了解預支的規定」，用「預支」去找問題裡有這個詞的 FAQ。"""
+            hit = find_high_confidence_faq_match(faq_list, raw_msg)
+            if hit or not is_info_request:
+                return hit
+            topic = raw_msg.strip()[len(INFO_INTENT_PREFIX):]
+            for suffix in ("的規定", "的工作內容"):
+                if topic.endswith(suffix):
+                    topic = topic[:-len(suffix)]
+            words = [clean_text_for_search(w) for w in re.split(r"[、，,/]", topic) if w.strip()]
+            candidates = [
+                f for f in faq_list or []
+                if words and all(w and w in clean_text_for_search(f.get("question", "")) for w in words)
+            ]
+            return min(candidates, key=lambda f: len(str(f.get("question", "")))) if candidates else None
+
+        def _reply_with_faq(faq):
+            faq_reply_text = str(faq.get("answer", "")).strip()
+            if not faq_reply_text:
+                return False
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", faq_reply_text)
+            # 按鈕照求職者記住的條件給：原本固定是「新莊工作／桃園工作」，
+            # 求職者明明在找台中的工作也一樣（第五輪測試）。
+            _faq_buttons = [QuickReplyButton(action=MessageAction(label="👀 看看符合的職缺", text="都給我看看"))]
+            if not location_known:
+                _faq_buttons.append(QuickReplyButton(action=MessageAction(label="📍 選擇地區", text=CHANGE_LOCATION_TEXT)))
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=faq_reply_text, quick_reply=QuickReply(items=_faq_buttons)))
+            log_ai_decision_event(
+                path="high_confidence_faq", action="ASK",
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
+            return True
+
+        if pending_intent_clarify or pending_statement_ask or is_info_request:
+            _early_faq = _faq_for_this_message()
+            if _early_faq and _reply_with_faq(_early_faq):
+                return
+
+        if pending_statement_ask:
+            _ask_text = "或".join(f"「{opt}」" for opt in pending_statement_ask)
+            statement_reply = f"了解 😊 想跟您確認一下，要幫您找{_ask_text}的工作嗎？"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", statement_reply)
+            _statement_buttons = [
+                QuickReplyButton(action=MessageAction(label=f"✅ {opt}的工作"[:20], text=f"{opt}的工作"))
+                for opt in pending_statement_ask[:10]
+            ]
+            _statement_buttons.append(QuickReplyButton(action=MessageAction(label="❌ 都不是", text=RESET_DECLINE_TEXT)))
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                text=statement_reply, quick_reply=QuickReply(items=_statement_buttons),
+            ))
+            log_ai_decision_event(
+                path="direct_intercept", intercept_type="statement_confirm",
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
+            return
+
         if pending_intent_clarify:
             _clarify_labels = [l for labels in pending_intent_clarify.values() for l in labels]
             _clarify_label_text = "、".join(f"「{l}」" for l in _clarify_labels)
@@ -1029,6 +1215,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 列出的選項只列「其他條件不變、換成這個真的有職缺」的值，按下去送出
         # 的是一般的條件句（「桃園市的工作」「早班的工作」），走正常篩選流程。
         _change_request = {CHANGE_LOCATION_TEXT: "location", CHANGE_SHIFT_TEXT: "shift", CHANGE_CATEGORY_TEXT: "category"}.get(raw_msg.strip())
+        if not _change_request and len(clean_input) <= 14:
+            _change_request = next(
+                (dim for dim, words in _CHANGE_REQUEST_WORDS.items() if any(w in clean_input for w in words)), None)
         if _change_request:
             _scope_for_change = _search_jobs(skip=_change_request)
             # 不列目前已經選的值（原本「換地區」的選項裡有目前的桃園市，按了
@@ -1194,8 +1383,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         _multi_category_turn = "|" in (detected_category_this_turn or "")
 
         def _cat_kw(label):
+            # 用這句話真正想找的類型（_category_mentions 已經排除掉被否定的、
+            # 「以前做外送」這種講過去的），不是整句話有沒有出現關鍵字
             return (
-                any(k in clean_input for k in CATEGORY_KEYWORDS[label])
+                label in _category_mentions
                 and label not in _excluded_categories and not _multi_category_turn
             )
 
@@ -1780,24 +1971,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 求職者問句完整命中某一筆 FAQ 問題本文時，代表這題有明確、已審核過的官方答案，
         # 直接回傳 Notion 原文即可：避免 AI 意譯規章/福利類文字造成合規風險，同時省下一次
         # Gemini 呼叫。命中不到才繼續往下走 AI 決策流程（FAQ 分數較低的候選仍會送給 AI 判斷）。
-        high_confidence_faq = find_high_confidence_faq_match(faq_list, raw_msg)
-        if high_confidence_faq:
-            faq_reply_text = str(high_confidence_faq.get("answer", "")).strip()
-            if faq_reply_text:
-                append_user_history(user_id, "求職者", raw_msg)
-                append_user_history(user_id, "招募顧問沛沛", faq_reply_text)
-                # 按鈕照求職者記住的條件給：原本固定是「新莊工作／桃園工作」，
-                # 求職者明明在找台中的工作也一樣（第五輪測試）。
-                _faq_buttons = [QuickReplyButton(action=MessageAction(label="👀 看看符合的職缺", text="都給我看看"))]
-                if not location_known:
-                    _faq_buttons.append(QuickReplyButton(action=MessageAction(label="📍 選擇地區", text=CHANGE_LOCATION_TEXT)))
-                quick_reply = QuickReply(items=_faq_buttons)
-                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=faq_reply_text, quick_reply=quick_reply))
-                log_ai_decision_event(
-                    path="high_confidence_faq", action="ASK",
-                    latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
-                )
-                return
+        high_confidence_faq = _faq_for_this_message()
+        if high_confidence_faq and _reply_with_faq(high_confidence_faq):
+            return
 
         # ---------------- 步驟 2：限時同步等待 AI 決策，只有長尾請求才改走背景 push ----------------
         # 壓力測試證實（見 HANDOFF.md）：Gemini 決策在中高併發下 p99 延遲會超過 LINE

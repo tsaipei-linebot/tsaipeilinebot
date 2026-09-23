@@ -1212,5 +1212,62 @@ class RoundFiveFlowMatcherTests(unittest.TestCase):
         self.assertFalse(m.job_is_excluded(two, {"location": {"中壢"}}))
 
 
+class RoundSixUnderstandingMatcherTests(unittest.TestCase):
+    """第六輪多輪對話測試第一批（matcher 端）。"""
+
+    def test_conditional_and_relax_are_not_negation(self):
+        self.assertEqual(m.detect_pay_method_labels("日領沒有的話週領也行"), ["日領", "週領"])
+        self.assertEqual(m.detect_pay_method_labels("沒有日領的話週領也可以", negated=True), [])
+
+    def test_negation_after_a_space_or_comma(self):
+        for text in ["夜班 不要", "夜班，不要", "夜班 不行"]:
+            self.assertEqual(m.extract_shift_labels(text), [], text)
+            self.assertEqual(m.extract_shift_labels(text, negated=True), ["大夜班"], text)
+
+    def test_more_postfix_negations(self):
+        for text in ["晚上不能上班", "夜班不做", "夜班做不來"]:
+            self.assertEqual(m.extract_shift_labels(text), [], text)
+
+    def test_weekend_off_is_leave_not_holiday_shift(self):
+        for text in ["週末休", "假日休息", "假日不上班", "六日休", "週末要休息"]:
+            self.assertEqual(m.extract_shift_labels(text), [], text)
+            self.assertEqual(m.extract_leave_labels(text), ["週休二日"], text)
+        self.assertEqual(m.extract_shift_labels("假日班"), ["假日班"])
+
+    def test_four_shift_two_rotation_is_only_a_shift(self):
+        self.assertEqual(m.extract_shift_labels("四班二輪"), ["輪班"])
+        self.assertEqual(m.extract_leave_labels("四班二輪"), [])
+
+    def test_everyday_wordings(self):
+        self.assertEqual(m.detect_pay_method_labels("月薪"), ["月領"])
+        self.assertEqual(m.detect_pay_method_labels("做一天領一天"), ["日領"])
+        self.assertEqual(m.detect_pay_method_labels("兩週領"), ["雙週領"])
+        self.assertEqual(m.extract_leave_labels("休禮拜一"), ["休日一"])
+        self.assertEqual(m.extract_shift_labels("早上"), ["早班"])
+        self.assertEqual(m.extract_shift_labels("part time"), ["兼職/工讀"])
+        self.assertEqual(m.extract_shift_labels("I accept anything"), [])
+        self.assertEqual(m.detect_category_label(m.clean_text_for_search("送貨的工作")), "外送")
+        self.assertEqual(m.detect_category_label(m.clean_text_for_search("櫃台")), "門市")
+        self.assertEqual(m.detect_category_label(m.clean_text_for_search("辦公室在哪裡")), "")
+
+    def test_flexible_shift_matches_free_scheduling_jobs(self):
+        self.assertIn("彈性排班", m.job_shift_labels({"班別": "早班", "休假方式": "自由報班"}))
+
+    def test_vendor_families_and_spaces(self):
+        jobs = [{"系統廠商名稱": "呷哺呷哺"}, {"系統廠商名稱": "強茂永安廠(代招)"}, {"系統廠商名稱": "LADY M"}]
+        self.assertEqual(m.detect_brand_label("呷哺有缺嗎", jobs), "呷哺呷哺")
+        self.assertEqual(m.detect_brand_label("強茂的工作", jobs), "強茂")
+        self.assertEqual(m.detect_brand_label("LADY M的工作", jobs), "LADY M")
+
+    def test_changing_mind_is_not_a_question(self):
+        self.assertEqual(m.classify_condition_utterance("還是新竹"), "demand")
+        self.assertEqual(m.classify_condition_utterance("算了還是桃園"), "demand")
+
+    def test_questions_about_the_company(self):
+        self.assertEqual(m.classify_condition_utterance("你們假日有上班嗎"), "info")
+        self.assertEqual(m.classify_condition_utterance("可以找真人客服嗎"), "info")
+        self.assertEqual(m.classify_condition_utterance("你們有交通車嗎"), "demand")
+
+
 if __name__ == "__main__":
     unittest.main()
