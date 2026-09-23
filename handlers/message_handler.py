@@ -40,6 +40,7 @@ from services.matcher_service import (
     clause_clean_text, detect_relax_labels,
     job_shift_labels, SHIFT_SYNONYMS, job_matches_location, ambiguous_district_choices,
     location_is_negated, detect_category_labels, job_is_excluded,
+    combine_pay_labels, detect_negated_subroles,
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -182,7 +183,7 @@ _CATEGORY_EMOJI = {
     "客服/行政": "💻", "設備/技術": "🔧",
 }
 
-_EXCLUSION_DIM_ORDER = ["location", "category", "brand", "shift", "leave", "pay", "benefit"]
+_EXCLUSION_DIM_ORDER = ["location", "category", "role", "brand", "shift", "leave", "pay", "benefit"]
 
 
 def _parse_exclusions(value: str) -> dict:
@@ -539,7 +540,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
 
                 formatted_detail = str(matched_job.get("排版工作說明") or "").strip()
                 if formatted_detail:
-                    formatted_detail = re.sub(r'^📋【職缺名稱[：:][^】\n]+】', standard_header, formatted_detail)
+                    # 換掉整個第一行：職缺名稱本身帶「】」時（「…作業員】無塵室品檢
+                    # 技術員】」），原本只換到第一個「】」，標題被切成兩半（第六輪測試）
+                    formatted_detail = re.sub(r'^📋【職缺名稱[：:][^\n]*', standard_header, formatted_detail)
                     if not formatted_detail.startswith("📋【職缺名稱"):
                         formatted_detail = f"{standard_header}\n\n{formatted_detail}"
                 else:
@@ -610,11 +613,42 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 「理貨或門市都可以」兩個都算（使用者 2026-09-23 第五輪決定），存成
         # 「理貨/倉儲|門市」；沒有「或／跟」連起來時取先講的那個。
         _intent_text = _intent_tail(raw_msg)
+        # 廠商名稱裡的類型字樣不算這句話講的類型：「台灣大哥大客服」講的是
+        # 這家廠商，不是另外要客服類（第六輪測試：原本疊成找不到）
+        _brand_for_category = detect_brand_label(raw_msg, active_jobs)
         _category_mentions = detect_category_labels(clause_clean_text(_intent_text))
+        if _brand_for_category and _category_mentions:
+            # 拿掉句子裡出現的完整廠商名稱再看一次：只有廠商名稱帶到、這家廠商
+            # 又根本沒有這種職缺的類型字樣不算（「台灣大哥大客服」是廠商名稱，
+            # 第六輪測試：原本疊成「台灣大哥大＋客服類」找不到）。「蝦皮門市」
+            # 這種廠商真的有門市職缺，照常算門市。
+            _category_text = _intent_text
+            for _vendor_name in sorted({str(j.get("系統廠商名稱") or "") for j in active_jobs}, key=len, reverse=True):
+                if len(_vendor_name) >= 2 and _vendor_name.lower() in _category_text.lower():
+                    _category_text = re.sub(re.escape(_vendor_name), " ", _category_text, flags=re.IGNORECASE)
+            _stripped_mentions = detect_category_labels(clause_clean_text(_category_text))
+            _brand_jobs_for_category = [j for j in active_jobs if job_matches_brand(j, _brand_for_category)]
+            _category_mentions = [
+                c for c in _category_mentions
+                if c in _stripped_mentions or filter_jobs_by_category_tiered(_brand_jobs_for_category, c)
+            ]
         detected_category_this_turn = _category_mentions[0] if _category_mentions else ""
         if len(_category_mentions) > 1 and any(c in clean_input for c in ("或", "跟", "和", "還是", "都可以", "都行")):
             detected_category_this_turn = "|".join(_category_mentions)
-        detected_brand_this_turn = detect_brand_label(raw_msg, active_jobs)
+        detected_brand_this_turn = _brand_for_category
+        if district_choices:
+            # 同名區只有一個在目前的類型/廠商下有職缺：直接用那個，不用問
+            # 「是哪一個」（第六輪測試：只有一個選項還在問）
+            _choice_category = detected_category_this_turn or (
+                user_slots.get("category", "") if user_slots.get("category", "") != "不限" else "")
+            _choice_brand = detected_brand_this_turn or user_slots.get("brand", "")
+            _choice_scope = filter_jobs_by_category_tiered(active_jobs, _choice_category, _choice_brand) if _choice_category else list(active_jobs)
+            if _choice_brand:
+                _choice_scope = [j for j in _choice_scope if job_matches_brand(j, _choice_brand)]
+            _choices_here = [c for c in district_choices if any(job_matches_location(j, c) for j in _choice_scope)]
+            if len(_choices_here) == 1:
+                extracted_loc = _choices_here[0]
+                district_choices = []
         # 這一句話本身講到的班別/休假/發薪/福利條件，每一項都可能同時講好幾個
         # （「日領或週領都可以」）。否定詞只看每個詞自己所在的子句：原本整句
         # 話只要出現「不要」就全部不算，「不要夜班，日領的就好」連日領都丟掉。
@@ -762,9 +796,35 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         _locked_location = user_slots.get("location", "")
         if _locked_location == ANY_LOCATION:
             _locked_location = ""
-        if extracted_loc and _is_additive and _locked_location and extracted_loc not in _locked_location.split("|"):
+        _locked_location_parts = [p for p in _locked_location.split("|") if p]
+        # 「中壢以外也可以」「桃園以外的也行」是放寬（別的地方也可以），不是
+        # 不要中壢（第六輪測試：原本意思相反，被記成排除中壢）
+        _broaden_beyond_location = bool(re.search(r"以外(的)?(也|都)(可以|行|好|ok)", clean_input))
+        if _broaden_beyond_location:
+            extracted_loc = ""
+            negated_loc = ""
+            explicit_any_location = True
+            scoped_broaden_dims = scoped_broaden_dims | {"location"}
+        # 「不要新竹」但記住的是「桃園|新竹」：只拿掉新竹（原本兩個都清掉、
+        # 還整組記成排除，第六輪測試）。「不要桃園」但記住的是桃園底下的中壢：
+        # 中壢一起清掉。
+        _dropped_location_parts = []
+        if not extracted_loc and not explicit_any_location and _locked_location_parts:
+            for _part in _locked_location_parts:
+                _part_county = resolve_county_for_location(_part, active_jobs)
+                if location_is_negated(raw_msg, _part, active_jobs) or (
+                    negated_loc and _part_county and (
+                        _part_county == negated_loc or _part_county[:-1] == negated_loc.replace("臺", "台")
+                    )
+                ):
+                    _dropped_location_parts.append(_part)
+        if extracted_loc and _is_additive and _locked_location and extracted_loc in _locked_location_parts:
+            # 講的「新竹也可以」本來就記住了：維持原本的，不能換成只剩新竹
+            current_location = _locked_location
+            location_slot_update = ""
+        elif extracted_loc and _is_additive and _locked_location:
             # 「平鎮也可以啦」：跟記住的地區合併（使用者 2026-09-23 決定兩個都算）
-            current_location = f"{_locked_location}|{extracted_loc}"
+            current_location = "|".join(dict.fromkeys(_locked_location_parts + extracted_loc.split("|")))
             location_slot_update = current_location
         elif extracted_loc:
             current_location = extracted_loc
@@ -773,10 +833,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             # 明確表示不限地區 → 存 ANY_LOCATION，之後就不會再問地區
             current_location = ""
             location_slot_update = ANY_LOCATION
-        elif location_is_negated(raw_msg, _locked_location, active_jobs):
-            # 否定了目前鎖定的那個地區 → 真正清空槽位，而不是只在本輪暫時忽略
-            current_location = ""
-            location_slot_update = CLEAR_SLOT
+        elif _dropped_location_parts:
+            # 否定了目前鎖定的地區 → 拿掉那幾個，剩下的保留；全部都拿掉就清空
+            current_location = "|".join(p for p in _locked_location_parts if p not in _dropped_location_parts)
+            location_slot_update = current_location or CLEAR_SLOT
         else:
             current_location = _locked_location
             location_slot_update = ""
@@ -794,13 +854,19 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # - 「班別都可以」→ 清掉。
         # - 「不要夜班」→ 只從記住的值裡拿掉夜班，其他的保留。
 
+        _locked_exclusions = _parse_exclusions(user_slots.get("exclude", ""))
+
         def _label_slot(dim):
             locked = user_slots.get(dim, "")
             locked_parts = [p for p in locked.split("|") if p]
             now = this_turn_labels[dim]
+            if now and _is_additive and not locked_parts and set(now) <= _locked_exclusions.get(dim, set()):
+                # 「不要夜班」之後講「夜班也可以」：只是不排除夜班了，不是只要
+                # 夜班（第六輪測試：原本變成只列夜班的職缺）
+                return "", ""
             if now:
                 merged = locked_parts + [p for p in now if p not in locked_parts] if _is_additive else now
-                value = "|".join(merged)
+                value = combine_pay_labels(merged, clean_input) if dim == "pay" and not _is_additive else "|".join(merged)
                 return value, value
             if dim in scoped_broaden_dims:
                 return (CLEAR_SLOT if locked else ""), ""
@@ -823,23 +889,42 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         ])
 
         _locked_category = user_slots.get("category", "")
+        _locked_category_parts = [p for p in _locked_category.split("|") if p and p != "不限"]
         if (
-            detected_category_from_text and _is_additive and _locked_category and _locked_category != "不限"
-            and detected_category_from_text not in _locked_category.split("|")
+            detected_category_from_text and _is_additive and not _locked_category_parts
+            and set(detected_category_from_text.split("|")) <= _locked_exclusions.get("category", set())
         ):
+            # 「不要外送」之後講「外送也可以」：只是不排除外送了
+            category_slot_update = ""
+            detected_category_from_text = _locked_category
+        elif (
+            detected_category_from_text and _is_additive and _locked_category_parts
+            and set(detected_category_from_text.split("|")) <= set(_locked_category_parts)
+        ):
+            # 講的「理貨也可以」本來就記住了：維持原本的「理貨|門市」
+            category_slot_update = ""
+            detected_category_from_text = _locked_category
+        elif detected_category_from_text and _is_additive and _locked_category_parts:
             # 「工廠也行」：跟記住的類型合併
-            detected_category_from_text = f"{_locked_category}|{detected_category_from_text}"
+            detected_category_from_text = "|".join(dict.fromkeys(_locked_category_parts + detected_category_from_text.split("|")))
             category_slot_update = detected_category_from_text
         elif detected_category_from_text:
             category_slot_update = detected_category_from_text
-        elif negated_category and negated_category == user_slots.get("category", ""):
-            # 使用者明確排除掉目前鎖定的類別（例如「除了外送」）→ 清空，這輪查詢也不再沿用被排除的舊類別
-            category_slot_update = CLEAR_SLOT
-            detected_category_from_text = ""
+        elif negated_category and negated_category in _locked_category_parts:
+            # 使用者明確排除掉目前鎖定的類別（例如「除了外送」）→ 拿掉那一個，
+            # 「理貨|門市」講「不要門市」剩理貨（原本同時記成要門市又排除門市）
+            _remaining_categories = "|".join(p for p in _locked_category_parts if p != negated_category)
+            category_slot_update = _remaining_categories or CLEAR_SLOT
+            detected_category_from_text = _remaining_categories
         elif explicit_any_category or raw_msg.strip() == SHOPEE_CLARIFY_ALL_TEXT:
             # 「蝦皮全部類型都看看」按鈕本身就是「類型不限」：沒清掉的話，之前
             # 鎖定的類別會一直留著，下一句問福利時只在舊類別裡找、誤答沒有。
-            category_slot_update = CLEAR_SLOT if user_slots.get("category", "") else ""
+            # 明講「類型都可以」時記成「不限」，跟「地區都可以」一樣之後不再
+            # 問想看哪一種（第六輪測試）；只說「都可以」時照舊清空。
+            if is_generic_broaden:
+                category_slot_update = CLEAR_SLOT if user_slots.get("category", "") else ""
+            else:
+                category_slot_update = "不限"
             detected_category_from_text = ""
         else:
             category_slot_update = ""
@@ -856,7 +941,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             "別家", "其他家", "別間", "別的公司", "其他公司",
         ])
         negated_brand = detect_negated_brand(raw_msg, active_jobs)
-        if detected_brand_this_turn:
+        if detected_brand_this_turn and _is_additive and not user_slots.get("brand", "") and detected_brand_this_turn in _locked_exclusions.get("brand", set()):
+            # 「不要蝦皮」之後講「蝦皮也可以」：只是不排除蝦皮了
+            detected_brand = ""
+            brand_slot_update = ""
+        elif detected_brand_this_turn:
             detected_brand = detected_brand_this_turn
             brand_slot_update = detected_brand_this_turn
         elif explicit_any_brand or (negated_brand and negated_brand == user_slots.get("brand", "")):
@@ -897,6 +986,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 current_location = _locked_location
                 location_slot_update = ""
 
+        # 地區或廠商撞名的判斷可能改了地區，給求職者看的文字要照最後結果
+        # （第六輪測試：原本出現「新興・新興」「新興的新興的職缺」）
+        current_location_text = current_location.replace("|", "或")
+        location_known = bool(current_location) or (
+            location_slot_update == ANY_LOCATION
+            or (location_slot_update == "" and user_slots.get("location", "") == ANY_LOCATION)
+        )
+
         # 換了廠商、這句話又沒提到類別時，上一輪鎖定的類別只在新廠商真的有
         # 這個類別的職缺時才沿用。實測：「蝦皮門市有工作嗎」→「美光有交通車
         # 嗎」，原本會拿「美光」＋「門市」去篩，篩成空的，誤答美光沒有交通車。
@@ -921,13 +1018,17 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         this_turn_exclusions = {dim: set(values) for dim, values in negated_labels.items() if values}
         if negated_category:
             this_turn_exclusions["category"] = {negated_category}
+        _negated_roles = detect_negated_subroles(clause_input)
+        if _negated_roles:
+            this_turn_exclusions["role"] = _negated_roles
         if negated_brand:
             this_turn_exclusions["brand"] = {negated_brand}
-        if location_slot_update == CLEAR_SLOT and _locked_location:
-            this_turn_exclusions["location"] = {_locked_location}
-        elif negated_loc and negated_loc not in current_location.split("|"):
-            # 「不要台南了，桃園有嗎」：台南記成排除、桃園是新的地區
+        if negated_loc and negated_loc not in current_location.split("|"):
+            # 「不要台南了，桃園有嗎」：台南記成排除、桃園是新的地區。記住的是
+            # 「台北市中山區」時講「不要台北」，排除的是台北（講的那個）。
             this_turn_exclusions["location"] = {negated_loc}
+        elif _dropped_location_parts:
+            this_turn_exclusions["location"] = set(_dropped_location_parts)
         _positive_this_turn = {
             "location": set(current_location.split("|")) if extracted_loc else set(),
             "category": set(detected_category_this_turn.split("|")) if detected_category_this_turn else set(),
@@ -941,6 +1042,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             else:
                 values = _locked_exclusions.get(dim, set()) | this_turn_exclusions.get(dim, set())
             values -= _positive_this_turn.get(dim, set())
+            if dim == "location" and extracted_loc:
+                # 講了被排除縣市裡的地方（排除桃園、這句問龜山）：不再排除桃園
+                for _new_part in current_location.split("|"):
+                    _new_county = resolve_county_for_location(_new_part, active_jobs)
+                    values = {
+                        v for v in values
+                        if not (_new_county and (_new_county == v or _new_county[:-1] == v.replace("臺", "台") or _new_part in v))
+                    }
             if values:
                 effective_exclusions[dim] = values
         _new_exclude = _format_exclusions(effective_exclusions)
@@ -993,7 +1102,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             這種給求職者看的文字，回覆時講清楚到底用了哪些條件。"""
             values = {"shift": effective_shift, "leave": effective_leave, "pay": effective_pay, "benefit": effective_benefit}
             parts = [
-                f"{_LABEL_DIMENSION_NAMES[dim]}：{values[dim].replace('|', '或')}"
+                f"{_LABEL_DIMENSION_NAMES[dim]}：{values[dim].replace('|', '或').replace('+', '＋')}"
                 for dim in _LABEL_DIMENSION_ORDER if values[dim] and dim != skip
             ]
             if effective_exclusions and skip != "exclude":
@@ -1016,7 +1125,17 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 jobs = [j for j in jobs if job_matches_brand(j, brand)]
             if skip != "location":
                 jobs = _filter_by_location(jobs, current_location)
+                if not jobs and category and current_location:
+                    jobs = _local_relaxed_category_jobs(category, brand, current_location)
             return _apply_label_filters(jobs, skip=skip)
+
+        def _local_relaxed_category_jobs(category, brand, location):
+            """全台有嚴格符合這個類型的職缺、但這個地區剛好沒有時，在這個地區
+            裡改用寬鬆比對（看行業別）：「礁溪的餐飲工作」原本說沒有，其實有
+            行業別是餐飲業的藕家（第六輪測試）。"""
+            local = _filter_by_location(active_jobs, location)
+            jobs = [j for j in local if job_matches_category_filter(j, category, brand, allow_relaxed=True)]
+            return [j for j in jobs if job_matches_brand(j, brand)] if brand else jobs
 
         def _drop_condition_buttons():
             """每一項目前生效的條件各一顆「X都可以」按鈕，最後加上清空條件——
@@ -1227,11 +1346,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 "shift": set(effective_shift.split("|")) if effective_shift else set(),
                 "category": set(_effective_category.split("|")) if _effective_category else set(),
             }[_change_request]
+            _excluded_locations = effective_exclusions.get("location", set())
             if _change_request == "location":
+                # 不列被排除的縣市（第六輪測試：講了不要桃園，選項裡還有桃園市）
                 _options = [
                     c for c in _counties_by_count(_scope_for_change)
                     if c not in _current_parts and c[:-1] not in _current_parts
-                ][:10]
+                    and c not in _excluded_locations and c[:-1] not in _excluded_locations
+                ][:12]
                 _change_name, _change_emoji = "地區", "📍"
             elif _change_request == "shift":
                 _found_shifts = set()
@@ -1720,13 +1842,19 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _secondary_desc_parts = _label_condition_parts
 
             _loc_filtered = _filter_by_location(_effective_pool, current_location)
+            if not _loc_filtered and _has_pool_intent and _pool_category and current_location:
+                _loc_filtered = _local_relaxed_category_jobs(_pool_category, _pool_brand, current_location)
 
             _fully_filtered = _apply_secondary_filters(_loc_filtered)
             _scope_desc_bits = [b for b in [current_location_text, _pool_desc if _has_pool_intent else ""] if b]
 
             # ---------------- 不知道地區、職缺又分散在好幾個縣市：先問地區 ----------------
             # 使用者 2026-09-23 決定。結果少到一次看得完時不問。
-            _result_counties = _counties_by_count(_fully_filtered)
+            _excluded_locations = effective_exclusions.get("location", set())
+            _result_counties = [
+                c for c in _counties_by_count(_fully_filtered)
+                if c not in _excluded_locations and c[:-1] not in _excluded_locations
+            ]
             if not location_known and len(_fully_filtered) > _CARD_LIMIT and len(_result_counties) > 1:
                 _where_scope = "・".join(_scope_desc_bits + _secondary_desc_parts())
                 _where_scope_text = f"符合「{_where_scope}」的職缺" if _where_scope else "目前的職缺"
@@ -1735,7 +1863,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 append_user_history(user_id, "招募顧問沛沛", ask_location_reply)
                 _location_buttons = [
                     QuickReplyButton(action=MessageAction(label=f"📍 {county}"[:20], text=f"{county}的工作"))
-                    for county in _result_counties[:10]
+                    for county in _result_counties[:12]
                 ]
                 _location_buttons.append(QuickReplyButton(action=MessageAction(label="🌏 哪裡都可以", text="地區都可以")))
                 target_line_bot_api.reply_message(reply_token, TextSendMessage(
@@ -1748,7 +1876,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 return
 
             # ---------------- 只講了地區、類型又很雜：問想看哪一種 ----------------
-            if is_location_only_turn and not _pool_category and not _pool_brand and len(_fully_filtered) > _CARD_LIMIT:
+            if (
+                is_location_only_turn and not _pool_category and not _pool_brand and len(_fully_filtered) > _CARD_LIMIT
+                and current_slots.get("category", "") != "不限"
+            ):
                 _location_categories = distinct_routable_categories_for_jobs(_fully_filtered)
                 if len(_location_categories) >= 2:
                     ask_category_reply = f"{current_location_text}目前有{'、'.join(_location_categories)}這幾種職缺，請問您想看哪一種呢？😊"
@@ -1874,8 +2005,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
 
             def _condition_display(dim, name, value):
                 if dim in _LABEL_DIMENSION_NAMES:
-                    return f"{name}：{value.replace('|', '或')}"
-                return value
+                    return f"{name}：{value.replace('|', '或').replace('+', '＋')}"
+                return value.replace("|", "或")
 
             _all_conditions_text = "・".join(_condition_display(*dim) for dim in _active_dimensions)
             _relax_emoji = {"location": "📍", "category": "🧰", "brand": "🏢", "shift": "⏰", "leave": "🏖️", "benefit": "🎁", "pay": "💰", "exclude": "🚫"}

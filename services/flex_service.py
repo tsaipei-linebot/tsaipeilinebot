@@ -132,9 +132,10 @@ def format_clean_location(job: dict, target_location: str = "", same_county_scop
             return "、".join(dict.fromkeys(matched_districts))
 
         county_list = [c.strip() for c in re.split(r'[,，、\s]+', county) if c.strip()]
-        for c in county_list:
-            if any(t in _normalize_tai(c) or _normalize_tai(c) in t for t in target_norms):
-                return f"{c} {suffix}".strip()
+        # 「桃園|新竹」兩個地區都在這筆職缺的縣市裡時兩個都列（原本只列第一個）
+        matched_counties = [c for c in county_list if any(t in _normalize_tai(c) or _normalize_tai(c) in t for t in target_norms)]
+        if matched_counties:
+            return f"{'、'.join(matched_counties)} {suffix}".strip()
 
     # 2. 「同縣市退讓建議」專用：先把行政區範圍縮小到這個縣市底下（用職缺原始、
     #    尚未去除縣市前綴的行政區文字比對，才不會漏掉本來就沒有前綴的一般職缺），

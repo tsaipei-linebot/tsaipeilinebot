@@ -1364,7 +1364,8 @@ class ExpandedBroadenPhraseTests(unittest.TestCase):
             h.process_user_message(event, line_bot_api)
 
         _, kwargs = mock_update_slots.call_args
-        self.assertEqual(kwargs.get("category"), h.CLEAR_SLOT)
+        # 第六輪起明講不限類型時記成「不限」，之後不會再問想看哪一種
+        self.assertEqual(kwargs.get("category"), "不限")
 
     def test_generic_broaden_phrase_clears_category_and_brand_but_keeps_location(self):
         # 「都可以」這種泛用表態，講出來時應該同時解鎖地區/類別/廠商，
@@ -3428,7 +3429,7 @@ class MultiTurnRoundFourFlowTests(_RoundFourSessionMixin, unittest.TestCase):
         self.assertEqual(sorted(r["titles"]), ["桃園理貨1", "桃園理貨2", "桃園蝦皮理貨"])
         r = self._say("類型都可以")
         self.assertEqual(len(r["titles"]), 4)
-        self.assertEqual(self.session_slots["category"], "")
+        self.assertEqual(self.session_slots["category"], "不限")
 
     def test_location_only_turn_lists_directly_when_few(self):
         r = self._say("新北有缺嗎")
@@ -3664,7 +3665,9 @@ class MultiTurnRoundFiveLocationTests(_RoundFourSessionMixin, unittest.TestCase)
     def test_ambiguous_district_choices_follow_remembered_conditions(self):
         self._say("理貨的工作")
         r = self._say("中山區呢")
-        self.assertEqual(r["buttons"], ["基隆市中山區的工作"])
+        # 第六輪起只剩一個有職缺的選項時直接用它，不再問「是哪一個」
+        self.assertEqual(r["titles"], ["基隆中山理貨"])
+        self.assertEqual(self.session_slots["location"], "基隆市中山區")
 
     def test_relax_buttons_are_fixed_phrases(self):
         self._say("八德門市的工作")
@@ -3841,6 +3844,81 @@ class MultiTurnRoundSixUnderstandingTests(_RoundFourSessionMixin, unittest.TestC
         # 這組資料只有桃園，沒有別的地區可以換；重點是不會落到 AI
         self.assertFalse(r["ai"])
         self.assertIn("地區", r["text"])
+
+
+class MultiTurnRoundSixExclusionTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第六輪多輪對話測試第二批：排除條件、地名、顯示。"""
+
+    def _jobs(self):
+        return [
+            self._job("桃園理貨早班", ["理貨人員"], "甲物流", ["桃園市"], ["桃園市中壢區"], "日領,現金", "", "排休", "早班"),
+            self._job("桃園理貨夜班", ["理貨人員"], "乙物流", ["桃園市"], ["桃園市楊梅區"], "月領,現金", "", "排休", "夜班"),
+            self._job("桃園門市", ["門市人員"], "丙門市", ["桃園市"], ["桃園市中壢區"], "月領", "", "週休二日", "早班"),
+            self._job("新竹門市", ["門市人員"], "丁門市", ["新竹市"], ["新竹市東區"], "月領", "", "週休二日", "早班"),
+            self._job("台北內場", ["內場人員"], "戊餐廳", ["台北市"], ["台北市大安區"], "月領", "", "排休", "早班"),
+            self._job("台北外場", ["外場人員"], "己餐廳", ["台北市"], ["台北市大安區"], "月領", "", "排休", "晚班"),
+            self._job("龜山作業員", ["作業員"], "庚科技", ["桃園市"], ["桃園市龜山區"], "月領", "", "週休二日", "日班"),
+            self._job("新北作業員", ["作業員"], "辛科技", ["新北市"], ["新北市五股區"], "月領", "", "週休二日", "日班"),
+        ]
+
+    def test_also_ok_after_excluding_lifts_the_exclusion(self):
+        self._say("桃園理貨的工作")
+        self._say("不要夜班")
+        r = self._say("夜班也可以")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(self.session_slots["exclude"], "")
+        self.assertEqual(sorted(r["titles"]), ["桃園理貨夜班", "桃園理貨早班"])
+
+    def test_dropping_one_of_two_places(self):
+        self._say("桃園或新竹的門市")
+        self._say("不要新竹")
+        self.assertEqual(self.session_slots["location"], "桃園")
+        self.assertEqual(self.session_slots["exclude"], "location:新竹")
+
+    def test_dropping_the_county_of_the_remembered_district(self):
+        self._say("中壢門市的工作")
+        self._say("不要桃園")
+        self.assertEqual(self.session_slots["location"], "")
+
+    def test_dropping_one_of_two_categories(self):
+        self._say("桃園理貨或門市都可以")
+        self._say("不要門市")
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+
+    def test_also_ok_for_a_value_already_remembered_keeps_the_others(self):
+        self._say("桃園或新竹的門市")
+        self._say("新竹也可以")
+        self.assertEqual(self.session_slots["location"], "桃園|新竹")
+
+    def test_excluding_a_sub_role_keeps_the_category(self):
+        self._say("台北餐廳內場")
+        r = self._say("不要外場")
+        self.assertEqual(self.session_slots["category"], "餐飲/服務")
+        self.assertEqual(r["titles"], ["台北內場"])
+
+    def test_asking_for_a_district_inside_an_excluded_county(self):
+        self._say("桃園有作業員的工作嗎")
+        self._say("不要桃園了，新北呢")
+        r = self._say("龜山有嗎")
+        self.assertEqual(r["titles"], ["龜山作業員"])
+
+    def test_beyond_a_place_is_also_ok_broadens(self):
+        self._say("中壢門市的工作")
+        self._say("中壢以外也可以")
+        self.assertEqual(self.session_slots["location"], h.ANY_LOCATION)
+        self.assertEqual(self.session_slots["exclude"], "")
+
+    def test_daily_pay_in_cash_means_both(self):
+        r = self._say("桃園日領現金的工作")
+        self.assertEqual(r["titles"], ["桃園理貨早班"])
+        self.assertIn("日領＋現金", r["text"])
+
+    def test_any_category_is_remembered(self):
+        self._say("桃園")
+        self._say("類型都可以")
+        self.assertEqual(self.session_slots["category"], "不限")
+        r = self._say("中壢")
+        self.assertNotIn("想看哪一種", r["text"])
 
 
 if __name__ == "__main__":
