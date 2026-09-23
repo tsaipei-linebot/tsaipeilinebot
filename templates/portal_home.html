@@ -2,15 +2,86 @@
 {% block title %}內部系統入口 - 材霈有限公司{% endblock %}
 {% block content %}
 {% if announcements %}
-<div class="announcement-list" style="max-width: 720px; margin: 0 auto 24px;">
-    {% for a in announcements %}
-    <div class="announcement-card">
-        <p class="announcement-title">📢 {{ a.title }}</p>
-        {% if a.content %}<p class="announcement-content">{{ a.content }}</p>{% endif %}
-        <p class="announcement-date">{{ a.created_at_display }}</p>
+{#
+  公告改成固定高度的直向輪播（2026-09-23）：原本每則公告各畫一張卡片、由上往下疊，
+  而部署後會自動發公告（見 .github/workflows/deploy.yml），更新一頻繁整個首頁就被
+  公告推到下面去。現在不管有幾則，框框高度都固定，一次顯示一則、每 6 秒自動換下一則，
+  也可以按左右箭頭手動翻。自動公告的內文是整段 PR 說明、常常很長，所以內文在框框裡
+  自己捲動，不會把框框撐高、也不會被截掉。
+  沒有 JavaScript 時（或只有一則公告時）就只顯示第一則，版面一樣是固定高度。
+#}
+<section class="announcement-carousel" aria-roledescription="carousel" aria-label="公告" data-interval="6000">
+    <div class="announcement-carousel-head">
+        <span class="announcement-carousel-label">📢 公告</span>
+        {% if announcements|length > 1 %}
+        <div class="announcement-carousel-controls">
+            <button type="button" class="announcement-nav" data-step="-1" aria-label="上一則公告">&lsaquo;</button>
+            <span class="announcement-counter"><span data-role="current">1</span> / {{ announcements|length }}</span>
+            <button type="button" class="announcement-nav" data-step="1" aria-label="下一則公告">&rsaquo;</button>
+        </div>
+        {% endif %}
     </div>
-    {% endfor %}
-</div>
+    <div class="announcement-viewport">
+        {% for a in announcements %}
+        <article class="announcement-slide" aria-roledescription="slide" aria-label="第 {{ loop.index }} 則，共 {{ announcements|length }} 則"{% if not loop.first %} hidden{% endif %}>
+            <p class="announcement-title">{{ a.title }}</p>
+            {% if a.content %}<div class="announcement-content">{{ a.content }}</div>{% endif %}
+            <p class="announcement-date">{{ a.created_at_display }}</p>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+{% if announcements|length > 1 %}
+<script>
+(function () {
+    var root = document.querySelector('.announcement-carousel');
+    if (!root) return;
+    var slides = root.querySelectorAll('.announcement-slide');
+    if (slides.length < 2) return;
+
+    var current = 0;
+    var counter = root.querySelector('[data-role="current"]');
+    var interval = parseInt(root.getAttribute('data-interval'), 10) || 6000;
+    // 滑鼠停在框框上、或鍵盤焦點在裡面時不自動換（同仁正在看/正在捲內文）；
+    // 手機沒有滑鼠，改成碰一下就暫停 15 秒。
+    var hovering = false;
+    var focused = false;
+    var pausedUntil = 0;
+    var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function show(index) {
+        slides[current].hidden = true;
+        slides[current].classList.remove('is-entering');
+        current = (index + slides.length) % slides.length;
+        slides[current].hidden = false;
+        if (!reduceMotion) slides[current].classList.add('is-entering');
+        var content = slides[current].querySelector('.announcement-content');
+        if (content) content.scrollTop = 0;
+        if (counter) counter.textContent = current + 1;
+    }
+
+    root.querySelectorAll('.announcement-nav').forEach(function (button) {
+        button.addEventListener('click', function () {
+            show(current + parseInt(button.getAttribute('data-step'), 10));
+            // 手動翻過之後，讓這一則完整停留一輪再自動換
+            pausedUntil = Date.now() + interval;
+        });
+    });
+    root.addEventListener('mouseenter', function () { hovering = true; });
+    root.addEventListener('mouseleave', function () { hovering = false; });
+    root.addEventListener('focusin', function () { focused = true; });
+    root.addEventListener('focusout', function () { focused = false; });
+    root.addEventListener('touchstart', function () { pausedUntil = Date.now() + 15000; }, { passive: true });
+
+    // 使用者設定「減少動態效果」時不自動輪播，只保留手動翻頁。
+    if (reduceMotion) return;
+    setInterval(function () {
+        if (hovering || focused || Date.now() < pausedUntil) return;
+        show(current + 1);
+    }, interval);
+})();
+</script>
+{% endif %}
 {% endif %}
 <div style="text-align: center; margin: 24px 0 32px;">
     <h1 class="page-title" style="margin-bottom: 8px;">內部系統入口</h1>
