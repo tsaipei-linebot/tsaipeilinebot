@@ -1516,6 +1516,22 @@ class LocationRequiredBeforeCardsTests(unittest.TestCase):
         args, _ = line_bot_api.reply_message.call_args
         self.assertIn("哪個地區", args[1].text)
 
+    def test_location_asked_before_reset_does_not_count(self):
+        # 實測：22:57 AI 問過地區，23:23 清空條件後問「有外送工作嗎？」，清空前那次
+        # 詢問還在最近 6 筆對話裡，被當成已經問過，結果直接推了卡片。清空之後要重新算。
+        history = [
+            {"role": "求職者", "text": "夜班工作"},
+            {"role": "招募顧問沛沛", "text": "沛沛為您找到許多符合夜班條件的職缺喔！請問您希望在哪個地區找工作呢？"},
+            {"role": "求職者", "text": "清除條件"},
+            {"role": "招募顧問沛沛", "text": "請問您是想清空目前鎖定的所有搜尋條件、重新開始找工作嗎？😊"},
+            {"role": "求職者", "text": "對，全部清空"},
+            {"role": "招募顧問沛沛", "text": "好的！沛沛已經為您清空先前的搜尋條件囉 😊\n\n請問您目前希望在哪個地區找工作？想找早班還是夜班呢？"},
+        ]
+        mock_flex_card, _, line_bot_api = self._run("有momo的職缺嗎", history=history)
+        mock_flex_card.assert_not_called()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertIn("哪個地區", args[1].text)
+
     def test_ai_is_told_to_ask_location_only_when_missing(self):
         _, mock_ai, _ = self._run("夜班工作")
         self.assertTrue(mock_ai.call_args[0][-1])

@@ -476,12 +476,18 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 還不知道地區時，要給卡片的地方一律改成先問地區。兩個保護避免卡住：
         # 求職者說不限地區（都可以、全台…）算回答了；沛沛最近已經問過地區（例如
         # 求職者回了程式認不出的地名），就不再重複問，照原本的流程走。
-        # 清空條件、年齡性別那兩句固定回覆雖然也提到地區，只是開場白，不算問過。
-        _location_already_asked = any(
-            item.get("role") == "招募顧問沛沛" and "哪個地區" in str(item.get("text", ""))
-            and not any(k in str(item.get("text", "")) for k in ("清空先前的搜尋條件", "就業服務法"))
-            for item in history[-6:]
-        )
+        # 清空條件、年齡性別那兩句固定回覆雖然也提到地區，只是開場白，不算問過；
+        # 清空條件之前問過的也不算（從最近一次清空之後重新算）。
+        _location_already_asked = False
+        for item in reversed(history[-6:]):
+            _text = str(item.get("text", ""))
+            if item.get("role") != "招募顧問沛沛":
+                continue
+            if "清空先前的搜尋條件" in _text:
+                break
+            if "哪個地區" in _text and "就業服務法" not in _text:
+                _location_already_asked = True
+                break
         need_location = not current_location and not explicit_any_location and not _location_already_asked
 
         # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截[cite: 6] ----------------
