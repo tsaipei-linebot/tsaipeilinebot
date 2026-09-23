@@ -199,6 +199,36 @@ JOB_PORTAL_GAS_WEBAPP_URL = os.getenv("JOB_PORTAL_GAS_WEBAPP_URL", "")
 # 的 ADMIN_API_SECRET，兩邊要設成同一個值），GAS 沒收到對的密鑰一律拒絕。
 JOB_PORTAL_ADMIN_API_SECRET = os.getenv("JOB_PORTAL_ADMIN_API_SECRET", "")
 
+# 職缺維護系統（GAS）核准薪資補款後，改成呼叫材霈平台的
+# /api/job-portal/send-mail 由平台寄通知信（2026-09-23 新增，原因見
+# services/email_service.py 開頭：Apps Script 的寄信額度每天只有 100 個
+# 收件人，撞到就整天都寄不出去）。GAS 呼叫時要帶這組共用密鑰
+# （對應 GAS「指令碼屬性」的 PLATFORM_MAIL_SECRET，兩邊要設成同一個
+# 值），沒設定或對不上一律回 403，等同這個端點不存在。
+JOB_PORTAL_MAIL_WEBHOOK_SECRET = os.getenv("JOB_PORTAL_MAIL_WEBHOOK_SECRET", "")
+
+# ==========================================
+# 11-1. 寄信（SMTP）
+# 平台自己寄信用的 SMTP 設定，見 services/email_service.py 開頭的說明。
+# 刻意不綁定特定廠商：公司信箱是 Google Workspace、Microsoft 365 還是
+# 別家主機，都只要改這幾個值就能用。
+#   - SMTP_HOST：Google Workspace/Gmail 是 smtp.gmail.com，
+#     Microsoft 365 是 smtp.office365.com，其他家問信箱服務商。
+#   - SMTP_PORT：預設 587（STARTTLS）；465 的話程式會自動改用 SSL。
+#   - SMTP_USERNAME / SMTP_PASSWORD：寄件信箱與密碼。**Gmail／Workspace
+#     一定要用「應用程式密碼」，不是平常登入的密碼**（要先開兩步驟驗證
+#     才能產生）。
+#   - MAIL_FROM_ADDRESS：沒設定就用 SMTP_USERNAME（大多數郵件服務也只
+#     允許用登入帳號本人的地址寄信）。
+#   - MAIL_FROM_NAME：收件人看到的寄件者顯示名稱。
+# ==========================================
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+MAIL_FROM_ADDRESS = os.getenv("MAIL_FROM_ADDRESS", "")
+MAIL_FROM_NAME = os.getenv("MAIL_FROM_NAME", "材霈招募薪資系統")
+
 # ==========================================
 # 12. 每日健康報告／FAQ 週報（監控與告警機制，見 HANDOFF.md）
 # 只有一個機制：Cloud Scheduler 每天呼叫一次 /internal/daily-report/run。
