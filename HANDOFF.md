@@ -8942,3 +8942,234 @@ discover -s tests -p "test_*.py"`）2073 個全數通過。
 `tests/test_dispatch_webhook_routes.py` 新增 `ReplyHandlerSilenceTests`
 （空字串時連 `get_line_bot_api()` 都不能呼叫）。全部測試（`python3 -m
 unittest discover -s tests -p "test_*.py"`）2120 個全數通過。
+
+## 補寄信「按了沒有動作」的真正原因：GAS 寄信額度用完（2026-09-23）
+
+同仁回報 `/me` 的「補寄信」按鈕按了沒反應。查下來**程式其實完全正常**，
+是錯誤訊息看不懂造成的誤解，而且背後藏著一個更重要的問題。
+
+### 怎麼查出來的（這套查法之後可以重用）
+
+Cloud Run 的 `httpRequest` log 可以直接看到請求有沒有進來、回什麼狀態，
+比在程式裡加 log 快得多：
+
+```bash
+# 1. 請求有沒有進到系統？（POST 有進來、回 303 轉址 → 路由跟權限都正常）
+gcloud logging read 'resource.type="cloud_run_revision"
+  resource.labels.service_name="recruitment-bot"
+  httpRequest.requestUrl:"resend-email"' --limit 20 \
+  --format="table(timestamp,httpRequest.requestMethod,httpRequest.status,httpRequest.requestUrl)"
+
+# 2. 那個 303 轉去成功還是失敗？轉址後瀏覽器會再發一次 GET，答案就在網址裡
+gcloud logging read 'resource.type="cloud_run_revision"
+  resource.labels.service_name="recruitment-bot"
+  httpRequest.requestUrl:"/me?"' --limit 20 \
+  --format="table(timestamp,httpRequest.requestMethod,httpRequest.status,httpRequest.requestUrl)"
+```
+
+第 2 步抓到的網址是 `/me?resend_error=補寄失敗：Exception: 單日叫用下列
+服務的次數過多：email。`（原本是 URL 編碼，用 `urllib.parse.unquote()`
+解開）。**這是 Google Apps Script 的每日寄信額度用完**（官方硬性限制：
+一般 Gmail 帳號每天 100 個收件人、Google Workspace 帳號每天 1500 個），
+不是程式壞掉。
+
+### 為什麼同仁覺得「沒有動作」
+
+畫面上其實**有**跳紅字，但內容是 `Exception: 單日叫用下列服務的次數過多：
+email。` 這種 Apps Script 原文，同仁看不懂、也不知道下一步該做什麼，就
+回報成「按了沒反應」。
+
+### 這次改的（材霈平台這邊）
+
+`services/salary_repayment_submit_service.py` 新增 `_plain_gas_error()`：
+把 GAS 回的技術性錯誤翻成白話再顯示，額度用完會顯示成「職缺維護系統今天
+的寄信額度已經用完（Google 對每個帳號每天寄信的數量有上限），今天不管
+補寄幾次都會失敗。請明天再按一次補寄；如果每天都遇到，請聯絡系統管理
+員。」。**只翻譯真的遇過、而且同仁自己有辦法處理的狀況**，對不到的訊息
+維持原文顯示、不吃掉資訊；原文另外印進 Cloud Run log 方便之後排查。
+
+### job-portal-gas-project 那邊查到的（還沒動手改）
+
+- 整個 GAS 專案只有兩處寄信：`Project_Salary.js` 的薪資補款通知信、
+  `ProjectWorkflowService.js` 的專案合約提報信。**兩處都是「一個動作寄
+  一封」，沒有迴圈、也沒有定時觸發器在大量寄信**，所以光靠這個專案自己
+  很難把 Workspace 的 1500 封額度用完。
+- 薪資補款信的收件人是「財會信箱（`HR_ACCOUNTING_EMAILS`，預設
+  `finance@tsaipei.com.tw`，可多筆）＋審核主管＋申請人」去重後一起寄，
+  所以**一封信通常吃掉 3～6 個收件人額度**——如果跑這支 script 的是一般
+  Gmail 帳號（每天 100 個收件人），大約 20～30 筆核准就會用完。
+- **額度是「每個 Google 帳號」共用的，跨所有 Apps Script 專案一起算**，
+  所以同一個帳號底下其他 script 寄的信也會吃掉同一份額度。
+- 核准流程本身已經會照實回報寄信失敗（見 `Project_Salary.js` 的
+  `handleSalaryPostback()`，主管的 LINE 會收到「已核准，但通知信寄送
+  失敗（…）」），所以**額度爆掉那天核准的每一筆，通知信應該都沒寄出去**，
+  不是只有手動補寄的那兩筆。
+
+**還沒確認、要繼續追的**：跑這支 Apps Script 的 Google 帳號到底是公司
+Workspace 帳號還是一般 @gmail.com（決定上限是 1500 還是 100），以及同一
+個帳號底下還有哪些 script 在寄信。確認之前不要急著改 GAS 的寄信邏輯。
+
+**這次不需要任何手動設定**，合併後自動部署即可生效。
+
+新增/調整檔案：`services/salary_repayment_submit_service.py`
+（`_GAS_ERROR_PLAIN_HINTS`／`_plain_gas_error()`，並在
+`resend_salary_repayment_email()` 失敗時套用＋把原文印進 log）。
+
+新增測試：`tests/test_salary_repayment_submit_service.py` 新增
+`PlainGasErrorTests`（中英文額度訊息都要翻譯、對不到的原文照回）跟
+`ResendEmailPlainErrorTests`（實際回應套用翻譯、成功的訊息不能被動到）。
+全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）2125 個
+全數通過。
+## 薪資補款通知信改由平台用 SMTP 寄（2026-09-23，搬離 GAS 的第一階段）
+
+### 背景
+
+同一天先查出「補寄信按了沒動作」的真正原因是 Apps Script 的寄信額度
+（每個 Google 帳號每天 100 個收件人）用完（見上一節）。跟使用者討論後
+確認方向：**把薪資補款系統從「Google 試算表＋GAS」逐步搬到 GCP**，但
+不要一次全搬，分三階段：
+
+1. **階段 1（這次）：只把「寄信」搬到平台** — 解決額度問題，風險最低，
+   出事把 GAS 的指令碼屬性清掉就回到原狀。
+2. 階段 2：資料（Firestore）＋審核流程搬到平台。
+3. 階段 3：PDF 存查單、財務匯出跟著搬。
+
+使用者確認的前提：**財務只看試算表、不編輯**（所以之後搬 Firestore
+風險低）、**歷史資料不用搬**（舊資料留在試算表當唯讀存檔）、寄件者
+**改用公司信箱**。
+
+### 這次做了什麼
+
+```
+主管在 LINE 按核准
+  → GAS 照舊寫試算表、組信件 HTML、產 PDF 存查單   ← 完全沒動
+  → GAS 改成 POST /api/job-portal/send-mail        ← 新增
+  → 平台用 SMTP 寄出                                ← 新增
+```
+
+- **`services/email_service.py`（新檔）**：純 SMTP 寄信，支援附件與
+  **內嵌圖片**（補款佐證照片靠 `cid:` 顯示在信件內文，掛錯層會變破圖，
+  所以內嵌圖片一定要 `add_related()` 到 HTML 那一份底下，不能掛在信件
+  最外層——測試有守住這點）。587 走 STARTTLS、465 自動改用 SSL。
+  **刻意寫成純 SMTP 設定、不綁特定廠商**：公司信箱是 Google Workspace、
+  Microsoft 365 還是別家主機，都只要改環境變數；之後要換成 SendGrid／
+  SES 這類正規寄信服務，也只要改這一支，呼叫端完全不用動。
+  所有失敗都回傳 `(False, 白話訊息)`、不拋例外，額度用完、密碼錯誤這
+  幾種常見狀況都翻成同仁看得懂的說明。
+- **`job_portal_mail_routes.py`（新檔）**：`POST /api/job-portal/send-mail`，
+  靠 header `X-Job-Portal-Mail-Secret` ＋ `hmac.compare_digest` 驗證
+  （跟 main.py 其他內部端點同一種寫法），密鑰沒設定一律 403。附件跟
+  內嵌圖片都收 base64、在這裡解碼；**單筆解不開就跳過那一筆、信照樣寄**
+  （寧可少一個附件也不要整封信失敗），附件總量上限 20MB。
+- **`config.py`**：新增 `JOB_PORTAL_MAIL_WEBHOOK_SECRET` 跟一組 SMTP
+  設定（`SMTP_HOST`／`SMTP_PORT`／`SMTP_USERNAME`／`SMTP_PASSWORD`／
+  `MAIL_FROM_ADDRESS`／`MAIL_FROM_NAME`）。
+- GAS 那邊的對應改動見 `job-portal-gas-project` 的 HANDOFF.md
+  「薪資補款通知信改由材霈平台寄出」章節——**兩個指令碼屬性沒設齊就
+  自動退回原本的 `GmailApp.sendEmail`**，漏設定不會讓通知信斷掉。
+
+### 上線前使用者要手動做的事
+
+**1. 準備寄件信箱的 SMTP 密碼**（公司信箱是 Google Workspace 的話）：
+Google 帳號 → 安全性 → 先開「兩步驟驗證」→ 再產生「應用程式密碼」
+（16 碼），**這組密碼才是 `SMTP_PASSWORD`，不是平常登入的密碼**。
+
+**2. 設定 Cloud Run 環境變數**（一次設完，`密碼` 換成上一步拿到的）：
+
+```bash
+gcloud run services update recruitment-bot \
+  --region asia-east1 \
+  --update-env-vars \
+SMTP_HOST=smtp.gmail.com,\
+SMTP_PORT=587,\
+SMTP_USERNAME=finance@tsaipei.com.tw,\
+SMTP_PASSWORD=應用程式密碼,\
+MAIL_FROM_ADDRESS=finance@tsaipei.com.tw,\
+MAIL_FROM_NAME=材霈招募薪資系統,\
+JOB_PORTAL_MAIL_WEBHOOK_SECRET=自己想一組亂碼
+```
+
+⚠️ 公司信箱如果不是 Google Workspace（例如 Microsoft 365），
+`SMTP_HOST` 要改成該服務商的（Microsoft 365 是 `smtp.office365.com`），
+其餘照填。
+
+**3. 設定 Apps Script 指令碼屬性**（見 GAS repo 的 HANDOFF）：
+`PLATFORM_MAIL_URL` ＝ 平台的 `/api/job-portal/send-mail` 網址、
+`PLATFORM_MAIL_SECRET` ＝ 跟上面 `JOB_PORTAL_MAIL_WEBHOOK_SECRET` 同值。
+
+**怎麼確認做對了**：找一筆「已核准」的補款單，到 `/me` 按「補寄信」，
+畫面顯示「通知信已重新寄出」而且信箱真的收到（寄件者會變成公司信箱）
+就成功了。失敗訊息現在都是白話，Cloud Run 的 log 搜「薪資補款寄信」
+也看得到原因。
+
+### 測試
+
+`tests/test_email_service.py`（新檔）：SMTP 設定不齊/沒有收件人時不連線、
+587 走 STARTTLS、465 走 SSL、密碼錯誤與額度用完都翻成白話、任何例外都
+不往外拋；組信件的部分驗證內嵌圖片有拿到 `Content-ID` 而且**不會同時
+變成一般附件**。`tests/test_job_portal_mail_routes.py`（新檔）：密鑰沒
+設定/沒帶/帶錯一律 403 且不寄信、收件人可以收字串或陣列並去重、附件與
+內嵌圖片正確解碼、壞掉的 base64 跳過但信照寄、寄信失敗時把白話訊息
+原樣回給 GAS。全部測試（`python3 -m unittest discover -s tests -p
+"test_*.py"`）2252 個全數通過。
+
+### 上線紀錄（2026-09-23 當天完成，已實測寄出）
+
+正式環境設定完成、實測補寄信成功，寄件者顯示為公司信箱，代表信件確實
+是走平台的 SMTP 出去、不再經過 Apps Script 的 `GmailApp`。
+
+實際使用的設定（值本身不記在這裡，密碼與密鑰請看 Cloud Run 環境變數與
+GAS 指令碼屬性）：
+
+- Cloud Run 服務網址：`https://recruitment-bot-412901869672.asia-east1.run.app`
+- GAS 指令碼屬性 `PLATFORM_MAIL_URL`：上面的網址 + `/api/job-portal/send-mail`
+- `SMTP_HOST=smtp.gmail.com`、`SMTP_PORT=587`，寄件帳號是公司的 Google
+  帳號，`SMTP_PASSWORD` 用的是該帳號的「應用程式密碼」。
+
+### 踩到的雷：`--update-env-vars` 一次設多個變數時被換行切壞
+
+設定環境變數時踩到一個很難看出來的坑，之後再設多個變數要特別注意。
+
+`gcloud run services update --update-env-vars="A=1,B=2,C=3"` 是**用逗號**
+分隔各個變數。如果把這行指令貼到文字編輯器去替換值、過程中把逗號換成了
+換行（或為了看清楚而分行），再整段貼回終端機，因為整串包在引號裡面，
+**shell 會把那些換行當成「值」的一部分照單全收，指令還是會執行成功、
+不會報錯**。結果是：
+
+```
+SMTP_USERNAME = "gary@example.com\nSMTP_PASSWORD=xxxx\nMAIL_FROM_ADDRESS=...\nJOB_PORTAL_MAIL_WEBHOOK_SECRET=..."
+```
+
+也就是第一個變數以後的全部變數都被塞進同一個變數的值裡，後面那幾個變數
+**根本不存在**。當時的症狀是 GAS 回報「材霈平台拒絕這次寄信請求（密鑰
+不符）」。
+
+判斷方法——**只列變數名稱**，一個變數一行，少了什麼一眼就看得出來：
+
+```bash
+gcloud run services describe recruitment-bot --region=asia-east1 \
+  --project=tsaipei-505807 \
+  --format="value(spec.template.spec.containers[0].env[].name)" | tr ';' '\n'
+```
+
+避免方法：給使用者的指令**先把值填好、不要留「請改成…」的佔位字**，讓
+對方整行複製貼上、完全不用編輯；真的需要替換，就拆成一次設一個變數的
+短指令。
+
+### 另一個容易誤判的地方：沒帶密鑰的 403 不能證明環境變數設對了
+
+`POST /api/job-portal/send-mail` 在「密鑰沒設定」「沒帶密鑰」「密鑰不符」
+三種情況都回 403，所以**不帶密鑰去打拿到 403 只能證明這支端點存在**，
+不能證明 `JOB_PORTAL_MAIL_WEBHOOK_SECRET` 設對了。要驗證密鑰，要帶著
+密鑰、但故意不給收件人：
+
+```bash
+curl -s -w "\nHTTP %{http_code}\n" -X POST "<服務網址>/api/job-portal/send-mail" \
+  -H "Content-Type: application/json" \
+  -H "X-Job-Portal-Mail-Secret: <密鑰>" \
+  -d '{"to":"","subject":"x","html":"x"}'
+```
+
+密鑰對的話會回 `HTTP 200` 加 `{"status":"error","message":"沒有任何收件
+人，這封信沒有寄出。"}`——那個 error 是故意不給收件人造成的，而且這樣
+測不會真的寄出任何信。密鑰不對就還是 403。

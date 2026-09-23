@@ -254,6 +254,55 @@ class ResendSalaryRepaymentEmailTests(unittest.TestCase):
         self.assertIn("尚未審核", result["message"])
 
 
+class PlainGasErrorTests(unittest.TestCase):
+    """2026-09-23 新增：GAS 回傳的技術性錯誤訊息要翻成同仁看得懂的白話。
+    實際遇到的狀況是 Apps Script 的寄信額度用完，原文是
+    「Exception: 單日叫用下列服務的次數過多：email。」，同仁看不懂就回報
+    成「按了沒有動作」。"""
+
+    def test_quota_error_is_translated_to_plain_chinese(self):
+        plain = submit_service._plain_gas_error("Exception: 單日叫用下列服務的次數過多：email。")
+        self.assertIn("寄信額度", plain)
+        self.assertIn("明天", plain)
+        self.assertNotIn("Exception", plain)
+
+    def test_english_quota_error_is_also_translated(self):
+        # Apps Script 的錯誤訊息語言跟著執行帳號的語言設定跑，英文版也要認得。
+        plain = submit_service._plain_gas_error(
+            "Exception: Service invoked too many times for one day: email."
+        )
+        self.assertIn("寄信額度", plain)
+
+    def test_unknown_message_is_returned_unchanged(self):
+        # 沒對到的訊息原文照回，不吃掉資訊。
+        original = "這筆補款單目前狀態是「尚未審核」"
+        self.assertEqual(submit_service._plain_gas_error(original), original)
+
+
+class ResendEmailPlainErrorTests(unittest.TestCase):
+    def test_quota_failure_shows_plain_message(self):
+        fake_response = mock.Mock(status_code=200)
+        fake_response.json.return_value = {
+            "status": "error", "message": "補寄失敗：Exception: 單日叫用下列服務的次數過多：email。"
+        }
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(submit_service, "JOB_PORTAL_ADMIN_API_SECRET", "secret123"):
+                with mock.patch.object(submit_service.requests, "post", return_value=fake_response):
+                    result = submit_service.resend_salary_repayment_email("SAL-1")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("寄信額度", result["message"])
+        self.assertNotIn("Exception", result["message"])
+
+    def test_success_response_is_not_touched(self):
+        fake_response = mock.Mock(status_code=200)
+        fake_response.json.return_value = {"status": "success", "message": "已重新寄送通知信至：a@b.com"}
+        with mock.patch.object(submit_service, "GAS_WEBAPP_URL", "https://example.com/exec"):
+            with mock.patch.object(submit_service, "JOB_PORTAL_ADMIN_API_SECRET", "secret123"):
+                with mock.patch.object(submit_service.requests, "post", return_value=fake_response):
+                    result = submit_service.resend_salary_repayment_email("SAL-1")
+        self.assertEqual(result["message"], "已重新寄送通知信至：a@b.com")
+
+
 class ExportApprovedSalaryPdfsZipTests(unittest.TestCase):
     """export_approved_salary_pdfs_zip()（2026-09-22 新增，財務部專區批次
     下載）呼叫 GAS 的 EXPORT_SALARY_PDFS 端點，成功時回應帶 base64 編碼的
