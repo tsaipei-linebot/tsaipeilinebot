@@ -27,9 +27,9 @@
     上傳 CSV 檔案（UTF-8 或 Big5 皆可），欄位需包含「姓名」「電話」，「人員資格」為選填（填中文名稱或代碼，
     多個用頓號或逗號分隔，例如「理貨、作業員」）。已存在相同「姓名+電話」的人員會自動略過，不會重複建立。
 </p>
-<p><a href="/dispatch/{{ site }}/personnel/import/template.csv">下載範例 CSV 範本</a></p>
+<p><a href="/dispatch/{{ site }}/personnel/import/template.xlsx">下載 Excel 範本</a>　<span class="hint">請下載範本填寫再上傳，姓名才不會變成問號（也接受舊的 CSV 檔）。</span></p>
 <form method="post" action="/dispatch/{{ site }}/personnel/import" enctype="multipart/form-data" class="inline-form">
-    <input type="file" name="file" accept=".csv,text/csv" required>
+    <input type="file" name="file" accept=".xlsx,.csv" required>
     <button type="submit" class="btn btn-primary">上傳並匯入</button>
 </form>
 

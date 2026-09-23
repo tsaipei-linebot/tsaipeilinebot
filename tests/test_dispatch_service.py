@@ -578,3 +578,49 @@ class ListPostingsFilterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParseFromExcelTests(unittest.TestCase):
+    """2026-09-23 起兩個匯入都收 .xlsx（原因見 services/tabular_upload.py 開頭）。"""
+
+    def _filled(self, headers, sample, text_columns, extra_rows):
+        import io
+
+        import openpyxl
+
+        from services import tabular_upload
+
+        content = tabular_upload.build_template_xlsx(headers, sample, text_columns)
+        workbook = openpyxl.load_workbook(io.BytesIO(content))
+        for row in extra_rows:
+            workbook.active.append(row)
+        output = io.BytesIO()
+        workbook.save(output)
+        return output.getvalue()
+
+    def test_personnel_keeps_leading_zero_phone_and_rare_characters(self):
+        content = self._filled(
+            ["姓名", "電話", "人員資格"],
+            ["王小明", "0912345678", "理貨、作業員"],
+            ("電話",),
+            [["陳堃喆", "0987654321", "理貨"]],
+        )
+        rows, header_error = dispatch_service.parse_personnel_csv(content)
+        self.assertIsNone(header_error)
+        self.assertEqual(rows[0]["phone"], "0912345678")
+        self.assertEqual(rows[1]["name"], "陳堃喆")
+        self.assertEqual(rows[1]["row"], 3)
+
+    def test_location_decimals_are_not_truncated(self):
+        """緯經度是小數，不能被「整數就去掉小數點」那段邏輯吃掉。"""
+        content = self._filled(
+            ["地點", "緯度", "經度"],
+            ["桃園火車站", "24.9880", "121.3141"],
+            (),
+            [["堃喆站", 24.98801, 121.31415]],
+        )
+        rows, header_error = dispatch_service.parse_location_csv(content)
+        self.assertIsNone(header_error)
+        self.assertEqual(rows[1]["name"], "堃喆站")
+        self.assertAlmostEqual(rows[1]["lat"], 24.98801, places=9)
+        self.assertAlmostEqual(rows[1]["lng"], 121.31415, places=9)

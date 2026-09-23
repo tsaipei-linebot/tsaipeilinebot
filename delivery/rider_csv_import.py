@@ -9,30 +9,17 @@ Firestore 裡動態維護的清單（不像 VENDOR_LOOKUP 是寫死在 config.py
 常數），所以地點名稱→地點資料的對照表（locations_by_name）由呼叫端先
 查好、當參數傳進來，這裡才能維持「不碰 Firestore」的純函式設計。
 """
-import csv
-import io
 from datetime import datetime
 
 from config import TAIPEI_TZ
 from delivery.config import RIDER_DEFAULT_SEARCH_RADIUS_KM
+from services import tabular_upload
 
 REQUIRED_HEADERS = {"地點", "開始時間", "結束時間", "需求人數"}
 
 # Excel 打時間常見會用空格或 T 分隔日期跟時間，兩種都接受，跟
 # csv_import.py 的到職日期比照兩種格式輸入是同一個考量。
 _DATETIME_INPUT_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M")
-
-
-def _decode(content: bytes) -> str:
-    """跟 delivery/csv_import.py 的 _decode() 邏輯完全一樣（Excel/記事本在
-    台灣常見存成 Big5），這裡不共用同一支函式，是因為這兩份匯入本來就是
-    各自獨立的功能，重複這幾行比互相 import 增加耦合更單純。"""
-    for encoding in ("utf-8-sig", "cp950"):
-        try:
-            return content.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return content.decode("utf-8", errors="replace")
 
 
 def _parse_datetime(raw: str):
@@ -63,18 +50,16 @@ def parse_shift_posting_csv(content: bytes, locations_by_name: dict):
     - 失敗：{"row": 列號, "ok": False, "error": 錯誤訊息, "location_name": ...}
     完全空白的列（地點、開始時間都沒填）直接跳過，不算錯誤。
     """
-    text = _decode(content)
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        return [], "檔案是空的或無法辨識表頭"
+    raw_rows, read_error = tabular_upload.read_rows(content)
+    if read_error:
+        return [], read_error
 
-    headers = {h.strip() for h in reader.fieldnames if h}
-    missing = REQUIRED_HEADERS - headers
+    missing = REQUIRED_HEADERS - tabular_upload.header_names(raw_rows)
     if missing:
         return [], f"缺少必要欄位：{'、'.join(sorted(missing))}"
 
     rows = []
-    for i, raw in enumerate(reader, start=2):  # 第 1 列是表頭，資料從第 2 列開始
+    for i, raw in enumerate(raw_rows, start=2):  # 第 1 列是表頭，資料從第 2 列開始
         location_name = (raw.get("地點") or "").strip()
         start_raw = raw.get("開始時間") or ""
         end_raw = raw.get("結束時間") or ""

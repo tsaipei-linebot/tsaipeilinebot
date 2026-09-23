@@ -11,10 +11,10 @@
     已存在相同「姓名+電話」的在職人員會自動略過，不會重複建立（兩者都要有值才會比對，
     電話留空的話無法判斷重複，會直接新增）。
 </p>
-<p><a href="/delivery/import/template.csv">下載範例 CSV 範本</a></p>
+<p><a href="/delivery/import/template.xlsx">下載 Excel 範本</a>　<span class="hint">請下載範本填寫再上傳，姓名才不會變成問號（也接受舊的 CSV 檔）。</span></p>
 
 <form method="post" action="/delivery/import" enctype="multipart/form-data" class="inline-form">
-    <input type="file" name="file" accept=".csv,text/csv" required>
+    <input type="file" name="file" accept=".xlsx,.csv" required>
     <button type="submit" class="btn btn-primary">上傳並匯入</button>
 </form>
 

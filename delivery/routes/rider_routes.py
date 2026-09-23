@@ -9,13 +9,14 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 
 from config import TAIPEI_TZ
 from delivery import rider_repository
 from delivery.auth import admin_required, current_user, login_required
 from delivery.config import MAX_UPLOAD_BYTES, RIDER_DEFAULT_SEARCH_RADIUS_KM
 from delivery.rider_csv_import import parse_shift_posting_csv
+from services import tabular_upload
 from delivery.templating import templates
 
 router = APIRouter()
@@ -309,20 +310,25 @@ def create_rider_shift(
     return RedirectResponse(url="/delivery/rider/shifts", status_code=303)
 
 
-_SHIFT_IMPORT_TEMPLATE_CSV = (
-    "地點,開始時間,結束時間,需求人數,服務半徑\n"
-    "新北中和門市,2024-01-31 09:00,2024-01-31 18:00,3,10\n"
-)
+# 範本 2026-09-23 從 CSV 改成 Excel，原因見 services/tabular_upload.py 開頭。
+_SHIFT_IMPORT_TEMPLATE_HEADERS = ["地點", "開始時間", "結束時間", "需求人數", "服務半徑"]
+_SHIFT_IMPORT_TEMPLATE_SAMPLE_ROW = ["新北中和門市", "2024-01-31 09:00", "2024-01-31 18:00", "3", "10"]
+# 時間欄位設成文字格式，同仁打什麼就是什麼，不會被 Excel 自己改成別種顯示格式。
+_SHIFT_IMPORT_TEMPLATE_TEXT_COLUMNS = ("開始時間", "結束時間")
 
 
-@router.get("/rider/shifts/import/template.csv")
+@router.get("/rider/shifts/import/template.xlsx")
 def rider_shifts_import_template(redirect=Depends(login_required)):
     if redirect:
         return redirect
-    return PlainTextResponse(
-        _SHIFT_IMPORT_TEMPLATE_CSV.encode("utf-8-sig"),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=shift_postings_template.csv"},
+    return Response(
+        tabular_upload.build_template_xlsx(
+            _SHIFT_IMPORT_TEMPLATE_HEADERS,
+            _SHIFT_IMPORT_TEMPLATE_SAMPLE_ROW,
+            _SHIFT_IMPORT_TEMPLATE_TEXT_COLUMNS,
+        ),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=shift_postings_template.xlsx"},
     )
 
 
