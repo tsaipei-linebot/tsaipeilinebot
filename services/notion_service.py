@@ -363,6 +363,13 @@ def _is_duplicate_faq_question(question_text: str, existing_titles: list, min_ma
 # 才能找到人，這是這個資料庫存在的目的，不能被這裡的過濾邏輯連帶擋掉。
 # ==========================================
 _FAQ_CANDIDATE_PHONE_PATTERN = re.compile(r'09\d{2}[-\s]?\d{3}[-\s]?\d{3}')
+# 第七輪測試：身分證字號、email、市話、門牌地址原本都沒擋，會被寫進 Notion
+_FAQ_CANDIDATE_PERSONAL_PATTERNS = [
+    re.compile(r'[A-Za-z][12]\d{8}'),
+    re.compile(r'[\w.+-]+@[\w-]+\.[\w.]+'),
+    re.compile(r'0\d{1,2}[-\s)]?\d{6,8}'),
+    re.compile(r'(路|街|大道)[^\n]{0,8}\d+\s*號'),
+]
 _FAQ_CANDIDATE_URL_PATTERN = re.compile(r'https?://\S+')
 # 過長的內容通常是廣告文案（例如整段商品介紹），不是真的 FAQ 問題——
 # 實測回報的廣告訊息普遍遠超過這個長度，真正的 FAQ 問題幾乎不會這麼長。
@@ -375,6 +382,8 @@ def _looks_unsuitable_for_faq_candidate(text: str) -> bool:
     if not text:
         return True
     if _FAQ_CANDIDATE_PHONE_PATTERN.search(text):
+        return True
+    if any(p.search(text) for p in _FAQ_CANDIDATE_PERSONAL_PATTERNS):
         return True
     if _FAQ_CANDIDATE_URL_PATTERN.search(text):
         return True

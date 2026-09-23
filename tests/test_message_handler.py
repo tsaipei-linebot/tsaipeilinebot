@@ -4039,5 +4039,116 @@ class MultiTurnRoundSixNewFeatureTests(_RoundFourSessionMixin, unittest.TestCase
         self.assertEqual(self.session_slots["salary"], "")
 
 
+
+class MultiTurnRoundSevenTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第七輪多輪對話測試：看更多／問看過的職缺、打字很亂、長對話狀態、非求職者。"""
+
+    def _jobs(self):
+        def job(name, cats, vendor, district, pay="月領", benefit="", leave="排休", shift="早班", worktype="全職", salary="時薪230", detail=""):
+            county = district[:3]
+            j = self._job(name, cats, vendor, [county], [district], pay, benefit, leave, shift)
+            j.update({"全/兼職": worktype, "薪資": salary, "排版工作說明": detail, "行業別": "物流業"})
+            return j
+        return [
+            job("甲理貨", ["理貨人員"], "甲物流", "桃園市中壢區", "日領,現金", "交通車"),
+            job("乙理貨", ["理貨人員"], "乙物流", "桃園市楊梅區", "日領", "", worktype="兼職", salary="時薪196~215",
+                detail="・享有勞健保"),
+            job("丙理貨", ["理貨人員"], "丙物流", "桃園市八德區", shift="夜班", salary="月薪36000"),
+            job("丁理貨", ["理貨人員"], "丁物流", "桃園市龜山區", worktype="全職,兼職", salary="200/H"),
+            job("戊理貨", ["理貨人員"], "戊物流", "桃園市蘆竹區", salary="月薪33-38k"),
+            job("台北外送", ["外送員"], "己外送", "台北市大安區"),
+            job("台北門市", ["門市人員"], "庚門市", "台北市信義區"),
+        ]
+
+    def test_more_after_conditions_changed_without_cards_does_not_page_old_list(self):
+        self._say("桃園理貨的工作")
+        self._say("台東的")
+        r = self._say(h.MORE_JOBS_TEXT)
+        self.assertEqual(r["titles"], [])
+        self.assertIn("沒有正在看的職缺清單", r["text"])
+
+    def test_filler_that_before_a_condition(self):
+        self._say("桃園理貨的工作")
+        r = self._say("那個我要兼職")
+        self.assertNotIn("哪一筆", r["text"])
+        self.assertEqual(self.session_slots["worktype"], "兼職")
+
+    def test_ordinals_beyond_the_page_and_several_at_once(self):
+        self._say("桃園理貨的工作")
+        r = self._say("第5個薪水多少")
+        self.assertIn("戊物流", r["text"])
+        r = self._say("第一個跟第三個薪水多少")
+        self.assertIn("甲物流", r["text"])
+        self.assertIn("丙物流", r["text"])
+
+    def test_follow_up_questions_keep_the_same_job(self):
+        self._say("桃園理貨的工作")
+        self._say("第二個有交通車嗎")
+        r = self._say("那薪水呢")
+        self.assertIn("乙物流", r["text"])
+        self.assertIn("時薪196~215", r["text"])
+        r = self._say("有勞健保嗎")
+        self.assertIn("享有勞健保", r["text"])
+
+    def test_typing_only_a_number_to_the_which_job_question(self):
+        self._say("桃園理貨的工作")
+        self._say("這個有交通車嗎")
+        r = self._say("1")
+        self.assertIn("甲物流", r["text"])
+        self.assertIn("交通車：有", r["text"])
+
+    def test_answer_with_its_own_value_is_not_rewritten_to_any(self):
+        self._say("桃園的工作")
+        self._say("理貨都可以")
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+
+    def test_dropping_one_part_of_combined_pay(self):
+        self._say("桃園日領現金的工作")
+        self.assertEqual(self.session_slots["pay"], "日領+現金")
+        self._say("不要現金")
+        self.assertEqual(self.session_slots["pay"], "日領")
+
+    def test_also_ok_after_any_keeps_any(self):
+        self._say("桃園的工作")
+        self._say("類型都可以")
+        r = self._say("外送也可以")
+        self.assertEqual(self.session_slots["category"], "不限")
+        self.assertEqual(len(r["titles"]), 4)
+
+    def test_first_time_part_time_also_ok_is_not_only_part_time(self):
+        self._say("桃園兼職也可以")
+        self.assertEqual(self.session_slots.get("worktype", ""), "")
+
+    def test_relaxed_category_does_not_pull_couriers_into_warehouse(self):
+        r = self._say("台北理貨的工作")
+        self.assertNotIn("台北外送", r["titles"])
+        self.assertNotIn("台北門市", r["titles"])
+
+    def test_messy_input(self):
+        self._say("桃 園 理 貨")
+        self.assertEqual(self.session_slots["location"], "桃園")
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+        self._say("没办法上夜班")
+        self.assertEqual(self.session_slots["exclude"], "shift:大夜班")
+
+    def test_polite_words_before_a_complaint_are_not_a_thank_you(self):
+        r = self._say("謝謝，我媽過世了要請喪假")
+        self.assertNotIn("預祝您求職面試順利", r["text"])
+
+    def test_minor_asking_about_age_does_not_get_no_age_limit(self):
+        r = self._say("我16歲有年齡限制嗎")
+        self.assertNotIn("無性別與年齡限制", r["text"])
+
+    def test_chat_about_family_location_asks_first(self):
+        self._say("桃園理貨的工作")
+        r = self._say("我媽住高雄")
+        self.assertIn("要幫您找", r["text"])
+        self.assertEqual(self.session_slots["location"], "桃園")
+
+    def test_vague_salary_gets_suggestions(self):
+        r = self._say("桃園理貨 薪水高一點的")
+        self.assertIn("時薪230以上", r["card_buttons"])
+
+
 if __name__ == "__main__":
     unittest.main()
