@@ -1,94 +1,6802 @@
 [
-  {"id": "時段-晚上有空", "text": "晚上有空，想找工作", "intent_in": ["找工作"], "any": {"shifts": ["晚班", "大夜班"]}, "forbid": {"shifts": ["早班"]}},
-  {"id": "時段-想白天上班", "text": "想白天上班", "has": {"shifts": ["早班"]}, "forbid": {"shifts": ["晚班", "大夜班"]}},
-  {"id": "時段-白天顧小孩", "text": "我白天要顧小孩", "forbid": {"shifts": ["早班"]}},
-  {"id": "時段-假日想休息", "text": "假日想休息", "forbid": {"shifts": ["假日班"]}},
-  {"id": "時段-週休一日", "text": "週休一日也可以", "forbid": {"leaves": ["週休二日"]}},
-  {"id": "時段-不要夜班日領", "text": "不要夜班 日領就好", "has": {"exclude_shifts": ["大夜班"]}, "expect": {"pays": ["日領"]}, "forbid": {"shifts": ["大夜班"]}},
-  {"id": "時段-早班不要假日", "text": "早班 不要假日班", "has": {"shifts": ["早班"], "exclude_shifts": ["假日班"]}},
-  {"id": "時段-不用輪班", "text": "不用輪班", "has": {"exclude_shifts": ["輪班"]}, "forbid": {"shifts": ["輪班"]}},
-  {"id": "時段-可以不輪班嗎", "text": "可以不輪班嗎", "has": {"exclude_shifts": ["輪班"]}, "forbid": {"shifts": ["輪班"]}},
-  {"id": "時段-假日要上班嗎", "text": "高雄餐飲 假日要上班嗎", "expect": {"locations": ["高雄"], "categories": ["餐飲/服務"]}, "forbid": {"shifts": ["假日班"]}},
-  {"id": "時段-時間都可以", "text": "時間都可以", "slots": {"location": "桃園", "category": "門市", "shift": "早班"}, "has": {"broaden": ["班別"]}, "forbid": {"broaden": ["類型", "地區"]}},
-  {"id": "時段-早晚班", "text": "早晚班都可以", "has": {"shifts": ["早班", "晚班"]}},
-  {"id": "時段-小夜班", "text": "有小夜班嗎", "has": {"shifts": ["晚班"]}},
-  {"id": "時段-做五休二", "text": "想要做五休二的", "has": {"leaves": ["週休二日"]}},
-  {"id": "時段-不排斥夜班", "text": "不排斥夜班", "has": {"shifts": ["大夜班"]}, "forbid": {"exclude_shifts": ["大夜班"]}},
-  {"id": "時段-不介意假日", "text": "不介意假日上班", "has": {"shifts": ["假日班"]}, "forbid": {"exclude_shifts": ["假日班"]}},
-  {"id": "時段-不怕大夜", "text": "我不怕大夜", "has": {"shifts": ["大夜班"]}, "forbid": {"exclude_shifts": ["大夜班"]}},
-  {"id": "時段-只能早班", "text": "我只能做早班", "expect": {"shifts": ["早班"]}},
-  {"id": "時段-晚班沒興趣", "text": "晚班沒興趣", "has": {"exclude_shifts": ["晚班"]}, "forbid": {"shifts": ["晚班"]}},
-  {"id": "時段-夜班也可以", "text": "夜班也可以", "slots": {"location": "桃園", "shift": "早班"}, "expect": {"shifts": ["早班", "大夜班"]}},
-  {"id": "時段-改早班", "text": "改成早班好了", "slots": {"location": "桃園", "shift": "大夜班"}, "expect": {"shifts": ["早班"]}},
-
-  {"id": "地區-新北或桃園", "text": "新北或桃園的工作", "expect": {"locations": ["新北", "桃園"]}},
-  {"id": "地區-台中彰化", "text": "台中 彰化都可以", "expect": {"locations": ["台中", "彰化"]}},
-  {"id": "地區-宜蘭花蓮", "text": "宜蘭或花蓮都行", "expect": {"locations": ["宜蘭", "花蓮"]}},
-  {"id": "地區-新竹竹北", "text": "新竹竹北的工作", "expect": {"locations": ["竹北"]}},
-  {"id": "地區-后里", "text": "后里有工作嗎", "expect": {"locations": ["后里"]}},
-  {"id": "地區-大安以外", "text": "大安區以外都可以", "has": {"exclude_locations": ["大安"]}, "forbid": {"locations": ["大安"]}},
-  {"id": "地區-不去中壢", "text": "不去中壢", "has": {"exclude_locations": ["中壢"]}, "forbid": {"locations": ["中壢"]}},
-  {"id": "地區-桃園除外", "text": "桃園除外", "has": {"exclude_locations": ["桃園"]}, "forbid": {"locations": ["桃園"]}},
-  {"id": "地區-不要新北要桃園", "text": "不要新北要桃園", "expect": {"locations": ["桃園"]}, "has": {"exclude_locations": ["新北"]}},
-  {"id": "地區-住板橋去台北", "text": "我住板橋，想在台北市上班", "expect": {"locations": ["台北"]}, "forbid": {"locations": ["板橋"]}},
-  {"id": "地區-交通車起點", "text": "有從楊梅出發的交通車嗎", "slots": {"location": "中壢", "category": "理貨/倉儲"}, "forbid": {"locations": ["楊梅"]}},
-  {"id": "地區-面試地點", "text": "面試地點在哪", "intent_in": ["問問題"], "expect": {"locations": []}},
-  {"id": "地區-全台都可以", "text": "全台都可以", "slots": {"location": "桃園", "category": "理貨/倉儲"}, "has": {"broaden": ["地區"]}, "forbid": {"broaden": ["類型"]}},
-  {"id": "地區-桃園以外", "text": "桃園以外都可以", "has": {"exclude_locations": ["桃園"]}, "forbid": {"locations": ["桃園"]}},
-  {"id": "地區-英文", "text": "taoyuan", "expect": {"locations": ["桃園"]}},
-  {"id": "地區-錯字", "text": "桃圓有工作嗎", "expect": {"locations": ["桃園"]}},
-  {"id": "地區-北市", "text": "北市的工作", "expect": {"locations": ["台北"]}},
-  {"id": "地區-台北縣", "text": "台北縣有嗎", "expect": {"locations": ["新北"]}},
-  {"id": "地區-那台中呢", "text": "那台中呢", "slots": {"location": "桃園", "category": "理貨/倉儲"}, "expect": {"locations": ["台中"], "categories": []}},
-  {"id": "地區-新竹也可以", "text": "新竹也可以", "slots": {"location": "桃園"}, "expect": {"locations": ["桃園", "新竹"]}},
-
-  {"id": "類型-冷氣設備", "text": "有冷氣設備嗎", "slots": {"location": "桃園", "category": "製造/作業員"}, "intent_in": ["問問題"], "expect": {"categories": []}},
-  {"id": "類型-物流業外送員", "text": "物流業外送員", "expect": {"categories": ["外送"]}},
-  {"id": "類型-保全", "text": "有保全的工作嗎", "expect": {"categories": []}, "nonempty": ["unsupported_roles"]},
-  {"id": "類型-清潔", "text": "想做清潔工", "expect": {"categories": []}, "nonempty": ["unsupported_roles"]},
-  {"id": "類型-助理工程師", "text": "助理工程師", "forbid": {"categories": ["客服/行政"]}},
-  {"id": "類型-飯店", "text": "飯店的工作", "expect": {"categories": ["餐飲/服務"], "brand": ""}},
-  {"id": "類型-撿貨", "text": "撿貨的工作", "expect": {"categories": ["理貨/倉儲"]}},
-  {"id": "類型-出貨", "text": "想做出貨", "expect": {"categories": ["理貨/倉儲"]}},
-  {"id": "類型-烘焙", "text": "烘焙", "expect": {"categories": ["餐飲/服務"]}},
-  {"id": "類型-晶圓廠", "text": "晶圓廠有缺嗎", "expect": {"categories": ["製造/作業員"]}},
-  {"id": "類型-蝦皮理貨", "text": "蝦皮理貨", "expect": {"brand": "蝦皮", "categories": ["理貨/倉儲"]}},
-  {"id": "類型-全聯", "text": "全聯有缺人嗎", "expect": {"brand": "全聯"}},
-  {"id": "類型-科技業", "text": "科技業的工作", "expect": {"brand": ""}},
-  {"id": "類型-宅配", "text": "宅配的工作", "expect": {"brand": ""}},
-  {"id": "類型-不要外送", "text": "不要外送 其他都可以", "has": {"exclude_categories": ["外送"]}, "forbid": {"categories": ["外送"]}},
-  {"id": "類型-理貨或門市", "text": "理貨或門市", "expect": {"categories": ["理貨/倉儲", "門市"]}},
-  {"id": "類型-餐廳內場", "text": "想做餐廳內場", "expect": {"categories": ["餐飲/服務"]}},
-  {"id": "類型-LADY M", "text": "LADY M內場", "expect": {"brand": "LADY M", "categories": ["餐飲/服務"]}},
-  {"id": "類型-什麼都可以", "text": "什麼工作都可以", "slots": {"location": "桃園", "category": "門市"}, "has": {"broaden": ["類型"]}, "forbid": {"broaden": ["地區"]}},
-
-  {"id": "意圖-公司倒閉", "text": "我們公司倒閉了 需要找新工作", "intent_in": ["找工作"]},
-  {"id": "意圖-要離職", "text": "我要離職了 桃園有理貨嗎", "intent_in": ["找工作"], "expect": {"locations": ["桃園"], "categories": ["理貨/倉儲"]}},
-  {"id": "意圖-請聯絡我", "text": "請聯絡我", "intent_in": ["轉專員"]},
-  {"id": "意圖-不喜歡說話", "text": "不喜歡跟人說話", "intent_not": ["轉專員"]},
-  {"id": "意圖-扣勞健保", "text": "薪水會扣勞健保嗎", "intent_in": ["問問題"]},
-  {"id": "意圖-面試穿什麼", "text": "面試要穿什麼", "intent_in": ["問問題"]},
-  {"id": "意圖-廠商徵人", "text": "我是廠商想徵人 需要10個作業員在桃園", "intent_in": ["轉專員"], "expect": {"handoff_reason": "business"}},
-  {"id": "意圖-薪水少了", "text": "我上個月薪水少了兩千", "intent_in": ["轉專員"], "expect": {"handoff_reason": "employee"}},
-  {"id": "意圖-真人", "text": "我想跟真人說話", "intent_in": ["轉專員"], "expect": {"handoff_reason": "human"}},
-  {"id": "意圖-刪個資", "text": "請刪除我的資料 不要再傳訊息給我", "intent_in": ["轉專員"], "expect": {"handoff_reason": "privacy"}},
-  {"id": "意圖-面試結果", "text": "我上週去面試了 什麼時候會通知結果", "intent_in": ["轉專員", "問問題"]},
-  {"id": "意圖-謝謝", "text": "謝謝你", "intent_in": ["閒聊"]},
-  {"id": "意圖-你好", "text": "你好", "intent_in": ["閒聊", "找工作"]},
-  {"id": "意圖-哈哈", "text": "哈哈哈", "intent_in": ["閒聊"]},
-  {"id": "意圖-宿舍問題", "text": "有宿舍嗎", "slots": {"location": "桃園", "category": "理貨/倉儲"}, "intent_in": ["問問題", "找工作"]},
-  {"id": "意圖-有宿舍的工作", "text": "桃園有宿舍的工作", "expect": {"locations": ["桃園"]}, "has": {"benefits": ["宿舍"]}},
-
-  {"id": "條件-月薪三萬", "text": "薪水至少三萬", "expect": {"salary_kind": "月薪", "salary_min": 30000}},
-  {"id": "條件-時薪200", "text": "時薪200以上", "expect": {"salary_kind": "時薪", "salary_min": 200}},
-  {"id": "條件-月薪4萬", "text": "月薪4萬的工作", "expect": {"salary_kind": "月薪", "salary_min": 40000}},
-  {"id": "條件-兼職", "text": "想找兼職", "expect": {"worktype": "兼職"}},
-  {"id": "條件-打工", "text": "想打工", "expect": {"worktype": "兼職"}},
-  {"id": "條件-正職", "text": "正職的工作", "expect": {"worktype": "全職"}},
-  {"id": "條件-週結", "text": "週結的", "expect": {"pays": ["週領"]}},
-  {"id": "條件-領現金", "text": "想領現金", "expect": {"pays": ["現金"]}},
-  {"id": "條件-日領或週領", "text": "日領或週領都可以", "expect": {"pays": ["日領", "週領"]}},
-  {"id": "條件-不要月領", "text": "不要月領", "has": {"exclude_pays": ["月領"]}, "forbid": {"pays": ["月領"]}},
-  {"id": "條件-有交通車", "text": "想找有交通車的", "has": {"benefits": ["交通車"]}},
-  {"id": "條件-都可以不清楚", "text": "都可以", "slots": {"location": "桃園", "category": "門市", "shift": "大夜班"}, "intent_in": ["不確定", "找工作"], "forbid": {"broaden": ["類型"]}}
+ {
+  "id": "時段-晚上有空",
+  "text": "晚上有空，想找工作",
+  "intent_in": [
+   "找工作"
+  ],
+  "any": {
+   "shifts": [
+    "晚班",
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "時段-想白天上班",
+  "text": "想白天上班",
+  "has": {
+   "shifts": [
+    "早班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "晚班",
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "時段-白天顧小孩",
+  "text": "我白天要顧小孩",
+  "forbid": {
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "時段-假日想休息",
+  "text": "假日想休息",
+  "forbid": {
+   "shifts": [
+    "假日班"
+   ]
+  }
+ },
+ {
+  "id": "時段-週休一日",
+  "text": "週休一日也可以",
+  "forbid": {
+   "leaves": [
+    "週休二日"
+   ]
+  }
+ },
+ {
+  "id": "時段-不要夜班日領",
+  "text": "不要夜班 日領就好",
+  "has": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "expect": {
+   "pays": [
+    "日領"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "時段-早班不要假日",
+  "text": "早班 不要假日班",
+  "has": {
+   "shifts": [
+    "早班"
+   ],
+   "exclude_shifts": [
+    "假日班"
+   ]
+  }
+ },
+ {
+  "id": "時段-不用輪班",
+  "text": "不用輪班",
+  "has": {
+   "exclude_shifts": [
+    "輪班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "輪班"
+   ]
+  }
+ },
+ {
+  "id": "時段-可以不輪班嗎",
+  "text": "可以不輪班嗎",
+  "has": {
+   "exclude_shifts": [
+    "輪班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "輪班"
+   ]
+  }
+ },
+ {
+  "id": "時段-假日要上班嗎",
+  "text": "高雄餐飲 假日要上班嗎",
+  "expect": {
+   "locations": [
+    "高雄"
+   ],
+   "categories": [
+    "餐飲/服務"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "假日班"
+   ]
+  }
+ },
+ {
+  "id": "時段-時間都可以",
+  "text": "時間都可以",
+  "slots": {
+   "location": "桃園",
+   "category": "門市",
+   "shift": "早班"
+  },
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "類型",
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "時段-早晚班",
+  "text": "早晚班都可以",
+  "has": {
+   "shifts": [
+    "早班",
+    "晚班"
+   ]
+  }
+ },
+ {
+  "id": "時段-小夜班",
+  "text": "有小夜班嗎",
+  "has": {
+   "shifts": [
+    "晚班"
+   ]
+  }
+ },
+ {
+  "id": "時段-做五休二",
+  "text": "想要做五休二的",
+  "has": {
+   "leaves": [
+    "週休二日"
+   ]
+  }
+ },
+ {
+  "id": "時段-不排斥夜班",
+  "text": "不排斥夜班",
+  "has": {
+   "shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "時段-不介意假日",
+  "text": "不介意假日上班",
+  "has": {
+   "shifts": [
+    "假日班"
+   ]
+  },
+  "forbid": {
+   "exclude_shifts": [
+    "假日班"
+   ]
+  }
+ },
+ {
+  "id": "時段-不怕大夜",
+  "text": "我不怕大夜",
+  "has": {
+   "shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "時段-只能早班",
+  "text": "我只能做早班",
+  "expect": {
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "時段-晚班沒興趣",
+  "text": "晚班沒興趣",
+  "has": {
+   "exclude_shifts": [
+    "晚班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "晚班"
+   ]
+  }
+ },
+ {
+  "id": "時段-夜班也可以",
+  "text": "夜班也可以",
+  "slots": {
+   "location": "桃園",
+   "shift": "早班"
+  },
+  "expect": {
+   "shifts": [
+    "早班",
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "時段-改早班",
+  "text": "改成早班好了",
+  "slots": {
+   "location": "桃園",
+   "shift": "大夜班"
+  },
+  "expect": {
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "地區-新北或桃園",
+  "text": "新北或桃園的工作",
+  "expect": {
+   "locations": [
+    "新北",
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "地區-台中彰化",
+  "text": "台中 彰化都可以",
+  "expect": {
+   "locations": [
+    "台中",
+    "彰化"
+   ]
+  }
+ },
+ {
+  "id": "地區-宜蘭花蓮",
+  "text": "宜蘭或花蓮都行",
+  "expect": {
+   "locations": [
+    "宜蘭",
+    "花蓮"
+   ]
+  }
+ },
+ {
+  "id": "地區-新竹竹北",
+  "text": "新竹竹北的工作",
+  "expect": {
+   "locations": [
+    "竹北"
+   ]
+  }
+ },
+ {
+  "id": "地區-后里",
+  "text": "后里有工作嗎",
+  "expect": {
+   "locations": [
+    "后里"
+   ]
+  }
+ },
+ {
+  "id": "地區-大安以外",
+  "text": "大安區以外都可以",
+  "has": {
+   "exclude_locations": [
+    "大安"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "大安"
+   ]
+  }
+ },
+ {
+  "id": "地區-不去中壢",
+  "text": "不去中壢",
+  "has": {
+   "exclude_locations": [
+    "中壢"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "中壢"
+   ]
+  }
+ },
+ {
+  "id": "地區-桃園除外",
+  "text": "桃園除外",
+  "has": {
+   "exclude_locations": [
+    "桃園"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "地區-不要新北要桃園",
+  "text": "不要新北要桃園",
+  "expect": {
+   "locations": [
+    "桃園"
+   ]
+  },
+  "has": {
+   "exclude_locations": [
+    "新北"
+   ]
+  }
+ },
+ {
+  "id": "地區-住板橋去台北",
+  "text": "我住板橋，想在台北市上班",
+  "expect": {
+   "locations": [
+    "台北"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "板橋"
+   ]
+  }
+ },
+ {
+  "id": "地區-交通車起點",
+  "text": "有從楊梅出發的交通車嗎",
+  "slots": {
+   "location": "中壢",
+   "category": "理貨/倉儲"
+  },
+  "forbid": {
+   "locations": [
+    "楊梅"
+   ]
+  }
+ },
+ {
+  "id": "地區-面試地點",
+  "text": "面試地點在哪",
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "地區-全台都可以",
+  "text": "全台都可以",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "has": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "地區-桃園以外",
+  "text": "桃園以外都可以",
+  "has": {
+   "exclude_locations": [
+    "桃園"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "地區-英文",
+  "text": "taoyuan",
+  "expect": {
+   "locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "地區-錯字",
+  "text": "桃圓有工作嗎",
+  "expect": {
+   "locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "地區-北市",
+  "text": "北市的工作",
+  "expect": {
+   "locations": [
+    "台北"
+   ]
+  }
+ },
+ {
+  "id": "地區-台北縣",
+  "text": "台北縣有嗎",
+  "expect": {
+   "locations": [
+    "新北"
+   ]
+  }
+ },
+ {
+  "id": "地區-那台中呢",
+  "text": "那台中呢",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "expect": {
+   "locations": [
+    "台中"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "地區-新竹也可以",
+  "text": "新竹也可以",
+  "slots": {
+   "location": "桃園"
+  },
+  "expect": {
+   "locations": [
+    "桃園",
+    "新竹"
+   ]
+  }
+ },
+ {
+  "id": "類型-冷氣設備",
+  "text": "有冷氣設備嗎",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "categories": []
+  }
+ },
+ {
+  "id": "類型-物流業外送員",
+  "text": "物流業外送員",
+  "expect": {
+   "categories": [
+    "外送"
+   ]
+  }
+ },
+ {
+  "id": "類型-保全",
+  "text": "有保全的工作嗎",
+  "expect": {
+   "categories": []
+  },
+  "nonempty": [
+   "unsupported_roles"
+  ]
+ },
+ {
+  "id": "類型-清潔",
+  "text": "想做清潔工",
+  "expect": {
+   "categories": []
+  },
+  "nonempty": [
+   "unsupported_roles"
+  ]
+ },
+ {
+  "id": "類型-助理工程師",
+  "text": "助理工程師",
+  "forbid": {
+   "categories": [
+    "客服/行政"
+   ]
+  }
+ },
+ {
+  "id": "類型-飯店",
+  "text": "飯店的工作",
+  "expect": {
+   "categories": [
+    "餐飲/服務"
+   ],
+   "brand": ""
+  }
+ },
+ {
+  "id": "類型-撿貨",
+  "text": "撿貨的工作",
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "類型-出貨",
+  "text": "想做出貨",
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "類型-烘焙",
+  "text": "烘焙",
+  "expect": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "類型-晶圓廠",
+  "text": "晶圓廠有缺嗎",
+  "expect": {
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "類型-蝦皮理貨",
+  "text": "蝦皮理貨",
+  "expect": {
+   "brand": "蝦皮",
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "類型-全聯",
+  "text": "全聯有缺人嗎",
+  "expect": {
+   "brand": "全聯"
+  }
+ },
+ {
+  "id": "類型-科技業",
+  "text": "科技業的工作",
+  "expect": {
+   "brand": ""
+  }
+ },
+ {
+  "id": "類型-宅配",
+  "text": "宅配的工作",
+  "expect": {
+   "brand": ""
+  }
+ },
+ {
+  "id": "類型-不要外送",
+  "text": "不要外送 其他都可以",
+  "has": {
+   "exclude_categories": [
+    "外送"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "外送"
+   ]
+  }
+ },
+ {
+  "id": "類型-理貨或門市",
+  "text": "理貨或門市",
+  "expect": {
+   "categories": [
+    "理貨/倉儲",
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "類型-餐廳內場",
+  "text": "想做餐廳內場",
+  "expect": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "類型-LADY M",
+  "text": "LADY M內場",
+  "expect": {
+   "brand": "LADY M",
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "類型-什麼都可以",
+  "text": "什麼工作都可以",
+  "slots": {
+   "location": "桃園",
+   "category": "門市"
+  },
+  "has": {
+   "broaden": [
+    "類型"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "意圖-公司倒閉",
+  "text": "我們公司倒閉了 需要找新工作",
+  "intent_in": [
+   "找工作"
+  ]
+ },
+ {
+  "id": "意圖-要離職",
+  "text": "我要離職了 桃園有理貨嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "桃園"
+   ],
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "意圖-請聯絡我",
+  "text": "請聯絡我",
+  "intent_in": [
+   "轉專員"
+  ]
+ },
+ {
+  "id": "意圖-不喜歡說話",
+  "text": "不喜歡跟人說話",
+  "intent_not": [
+   "轉專員"
+  ]
+ },
+ {
+  "id": "意圖-扣勞健保",
+  "text": "薪水會扣勞健保嗎",
+  "intent_in": [
+   "問問題"
+  ]
+ },
+ {
+  "id": "意圖-面試穿什麼",
+  "text": "面試要穿什麼",
+  "intent_in": [
+   "問問題"
+  ]
+ },
+ {
+  "id": "意圖-廠商徵人",
+  "text": "我是廠商想徵人 需要10個作業員在桃園",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "business"
+  }
+ },
+ {
+  "id": "意圖-薪水少了",
+  "text": "我上個月薪水少了兩千",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "employee"
+  }
+ },
+ {
+  "id": "意圖-真人",
+  "text": "我想跟真人說話",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "human"
+  }
+ },
+ {
+  "id": "意圖-刪個資",
+  "text": "請刪除我的資料 不要再傳訊息給我",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "privacy"
+  }
+ },
+ {
+  "id": "意圖-面試結果",
+  "text": "我上週去面試了 什麼時候會通知結果",
+  "intent_in": [
+   "轉專員",
+   "問問題"
+  ]
+ },
+ {
+  "id": "意圖-謝謝",
+  "text": "謝謝你",
+  "intent_in": [
+   "閒聊"
+  ]
+ },
+ {
+  "id": "意圖-你好",
+  "text": "你好",
+  "intent_in": [
+   "閒聊",
+   "找工作"
+  ]
+ },
+ {
+  "id": "意圖-哈哈",
+  "text": "哈哈哈",
+  "intent_in": [
+   "閒聊"
+  ]
+ },
+ {
+  "id": "意圖-宿舍問題",
+  "text": "有宿舍嗎",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "intent_in": [
+   "問問題",
+   "找工作"
+  ]
+ },
+ {
+  "id": "意圖-有宿舍的工作",
+  "text": "桃園有宿舍的工作",
+  "expect": {
+   "locations": [
+    "桃園"
+   ]
+  },
+  "has": {
+   "benefits": [
+    "宿舍"
+   ]
+  }
+ },
+ {
+  "id": "條件-月薪三萬",
+  "text": "薪水至少三萬",
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 30000
+  }
+ },
+ {
+  "id": "條件-時薪200",
+  "text": "時薪200以上",
+  "expect": {
+   "salary_kind": "時薪",
+   "salary_min": 200
+  }
+ },
+ {
+  "id": "條件-月薪4萬",
+  "text": "月薪4萬的工作",
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 40000
+  }
+ },
+ {
+  "id": "條件-兼職",
+  "text": "想找兼職",
+  "expect": {
+   "worktype": "兼職"
+  }
+ },
+ {
+  "id": "條件-打工",
+  "text": "想打工",
+  "expect": {
+   "worktype": "兼職"
+  }
+ },
+ {
+  "id": "條件-正職",
+  "text": "正職的工作",
+  "expect": {
+   "worktype": "全職"
+  }
+ },
+ {
+  "id": "條件-週結",
+  "text": "週結的",
+  "expect": {
+   "pays": [
+    "週領"
+   ]
+  }
+ },
+ {
+  "id": "條件-領現金",
+  "text": "想領現金",
+  "expect": {
+   "pays": [
+    "現金"
+   ]
+  }
+ },
+ {
+  "id": "條件-日領或週領",
+  "text": "日領或週領都可以",
+  "expect": {
+   "pays": [
+    "日領",
+    "週領"
+   ]
+  }
+ },
+ {
+  "id": "條件-不要月領",
+  "text": "不要月領",
+  "has": {
+   "exclude_pays": [
+    "月領"
+   ]
+  },
+  "forbid": {
+   "pays": [
+    "月領"
+   ]
+  }
+ },
+ {
+  "id": "條件-有交通車",
+  "text": "想找有交通車的",
+  "has": {
+   "benefits": [
+    "交通車"
+   ]
+  }
+ },
+ {
+  "id": "條件-都可以不清楚",
+  "text": "都可以",
+  "slots": {
+   "location": "桃園",
+   "category": "門市",
+   "shift": "大夜班"
+  },
+  "intent_in": [
+   "不確定",
+   "找工作"
+  ],
+  "forbid": {
+   "broaden": [
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "A時段-大夜錯字",
+  "text": "大夜斑有嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "has": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-想做夜班",
+  "text": "想做夜班的",
+  "expect": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-小夜可以",
+  "text": "小夜可以",
+  "expect": {
+   "shifts": [
+    "晚班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-只能晚上",
+  "text": "我只能晚上上班",
+  "has": {
+   "shifts": [
+    "晚班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-日班錯字",
+  "text": "想找日斑",
+  "has": {
+   "shifts": [
+    "早班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班",
+    "晚班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-白天上課",
+  "text": "我白天要上課",
+  "forbid": {
+   "shifts": [
+    "早班"
+   ]
+  },
+  "intent_not": [
+   "轉專員"
+  ]
+ },
+ {
+  "id": "A時段-假日顧小孩",
+  "text": "假日要顧小孩",
+  "forbid": {
+   "shifts": [
+    "假日班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-晚上沒空",
+  "text": "晚上沒空喔",
+  "has": {
+   "exclude_shifts": [
+    "晚班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "晚班",
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-只有六日有空",
+  "text": "平日要上課 只有六日有空",
+  "has": {
+   "shifts": [
+    "假日班"
+   ]
+  },
+  "forbid": {
+   "exclude_shifts": [
+    "假日班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-上午有空",
+  "text": "上午有空 下午要接小孩",
+  "has": {
+   "shifts": [
+    "早班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "晚班",
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-大夜不要",
+  "text": "大夜不要",
+  "has": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-夜班NG",
+  "text": "夜班NG",
+  "has": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-輪班叉叉",
+  "text": "輪班❌",
+  "has": {
+   "exclude_shifts": [
+    "輪班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "輪班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-沒辦法夜班",
+  "text": "身體關係沒辦法上夜班",
+  "has": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-不想輪班",
+  "text": "不想要輪班的",
+  "has": {
+   "exclude_shifts": [
+    "輪班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "輪班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-免輪班",
+  "text": "免輪班的有嗎",
+  "has": {
+   "exclude_shifts": [
+    "輪班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "輪班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-除了大夜都可以",
+  "text": "除了大夜班其他時段都可以",
+  "has": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-早晚可大夜不要",
+  "text": "早晚班都行 大夜不要",
+  "has": {
+   "shifts": [
+    "早班",
+    "晚班"
+   ],
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-可以接受輪班",
+  "text": "可以接受輪班",
+  "has": {
+   "shifts": [
+    "輪班"
+   ]
+  },
+  "forbid": {
+   "exclude_shifts": [
+    "輪班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-不介意晚班",
+  "text": "不介意晚班",
+  "has": {
+   "shifts": [
+    "晚班"
+   ]
+  },
+  "forbid": {
+   "exclude_shifts": [
+    "晚班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-通宵OK",
+  "text": "通宵的工作也OK",
+  "has": {
+   "shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-打烊班",
+  "text": "有打烊班嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "shifts": [
+    "晚班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-自己排班",
+  "text": "想要時間彈性一點 可以自己排班的",
+  "has": {
+   "shifts": [
+    "彈性排班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-桃園夜班作業員",
+  "text": "桃園有沒有夜班的作業員",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "桃園"
+   ],
+   "categories": [
+    "製造/作業員"
+   ],
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-有夜班嗎",
+  "text": "有夜班嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-夜班有加給嗎",
+  "text": "夜班有加給嗎",
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "shifts": [],
+   "exclude_shifts": []
+  }
+ },
+ {
+  "id": "A時段-大夜幾點下班",
+  "text": "大夜班幾點下班",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員",
+   "shift": "大夜班"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "shifts": [],
+   "locations": []
+  }
+ },
+ {
+  "id": "A時段-輪班怎麼輪",
+  "text": "輪班是怎麼輪的",
+  "slots": {
+   "location": "新竹",
+   "category": "製造/作業員"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "shifts": []
+  }
+ },
+ {
+  "id": "A時段-改成早班",
+  "text": "那改成早班看看",
+  "slots": {
+   "location": "台中",
+   "shift": "晚班"
+  },
+  "expect": {
+   "shifts": [
+    "早班"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "A時段-晚班也行",
+  "text": "晚班也行",
+  "slots": {
+   "location": "新北",
+   "category": "門市",
+   "shift": "早班"
+  },
+  "expect": {
+   "shifts": [
+    "早班",
+    "晚班"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "A時段-早班不要了",
+  "text": "早班不要了 晚上的比較好",
+  "slots": {
+   "location": "台北",
+   "shift": "早班"
+  },
+  "has": {
+   "shifts": [
+    "晚班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "A時段-班別都可以",
+  "text": "班別都可以",
+  "slots": {
+   "location": "新北",
+   "category": "理貨/倉儲",
+   "shift": "大夜班"
+  },
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "A時段-時間不限",
+  "text": "時間不限",
+  "slots": {
+   "location": "台南",
+   "category": "門市",
+   "shift": "早班"
+  },
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "A休假-週休二日的",
+  "text": "要週休二日的",
+  "expect": {
+   "leaves": [
+    "週休二日"
+   ]
+  }
+ },
+ {
+  "id": "A休假-周休2日",
+  "text": "想要周休2日",
+  "expect": {
+   "leaves": [
+    "週休二日"
+   ]
+  }
+ },
+ {
+  "id": "A休假-做四休二",
+  "text": "做四休二的有嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "leaves": [
+    "做四休二"
+   ]
+  }
+ },
+ {
+  "id": "A休假-4休2",
+  "text": "4休2可以",
+  "expect": {
+   "leaves": [
+    "做四休二"
+   ]
+  }
+ },
+ {
+  "id": "A休假-排休",
+  "text": "排休的比較好",
+  "expect": {
+   "leaves": [
+    "排休"
+   ]
+  }
+ },
+ {
+  "id": "A休假-月休八天",
+  "text": "月休八天就好",
+  "expect": {
+   "leaves": [
+    "排休"
+   ]
+  }
+ },
+ {
+  "id": "A休假-休禮拜一",
+  "text": "固定休禮拜一可以",
+  "expect": {
+   "leaves": [
+    "休日一"
+   ]
+  }
+ },
+ {
+  "id": "A休假-做三休三",
+  "text": "有做三休三的嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "leaves": [
+    "做三休三"
+   ]
+  }
+ },
+ {
+  "id": "A休假-六日要休",
+  "text": "六日要休息",
+  "has": {
+   "leaves": [
+    "週休二日"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "假日班"
+   ]
+  }
+ },
+ {
+  "id": "A休假-週末放假",
+  "text": "希望週末放假",
+  "has": {
+   "leaves": [
+    "週休二日"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "假日班"
+   ]
+  }
+ },
+ {
+  "id": "A休假-不要排休",
+  "text": "不要排休 要固定休",
+  "has": {
+   "exclude_leaves": [
+    "排休"
+   ]
+  },
+  "forbid": {
+   "leaves": [
+    "排休"
+   ]
+  }
+ },
+ {
+  "id": "A休假-做四休二不想",
+  "text": "做四休二不想",
+  "has": {
+   "exclude_leaves": [
+    "做四休二"
+   ]
+  },
+  "forbid": {
+   "leaves": [
+    "做四休二"
+   ]
+  }
+ },
+ {
+  "id": "A休假-除了輪休都行",
+  "text": "除了輪休 其他休假方式都可以",
+  "has": {
+   "exclude_leaves": [
+    "排休"
+   ]
+  },
+  "forbid": {
+   "leaves": [
+    "排休"
+   ]
+  }
+ },
+ {
+  "id": "A休假-不介意排休",
+  "text": "不介意排休",
+  "has": {
+   "leaves": [
+    "排休"
+   ]
+  },
+  "forbid": {
+   "exclude_leaves": [
+    "排休"
+   ]
+  }
+ },
+ {
+  "id": "A休假-一週休一天",
+  "text": "一週休一天就好",
+  "forbid": {
+   "leaves": [
+    "週休二日"
+   ]
+  }
+ },
+ {
+  "id": "A休假-週休三日",
+  "text": "想要週休三日",
+  "forbid": {
+   "leaves": [
+    "週休二日"
+   ]
+  }
+ },
+ {
+  "id": "A休假-做二休二也可以",
+  "text": "做二休二也可以",
+  "slots": {
+   "location": "桃園",
+   "leave": "週休二日"
+  },
+  "expect": {
+   "leaves": [
+    "週休二日",
+    "做二休二"
+   ]
+  }
+ },
+ {
+  "id": "A休假-改做四休二",
+  "text": "改成做四休二",
+  "slots": {
+   "location": "新竹",
+   "leave": "週休二日"
+  },
+  "expect": {
+   "leaves": [
+    "做四休二"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "A休假-休假都可以",
+  "text": "休假方式都可以",
+  "slots": {
+   "location": "台中",
+   "shift": "早班",
+   "leave": "週休二日"
+  },
+  "has": {
+   "broaden": [
+    "休假方式"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "班別",
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "A休假-週休幾天",
+  "text": "這個週休幾天",
+  "slots": {
+   "location": "台北",
+   "category": "門市"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "leaves": [],
+   "exclude_leaves": []
+  }
+ },
+ {
+  "id": "A發薪-有日領嗎",
+  "text": "有日領的工作嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "pays": [
+    "日領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-急用日結",
+  "text": "急需用錢 想找日結的",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "pays": [
+    "日領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-做一天領一天",
+  "text": "做一天領一天那種",
+  "expect": {
+   "pays": [
+    "日領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-現領",
+  "text": "現領的工作",
+  "any": {
+   "pays": [
+    "日領",
+    "現金"
+   ]
+  },
+  "forbid": {
+   "pays": [
+    "月領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-周結錯字",
+  "text": "周結的有嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "pays": [
+    "週領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-兩週領",
+  "text": "兩個禮拜領一次也行",
+  "expect": {
+   "pays": [
+    "雙週領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-月領就好",
+  "text": "月領就好",
+  "expect": {
+   "pays": [
+    "月領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-預支",
+  "text": "有可以預支的工作嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "pays": [
+    "預支"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-借支",
+  "text": "能借支的",
+  "expect": {
+   "pays": [
+    "預支"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-街口",
+  "text": "可以用街口領薪水的",
+  "has": {
+   "pays": [
+    "街口"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-現金不要匯款",
+  "text": "要領現金 不要匯款",
+  "has": {
+   "pays": [
+    "現金"
+   ],
+   "exclude_pays": [
+    "匯款"
+   ]
+  },
+  "forbid": {
+   "pays": [
+    "匯款"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-不要月領日週都可",
+  "text": "不要月領 日領或週領都可以",
+  "expect": {
+   "pays": [
+    "日領",
+    "週領"
+   ]
+  },
+  "has": {
+   "exclude_pays": [
+    "月領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-月領叉叉",
+  "text": "月領❌",
+  "has": {
+   "exclude_pays": [
+    "月領"
+   ]
+  },
+  "forbid": {
+   "pays": [
+    "月領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-不排斥月領",
+  "text": "不排斥月領",
+  "has": {
+   "pays": [
+    "月領"
+   ]
+  },
+  "forbid": {
+   "exclude_pays": [
+    "月領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-週結不輪班",
+  "text": "週結 不用輪班",
+  "expect": {
+   "pays": [
+    "週領"
+   ]
+  },
+  "has": {
+   "exclude_shifts": [
+    "輪班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "輪班"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-週領也可以",
+  "text": "週領也可以",
+  "slots": {
+   "location": "桃園",
+   "pay": "日領"
+  },
+  "expect": {
+   "pays": [
+    "日領",
+    "週領"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-改月領",
+  "text": "改月領沒關係",
+  "slots": {
+   "location": "台南",
+   "pay": "日領"
+  },
+  "expect": {
+   "pays": [
+    "月領"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "A發薪-發薪都可以",
+  "text": "領薪方式都可以",
+  "slots": {
+   "location": "高雄",
+   "shift": "早班",
+   "pay": "日領"
+  },
+  "has": {
+   "broaden": [
+    "發薪方式"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "班別",
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "A發薪-匯款還是現金",
+  "text": "薪水是匯款還是領現金",
+  "slots": {
+   "location": "新北",
+   "category": "理貨/倉儲"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "pays": [],
+   "exclude_pays": []
+  }
+ },
+ {
+  "id": "A發薪-幾號發薪",
+  "text": "幾號發薪水",
+  "slots": {
+   "location": "新北",
+   "category": "門市"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "pays": []
+  }
+ },
+ {
+  "id": "A發薪-日領一天多少",
+  "text": "日領一天多少錢",
+  "slots": {
+   "location": "桃園",
+   "pay": "日領"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "pays": [],
+   "salary_kind": "",
+   "salary_min": 0
+  }
+ },
+ {
+  "id": "A薪資-月薪3萬5",
+  "text": "月薪3萬5以上",
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 35000
+  }
+ },
+ {
+  "id": "A薪資-35k",
+  "text": "35k以上的工作",
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 35000
+  }
+ },
+ {
+  "id": "A薪資-2萬8起",
+  "text": "2萬8起",
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 28000
+  }
+ },
+ {
+  "id": "A薪資-三萬二",
+  "text": "薪水至少要三萬二",
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 32000
+  }
+ },
+ {
+  "id": "A薪資-四萬起跳",
+  "text": "薪水要四萬起跳",
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 40000
+  }
+ },
+ {
+  "id": "A薪資-有4萬的嗎",
+  "text": "月薪有4萬的嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 40000
+  }
+ },
+ {
+  "id": "A薪資-時薪兩百",
+  "text": "時薪兩百以上",
+  "expect": {
+   "salary_kind": "時薪",
+   "salary_min": 200
+  }
+ },
+ {
+  "id": "A薪資-時薪至少190",
+  "text": "時薪至少190",
+  "expect": {
+   "salary_kind": "時薪",
+   "salary_min": 190
+  }
+ },
+ {
+  "id": "A薪資-時新錯字",
+  "text": "時新200以上",
+  "expect": {
+   "salary_kind": "時薪",
+   "salary_min": 200
+  }
+ },
+ {
+  "id": "A薪資-時薪不低於",
+  "text": "時薪不要低於210",
+  "expect": {
+   "salary_kind": "時薪",
+   "salary_min": 210
+  }
+ },
+ {
+  "id": "A薪資-日薪",
+  "text": "日薪2000以上",
+  "expect": {
+   "salary_kind": "",
+   "salary_min": 0
+  }
+ },
+ {
+  "id": "A薪資-一天兩千",
+  "text": "一天可以賺兩千的",
+  "expect": {
+   "salary_kind": "",
+   "salary_min": 0
+  }
+ },
+ {
+  "id": "A薪資-高一點",
+  "text": "想找薪水高一點的",
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ],
+  "expect": {
+   "salary_kind": "",
+   "salary_min": 0
+  }
+ },
+ {
+  "id": "A薪資-桃園理貨3萬",
+  "text": "桃園 理貨 月薪三萬以上",
+  "expect": {
+   "locations": [
+    "桃園"
+   ],
+   "categories": [
+    "理貨/倉儲"
+   ],
+   "salary_kind": "月薪",
+   "salary_min": 30000
+  }
+ },
+ {
+  "id": "A薪資-3萬不要夜班",
+  "text": "月薪三萬以上 不要夜班",
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 30000
+  },
+  "has": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "A薪資-改時薪",
+  "text": "那時薪220以上的呢",
+  "slots": {
+   "location": "台北",
+   "salary": "月薪30000"
+  },
+  "expect": {
+   "salary_kind": "時薪",
+   "salary_min": 220
+  }
+ },
+ {
+  "id": "A薪資-薪水都可以",
+  "text": "薪水多少都可以",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員",
+   "salary": "月薪35000"
+  },
+  "has": {
+   "broaden": [
+    "薪資"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "A薪資-這份有4萬嗎",
+  "text": "這個工作月薪有到四萬嗎",
+  "slots": {
+   "location": "台中",
+   "category": "製造/作業員"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "salary_kind": "",
+   "salary_min": 0
+  }
+ },
+ {
+  "id": "A薪資-底薪多少",
+  "text": "底薪多少",
+  "slots": {
+   "location": "台中",
+   "category": "製造/作業員"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "salary_kind": "",
+   "salary_min": 0
+  }
+ },
+ {
+  "id": "A薪資-加班費",
+  "text": "加班費怎麼算",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "salary_kind": "",
+   "salary_min": 0
+  }
+ },
+ {
+  "id": "A全兼職-有PT嗎",
+  "text": "有PT嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "worktype": "兼職"
+  }
+ },
+ {
+  "id": "A全兼職-pt晚上",
+  "text": "想找pt 晚上",
+  "expect": {
+   "worktype": "兼職"
+  },
+  "has": {
+   "shifts": [
+    "晚班"
+   ]
+  }
+ },
+ {
+  "id": "A全兼職-學生工讀",
+  "text": "學生想找工讀",
+  "expect": {
+   "worktype": "兼職"
+  }
+ },
+ {
+  "id": "A全兼職-下班兼差",
+  "text": "下班後想兼差",
+  "expect": {
+   "worktype": "兼職"
+  }
+ },
+ {
+  "id": "A全兼職-暑假短期",
+  "text": "短期工讀 暑假兩個月",
+  "expect": {
+   "worktype": "兼職"
+  }
+ },
+ {
+  "id": "A全兼職-台北打工",
+  "text": "台北有沒有打工的",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "worktype": "兼職",
+   "locations": [
+    "台北"
+   ]
+  }
+ },
+ {
+  "id": "A全兼職-假日工讀",
+  "text": "假日工讀",
+  "expect": {
+   "worktype": "兼職"
+  },
+  "has": {
+   "shifts": [
+    "假日班"
+   ]
+  }
+ },
+ {
+  "id": "A全兼職-兼職時薪",
+  "text": "兼職時薪兩百以上",
+  "expect": {
+   "worktype": "兼職",
+   "salary_kind": "時薪",
+   "salary_min": 200
+  }
+ },
+ {
+  "id": "A全兼職-要正職不要兼職",
+  "text": "要正職 不要兼職",
+  "expect": {
+   "worktype": "全職"
+  }
+ },
+ {
+  "id": "A全兼職-兼職不行",
+  "text": "兼職不行 要全職",
+  "expect": {
+   "worktype": "全職"
+  }
+ },
+ {
+  "id": "A全兼職-不要兼職的",
+  "text": "不要兼職的",
+  "expect": {
+   "worktype": "全職"
+  }
+ },
+ {
+  "id": "A全兼職-全職早班",
+  "text": "全職早班",
+  "expect": {
+   "worktype": "全職",
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "A全兼職-正職週休月薪",
+  "text": "正職 週休二日 月薪32000以上",
+  "expect": {
+   "worktype": "全職",
+   "leaves": [
+    "週休二日"
+   ],
+   "salary_kind": "月薪",
+   "salary_min": 32000
+  }
+ },
+ {
+  "id": "A全兼職-改全職",
+  "text": "改全職好了",
+  "slots": {
+   "location": "台北",
+   "worktype": "兼職"
+  },
+  "expect": {
+   "worktype": "全職",
+   "locations": []
+  }
+ },
+ {
+  "id": "A全兼職-全兼都可以",
+  "text": "全職兼職都可以",
+  "slots": {
+   "location": "新竹",
+   "worktype": "兼職"
+  },
+  "has": {
+   "broaden": [
+    "全職/兼職"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "A全兼職-兼職有勞保嗎",
+  "text": "兼職有保勞保嗎",
+  "slots": {
+   "location": "台北",
+   "worktype": "兼職"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "worktype": ""
+  }
+ },
+ {
+  "id": "B地區-中壢理貨",
+  "text": "中壢有理貨的嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "中壢"
+   ],
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "B地區-板橋缺人",
+  "text": "板橋有缺人嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "板橋"
+   ]
+  }
+ },
+ {
+  "id": "B地區-新店門市",
+  "text": "想在新店做門市",
+  "expect": {
+   "locations": [
+    "新店"
+   ],
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "B地區-高雄什麼工作",
+  "text": "高雄有什麼工作",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "高雄"
+   ]
+  }
+ },
+ {
+  "id": "B地區-台南餐飲",
+  "text": "台南 餐飲",
+  "expect": {
+   "locations": [
+    "台南"
+   ],
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "B地區-蘆竹倉儲",
+  "text": "蘆竹那邊有倉儲嗎",
+  "expect": {
+   "locations": [
+    "蘆竹"
+   ],
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "B地區-內湖客服",
+  "text": "內湖有客服的缺嗎",
+  "expect": {
+   "locations": [
+    "內湖"
+   ],
+   "categories": [
+    "客服/行政"
+   ]
+  }
+ },
+ {
+  "id": "B地區-基隆",
+  "text": "基隆有工作嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "基隆"
+   ]
+  }
+ },
+ {
+  "id": "B地區-嘉義縣",
+  "text": "嘉義縣有職缺嗎",
+  "expect": {
+   "locations": [
+    "嘉義縣"
+   ]
+  }
+ },
+ {
+  "id": "B地區-頭份作業員",
+  "text": "頭份作業員",
+  "expect": {
+   "locations": [
+    "頭份"
+   ],
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "B地區-楊梅夜班",
+  "text": "楊梅有夜班嗎",
+  "expect": {
+   "locations": [
+    "楊梅"
+   ],
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "B地區-台中西屯",
+  "text": "台中西屯有什麼工作",
+  "expect": {
+   "locations": [
+    "西屯"
+   ]
+  }
+ },
+ {
+  "id": "B地區-高雄前鎮理貨",
+  "text": "高雄前鎮 理貨",
+  "expect": {
+   "locations": [
+    "前鎮"
+   ],
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "B地區-新竹縣竹北市",
+  "text": "新竹縣竹北市的缺",
+  "expect": {
+   "locations": [
+    "竹北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-桃園中壢早班",
+  "text": "桃園中壢 早班",
+  "expect": {
+   "locations": [
+    "中壢"
+   ],
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "B地區-新北板橋區門市",
+  "text": "新北板橋區有門市嗎",
+  "expect": {
+   "locations": [
+    "板橋"
+   ],
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "B地區-台南永康餐廳",
+  "text": "台南永康餐廳",
+  "expect": {
+   "locations": [
+    "永康"
+   ],
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "B地區-新北市三重區",
+  "text": "新北市三重區的工作",
+  "expect": {
+   "locations": [
+    "三重"
+   ]
+  }
+ },
+ {
+  "id": "B地區-中壢或平鎮",
+  "text": "中壢或平鎮",
+  "expect": {
+   "locations": [
+    "中壢",
+    "平鎮"
+   ]
+  }
+ },
+ {
+  "id": "B地區-板橋跟中和",
+  "text": "板橋跟中和都可以",
+  "expect": {
+   "locations": [
+    "板橋",
+    "中和"
+   ]
+  }
+ },
+ {
+  "id": "B地區-台北頓號新北",
+  "text": "台北、新北",
+  "expect": {
+   "locations": [
+    "台北",
+    "新北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-桃園空白新竹",
+  "text": "桃園 新竹",
+  "expect": {
+   "locations": [
+    "桃園",
+    "新竹"
+   ]
+  }
+ },
+ {
+  "id": "B地區-台中還是彰化",
+  "text": "台中還是彰化都行",
+  "expect": {
+   "locations": [
+    "台中",
+    "彰化"
+   ]
+  }
+ },
+ {
+  "id": "B地區-高雄台南連寫",
+  "text": "高雄台南都可以",
+  "expect": {
+   "locations": [
+    "高雄",
+    "台南"
+   ]
+  }
+ },
+ {
+  "id": "B地區-三重蘆洲新莊",
+  "text": "三重、蘆洲、新莊都可以",
+  "expect": {
+   "locations": [
+    "三重",
+    "蘆洲",
+    "新莊"
+   ]
+  }
+ },
+ {
+  "id": "B地區-林口或龜山倉儲",
+  "text": "林口或龜山的倉儲",
+  "expect": {
+   "locations": [
+    "林口",
+    "龜山"
+   ],
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "B地區-嘉義市跟縣",
+  "text": "嘉義市跟嘉義縣都可以",
+  "expect": {
+   "locations": [
+    "嘉義市",
+    "嘉義縣"
+   ]
+  }
+ },
+ {
+  "id": "B地區-竹北湖口新豐",
+  "text": "竹北 湖口 新豐都可",
+  "expect": {
+   "locations": [
+    "竹北",
+    "湖口",
+    "新豐"
+   ]
+  }
+ },
+ {
+  "id": "B地區-新北以外",
+  "text": "新北以外都行",
+  "has": {
+   "exclude_locations": [
+    "新北"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "新北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-除了台北",
+  "text": "除了台北都可以",
+  "has": {
+   "exclude_locations": [
+    "台北"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "台北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-不要去桃園",
+  "text": "不要去桃園",
+  "has": {
+   "exclude_locations": [
+    "桃園"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "B地區-林口太遠",
+  "text": "林口太遠了",
+  "slots": {
+   "location": "新北"
+  },
+  "has": {
+   "exclude_locations": [
+    "林口"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "林口"
+   ]
+  }
+ },
+ {
+  "id": "B地區-觀音太遠不要",
+  "text": "觀音太遠了不要",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "has": {
+   "exclude_locations": [
+    "觀音"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "觀音"
+   ],
+   "exclude_categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "B地區-南部不要",
+  "text": "南部的不要",
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ],
+  "forbid": {
+   "locations": [
+    "台南",
+    "高雄",
+    "屏東",
+    "嘉義"
+   ]
+  }
+ },
+ {
+  "id": "B地區-板橋土城不要",
+  "text": "板橋跟土城不要",
+  "has": {
+   "exclude_locations": [
+    "板橋",
+    "土城"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "板橋",
+    "土城"
+   ]
+  }
+ },
+ {
+  "id": "B地區-新莊以外的新北",
+  "text": "新莊以外的新北都可以",
+  "expect": {
+   "locations": [
+    "新北"
+   ]
+  },
+  "has": {
+   "exclude_locations": [
+    "新莊"
+   ]
+  }
+ },
+ {
+  "id": "B地區-不想去台中",
+  "text": "我不想去台中",
+  "has": {
+   "exclude_locations": [
+    "台中"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "台中"
+   ]
+  }
+ },
+ {
+  "id": "B地區-花蓮台東不去",
+  "text": "花蓮台東不去",
+  "has": {
+   "exclude_locations": [
+    "花蓮",
+    "台東"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "花蓮",
+    "台東"
+   ]
+  }
+ },
+ {
+  "id": "B地區-中壢以外帶桃園",
+  "text": "中壢以外",
+  "slots": {
+   "location": "桃園"
+  },
+  "has": {
+   "exclude_locations": [
+    "中壢"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "中壢"
+   ]
+  }
+ },
+ {
+  "id": "B地區-不要台北要新北",
+  "text": "不要台北，要新北",
+  "expect": {
+   "locations": [
+    "新北"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "台北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-中壢不要桃園區可以",
+  "text": "中壢不要，桃園區可以",
+  "expect": {
+   "locations": [
+    "桃園區"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "中壢"
+   ]
+  }
+ },
+ {
+  "id": "B地區-高雄不要改台南",
+  "text": "高雄不要了 改台南",
+  "slots": {
+   "location": "高雄"
+  },
+  "expect": {
+   "locations": [
+    "台南"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "高雄"
+   ]
+  }
+ },
+ {
+  "id": "B地區-不是台中是台南",
+  "text": "不是台中是台南",
+  "slots": {
+   "location": "台中"
+  },
+  "expect": {
+   "locations": [
+    "台南"
+   ]
+  }
+ },
+ {
+  "id": "B地區-不要三重要板橋",
+  "text": "不要三重 想要板橋",
+  "expect": {
+   "locations": [
+    "板橋"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "三重"
+   ]
+  }
+ },
+ {
+  "id": "B地區-新竹市不要竹北可以",
+  "text": "新竹市不要，竹北可以",
+  "expect": {
+   "locations": [
+    "竹北"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "新竹"
+   ]
+  }
+ },
+ {
+  "id": "B地區-住三重去台北",
+  "text": "我住三重想去台北上班",
+  "expect": {
+   "locations": [
+    "台北"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "三重"
+   ]
+  }
+ },
+ {
+  "id": "B地區-家在中壢附近就好",
+  "text": "我家在中壢，附近就好",
+  "intent_in": [
+   "找工作"
+  ],
+  "any": {
+   "locations": [
+    "中壢",
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "B地區-住新莊想林口",
+  "text": "住新莊，但想在林口工作",
+  "expect": {
+   "locations": [
+    "林口"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "新莊"
+   ]
+  }
+ },
+ {
+  "id": "B地區-住台中找台北",
+  "text": "我住在台中，想找台北的工作",
+  "expect": {
+   "locations": [
+    "台北"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "台中"
+   ]
+  }
+ },
+ {
+  "id": "B地區-住龜山通勤桃園區",
+  "text": "我住龜山，通勤到桃園區可以",
+  "expect": {
+   "locations": [
+    "桃園"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "龜山"
+   ]
+  }
+ },
+ {
+  "id": "B地區-人在高雄回台南",
+  "text": "人在高雄，但想回台南工作",
+  "expect": {
+   "locations": [
+    "台南"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "高雄"
+   ]
+  }
+ },
+ {
+  "id": "B地區-家住蘆洲近就好",
+  "text": "家住蘆洲 離家近的就好",
+  "intent_in": [
+   "找工作"
+  ],
+  "any": {
+   "locations": [
+    "蘆洲",
+    "新北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-住新竹接受竹北",
+  "text": "我住新竹，可以接受到竹北上班",
+  "has": {
+   "locations": [
+    "竹北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-搬來板橋附近找",
+  "text": "剛搬來板橋，想在附近找",
+  "intent_in": [
+   "找工作"
+  ],
+  "any": {
+   "locations": [
+    "板橋",
+    "新北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-交通車經過三峽",
+  "text": "交通車有經過三峽嗎",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "forbid": {
+   "locations": [
+    "三峽"
+   ]
+  }
+ },
+ {
+  "id": "B地區-八德出發交通車",
+  "text": "我從八德出發，有交通車可以坐嗎",
+  "slots": {
+   "location": "桃園"
+  },
+  "intent_in": [
+   "問問題",
+   "找工作"
+  ],
+  "forbid": {
+   "locations": [
+    "八德"
+   ]
+  }
+ },
+ {
+  "id": "B地區-交通車中壢火車站",
+  "text": "交通車是從中壢火車站出發嗎",
+  "slots": {
+   "location": "新竹",
+   "category": "製造/作業員"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "forbid": {
+   "locations": [
+    "中壢"
+   ]
+  }
+ },
+ {
+  "id": "B地區-面試要到台北",
+  "text": "面試要到台北嗎",
+  "slots": {
+   "location": "桃園"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "forbid": {
+   "locations": [
+    "台北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-面試中壢還是廠區",
+  "text": "面試是在中壢還是在廠區",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "B地區-報到去高雄總公司",
+  "text": "報到要去高雄總公司嗎",
+  "slots": {
+   "location": "台南"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "forbid": {
+   "locations": [
+    "高雄"
+   ]
+  }
+ },
+ {
+  "id": "B地區-戶籍屏東住台北",
+  "text": "我戶籍在屏東，但現在住台北，想找台北的工作",
+  "expect": {
+   "locations": [
+    "台北"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "屏東"
+   ]
+  }
+ },
+ {
+  "id": "B地區-戶籍雲林影響嗎",
+  "text": "戶籍在雲林會影響應徵嗎",
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "B地區-英文taipei",
+  "text": "taipei",
+  "expect": {
+   "locations": [
+    "台北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-英文Taichung",
+  "text": "Taichung jobs",
+  "expect": {
+   "locations": [
+    "台中"
+   ]
+  }
+ },
+ {
+  "id": "B地區-英文kaohsiung",
+  "text": "kaohsiung 有缺嗎",
+  "expect": {
+   "locations": [
+    "高雄"
+   ]
+  }
+ },
+ {
+  "id": "B地區-英文Zhongli倉儲",
+  "text": "Zhongli 倉儲",
+  "expect": {
+   "locations": [
+    "中壢"
+   ],
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "B地區-英文Banqiao",
+  "text": "Banqiao 有工作嗎",
+  "expect": {
+   "locations": [
+    "板橋"
+   ]
+  }
+ },
+ {
+  "id": "B地區-錯字桃圓理貨",
+  "text": "桃圓 理貨",
+  "expect": {
+   "locations": [
+    "桃園"
+   ],
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "B地區-臺北門市",
+  "text": "臺北的門市",
+  "expect": {
+   "locations": [
+    "台北"
+   ],
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "B地區-錯字高熊",
+  "text": "高熊有工作嗎",
+  "expect": {
+   "locations": [
+    "高雄"
+   ]
+  }
+ },
+ {
+  "id": "B地區-錯字中歷",
+  "text": "中歷有缺嗎",
+  "expect": {
+   "locations": [
+    "中壢"
+   ]
+  }
+ },
+ {
+  "id": "B地區-錯字盧洲",
+  "text": "盧洲有門市嗎",
+  "expect": {
+   "locations": [
+    "蘆洲"
+   ],
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "B地區-簡稱北市餐飲",
+  "text": "北市 餐飲",
+  "expect": {
+   "locations": [
+    "台北"
+   ],
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "B地區-簡稱中市",
+  "text": "中市有作業員嗎",
+  "expect": {
+   "locations": [
+    "台中"
+   ],
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "B地區-簡稱竹縣",
+  "text": "竹縣有工作嗎",
+  "expect": {
+   "locations": [
+    "新竹縣"
+   ]
+  }
+ },
+ {
+  "id": "B地區-雙北",
+  "text": "雙北都可以",
+  "expect": {
+   "locations": [
+    "台北",
+    "新北"
+   ]
+  }
+ },
+ {
+  "id": "B地區-大台北",
+  "text": "大台北地區的工作",
+  "any": {
+   "locations": [
+    "台北",
+    "新北"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "桃園",
+    "新竹"
+   ]
+  }
+ },
+ {
+  "id": "B地區-桃竹苗",
+  "text": "桃竹苗都可以",
+  "expect": {
+   "locations": [
+    "桃園",
+    "新竹",
+    "苗栗"
+   ]
+  }
+ },
+ {
+  "id": "B地區-竹科",
+  "text": "竹科的工作",
+  "intent_in": [
+   "找工作"
+  ],
+  "any": {
+   "locations": [
+    "新竹",
+    "東區",
+    "寶山",
+    "竹北",
+    "竹東"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "台中",
+    "台南"
+   ]
+  }
+ },
+ {
+  "id": "B地區-中科",
+  "text": "中科有缺嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "any": {
+   "locations": [
+    "台中",
+    "西屯",
+    "大雅",
+    "后里"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "新竹",
+    "台南"
+   ]
+  }
+ },
+ {
+  "id": "B地區-南科",
+  "text": "南科附近",
+  "intent_in": [
+   "找工作"
+  ],
+  "any": {
+   "locations": [
+    "台南",
+    "善化",
+    "新市",
+    "安定"
+   ]
+  },
+  "forbid": {
+   "locations": [
+    "新竹",
+    "台中"
+   ]
+  }
+ },
+ {
+  "id": "B地區-北部",
+  "text": "北部的工作",
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ],
+  "forbid": {
+   "locations": [
+    "台中",
+    "台南",
+    "高雄",
+    "嘉義",
+    "屏東"
+   ]
+  }
+ },
+ {
+  "id": "B地區-中南部",
+  "text": "中南部都可以",
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ],
+  "forbid": {
+   "locations": [
+    "台北",
+    "新北",
+    "桃園",
+    "基隆"
+   ]
+  }
+ },
+ {
+  "id": "B地區-台北中山區呢",
+  "text": "中山區呢",
+  "slots": {
+   "location": "台北"
+  },
+  "expect": {
+   "locations": [
+    "中山"
+   ]
+  }
+ },
+ {
+  "id": "B地區-新竹東區有嗎",
+  "text": "東區有嗎",
+  "slots": {
+   "location": "新竹"
+  },
+  "expect": {
+   "locations": [
+    "東區"
+   ]
+  }
+ },
+ {
+  "id": "B地區-台南東區",
+  "text": "東區的有嗎",
+  "slots": {
+   "location": "台南",
+   "category": "餐飲/服務"
+  },
+  "expect": {
+   "locations": [
+    "東區"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "B地區-台北大安區",
+  "text": "大安區可以嗎",
+  "slots": {
+   "location": "台北"
+  },
+  "expect": {
+   "locations": [
+    "大安"
+   ]
+  }
+ },
+ {
+  "id": "B地區-基隆信義區",
+  "text": "信義區",
+  "slots": {
+   "location": "基隆"
+  },
+  "expect": {
+   "locations": [
+    "信義"
+   ]
+  }
+ },
+ {
+  "id": "B地區-沒條件東區",
+  "text": "東區有工作嗎",
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ]
+ },
+ {
+  "id": "B地區-新竹東區連寫",
+  "text": "新竹東區",
+  "expect": {
+   "locations": [
+    "東區"
+   ]
+  }
+ },
+ {
+  "id": "B地區-西屯加北區",
+  "text": "北區也可以",
+  "slots": {
+   "location": "西屯"
+  },
+  "expect": {
+   "locations": [
+    "西屯",
+    "北區"
+   ]
+  }
+ },
+ {
+  "id": "B地區-高雄餐飲那台南",
+  "text": "那台南呢",
+  "slots": {
+   "location": "高雄",
+   "category": "餐飲/服務"
+  },
+  "expect": {
+   "locations": [
+    "台南"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "B地區-桃園加苗栗",
+  "text": "苗栗也可以",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "expect": {
+   "locations": [
+    "桃園",
+    "苗栗"
+   ]
+  }
+ },
+ {
+  "id": "B地區-地區不限",
+  "text": "地區不限",
+  "slots": {
+   "location": "新北",
+   "category": "門市"
+  },
+  "has": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "B地區-哪裡都可以",
+  "text": "哪裡都可以",
+  "slots": {
+   "location": "台中",
+   "category": "製造/作業員"
+  },
+  "has": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "B地區-全台灣都行",
+  "text": "全台灣都行",
+  "slots": {
+   "location": "台北",
+   "shift": "早班"
+  },
+  "has": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "班別"
+   ]
+  }
+ },
+ {
+  "id": "B地區-改新竹",
+  "text": "改新竹好了",
+  "slots": {
+   "location": "桃園"
+  },
+  "expect": {
+   "locations": [
+    "新竹"
+   ]
+  }
+ },
+ {
+  "id": "B地區-兩地拿掉桃園",
+  "text": "桃園不要了",
+  "slots": {
+   "location": "新北|桃園"
+  },
+  "forbid": {
+   "locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "B地區-帶夜班問新竹",
+  "text": "新竹有嗎",
+  "slots": {
+   "location": "桃園",
+   "shift": "大夜班"
+  },
+  "expect": {
+   "locations": [
+    "新竹"
+   ],
+   "shifts": []
+  }
+ },
+ {
+  "id": "B地區-其他縣市也可以",
+  "text": "其他縣市也可以",
+  "slots": {
+   "location": "台中",
+   "category": "門市"
+  },
+  "has": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "B地區-板橋放大新北",
+  "text": "整個新北都可以",
+  "slots": {
+   "location": "板橋"
+  },
+  "expect": {
+   "locations": [
+    "新北"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "B地區-不限地區要夜班",
+  "text": "不限地區 只要有夜班",
+  "slots": {
+   "location": "桃園"
+  },
+  "has": {
+   "broaden": [
+    "地區"
+   ],
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "B地區-公司在哪",
+  "text": "公司在哪",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "B地區-工作地點在哪裡",
+  "text": "工作地點在哪裡？",
+  "slots": {
+   "location": "台北"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "B地區-給我地址",
+  "text": "可以給我地址嗎",
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "B地區-在中壢哪裡",
+  "text": "這間在中壢哪裡",
+  "slots": {
+   "location": "中壢"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "B地區-倉庫觀音還是大園",
+  "text": "倉庫在觀音還是大園",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "B地區-金門",
+  "text": "金門有工作嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "金門"
+   ]
+  }
+ },
+ {
+  "id": "B地區-連江",
+  "text": "連江縣有缺嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "連江"
+   ]
+  }
+ },
+ {
+  "id": "B地區-恆春",
+  "text": "恆春有工作嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "恆春"
+   ]
+  }
+ },
+ {
+  "id": "C類型-揀貨打包",
+  "text": "想做揀貨打包",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "C類型-送貨員",
+  "text": "送貨員有嗎",
+  "expect": {
+   "categories": [
+    "外送"
+   ]
+  }
+ },
+ {
+  "id": "C類型-騎手",
+  "text": "騎手的工作",
+  "expect": {
+   "categories": [
+    "外送"
+   ]
+  }
+ },
+ {
+  "id": "C類型-隨車助手",
+  "text": "隨車助手",
+  "expect": {
+   "categories": [
+    "外送"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  },
+  "note": "「助手」不是餐飲的廚房助手"
+ },
+ {
+  "id": "C類型-收銀員",
+  "text": "收銀員",
+  "expect": {
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "C類型-服飾店",
+  "text": "服飾店的工作",
+  "expect": {
+   "categories": [
+    "門市"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "C類型-品檢員",
+  "text": "品檢員",
+  "expect": {
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C類型-工廠技術員",
+  "text": "工廠技術員",
+  "any": {
+   "categories": [
+    "製造/作業員",
+    "設備/技術"
+   ]
+  },
+  "expect": {
+   "unsupported_roles": []
+  }
+ },
+ {
+  "id": "C類型-包裝員",
+  "text": "包裝員",
+  "any": {
+   "categories": [
+    "理貨/倉儲",
+    "製造/作業員"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "餐飲/服務",
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "C類型-廚房助手",
+  "text": "廚房助手",
+  "expect": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "C類型-洗碗",
+  "text": "洗碗也可以",
+  "expect": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "C類型-外場服務生",
+  "text": "外場服務生",
+  "expect": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "C類型-行政助理",
+  "text": "行政助理",
+  "expect": {
+   "categories": [
+    "客服/行政"
+   ]
+  }
+ },
+ {
+  "id": "C類型-文書處理",
+  "text": "文書處理的工作",
+  "expect": {
+   "categories": [
+    "客服/行政"
+   ]
+  }
+ },
+ {
+  "id": "C類型-水電師傅",
+  "text": "水電師傅",
+  "expect": {
+   "categories": [
+    "設備/技術"
+   ]
+  }
+ },
+ {
+  "id": "C類型-機電維護",
+  "text": "機電維護",
+  "expect": {
+   "categories": [
+    "設備/技術"
+   ]
+  }
+ },
+ {
+  "id": "C類型-機台維修",
+  "text": "機台維修",
+  "has": {
+   "categories": [
+    "設備/技術"
+   ]
+  },
+  "note": "行業詞「機台」＋職務詞「維修」，以維修為準"
+ },
+ {
+  "id": "C類型-物流公司司機",
+  "text": "物流公司的司機",
+  "expect": {
+   "categories": [
+    "外送"
+   ],
+   "brand": ""
+  },
+  "forbid": {
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "C類型-電子廠倉管",
+  "text": "電子廠倉管",
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C類型-工廠廚房",
+  "text": "工廠廚房打菜",
+  "expect": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C類型-科技廠行政",
+  "text": "科技廠行政",
+  "expect": {
+   "categories": [
+    "客服/行政"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C類型-百貨專櫃",
+  "text": "百貨公司專櫃",
+  "expect": {
+   "categories": [
+    "門市"
+   ],
+   "brand": ""
+  },
+  "forbid": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "C類型-餐廳收銀",
+  "text": "餐廳收銀",
+  "any": {
+   "categories": [
+    "門市",
+    "餐飲/服務"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "客服/行政"
+   ]
+  }
+ },
+ {
+  "id": "C類型-作業員或倉管",
+  "text": "作業員或倉管都行",
+  "expect": {
+   "categories": [
+    "製造/作業員",
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "C類型-店員或服務生",
+  "text": "店員或服務生",
+  "expect": {
+   "categories": [
+    "門市",
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "C類型-司機跟維修",
+  "text": "司機跟維修都可以",
+  "expect": {
+   "categories": [
+    "外送",
+    "設備/技術"
+   ]
+  }
+ },
+ {
+  "id": "C類型-不要餐飲",
+  "text": "不要餐飲 其他都行",
+  "has": {
+   "exclude_categories": [
+    "餐飲/服務"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "C類型-除了工廠",
+  "text": "除了工廠都可以",
+  "has": {
+   "exclude_categories": [
+    "製造/作業員"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C類型-不想站櫃台",
+  "text": "不想站櫃台",
+  "has": {
+   "exclude_categories": [
+    "門市"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "C類型-不要產線要倉庫",
+  "text": "不要產線 想做倉庫",
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ]
+  },
+  "has": {
+   "exclude_categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C類型-警衛",
+  "text": "想當警衛",
+  "expect": {
+   "categories": []
+  },
+  "nonempty": [
+   "unsupported_roles"
+  ]
+ },
+ {
+  "id": "C類型-會計",
+  "text": "有會計的缺嗎",
+  "expect": {
+   "categories": []
+  },
+  "nonempty": [
+   "unsupported_roles"
+  ]
+ },
+ {
+  "id": "C類型-美髮助理",
+  "text": "美髮助理",
+  "expect": {
+   "categories": []
+  },
+  "nonempty": [
+   "unsupported_roles"
+  ],
+  "note": "「助理」陷阱，不是客服/行政"
+ },
+ {
+  "id": "C類型-護理師",
+  "text": "我是護理師",
+  "expect": {
+   "categories": []
+  },
+  "nonempty": [
+   "unsupported_roles"
+  ]
+ },
+ {
+  "id": "C類型-補習班老師",
+  "text": "補習班老師",
+  "expect": {
+   "categories": []
+  },
+  "nonempty": [
+   "unsupported_roles"
+  ]
+ },
+ {
+  "id": "C類型-軟體工程師",
+  "text": "軟體工程師",
+  "expect": {
+   "categories": []
+  },
+  "nonempty": [
+   "unsupported_roles"
+  ]
+ },
+ {
+  "id": "C類型-電子廠清潔",
+  "text": "電子廠清潔",
+  "nonempty": [
+   "unsupported_roles"
+  ],
+  "forbid": {
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C類型-保全或倉管",
+  "text": "保全或倉管",
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ]
+  },
+  "nonempty": [
+   "unsupported_roles"
+  ]
+ },
+ {
+  "id": "C類型-改找倉庫",
+  "text": "改找倉庫的好了",
+  "slots": {
+   "location": "桃園",
+   "category": "門市"
+  },
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "C類型-作業員也可以",
+  "text": "作業員也可以",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "expect": {
+   "categories": [
+    "理貨/倉儲",
+    "製造/作業員"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "C廠商-蝦皮倉庫",
+  "text": "蝦皮倉庫有缺嗎",
+  "expect": {
+   "brand": "蝦皮",
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-美光作業員",
+  "text": "美光的作業員",
+  "expect": {
+   "brand": "美光",
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-momo理貨",
+  "text": "momo理貨",
+  "expect": {
+   "brand": "momo",
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-PChome",
+  "text": "PChome倉儲有在找人嗎",
+  "expect": {
+   "brand": "PChome",
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-鼎王",
+  "text": "鼎王在徵人嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "brand": "鼎王"
+  }
+ },
+ {
+  "id": "C廠商-石二鍋外場",
+  "text": "石二鍋外場",
+  "expect": {
+   "brand": "石二鍋",
+   "categories": [
+    "餐飲/服務"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-台灣大哥大客服",
+  "text": "台灣大哥大的客服",
+  "expect": {
+   "brand": "台灣大哥大",
+   "categories": [
+    "客服/行政"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-佐丹奴門市",
+  "text": "佐丹奴門市",
+  "expect": {
+   "brand": "佐丹奴",
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-漢來",
+  "text": "想去漢來上班",
+  "intent_in": [
+   "找工作"
+  ],
+  "nonempty": [
+   "brand"
+  ]
+ },
+ {
+  "id": "C廠商-Uber外送",
+  "text": "uber外送",
+  "nonempty": [
+   "brand"
+  ],
+  "expect": {
+   "categories": [
+    "外送"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-蝦皮門市桃園",
+  "text": "桃園蝦皮門市",
+  "expect": {
+   "brand": "蝦皮",
+   "categories": [
+    "門市"
+   ],
+   "locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-全家",
+  "text": "全家便利商店",
+  "expect": {
+   "brand": "全家",
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-7-11",
+  "text": "7-11店員",
+  "nonempty": [
+   "brand"
+  ],
+  "expect": {
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-麥當勞",
+  "text": "麥當勞有在找人嗎",
+  "expect": {
+   "brand": "麥當勞"
+  }
+ },
+ {
+  "id": "C廠商-台積電",
+  "text": "台積電作業員",
+  "expect": {
+   "brand": "台積電",
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-家樂福",
+  "text": "家樂福理貨",
+  "expect": {
+   "brand": "家樂福",
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-便利商店通稱",
+  "text": "便利商店店員",
+  "expect": {
+   "brand": "",
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-物流業",
+  "text": "物流業的工作",
+  "expect": {
+   "brand": ""
+  }
+ },
+ {
+  "id": "C廠商-代招",
+  "text": "代招的職缺有哪些",
+  "expect": {
+   "brand": ""
+  }
+ },
+ {
+  "id": "C廠商-電子廠",
+  "text": "電子廠都可以",
+  "expect": {
+   "brand": "",
+   "categories": [
+    "製造/作業員"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-宅配司機",
+  "text": "宅配司機",
+  "expect": {
+   "brand": "",
+   "categories": [
+    "外送"
+   ]
+  }
+ },
+ {
+  "id": "C廠商-蝦皮薪水怎麼算",
+  "text": "蝦皮的薪水怎麼算",
+  "slots": {
+   "location": "桃園",
+   "brand": "蝦皮"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "categories": [],
+   "locations": []
+  }
+ },
+ {
+  "id": "C廠商-在美光薪水少算",
+  "text": "我是派去美光的 這個月薪水少算了",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "employee"
+  }
+ },
+ {
+  "id": "C廠商-全聯人資",
+  "text": "我是全聯的人資 想找派遣人力",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "business"
+  }
+ },
+ {
+  "id": "C意圖-薪水怎麼算",
+  "text": "這個薪水怎麼算",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "last_bot": "幫你找到 3 筆桃園的理貨/倉儲職缺，點「查看職缺詳情」可以看更多。",
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "categories": [],
+   "locations": []
+  }
+ },
+ {
+  "id": "C意圖-有勞健保嗎",
+  "text": "有保勞健保嗎",
+  "intent_in": [
+   "問問題"
+  ]
+ },
+ {
+  "id": "C意圖-面試要帶什麼",
+  "text": "面試要帶什麼東西",
+  "intent_in": [
+   "問問題"
+  ]
+ },
+ {
+  "id": "C意圖-宿舍要錢嗎",
+  "text": "宿舍要錢嗎",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "benefits": []
+  }
+ },
+ {
+  "id": "C意圖-需要經驗嗎",
+  "text": "需要經驗嗎",
+  "slots": {
+   "location": "台中",
+   "category": "製造/作業員"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "categories": []
+  }
+ },
+ {
+  "id": "C意圖-幾歲可以做",
+  "text": "幾歲可以做",
+  "intent_in": [
+   "問問題"
+  ]
+ },
+ {
+  "id": "C意圖-會不會很累",
+  "text": "這工作會不會很累",
+  "slots": {
+   "location": "新北",
+   "category": "理貨/倉儲"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "categories": []
+  }
+ },
+ {
+  "id": "C意圖-能不能預支",
+  "text": "錄取後第一個月能先預支嗎",
+  "intent_in": [
+   "問問題"
+  ]
+ },
+ {
+  "id": "C意圖-加班費怎麼算",
+  "text": "加班費怎麼算",
+  "intent_in": [
+   "問問題"
+  ],
+  "intent_not": [
+   "轉專員"
+  ]
+ },
+ {
+  "id": "C意圖-要站一整天",
+  "text": "要站一整天嗎",
+  "slots": {
+   "location": "台北",
+   "category": "門市"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "categories": []
+  }
+ },
+ {
+  "id": "C意圖-要自備機車",
+  "text": "要自己準備機車嗎",
+  "slots": {
+   "location": "台北",
+   "category": "外送"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "categories": []
+  }
+ },
+ {
+  "id": "C意圖-學生可以嗎",
+  "text": "學生可以做嗎",
+  "intent_in": [
+   "問問題",
+   "找工作"
+  ]
+ },
+ {
+  "id": "C意圖-有宿舍的工作嗎",
+  "text": "有宿舍的工作嗎",
+  "intent_in": [
+   "找工作"
+  ],
+  "has": {
+   "benefits": [
+    "宿舍"
+   ]
+  }
+ },
+ {
+  "id": "C意圖-沒經驗可以做的",
+  "text": "沒經驗可以做的工作",
+  "intent_in": [
+   "找工作"
+  ]
+ },
+ {
+  "id": "C意圖-沒經驗倉庫",
+  "text": "有沒有不用經驗的倉庫工作",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "C意圖-工廠缺人",
+  "text": "我們工廠缺人 可以幫忙找嗎",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "business"
+  }
+ },
+ {
+  "id": "C意圖-薪水還沒入帳",
+  "text": "這個月薪水還沒入帳",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "employee"
+  }
+ },
+ {
+  "id": "C意圖-明天請假",
+  "text": "我明天要請假 要跟誰說",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "employee"
+  }
+ },
+ {
+  "id": "C意圖-辦離職手續",
+  "text": "我想辦離職手續",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "employee"
+  }
+ },
+ {
+  "id": "C意圖-加班費沒算",
+  "text": "上個月加班費好像沒算到",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "employee"
+  }
+ },
+ {
+  "id": "C意圖-專員態度差",
+  "text": "你們專員態度很差",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "complaint"
+  }
+ },
+ {
+  "id": "C意圖-罵機器人",
+  "text": "什麼爛機器人 講都講不聽",
+  "intent_in": [
+   "轉專員"
+  ],
+  "intent_not": [
+   "找工作"
+  ]
+ },
+ {
+  "id": "C意圖-真人客服",
+  "text": "給我真人客服",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "human"
+  }
+ },
+ {
+  "id": "C意圖-打電話給我",
+  "text": "可以直接打電話給我嗎",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "human"
+  }
+ },
+ {
+  "id": "C意圖-刪電話",
+  "text": "取消訂閱 把我的電話刪掉",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "privacy"
+  }
+ },
+ {
+  "id": "C意圖-有錄取嗎",
+  "text": "我昨天面試完了 請問有錄取嗎",
+  "intent_in": [
+   "轉專員"
+  ],
+  "expect": {
+   "handoff_reason": "interview"
+  }
+ },
+ {
+  "id": "C意圖-改報到時間",
+  "text": "報到時間可以改嗎",
+  "intent_in": [
+   "轉專員",
+   "問問題"
+  ],
+  "intent_not": [
+   "找工作"
+  ]
+ },
+ {
+  "id": "C意圖-工廠收掉",
+  "text": "工廠收掉了 我失業了",
+  "intent_not": [
+   "轉專員",
+   "問問題"
+  ]
+ },
+ {
+  "id": "C意圖-剛退伍",
+  "text": "剛退伍 想找工作",
+  "intent_in": [
+   "找工作"
+  ]
+ },
+ {
+  "id": "C意圖-被裁員",
+  "text": "被裁員了 有什麼工作可以做",
+  "intent_in": [
+   "找工作"
+  ]
+ },
+ {
+  "id": "C意圖-懷孕",
+  "text": "我懷孕了 想找不要太累的",
+  "intent_in": [
+   "找工作"
+  ],
+  "intent_not": [
+   "轉專員"
+  ]
+ },
+ {
+  "id": "C意圖-二度就業",
+  "text": "小孩上小學了 想二度就業",
+  "intent_in": [
+   "找工作"
+  ]
+ },
+ {
+  "id": "C意圖-下個月離職",
+  "text": "下個月要離職 先看看有什麼工作",
+  "intent_in": [
+   "找工作"
+  ],
+  "intent_not": [
+   "轉專員"
+  ]
+ },
+ {
+  "id": "C意圖-老闆拖薪換工作",
+  "text": "現在工廠老闆一直拖欠薪水 想換工作",
+  "intent_in": [
+   "找工作"
+  ],
+  "intent_not": [
+   "轉專員"
+  ],
+  "note": "別家公司的薪水問題，不是材霈在職員工"
+ },
+ {
+  "id": "C意圖-早安",
+  "text": "早安",
+  "intent_in": [
+   "閒聊"
+  ]
+ },
+ {
+  "id": "C意圖-機器人嗎",
+  "text": "你是機器人嗎",
+  "intent_in": [
+   "閒聊",
+   "問問題"
+  ],
+  "intent_not": [
+   "轉專員"
+  ]
+ },
+ {
+  "id": "C意圖-貼圖",
+  "text": "[貼圖]",
+  "intent_in": [
+   "閒聊"
+  ]
+ },
+ {
+  "id": "C意圖-今天好熱",
+  "text": "今天好熱喔",
+  "intent_in": [
+   "閒聊"
+  ]
+ },
+ {
+  "id": "C意圖-ok謝啦",
+  "text": "ok 謝啦",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "last_bot": "幫你找到 3 筆桃園的理貨/倉儲職缺，點「查看職缺詳情」可以看更多。",
+  "intent_in": [
+   "閒聊"
+  ],
+  "expect": {
+   "categories": [],
+   "locations": []
+  }
+ },
+ {
+  "id": "C意圖-隨便沒上下文",
+  "text": "隨便",
+  "intent_in": [
+   "不確定",
+   "閒聊"
+  ],
+  "expect": {
+   "broaden": []
+  }
+ },
+ {
+  "id": "C意圖-好沒上下文",
+  "text": "好",
+  "intent_in": [
+   "不確定",
+   "閒聊"
+  ],
+  "intent_not": [
+   "找工作"
+  ]
+ },
+ {
+  "id": "C意圖-都可以沒上下文",
+  "text": "我都可以",
+  "intent_in": [
+   "不確定"
+  ],
+  "expect": {
+   "broaden": []
+  }
+ },
+ {
+  "id": "C意圖-都行地區",
+  "text": "都行啦",
+  "slots": {
+   "category": "理貨/倉儲"
+  },
+  "last_bot": "想找哪個地區的工作呢？",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "broaden": [
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "C意圖-好改晚班",
+  "text": "好",
+  "slots": {
+   "location": "桃園",
+   "shift": "早班"
+  },
+  "last_bot": "桃園目前沒有早班的職缺，要不要改看晚班？",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "shifts": [
+    "晚班"
+   ]
+  }
+ },
+ {
+  "id": "C意圖-隨便類型",
+  "text": "隨便",
+  "slots": {
+   "location": "桃園"
+  },
+  "last_bot": "想找什麼類型的工作呢？例如理貨/倉儲、製造/作業員、門市。",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "broaden": [
+    "類型"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-改口-台中勒",
+  "text": "那台中勒",
+  "slots": {
+   "location": "新北",
+   "category": "餐飲/服務"
+  },
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "locations": [
+    "台中"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-改口-那高雄呢",
+  "text": "那高雄呢？",
+  "slots": {
+   "location": "台南",
+   "category": "製造/作業員",
+   "shift": "早班"
+  },
+  "expect": {
+   "locations": [
+    "高雄"
+   ],
+   "categories": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-改口-算了桃園就好",
+  "text": "還是算了，桃園就好",
+  "slots": {
+   "location": "台北|新北"
+  },
+  "expect": {
+   "locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-改口-只要中壢",
+  "text": "只要中壢就好",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "expect": {
+   "locations": [
+    "中壢"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-改口-改成倉儲",
+  "text": "改成倉儲的",
+  "slots": {
+   "location": "桃園",
+   "category": "門市"
+  },
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-改口-不要倉庫改工廠",
+  "text": "不要倉庫了，改做工廠",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "expect": {
+   "categories": [
+    "製造/作業員"
+   ],
+   "locations": []
+  },
+  "forbid": {
+   "categories": [
+    "理貨/倉儲"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-改口-那客服呢",
+  "text": "那客服呢",
+  "slots": {
+   "location": "台北",
+   "category": "外送"
+  },
+  "expect": {
+   "categories": [
+    "客服/行政"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-改口-改晚班",
+  "text": "改晚班",
+  "slots": {
+   "location": "台中",
+   "shift": "早班"
+  },
+  "expect": {
+   "shifts": [
+    "晚班"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-改口-只要白天",
+  "text": "只要白天的",
+  "slots": {
+   "location": "新北",
+   "shift": "早班|晚班"
+  },
+  "expect": {
+   "shifts": [
+    "早班"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-改口-改成兼職",
+  "text": "改成兼職",
+  "slots": {
+   "location": "台北",
+   "category": "門市",
+   "worktype": "全職"
+  },
+  "expect": {
+   "worktype": "兼職",
+   "locations": [],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-改口-改日領",
+  "text": "改日領好了",
+  "slots": {
+   "location": "桃園",
+   "pay": "月領"
+  },
+  "expect": {
+   "pays": [
+    "日領"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-改口-那美光呢",
+  "text": "那美光呢",
+  "slots": {
+   "location": "台中",
+   "brand": "蝦皮"
+  },
+  "expect": {
+   "brand": "美光",
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-改口-三萬也可以",
+  "text": "三萬也可以",
+  "slots": {
+   "location": "桃園",
+   "salary": "月薪35000"
+  },
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 30000,
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-改口-桃園都可以",
+  "text": "桃園都可以",
+  "slots": {
+   "location": "中壢",
+   "category": "理貨/倉儲"
+  },
+  "expect": {
+   "locations": [
+    "桃園"
+   ],
+   "categories": []
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-追加-那新竹也可以",
+  "text": "那新竹也可以",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員"
+  },
+  "expect": {
+   "locations": [
+    "桃園",
+    "新竹"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-追加-板橋也行",
+  "text": "板橋也行",
+  "slots": {
+   "location": "台北"
+  },
+  "expect": {
+   "locations": [
+    "台北",
+    "板橋"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-追加-作業員也可以",
+  "text": "作業員也可以",
+  "slots": {
+   "location": "台中",
+   "category": "餐飲/服務"
+  },
+  "expect": {
+   "categories": [
+    "餐飲/服務",
+    "製造/作業員"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-追加-門市也看",
+  "text": "門市也看看",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "expect": {
+   "categories": [
+    "理貨/倉儲",
+    "門市"
+   ],
+   "locations": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-追加-夜班也行",
+  "text": "夜班也行",
+  "slots": {
+   "location": "新北",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "expect": {
+   "shifts": [
+    "早班",
+    "大夜班"
+   ],
+   "locations": [],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-追加-晚班也可以",
+  "text": "晚班也可以喔",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "expect": {
+   "shifts": [
+    "早班",
+    "晚班"
+   ],
+   "locations": [],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-追加-中班也能做",
+  "text": "中班也能做",
+  "slots": {
+   "location": "桃園",
+   "shift": "早班"
+  },
+  "expect": {
+   "shifts": [
+    "早班",
+    "晚班"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-追加-排休也可以",
+  "text": "排休也沒關係",
+  "slots": {
+   "location": "台中",
+   "leave": "週休二日"
+  },
+  "expect": {
+   "leaves": [
+    "週休二日",
+    "排休"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-追加-正職也行",
+  "text": "正職也行",
+  "slots": {
+   "location": "台北",
+   "worktype": "兼職"
+  },
+  "has": {
+   "broaden": [
+    "全職/兼職"
+   ]
+  },
+  "expect": {
+   "locations": []
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-追加-排除的大夜也可以",
+  "text": "大夜其實也可以啦",
+  "slots": {
+   "location": "桃園",
+   "exclude": "shift:大夜班"
+  },
+  "has": {
+   "shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-追加-排除的桃園也可以",
+  "text": "桃園其實也可以",
+  "slots": {
+   "location": "新北",
+   "exclude": "location:桃園"
+  },
+  "has": {
+   "locations": [
+    "桃園"
+   ]
+  },
+  "forbid": {
+   "exclude_locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-刪除-不要門市了",
+  "text": "不要門市了",
+  "slots": {
+   "location": "台北",
+   "category": "門市"
+  },
+  "intent_in": [
+   "找工作"
+  ],
+  "forbid": {
+   "categories": [
+    "門市"
+   ]
+  },
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-刪除-新竹不要了",
+  "text": "新竹不要了",
+  "slots": {
+   "location": "桃園|新竹"
+  },
+  "expect": {
+   "locations": [
+    "桃園"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-刪除-夜班不要了",
+  "text": "夜班不要了",
+  "slots": {
+   "location": "桃園",
+   "shift": "大夜班"
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  },
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-刪除-班別無所謂",
+  "text": "班別無所謂了",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "大夜班"
+  },
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-刪除-類型不限",
+  "text": "類型不限",
+  "slots": {
+   "location": "台中",
+   "category": "製造/作業員"
+  },
+  "has": {
+   "broaden": [
+    "類型"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-刪除-薪水低一點沒關係",
+  "text": "薪水低一點也沒關係",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員",
+   "salary": "月薪35000"
+  },
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ],
+  "expect": {
+   "locations": [],
+   "categories": []
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型",
+    "班別"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-刪除-領錢方式都可以",
+  "text": "領錢方式都可以",
+  "slots": {
+   "location": "桃園",
+   "pay": "日領"
+  },
+  "has": {
+   "broaden": [
+    "發薪方式"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "expect": {
+   "pays": []
+  }
+ },
+ {
+  "id": "D上下文-刪除-其他公司也可以",
+  "text": "其他公司也可以",
+  "slots": {
+   "location": "桃園",
+   "brand": "蝦皮",
+   "category": "理貨/倉儲"
+  },
+  "has": {
+   "broaden": [
+    "廠商"
+   ]
+  },
+  "expect": {
+   "categories": [],
+   "locations": []
+  },
+  "forbid": {
+   "broaden": [
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-刪除-週領不要了",
+  "text": "週領不要了",
+  "slots": {
+   "location": "桃園",
+   "pay": "日領|週領"
+  },
+  "forbid": {
+   "pays": [
+    "週領"
+   ]
+  },
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-刪除-剛剛那個條件拿掉",
+  "text": "剛剛那個條件拿掉",
+  "slots": {
+   "location": "桃園",
+   "category": "門市",
+   "pay": "週領"
+  },
+  "last_bot": "不好意思，沛沛桃園的職缺中，暫時沒有符合週領的喔 🙏（您目前的條件：桃園・門市・週領）要不要拿掉一些條件，讓沛沛幫您再找找看呢？",
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ],
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-刪除-那班別拿掉",
+  "text": "那把班別拿掉",
+  "slots": {
+   "location": "台北",
+   "category": "客服/行政",
+   "shift": "大夜班"
+  },
+  "last_bot": "不好意思，沛沛台北的職缺中，暫時沒有符合大夜班的喔 🙏（您目前的條件：台北・客服/行政・大夜班）要不要拿掉一些條件，讓沛沛幫您再找找看呢？",
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-刪除-發薪拿掉",
+  "text": "發薪方式拿掉好了",
+  "slots": {
+   "location": "桃園",
+   "category": "門市",
+   "pay": "週領"
+  },
+  "last_bot": "不好意思，沛沛桃園的職缺中，暫時沒有符合週領的喔 🙏（您目前的條件：桃園・門市・週領）要不要拿掉一些條件，讓沛沛幫您再找找看呢？",
+  "has": {
+   "broaden": [
+    "發薪方式"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-晚班就好",
+  "text": "晚班就好",
+  "slots": {
+   "location": "新北"
+  },
+  "last_bot": "了解 😊 想跟您確認一下，要幫您找「晚班」或「大夜班」的工作嗎？",
+  "expect": {
+   "shifts": [
+    "晚班"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-晚大夜都可以",
+  "text": "都可以啊",
+  "slots": {
+   "location": "新北"
+  },
+  "last_bot": "了解 😊 想跟您確認一下，要幫您找「晚班」或「大夜班」的工作嗎？",
+  "intent_in": [
+   "找工作"
+  ],
+  "has": {
+   "shifts": [
+    "晚班",
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-白天不行",
+  "text": "白天不行",
+  "slots": {
+   "location": "新北"
+  },
+  "last_bot": "了解 😊 想跟您確認一下，要幫您找「晚班」或「大夜班」的工作嗎？",
+  "has": {
+   "exclude_shifts": [
+    "早班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-大夜不要",
+  "text": "大夜不要，晚班可以",
+  "slots": {
+   "location": "新北"
+  },
+  "last_bot": "了解 😊 想跟您確認一下，要幫您找「晚班」或「大夜班」的工作嗎？",
+  "has": {
+   "shifts": [
+    "晚班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-只要早班",
+  "text": "只要早班",
+  "slots": {
+   "location": "桃園",
+   "shift": "早班"
+  },
+  "last_bot": "想跟您確認一下 😊 是只要看「早班」的工作，還是「早班」跟其他班別都可以呢？",
+  "expect": {
+   "shifts": [
+    "早班"
+   ],
+   "broaden": [],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-其他班都行",
+  "text": "都行",
+  "slots": {
+   "location": "桃園",
+   "shift": "早班"
+  },
+  "last_bot": "想跟您確認一下 😊 是只要看「早班」的工作，還是「早班」跟其他班別都可以呢？",
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-只要兼職",
+  "text": "兼職就好",
+  "slots": {
+   "location": "台北",
+   "worktype": "兼職"
+  },
+  "last_bot": "想跟您確認一下 😊 是只要看「兼職」的工作，還是全職、兼職都可以呢？",
+  "expect": {
+   "worktype": "兼職",
+   "broaden": []
+  }
+ },
+ {
+  "id": "D上下文-回答-全兼職都可以",
+  "text": "都可以喔",
+  "slots": {
+   "location": "台北",
+   "worktype": "兼職"
+  },
+  "last_bot": "想跟您確認一下 😊 是只要看「兼職」的工作，還是全職、兼職都可以呢？",
+  "has": {
+   "broaden": [
+    "全職/兼職"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "班別"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-只要日領",
+  "text": "只要日領",
+  "slots": {
+   "location": "桃園",
+   "pay": "日領"
+  },
+  "last_bot": "想跟您確認一下 😊 是只要看「日領」的工作，還是「日領」跟其他發薪方式都可以呢？",
+  "expect": {
+   "pays": [
+    "日領"
+   ],
+   "broaden": []
+  }
+ },
+ {
+  "id": "D上下文-回答-不要大夜",
+  "text": "不要",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "last_bot": "想跟您確認一下 😊 您是想找「大夜班」的工作，還是不要「大夜班」呢？",
+  "has": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  },
+  "expect": {
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-回答-要啊大夜",
+  "text": "要啊",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲"
+  },
+  "last_bot": "想跟您確認一下 😊 您是想找「大夜班」的工作，還是不要「大夜班」呢？",
+  "has": {
+   "shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "expect": {
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-回答-外送不考慮",
+  "text": "不考慮",
+  "slots": {
+   "location": "台北"
+  },
+  "last_bot": "想跟您確認一下 😊 您是想找「外送」的工作，還是不要「外送」呢？",
+  "has": {
+   "exclude_categories": [
+    "外送"
+   ]
+  },
+  "forbid": {
+   "categories": [
+    "外送"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-要大夜或不要都可以",
+  "text": "都可以耶",
+  "slots": {
+   "location": "桃園"
+  },
+  "last_bot": "想跟您確認一下 😊 您是想找「大夜班」的工作，還是不要「大夜班」呢？",
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ],
+  "forbid": {
+   "exclude_shifts": [
+    "大夜班"
+   ],
+   "broaden": [
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-地區都可以",
+  "text": "我都可以",
+  "slots": {
+   "category": "理貨/倉儲"
+  },
+  "last_bot": "符合「理貨/倉儲」的職缺分布在好幾個縣市，請問您想在哪個地區工作呢？😊",
+  "has": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "類型"
+   ]
+  },
+  "expect": {
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-回答-台北啦",
+  "text": "台北啦",
+  "slots": {
+   "category": "客服/行政"
+  },
+  "last_bot": "符合「客服/行政」的職缺分布在好幾個縣市，請問您想在哪個地區工作呢？😊",
+  "expect": {
+   "locations": [
+    "台北"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-回答-雙北",
+  "text": "雙北都可以",
+  "slots": {
+   "category": "門市"
+  },
+  "last_bot": "符合「門市」的職缺分布在好幾個縣市，請問您想在哪個地區工作呢？😊",
+  "expect": {
+   "locations": [
+    "台北",
+    "新北"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-回答-沒差地區",
+  "text": "沒差",
+  "slots": {
+   "worktype": "兼職"
+  },
+  "last_bot": "目前的職缺分布在好幾個縣市，請問您想在哪個地區工作呢？😊",
+  "has": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "全職/兼職"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-類型隨便",
+  "text": "隨便",
+  "slots": {
+   "location": "桃園"
+  },
+  "last_bot": "桃園市目前有製造/作業員、理貨/倉儲、餐飲/服務、門市這幾種職缺，請問您想看哪一種呢？😊",
+  "has": {
+   "broaden": [
+    "類型"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-倉庫的",
+  "text": "倉庫的",
+  "slots": {
+   "location": "桃園"
+  },
+  "last_bot": "桃園市目前有製造/作業員、理貨/倉儲、餐飲/服務、門市這幾種職缺，請問您想看哪一種呢？😊",
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-第二個",
+  "text": "第二個",
+  "slots": {
+   "location": "桃園"
+  },
+  "last_bot": "桃園市目前有製造/作業員、理貨/倉儲、餐飲/服務、門市這幾種職缺，請問您想看哪一種呢？😊",
+  "expect": {
+   "categories": [
+    "理貨/倉儲"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-吃的",
+  "text": "吃的那種",
+  "slots": {
+   "location": "台中"
+  },
+  "last_bot": "台中市目前有製造/作業員、餐飲/服務、門市這幾種職缺，請問您想看哪一種呢？😊",
+  "expect": {
+   "categories": [
+    "餐飲/服務"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-蝦皮送貨的",
+  "text": "送貨的",
+  "slots": {
+   "location": "桃園",
+   "brand": "蝦皮"
+  },
+  "last_bot": "蝦皮桃園市目前有理貨/倉儲、外送、門市這幾種職缺在招募，請問您想看哪一種呢？😊",
+  "expect": {
+   "categories": [
+    "外送"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-蝦皮都看看",
+  "text": "都看看",
+  "slots": {
+   "location": "桃園",
+   "brand": "蝦皮"
+  },
+  "last_bot": "蝦皮桃園市目前有理貨/倉儲、外送、門市這幾種職缺在招募，請問您想看哪一種呢？😊",
+  "has": {
+   "broaden": [
+    "類型"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "廠商",
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-拿掉大夜",
+  "text": "拿掉吧",
+  "slots": {
+   "location": "桃園",
+   "shift": "大夜班"
+  },
+  "last_bot": "想跟您確認一下 😊 要把「班別：大夜班」這個條件拿掉嗎？",
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ],
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-不拿掉大夜",
+  "text": "不要，保留",
+  "slots": {
+   "location": "桃園",
+   "shift": "大夜班"
+  },
+  "last_bot": "想跟您確認一下 😊 要把「班別：大夜班」這個條件拿掉嗎？",
+  "forbid": {
+   "broaden": [
+    "班別"
+   ],
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-拿掉日領",
+  "text": "可以",
+  "slots": {
+   "location": "桃園",
+   "pay": "日領"
+  },
+  "last_bot": "想跟您確認一下 😊 要把「發薪方式：日領」這個條件拿掉嗎？",
+  "has": {
+   "broaden": [
+    "發薪方式"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ],
+   "exclude_pays": [
+    "日領"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-班別啦",
+  "text": "班別啦",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "last_bot": "想跟您確認一下 😊 您說的「都可以」是指哪一項條件都可以呢？",
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-工作內容",
+  "text": "做什麼工作都可以",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "last_bot": "想跟您確認一下 😊 您說的「都可以」是指哪一項條件都可以呢？",
+  "has": {
+   "broaden": [
+    "類型"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "班別"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-換新竹",
+  "text": "新竹好了",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員"
+  },
+  "last_bot": "好的！想換到哪個地區呢？下面列的是其他條件不變、目前有職缺的選項 😊",
+  "expect": {
+   "locations": [
+    "新竹"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-回答-換地區隨便",
+  "text": "隨便啦",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員"
+  },
+  "last_bot": "好的！想換到哪個地區呢？下面列的是其他條件不變、目前有職缺的選項 😊",
+  "has": {
+   "broaden": [
+    "地區"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-換晚上的",
+  "text": "晚上的",
+  "slots": {
+   "location": "台北",
+   "category": "餐飲/服務",
+   "shift": "早班"
+  },
+  "last_bot": "好的！想換成哪一種班別呢？下面列的是其他條件不變、目前有職缺的選項 😊",
+  "expect": {
+   "shifts": [
+    "晚班"
+   ],
+   "categories": [],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-換班別沒差",
+  "text": "沒差啦",
+  "slots": {
+   "location": "台北",
+   "category": "餐飲/服務",
+   "shift": "早班"
+  },
+  "last_bot": "好的！想換成哪一種班別呢？下面列的是其他條件不變、目前有職缺的選項 😊",
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-調整改台南",
+  "text": "地區，改台南",
+  "slots": {
+   "location": "高雄",
+   "category": "餐飲/服務"
+  },
+  "last_bot": "好的，請問您想調整地區、班別，還是工作類型呢？其他已經確認的條件沛沛會繼續保留 😊",
+  "expect": {
+   "locations": [
+    "台南"
+   ],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-回答-調整只說班別",
+  "text": "班別",
+  "slots": {
+   "location": "高雄",
+   "shift": "早班"
+  },
+  "last_bot": "好的，請問您想調整地區、班別，還是工作類型呢？其他已經確認的條件沛沛會繼續保留 😊",
+  "intent_in": [
+   "不確定",
+   "找工作"
+  ],
+  "forbid": {
+   "broaden": [
+    "地區",
+    "班別"
+   ]
+  },
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-找交通車職缺",
+  "text": "找職缺",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員"
+  },
+  "last_bot": "想跟您確認一下 😊 您是想了解「交通車」的相關規定，還是想找有「交通車」的職缺呢？",
+  "intent_in": [
+   "找工作"
+  ],
+  "has": {
+   "benefits": [
+    "交通車"
+   ]
+  },
+  "expect": {
+   "locations": [],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-回答-了解交通車",
+  "text": "想先了解一下",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員"
+  },
+  "last_bot": "想跟您確認一下 😊 您是想了解「交通車」的相關規定，還是想找有「交通車」的職缺呢？",
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "benefits": [],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-找外送職缺",
+  "text": "找工作啦",
+  "slots": {
+   "location": "台北"
+  },
+  "last_bot": "想跟您確認一下 😊 您是想了解「外送」的工作內容，還是想找「外送」的職缺呢？",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "categories": [
+    "外送"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-回答-清空後台中早班",
+  "text": "台中 早班",
+  "last_bot": "好的！沛沛已經為您清空先前的搜尋條件囉 😊\n\n請問您目前希望在哪個地區找工作？想找早班還是夜班呢？",
+  "expect": {
+   "locations": [
+    "台中"
+   ],
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-招呼晚上",
+  "text": "晚上",
+  "last_bot": "您好呀！我是招募顧問沛沛 😊\n\n很高興為您服務！想了解您偏好在哪個地區上班？或是偏好早班還是夜班呢？",
+  "any": {
+   "shifts": [
+    "晚班",
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "早班"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-招呼都可以",
+  "text": "都ok",
+  "last_bot": "您好呀！我是招募顧問沛沛 😊\n\n很高興為您服務！想了解您偏好在哪個地區上班？或是偏好早班還是夜班呢？",
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ],
+  "forbid": {
+   "broaden": [
+    "類型",
+    "廠商"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-同縣市好啊",
+  "text": "好啊",
+  "slots": {
+   "location": "楊梅",
+   "pay": "日領"
+  },
+  "last_bot": "「楊梅」目前沒有明確列出符合日領的職缺，不過桃園市的中壢、平鎮有相關職缺，要不要參考看看呢？😊",
+  "intent_in": [
+   "找工作"
+  ],
+  "any": {
+   "locations": [
+    "中壢",
+    "平鎮",
+    "桃園"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "發薪方式"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-放寬班別吧",
+  "text": "班別吧",
+  "slots": {
+   "location": "桃園",
+   "shift": "早班",
+   "pay": "日領"
+  },
+  "last_bot": "不好意思，目前沒有完全符合「桃園・早班・日領」的職缺 🙏 方便告訴沛沛您比較能接受放寬哪個條件嗎？😊",
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區",
+    "發薪方式"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-日領可以不要",
+  "text": "日領可以不要",
+  "slots": {
+   "location": "桃園",
+   "shift": "早班",
+   "pay": "日領"
+  },
+  "last_bot": "不好意思，目前沒有完全符合「桃園・早班・日領」的職缺 🙏 方便告訴沛沛您比較能接受放寬哪個條件嗎？😊",
+  "forbid": {
+   "pays": [
+    "日領"
+   ],
+   "exclude_pays": [
+    "日領"
+   ],
+   "broaden": [
+    "地區",
+    "班別"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-回答-月領也可以",
+  "text": "月領也可以",
+  "slots": {
+   "location": "桃園",
+   "category": "門市",
+   "pay": "週領"
+  },
+  "last_bot": "不好意思，沛沛桃園的職缺中，暫時沒有符合週領的喔 🙏（您目前的條件：桃園・門市・週領）要不要拿掉一些條件，讓沛沛幫您再找找看呢？",
+  "expect": {
+   "pays": [
+    "週領",
+    "月領"
+   ],
+   "locations": [],
+   "categories": []
+  }
+ },
+ {
+  "id": "D上下文-回答-那作業員好了",
+  "text": "那作業員好了",
+  "last_bot": "不好意思，沛沛這邊目前沒有「保全」相關的職缺 🙏\n\n目前有外送、門市、製造/作業員、理貨/倉儲、餐飲/服務、客服/行政、設備/技術這幾種類型，要不要看看呢？😊",
+  "expect": {
+   "categories": [
+    "製造/作業員"
+   ],
+   "unsupported_roles": []
+  }
+ },
+ {
+  "id": "D上下文-回答-列完不用了",
+  "text": "不用了謝謝",
+  "slots": {
+   "location": "台北",
+   "category": "客服/行政"
+  },
+  "last_bot": "符合目前條件的 3 筆職缺都已經列給您看囉 😊 要不要換個地區或工作類型再找找看呢？",
+  "intent_in": [
+   "閒聊",
+   "不確定"
+  ],
+  "expect": {
+   "locations": [],
+   "categories": [],
+   "broaden": []
+  }
+ },
+ {
+  "id": "D上下文-短回覆-好-找晚班",
+  "text": "好",
+  "slots": {
+   "location": "台中"
+  },
+  "last_bot": "了解 😊 想跟您確認一下，要幫您找「晚班」的工作嗎？",
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "shifts": [
+    "晚班"
+   ],
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-短回覆-不要-找大夜",
+  "text": "不要",
+  "slots": {
+   "location": "桃園"
+  },
+  "last_bot": "了解 😊 想跟您確認一下，要幫您找「大夜班」的工作嗎？",
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  },
+  "expect": {
+   "locations": []
+  }
+ },
+ {
+  "id": "D上下文-短回覆-嗯-要或不要",
+  "text": "嗯",
+  "slots": {
+   "location": "桃園"
+  },
+  "last_bot": "想跟您確認一下 😊 您是想找「大夜班」的工作，還是不要「大夜班」呢？",
+  "intent_in": [
+   "不確定"
+  ]
+ },
+ {
+  "id": "D上下文-短回覆-OK-規定或職缺",
+  "text": "OK",
+  "slots": {
+   "location": "桃園"
+  },
+  "last_bot": "想跟您確認一下 😊 您是想了解「交通車」的相關規定，還是想找有「交通車」的職缺呢？",
+  "intent_in": [
+   "不確定",
+   "找工作"
+  ]
+ },
+ {
+  "id": "D上下文-短回覆-可以-只要或都可以",
+  "text": "可以",
+  "slots": {
+   "location": "桃園",
+   "shift": "早班"
+  },
+  "last_bot": "想跟您確認一下 😊 是只要看「早班」的工作，還是「早班」跟其他班別都可以呢？",
+  "intent_in": [
+   "不確定",
+   "找工作"
+  ],
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-短回覆-好-拿掉嗎",
+  "text": "好",
+  "slots": {
+   "location": "台北",
+   "shift": "大夜班"
+  },
+  "last_bot": "想跟您確認一下 😊 要把「班別：大夜班」這個條件拿掉嗎？",
+  "has": {
+   "broaden": [
+    "班別"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-短回覆-好-要拿掉一些條件",
+  "text": "好",
+  "slots": {
+   "location": "桃園",
+   "category": "門市",
+   "pay": "週領"
+  },
+  "last_bot": "不好意思，沛沛桃園的職缺中，暫時沒有符合週領的喔 🙏（您目前的條件：桃園・門市・週領）要不要拿掉一些條件，讓沛沛幫您再找找看呢？",
+  "intent_in": [
+   "不確定",
+   "找工作"
+  ],
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-短回覆-沒差-沒上下文",
+  "text": "沒差",
+  "slots": {
+   "location": "桃園",
+   "category": "門市",
+   "shift": "早班"
+  },
+  "intent_in": [
+   "不確定",
+   "找工作"
+  ],
+  "forbid": {
+   "broaden": [
+    "地區",
+    "類型"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-短回覆-都可以-只要兼職",
+  "text": "都可以呀",
+  "slots": {
+   "location": "台北",
+   "worktype": "兼職"
+  },
+  "last_bot": "想跟您確認一下 😊 是只要看「兼職」的工作，還是全職、兼職都可以呢？",
+  "has": {
+   "broaden": [
+    "全職/兼職"
+   ]
+  },
+  "forbid": {
+   "broaden": [
+    "地區"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-短回覆-不要-問類型",
+  "text": "不要",
+  "slots": {
+   "location": "桃園"
+  },
+  "last_bot": "桃園市目前有製造/作業員、理貨/倉儲、餐飲/服務、門市這幾種職缺，請問您想看哪一種呢？😊",
+  "intent_in": [
+   "不確定",
+   "閒聊"
+  ],
+  "expect": {
+   "categories": [],
+   "exclude_categories": []
+  }
+ },
+ {
+  "id": "D上下文-短回覆-都可以-清空確認",
+  "text": "都可以啦",
+  "slots": {
+   "location": "桃園",
+   "category": "門市"
+  },
+  "last_bot": "請問您是想清空目前鎖定的所有搜尋條件、重新開始找工作嗎？😊",
+  "intent_in": [
+   "找工作",
+   "不確定"
+  ],
+  "forbid": {
+   "categories": [
+    "門市"
+   ]
+  }
+ },
+ {
+  "id": "D上下文-只改一項-日領",
+  "text": "日領的",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "expect": {
+   "pays": [
+    "日領"
+   ],
+   "locations": [],
+   "categories": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-要兼職",
+  "text": "要兼職的",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "expect": {
+   "worktype": "兼職",
+   "locations": [],
+   "categories": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-交通車",
+  "text": "有交通車的",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "has": {
+   "benefits": [
+    "交通車"
+   ]
+  },
+  "expect": {
+   "locations": [],
+   "categories": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-月薪三萬",
+  "text": "月薪三萬以上",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "expect": {
+   "salary_kind": "月薪",
+   "salary_min": 30000,
+   "locations": [],
+   "categories": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-蝦皮",
+  "text": "蝦皮的",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "expect": {
+   "brand": "蝦皮",
+   "locations": [],
+   "categories": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-做四休二",
+  "text": "做四休二的",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "expect": {
+   "leaves": [
+    "做四休二"
+   ],
+   "locations": [],
+   "categories": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-換中壢",
+  "text": "換中壢",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "expect": {
+   "locations": [
+    "中壢"
+   ],
+   "categories": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-不要大夜",
+  "text": "大夜不要",
+  "slots": {
+   "location": "新北",
+   "category": "製造/作業員",
+   "pay": "月領"
+  },
+  "has": {
+   "exclude_shifts": [
+    "大夜班"
+   ]
+  },
+  "forbid": {
+   "shifts": [
+    "大夜班"
+   ]
+  },
+  "expect": {
+   "locations": [],
+   "categories": [],
+   "pays": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-週結",
+  "text": "有週結的嗎",
+  "slots": {
+   "location": "桃園",
+   "category": "製造/作業員",
+   "shift": "大夜班"
+  },
+  "intent_in": [
+   "找工作"
+  ],
+  "expect": {
+   "pays": [
+    "週領"
+   ],
+   "locations": [],
+   "categories": [],
+   "shifts": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-改外送",
+  "text": "改外送",
+  "slots": {
+   "location": "台北",
+   "category": "門市",
+   "shift": "晚班",
+   "worktype": "兼職"
+  },
+  "expect": {
+   "categories": [
+    "外送"
+   ],
+   "locations": [],
+   "shifts": [],
+   "worktype": ""
+  }
+ },
+ {
+  "id": "D上下文-只改一項-宿舍問題不改條件",
+  "text": "那邊有宿舍嗎",
+  "slots": {
+   "location": "桃園",
+   "category": "理貨/倉儲",
+   "shift": "早班"
+  },
+  "intent_in": [
+   "問問題"
+  ],
+  "expect": {
+   "locations": [],
+   "categories": [],
+   "shifts": [],
+   "benefits": []
+  }
+ },
+ {
+  "id": "D上下文-只改一項-不要假日班",
+  "text": "假日不想上班",
+  "slots": {
+   "location": "桃園",
+   "category": "門市",
+   "shift": "早班"
+  },
+  "forbid": {
+   "shifts": [
+    "假日班"
+   ]
+  },
+  "expect": {
+   "locations": [],
+   "categories": []
+  }
+ }
 ]
