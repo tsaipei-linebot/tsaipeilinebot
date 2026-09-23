@@ -4448,6 +4448,8 @@ class AiUnderstandingTests(_RoundFourSessionMixin, unittest.TestCase):
         self.assertEqual(form["locations"], ["中壢"])
         form = us.validate_form(self._form(locations=["桃園", "中壢"]), jobs, "桃園或中壢都可以")
         self.assertEqual(form["locations"], ["桃園", "中壢"])
+        # 職缺資料裡沒有的區也要認得（考試是在沒有職缺資料的情況下跑）
+        self.assertEqual(us.drop_county_before_district(["新竹", "竹北"], "新竹竹北的工作"), ["竹北"])
 
     def test_precise_hit_boundaries(self):
         jobs = self._jobs()

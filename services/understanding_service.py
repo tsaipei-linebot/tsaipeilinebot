@@ -172,7 +172,20 @@ def _valid_location(name: str, active_jobs: list) -> str:
     return name if parsed and "|" not in parsed else ""
 
 
-def _drop_county_before_district(locations: list, message: str, active_jobs: list) -> list:
+def _static_county_core(district: str) -> str:
+    """全台行政區對照表（職缺上架表單用的那份）查行政區在哪個縣市，職缺資料裡
+    剛好沒有這個區時也查得到。"""
+    from services.job_listing_submit_service import TAIWAN_CITY_DISTRICTS
+    target = str(district).replace("臺", "台")
+    for county, districts in TAIWAN_CITY_DISTRICTS.items():
+        for full in districts:
+            core = full[len(county):] if full.startswith(county) else full
+            if target in (core, core[:-1]):
+                return county[:2]
+    return ""
+
+
+def drop_county_before_district(locations: list, message: str, active_jobs: list = None) -> list:
     """「新竹竹北」是同一個地方：AI 偶爾兩個都填，變成「新竹或竹北」把新竹市也列進來
     （第一次準確率考試）。句子裡縣市緊接著行政區時，拿掉那個縣市。"""
     if len(locations) < 2 or not message:
@@ -186,7 +199,8 @@ def _drop_county_before_district(locations: list, message: str, active_jobs: lis
         for district in locations:
             if district == county:
                 continue
-            if (resolve_county_for_location(district, active_jobs) or "")[:2] != core:
+            district_core = (resolve_county_for_location(district, active_jobs) or "")[:2] or _static_county_core(district)
+            if district_core != core:
                 continue
             if re.search(re.escape(county) + r"[縣市]?" + re.escape(district), compact):
                 dropped.add(county)
@@ -198,7 +212,7 @@ def validate_form(form: dict, active_jobs: list, message: str = "") -> dict:
     if not form:
         return None
     clean = dict(form)
-    clean["locations"] = _drop_county_before_district(list(dict.fromkeys(
+    clean["locations"] = drop_county_before_district(list(dict.fromkeys(
         v for v in (_valid_location(x, active_jobs) for x in form["locations"]) if v)), message, active_jobs)
     clean["exclude_locations"] = list(dict.fromkeys(
         v for v in (_valid_location(x, active_jobs) for x in form["exclude_locations"]) if v and v not in clean["locations"]))

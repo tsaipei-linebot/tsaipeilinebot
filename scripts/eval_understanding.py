@@ -1,7 +1,8 @@
 """AI 需求單準確率考試（HANDOFF.md 第 81 項）。
 
 用 scripts/understanding_eval_cases.json 裡整理好的求職者說法（第四～八輪測試抓到、
-程式判斷錯的句子）去問真正的 Gemini，比對 AI 填的需求單對不對，印出通過率跟每句
+程式判斷錯的句子）去問真正的 Gemini，比對 AI 填的需求單（加上程式不需要職缺資料
+就能做的檢查，例如「新竹竹北」只算竹北）對不對，印出通過率跟每句
 等了幾秒。只會呼叫 Gemini，不會傳 LINE 訊息、不會改任何資料。
 
 在 Cloud Shell 執行（第一次要先裝套件）：
@@ -25,7 +26,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.understanding_service import understand_message  # noqa: E402
+from services.understanding_service import understand_message, drop_county_before_district  # noqa: E402
 
 CASES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "understanding_eval_cases.json")
 _KEEP_FULL = {"新竹縣", "新竹市", "嘉義縣", "嘉義市"}
@@ -98,6 +99,9 @@ def main():
         history = [{"role": "招募顧問沛沛", "text": case["last_bot"]}] if case.get("last_bot") else []
         start = time.monotonic()
         form = understand_message(case["text"], case.get("slots") or {}, history, thinking_budget=args.thinking)
+        if form:
+            # 正式上線時程式會再檢查一次需求單，考試也照同樣的規則整理地區（例如「新竹竹北」只算竹北）
+            form["locations"] = drop_county_before_district(form["locations"], case["text"])
         latencies.append(time.monotonic() - start)
         problems = check(case, form)
         mark = "✅" if not problems else "❌"
