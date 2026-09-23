@@ -160,6 +160,77 @@ def _strip_admin_suffix(s: str) -> str:
     return s
 
 
+def _split_district_token_full(token: str, fallback_county_full: str = "") -> tuple:
+    """跟 _split_district_token() 一樣，但回傳縣市全名（「新竹縣」而不是
+    「新竹」）：新竹縣/新竹市、嘉義縣/嘉義市共用同一個核心字，只存核心字
+    的話，竹北（新竹縣）還原成全名時會變成新竹市，同縣市退讓建議因此推了
+    新竹市的職缺。"""
+    token = token.strip()
+    if not token:
+        return "", ""
+    for full in _COUNTY_FULL_NAMES:
+        for variant in {full, full.replace("台", "臺")}:
+            if token.startswith(variant):
+                return full, _strip_admin_suffix(token[len(variant):].strip())
+    return fallback_county_full, _strip_admin_suffix(token)
+
+
+def _normalize_county_full(name: str) -> str:
+    name = str(name or "").strip().replace("臺", "台")
+    return name if name in _COUNTY_FULL_NAMES else ""
+
+
+def _job_county_fulls(job: dict) -> list:
+    tokens = [_normalize_county_full(c) for c in re.split(r'[,，、\s]+', str(job.get("縣市") or ""))]
+    return [c for c in tokens if c]
+
+
+def _job_district_pairs(job: dict) -> set:
+    """這筆職缺的 (縣市全名, 行政區核心字) 組合。行政區沒寫縣市前綴、「縣市」
+    欄位又列了好幾個縣市時，縣市留空（不知道是哪一個）。"""
+    counties = _job_county_fulls(job)
+    fallback = counties[0] if len(counties) == 1 else ""
+    pairs = set()
+    for token in re.split(r'[,，、\s]+', str(job.get("行政區") or "")):
+        county_full, district_core = _split_district_token_full(token, fallback)
+        if district_core:
+            pairs.add((county_full, district_core))
+    return pairs
+
+
+def build_district_county_full_index(active_jobs: list) -> dict:
+    """跟 build_district_county_index() 一樣，但縣市存全名（見
+    _split_district_token_full() 說明）。"""
+    index = {}
+    for job in active_jobs or []:
+        for county_full, district_core in _job_district_pairs(job):
+            if county_full:
+                index.setdefault(district_core, set()).add(county_full)
+    return index
+
+
+def job_matches_location(job: dict, location: str) -> bool:
+    """職缺是不是在這個地區。先用原本的 _location_search_text 字串比對；
+    「台北市中山區」這種帶縣市的完整寫法再用結構化欄位比一次：職缺的
+    「行政區」只寫「中山區」、「縣市」又列了好幾個縣市時，字串比對會
+    漏掉（「臺北市新北市中山區板橋區」裡沒有「臺北市中山區」）。"""
+    if not location:
+        return True
+    search = job.get("_location_search_text", "")
+    loc_clean = location.replace("台", "臺")
+    if location in search or loc_clean in search:
+        return True
+    county_full = next((f for f in _COUNTY_FULL_NAMES if location.replace("臺", "台").startswith(f)), "")
+    rest = location.replace("臺", "台")[len(county_full):] if county_full else ""
+    if not county_full or not rest:
+        return False
+    district_core = _strip_admin_suffix(rest)
+    pairs = _job_district_pairs(job)
+    return (county_full, district_core) in pairs or (
+        ("", district_core) in pairs and county_full in _job_county_fulls(job)
+    )
+
+
 def _split_district_token(token: str, fallback_county_core: str = "") -> tuple:
     """把「台北市大安區」這種同仁慣用的完整寫法，拆成 (縣市核心字, 行政區核心字)，
     例如 ("台北", "大安")。如果這個 token 本身沒有帶縣市前綴（同仁少數情況下
@@ -222,10 +293,10 @@ def resolve_county_for_location(location: str, active_jobs: list = None) -> str:
             return full
     if not active_jobs:
         return ""
-    counties = build_district_county_index(active_jobs).get(location, set())
+    counties = build_district_county_full_index(active_jobs).get(location, set())
     if len(counties) != 1:
         return ""
-    return _COUNTY_CORE_TO_FULL.get(next(iter(counties)), "")
+    return next(iter(counties))
 
 
 def find_county_level_alternative_jobs(category_matched_jobs: list, target_location: str, active_jobs: list = None) -> list:
@@ -289,7 +360,7 @@ def find_same_county_district_labels(same_county_jobs: list, target_location: st
     return labels
 
 
-def extract_current_target_location(raw_msg: str, history_text: str = "", active_jobs: list = None) -> str:
+def extract_current_target_location(raw_msg: str, history_text: str = "", active_jobs: list = None, context_location: str = "") -> str:
     """從使用者最新訊息擷取鎖定地區（避免被對話歷史中的範例字詞干擾，並跳過被否定的地名）[cite: 1]
 
     分三輪、精準度由高到低檢查，刻意不是單純「查完 LOCATION_CANDIDATES 全部
@@ -302,30 +373,52 @@ def extract_current_target_location(raw_msg: str, history_text: str = "", active
     只有兩者都沒查到時，才退回「縣市層級」的詞。同一個行政區名稱同時存在於
     多個縣市時（例如「東區」台中、台南都有），動態索引保守跳過不猜，讓這句話
     落到既有的 AI 決策保底流程，不要冒著答非所問的風險猜一個。"""
+    # 一句話裡可能同時出現好幾個行政區層級的地名，全部找出來再挑：
+    # - 跟縣市同名的地名（「桃園」；職缺資料裡的「宜蘭市」「苗栗市」核心字
+    #   也是「宜蘭」「苗栗」）句子裡還有更精確的地名時不算：「桃園市八德區」
+    #   原本照清單順序先命中桃園、「宜蘭縣礁溪鄉」先命中宜蘭，變成整個縣市。
+    # - 被另一個較長地名整個包住的不算。
+    # - 其餘挑最早出現的（「台南市安南區」的「安南」比「南區」早出現）。
+    matches = []
     for loc in LOCATION_CANDIDATES:
         if loc in _LOCATION_COUNTY_LEVEL_NAMES:
             continue
-        if loc in raw_msg and not _keyword_is_negated(raw_msg, loc):
-            # 「桃園區」是桃園市底下的一個區，不是整個桃園市。
-            if loc == "桃園" and "桃園區" in raw_msg:
-                return "桃園區"
-            return loc.replace("臺", "台")
+        pos = raw_msg.find(loc)
+        if pos == -1 or _keyword_is_negated(raw_msg, loc):
+            continue
+        # 「桃園區」是桃園市底下的一個區，不是整個桃園市。
+        value = "桃園區" if loc == "桃園" and "桃園區" in raw_msg else loc.replace("臺", "台")
+        matches.append((pos, loc, value))
 
     if active_jobs:
-        district_index = build_district_county_index(active_jobs)
-        # 依地名長度由長到短檢查，避免短地名先命中、蓋掉更精確的地名。
-        for district_core in sorted(district_index.keys(), key=len, reverse=True):
-            if district_core not in raw_msg or _keyword_is_negated(raw_msg, district_core):
+        district_index = build_district_county_full_index(active_jobs)
+        context_county = resolve_county_for_location(context_location, active_jobs) if context_location else ""
+        for district_core, counties in district_index.items():
+            pos = raw_msg.find(district_core)
+            if pos == -1 or _keyword_is_negated(raw_msg, district_core):
                 continue
-            counties = district_index[district_core]
             if len(counties) == 1:
-                return district_core
+                matches.append((pos, district_core, district_core))
+                continue
             # 同一個區名在好幾個縣市都有（例如台北市、基隆市都有中山區）時，
             # 原本一律跳過，「台北市中山區」就退回成「整個台北」。這句話本身
-            # 有講是哪個縣市時，組成「台北市中山區」精準比對。
-            qualified = _qualify_ambiguous_district(raw_msg, district_core, counties)
+            # 有講是哪個縣市時，組成「台北市中山區」精準比對；沒講的話，看
+            # 上一輪記住的地區在哪個縣市（先問「台北」再問「中山區呢」）。
+            qualified = _qualify_ambiguous_district(raw_msg, district_core, counties, context_county)
             if qualified:
-                return qualified
+                matches.append((pos, district_core, qualified))
+
+    if len(matches) > 1:
+        matches = [m for m in matches if m[2] != "桃園" and m[2] not in _COUNTY_CORE_TO_FULL] or matches
+        matches = [
+            m for m in matches
+            if not any(
+                o[0] <= m[0] and m[0] + len(m[1]) <= o[0] + len(o[1]) and len(o[1]) > len(m[1])
+                for o in matches
+            )
+        ]
+    if matches:
+        return min(matches, key=lambda m: (m[0], -len(m[1])))[2]
 
     for loc in LOCATION_CANDIDATES:
         if loc not in _LOCATION_COUNTY_LEVEL_NAMES:
@@ -342,12 +435,20 @@ def extract_current_target_location(raw_msg: str, history_text: str = "", active
     return ""
 
 
-def _qualify_ambiguous_district(raw_msg: str, district_core: str, counties: set) -> str:
-    mentioned = [c for c in counties if c in raw_msg or c.replace("台", "臺") in raw_msg]
-    if len(mentioned) != 1:
-        return ""
-    county_full = _COUNTY_CORE_TO_FULL.get(mentioned[0], "")
-    if not county_full:
+def _qualify_ambiguous_district(raw_msg: str, district_core: str, counties: set, context_county: str = "") -> str:
+    """counties 是縣市全名。句子裡講了完整縣市名（「新竹縣」）優先；只講
+    核心字（「台北」）時要剛好只對到一個縣市；都沒講時用 context_county
+    （上一輪記住的地區所在縣市）。"""
+    variants = lambda c: {c, c.replace("台", "臺")}
+    exact = [c for c in counties if any(v in raw_msg for v in variants(c))]
+    core = [c for c in counties if any(v[:-1] in raw_msg for v in variants(c))]
+    if len(exact) == 1:
+        county_full = exact[0]
+    elif not exact and len(core) == 1:
+        county_full = core[0]
+    elif not exact and not core and context_county in counties:
+        county_full = context_county
+    else:
         return ""
     if district_core[-1] in ("區", "鄉", "鎮", "市"):
         return f"{county_full}{district_core}"
@@ -355,6 +456,26 @@ def _qualify_ambiguous_district(raw_msg: str, district_core: str, counties: set)
         if f"{district_core}{suffix}" in raw_msg:
             return f"{county_full}{district_core}{suffix}"
     return f"{county_full}{district_core}區"
+
+
+def ambiguous_district_choices(raw_msg: str, active_jobs: list = None) -> list:
+    """句子裡講了一個好幾個縣市都有的區名（「中山區」台北、基隆都有），又
+    沒辦法從句子或上一輪的地區判斷是哪一個時，回傳可以選的完整寫法（例如
+    ["台北市中山區", "基隆市中山區"]），讓求職者自己選（使用者 2026-09-23 定
+    的原則）。只在區名後面真的接著「區/鄉/鎮」時才算，避免「中山路」這種
+    地址誤判。"""
+    if not active_jobs:
+        return []
+    for district_core, counties in build_district_county_full_index(active_jobs).items():
+        if len(counties) < 2:
+            continue
+        with_suffix = district_core if district_core[-1] in ("區", "鄉", "鎮") else ""
+        if not with_suffix:
+            with_suffix = next((f"{district_core}{s}" for s in ("區", "鄉", "鎮") if f"{district_core}{s}" in raw_msg), "")
+        if not with_suffix or with_suffix not in raw_msg or _keyword_is_negated(raw_msg, with_suffix):
+            continue
+        return [f"{county}{with_suffix}" for county in _COUNTY_FULL_NAMES if county in counties]
+    return []
 
 
 def detect_negated_location(raw_msg: str, active_jobs: list = None) -> str:

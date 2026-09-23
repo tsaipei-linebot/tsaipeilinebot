@@ -962,5 +962,53 @@ class RoundFourUnderstandingMatcherTests(unittest.TestCase):
         self.assertTrue(m.job_matches_category_filter(untagged, "理貨/倉儲", allow_relaxed=False))
 
 
+class RoundFourLocationPrecisionTests(unittest.TestCase):
+    """第四輪多輪對話測試第三批：地區比對更精準。"""
+
+    def _jobs(self):
+        return [
+            {"縣市": "桃園市", "行政區": "桃園市八德區,桃園市中壢區", "_location_search_text": "桃園市桃園市八德區桃園市中壢區"},
+            {"縣市": "宜蘭縣", "行政區": "宜蘭縣宜蘭市,宜蘭縣礁溪鄉", "_location_search_text": "宜蘭縣宜蘭縣宜蘭市宜蘭縣礁溪鄉"},
+            {"縣市": "台南市", "行政區": "台南市安南區,台南市南區", "_location_search_text": "臺南市臺南市安南區臺南市南區"},
+            {"縣市": "台中市", "行政區": "台中市南區", "_location_search_text": "臺中市臺中市南區"},
+            {"縣市": "台北市,基隆市", "行政區": "中山區,仁愛區", "_location_search_text": "臺北市基隆市中山區仁愛區"},
+            {"縣市": "新竹縣", "行政區": "竹北市", "_location_search_text": "新竹縣竹北市"},
+            {"縣市": "新竹市", "行政區": "新竹市東區", "_location_search_text": "新竹市新竹市東區"},
+        ]
+
+    def test_district_wins_over_county_core_in_full_address(self):
+        jobs = self._jobs()
+        self.assertEqual(m.extract_current_target_location("桃園市八德區有工作嗎", "", jobs), "八德")
+        self.assertEqual(m.extract_current_target_location("桃園市中壢區", "", jobs), "中壢")
+        self.assertEqual(m.extract_current_target_location("宜蘭縣礁溪鄉有工作嗎", "", jobs), "礁溪")
+
+    def test_earliest_district_wins(self):
+        jobs = self._jobs()
+        self.assertEqual(m.extract_current_target_location("台南市安南區的工作", "", jobs), "安南")
+        self.assertEqual(m.extract_current_target_location("中壢或八德", "", jobs), "中壢")
+
+    def test_ambiguous_district_uses_context_county(self):
+        jobs = self._jobs() + [{"縣市": "台北市", "行政區": "台北市中山區", "_location_search_text": "臺北市臺北市中山區"},
+                               {"縣市": "基隆市", "行政區": "基隆市中山區", "_location_search_text": "基隆市基隆市中山區"}]
+        self.assertEqual(m.extract_current_target_location("中山區呢", "", jobs, context_location="台北"), "台北市中山區")
+        self.assertEqual(m.extract_current_target_location("中山區呢", "", jobs, context_location="基隆"), "基隆市中山區")
+        self.assertEqual(m.extract_current_target_location("中山區呢", "", jobs), "")
+        self.assertEqual(m.ambiguous_district_choices("中山區有工作嗎", jobs), ["台北市中山區", "基隆市中山區"])
+        self.assertEqual(m.ambiguous_district_choices("中山路附近", jobs), [])
+
+    def test_full_index_keeps_county_or_city(self):
+        index = m.build_district_county_full_index(self._jobs())
+        self.assertEqual(index["竹北"], {"新竹縣"})
+        self.assertEqual(m.resolve_county_for_location("竹北", self._jobs()), "新竹縣")
+
+    def test_structured_match_for_unprefixed_district_with_many_counties(self):
+        job = self._jobs()[4]
+        self.assertTrue(m.job_matches_location(job, "台北市中山區"))
+        self.assertTrue(m.job_matches_location(job, "基隆市中山區"))
+        self.assertFalse(m.job_matches_location(job, "台北市大安區"))
+        self.assertFalse(m.job_matches_location(self._jobs()[3], "台南市南區"))
+        self.assertTrue(m.job_matches_location(self._jobs()[2], "台南市南區"))
+
+
 if __name__ == "__main__":
     unittest.main()

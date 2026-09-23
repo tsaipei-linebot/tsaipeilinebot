@@ -3464,5 +3464,50 @@ class MultiTurnRoundFourFlowTests(_RoundFourSessionMixin, unittest.TestCase):
         self.assertFalse(r["ai"])
 
 
+class MultiTurnRoundFourLocationTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第四輪多輪對話測試第三批：地區比對。"""
+
+    def _jobs(self):
+        return [
+            self._job("八德門市", ["門市人員"], "甲門市", ["桃園市"], ["桃園市八德區"], "月領"),
+            self._job("中壢門市", ["門市人員"], "乙門市", ["桃園市"], ["桃園市中壢區"], "月領"),
+            self._job("台北中山外送", ["外送員"], "丙外送", ["台北市"], ["台北市中山區"], "週領"),
+            self._job("台北大安外送", ["外送員"], "丁外送", ["台北市"], ["台北市大安區"], "週領"),
+            self._job("基隆中山外送", ["外送員"], "戊外送", ["基隆市"], ["基隆市中山區"], "週領"),
+            self._job("新興(代招)", ["作業員"], "新興(代招)", ["新北市"], ["新北市五股區"], "月領"),
+            self._job("高雄外送", ["外送員"], "己外送", ["高雄市"], ["高雄市新興區"], "週領"),
+        ]
+
+    def test_full_address_uses_the_district(self):
+        r = self._say("桃園市八德區有門市的工作嗎")
+        self.assertEqual(self.session_slots["location"], "八德")
+        self.assertEqual(r["titles"], ["八德門市"])
+
+    def test_ambiguous_district_asks_which_county(self):
+        r = self._say("中山區有外送的工作嗎")
+        self.assertEqual(r["buttons"], ["台北市中山區的工作", "基隆市中山區的工作"])
+        self.assertEqual(r["titles"], [])
+        r = self._say("基隆市中山區的工作")
+        self.assertEqual(r["titles"], ["基隆中山外送"])
+
+    def test_ambiguous_district_uses_remembered_county(self):
+        self._say("台北外送的工作")
+        r = self._say("中山區呢")
+        self.assertEqual(r["titles"], ["台北中山外送"])
+
+    def test_vendor_or_district_asks_when_unclear(self):
+        r = self._say("新興有工作嗎")
+        self.assertEqual(r["buttons"], ["新興區的工作", "新興這家廠商的工作"])
+        self.assertEqual(self.session_slots["brand"], "")
+        self.assertEqual(self.session_slots["location"], "")
+
+    def test_vendor_or_district_buttons_resolve(self):
+        r = self._say("新興區的工作")
+        self.assertEqual(r["titles"], ["高雄外送"])
+        self.setUp()
+        r = self._say("新興這家廠商的工作")
+        self.assertEqual(r["titles"], ["新興(代招)"])
+
+
 if __name__ == "__main__":
     unittest.main()
