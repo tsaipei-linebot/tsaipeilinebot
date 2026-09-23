@@ -272,3 +272,18 @@ FAQ_REPORT_DAILY_MODE = os.getenv("FAQ_REPORT_DAILY_MODE", "false").strip().lowe
 # 重新部署。
 # ==========================================
 AI_DECISION_SYNC_TIMEOUT_SECONDS = _int_env("AI_DECISION_SYNC_TIMEOUT_SECONDS", 15)
+
+# ==========================================
+# AI 需求單（使用者 2026-09-23 決定，見 HANDOFF.md 第 81 項）
+# 程式沒有精準命中的句子交給 Gemini 整理成固定格式的需求單，程式檢查過再照需求單找職缺。
+# AI_UNDERSTANDING_MODE：
+#   off（預設）＝完全不用，跟原本一樣；
+#   shadow＝照原本的流程回覆，但背景另外問 AI、把 AI 的判斷寫進 log（「[AI需求單]」），
+#          用來上線前比對 AI 判斷得準不準，不影響求職者看到的回覆；
+#   on＝正式使用 AI 需求單。
+# AI_UNDERSTANDING_TIMEOUT_SECONDS：等 AI 需求單最多幾秒，超過就照原本的流程走。
+# AI_UNDERSTANDING_THINKING_BUDGET：Gemini 先「想一想」的額度，0＝不想（最快）。
+# ==========================================
+AI_UNDERSTANDING_MODE = os.getenv("AI_UNDERSTANDING_MODE", "off").strip().lower()
+AI_UNDERSTANDING_TIMEOUT_SECONDS = _float_env("AI_UNDERSTANDING_TIMEOUT_SECONDS", 6.0)
+AI_UNDERSTANDING_THINKING_BUDGET = _int_env("AI_UNDERSTANDING_THINKING_BUDGET", 0)
