@@ -8872,3 +8872,81 @@ discover -s tests -p "test_*.py"`）2073 個全數通過。
 `tests/test_dispatch_webhook_routes.py` 新增 `ReplyHandlerSilenceTests`
 （空字串時連 `get_line_bot_api()` 都不能呼叫）。全部測試（`python3 -m
 unittest discover -s tests -p "test_*.py"`）2120 個全數通過。
+
+## 補寄信「按了沒有動作」的真正原因：GAS 寄信額度用完（2026-09-23）
+
+同仁回報 `/me` 的「補寄信」按鈕按了沒反應。查下來**程式其實完全正常**，
+是錯誤訊息看不懂造成的誤解，而且背後藏著一個更重要的問題。
+
+### 怎麼查出來的（這套查法之後可以重用）
+
+Cloud Run 的 `httpRequest` log 可以直接看到請求有沒有進來、回什麼狀態，
+比在程式裡加 log 快得多：
+
+```bash
+# 1. 請求有沒有進到系統？（POST 有進來、回 303 轉址 → 路由跟權限都正常）
+gcloud logging read 'resource.type="cloud_run_revision"
+  resource.labels.service_name="recruitment-bot"
+  httpRequest.requestUrl:"resend-email"' --limit 20 \
+  --format="table(timestamp,httpRequest.requestMethod,httpRequest.status,httpRequest.requestUrl)"
+
+# 2. 那個 303 轉去成功還是失敗？轉址後瀏覽器會再發一次 GET，答案就在網址裡
+gcloud logging read 'resource.type="cloud_run_revision"
+  resource.labels.service_name="recruitment-bot"
+  httpRequest.requestUrl:"/me?"' --limit 20 \
+  --format="table(timestamp,httpRequest.requestMethod,httpRequest.status,httpRequest.requestUrl)"
+```
+
+第 2 步抓到的網址是 `/me?resend_error=補寄失敗：Exception: 單日叫用下列
+服務的次數過多：email。`（原本是 URL 編碼，用 `urllib.parse.unquote()`
+解開）。**這是 Google Apps Script 的每日寄信額度用完**（官方硬性限制：
+一般 Gmail 帳號每天 100 個收件人、Google Workspace 帳號每天 1500 個），
+不是程式壞掉。
+
+### 為什麼同仁覺得「沒有動作」
+
+畫面上其實**有**跳紅字，但內容是 `Exception: 單日叫用下列服務的次數過多：
+email。` 這種 Apps Script 原文，同仁看不懂、也不知道下一步該做什麼，就
+回報成「按了沒反應」。
+
+### 這次改的（材霈平台這邊）
+
+`services/salary_repayment_submit_service.py` 新增 `_plain_gas_error()`：
+把 GAS 回的技術性錯誤翻成白話再顯示，額度用完會顯示成「職缺維護系統今天
+的寄信額度已經用完（Google 對每個帳號每天寄信的數量有上限），今天不管
+補寄幾次都會失敗。請明天再按一次補寄；如果每天都遇到，請聯絡系統管理
+員。」。**只翻譯真的遇過、而且同仁自己有辦法處理的狀況**，對不到的訊息
+維持原文顯示、不吃掉資訊；原文另外印進 Cloud Run log 方便之後排查。
+
+### job-portal-gas-project 那邊查到的（還沒動手改）
+
+- 整個 GAS 專案只有兩處寄信：`Project_Salary.js` 的薪資補款通知信、
+  `ProjectWorkflowService.js` 的專案合約提報信。**兩處都是「一個動作寄
+  一封」，沒有迴圈、也沒有定時觸發器在大量寄信**，所以光靠這個專案自己
+  很難把 Workspace 的 1500 封額度用完。
+- 薪資補款信的收件人是「財會信箱（`HR_ACCOUNTING_EMAILS`，預設
+  `finance@tsaipei.com.tw`，可多筆）＋審核主管＋申請人」去重後一起寄，
+  所以**一封信通常吃掉 3～6 個收件人額度**——如果跑這支 script 的是一般
+  Gmail 帳號（每天 100 個收件人），大約 20～30 筆核准就會用完。
+- **額度是「每個 Google 帳號」共用的，跨所有 Apps Script 專案一起算**，
+  所以同一個帳號底下其他 script 寄的信也會吃掉同一份額度。
+- 核准流程本身已經會照實回報寄信失敗（見 `Project_Salary.js` 的
+  `handleSalaryPostback()`，主管的 LINE 會收到「已核准，但通知信寄送
+  失敗（…）」），所以**額度爆掉那天核准的每一筆，通知信應該都沒寄出去**，
+  不是只有手動補寄的那兩筆。
+
+**還沒確認、要繼續追的**：跑這支 Apps Script 的 Google 帳號到底是公司
+Workspace 帳號還是一般 @gmail.com（決定上限是 1500 還是 100），以及同一
+個帳號底下還有哪些 script 在寄信。確認之前不要急著改 GAS 的寄信邏輯。
+
+**這次不需要任何手動設定**，合併後自動部署即可生效。
+
+新增/調整檔案：`services/salary_repayment_submit_service.py`
+（`_GAS_ERROR_PLAIN_HINTS`／`_plain_gas_error()`，並在
+`resend_salary_repayment_email()` 失敗時套用＋把原文印進 log）。
+
+新增測試：`tests/test_salary_repayment_submit_service.py` 新增
+`PlainGasErrorTests`（中英文額度訊息都要翻譯、對不到的原文照回）跟
+`ResendEmailPlainErrorTests`（實際回應套用翻譯、成功的訊息不能被動到）。
+全部測試（`python3 -m unittest discover -s tests -p "test_*.py"`）2125 個
+全數通過。
