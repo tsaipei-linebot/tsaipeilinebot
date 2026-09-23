@@ -443,9 +443,9 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         }
         old_slots = dict(location="", category="", shift="", leave="", brand="蝦皮")
 
-        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit=""):
+        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude=""):
             merged = dict(old_slots)
-            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit)]:
+            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit), ("exclude", exclude)]:
                 if value == h.CLEAR_SLOT:
                     merged[key] = ""
                 elif value:
@@ -455,7 +455,9 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         event = MagicMock()
         event.reply_token = "valid-reply-token"
         event.source.user_id = "test-user-brand-override"
-        event.message.text = "有大立光的工作嗎"
+        # 第五輪起只講廠商會直接列出那家的職缺，這裡改用一句會落到 AI 的話
+        # （「不要太累」這種排除不了的要求）。
+        event.message.text = "大立光的工作不要太累的"
         line_bot_api = MagicMock()
         fake_decision = json.dumps({"action": "NO_MATCH", "reply": "目前暫無", "ids": [], "buttons": []})
 
@@ -1258,7 +1260,7 @@ class BareLocationFollowupContinuesContextTests(unittest.TestCase):
         # 老實說沒有，不推其他地區的職缺。
         self.assertFalse(has_cards)
         self.assertIn("沒有八德", text)
-        self.assertIn("清空條件", buttons)
+        self.assertIn(h.RESET_DIRECT_TEXT, buttons)
 
     def test_faq_question_not_hijacked_by_persisted_category(self):
         # 持續鎖定「門市」類別，但這句話是問發薪日（FAQ 類問題，抓不到地名），
@@ -1664,9 +1666,9 @@ class WarehouseManufacturingShopeeDirectInterceptTests(unittest.TestCase):
         # 蝦皮沒有門市職缺：老實說沒有，不推那筆理貨/倉儲職缺（原本落到 AI）
         self.assertFalse(has_cards)
         self.assertIn("蝦皮門市", text)
-        self.assertIn("清空條件", buttons)
+        self.assertIn(h.RESET_DIRECT_TEXT, buttons)
 
-    def test_negated_warehouse_mention_falls_through_to_ai(self):
+    def test_negated_warehouse_mention_is_excluded(self):
         job = self._warehouse_job()
         control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
         event = MagicMock()
@@ -1685,9 +1687,13 @@ class WarehouseManufacturingShopeeDirectInterceptTests(unittest.TestCase):
              patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
             h.process_user_message(event, line_bot_api)
 
+        # 第五輪起「不要理貨」記成排除條件：唯一一筆就是理貨，排掉後老實說沒有，
+        # 不會把理貨職缺推出來。
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, _, has_cards = _reply_text_and_buttons(args[1])
+        self.assertIsNot(args[1], control_message)
+        self.assertFalse(has_cards)
 
 
 class ShopeeCategoryClarifyTests(unittest.TestCase):
@@ -1947,7 +1953,10 @@ class CompoundSecondaryFilterTests(unittest.TestCase):
         mock_ai.assert_not_called()
         mock_flex.assert_not_called()
 
-    def test_negated_secondary_keyword_falls_through_to_ai(self):
+    def test_negated_secondary_keyword_is_excluded(self):
+        # 使用者 2026-09-23（第五輪）決定：「不要公司車」要真的排除（原本交給
+        # AI）。唯一有公司車的是蝦皮外送，剩下門市跟理貨兩種類型，照樣問想看
+        # 哪一種，但選項不能再列出外送。
         jobs = self._shopee_jobs()
         control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
         event = MagicMock()
@@ -1968,7 +1977,10 @@ class CompoundSecondaryFilterTests(unittest.TestCase):
 
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, buttons, _ = _reply_text_and_buttons(args[1])
+        self.assertIsNot(args[1], control_message)
+        self.assertIn("蝦皮門市", buttons)
+        self.assertNotIn("蝦皮外送", buttons)
 
 
 class BrandPoolNarrowingFixTests(unittest.TestCase):
@@ -2087,14 +2099,16 @@ class BrandPoolNarrowingFixTests(unittest.TestCase):
         titles = [j["職缺名稱"] for j in mock_flex.call_args[0][0]]
         self.assertEqual(titles, ["康寧(世捷)_倉儲"])
 
-    def test_bare_brand_alone_without_secondary_condition_still_falls_through_to_ai(self):
+    def test_bare_brand_alone_lists_that_vendor(self):
         # 刻意保守：單純講廠商名稱、沒有其他資訊（類別/福利/發薪/休假）時，
         # 維持原本會落到 AI 決策的既有行為，不擴大這次修正的範圍。
         jobs = [
             self._job("康寧(世捷)_倉儲", ["倉儲人員"], "康寧(世捷)", ["台中市"], ["台中市西屯區"], "月領,週領", "", "週休"),
         ]
+        # 使用者 2026-09-23（第五輪）決定：只講廠商名稱直接列出那家的職缺
         mock_ai, mock_flex, api = self._run("康寧的工作", jobs, "test-bare-brand-no-secondary")
-        mock_ai.assert_called_once()
+        mock_ai.assert_not_called()
+        self.assertEqual([j["職缺名稱"] for j in mock_flex.call_args[0][0]], ["康寧(世捷)_倉儲"])
 
 
 class FoodServicePoolAndUberBrandFixTests(unittest.TestCase):
@@ -2230,11 +2244,11 @@ class MultiTurnLockedCategoryPersistenceTests(unittest.TestCase):
     def _make_session(self, jobs):
         """建立一個真正會保留槽位/對話紀錄狀態的多輪測試環境，不是每輪都
         重置——跟真實 LINE 對話一樣，上一輪鎖定的槽位要能沿用到下一輪。"""
-        session_slots = dict(location="", category="", shift="", leave="", brand="", pay="", benefit="")
+        session_slots = dict(location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude="")
         history = []
 
-        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit=""):
-            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit)]:
+        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude=""):
+            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit), ("exclude", exclude)]:
                 if value == h.CLEAR_SLOT:
                     session_slots[key] = ""
                 elif value:
@@ -3035,9 +3049,12 @@ class BenefitKeywordDirectInterceptTests(unittest.TestCase):
              patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
             h.process_user_message(event, line_bot_api)
 
+        # 第五輪起「不要公司車」記成排除條件：唯一一筆有公司車，排掉後老實說沒有
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, _, has_cards = _reply_text_and_buttons(args[1])
+        self.assertIsNot(args[1], control_message)
+        self.assertFalse(has_cards)
 
     def test_location_narrows_benefit_matches(self):
         # 求職者這輪已經鎖定地區時，福利關鍵字攔截也要一併用地區篩選縮小範圍。
@@ -3175,7 +3192,7 @@ class PayMethodKeywordDirectInterceptTests(unittest.TestCase):
         self.assertIn("日領", args[1].text)
         self.assertIn("沒有", args[1].text)
 
-    def test_negated_pay_method_falls_through_to_ai(self):
+    def test_negated_pay_method_is_excluded_not_sent_to_ai(self):
         shopee_job = self._job()
         event = MagicMock()
         event.reply_token = "valid-reply-token"
@@ -3195,9 +3212,10 @@ class PayMethodKeywordDirectInterceptTests(unittest.TestCase):
              patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message):
             h.process_user_message(event, line_bot_api)
 
+        # 使用者 2026-09-23（第五輪）決定排除條件要真的幫忙排除，不再交給 AI
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        self.assertIsNot(args[1], control_message)
 
     def test_no_pay_method_keyword_lists_location_jobs(self):
         shopee_job = self._job()
@@ -3246,7 +3264,7 @@ class _RoundFourSessionMixin:
         ]
 
     def setUp(self):
-        self.session_slots = dict(location="", category="", shift="", leave="", brand="", pay="", benefit="")
+        self.session_slots = dict(location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude="")
         self.history = []
 
     def _say(self, msg):
@@ -3270,6 +3288,7 @@ class _RoundFourSessionMixin:
              patch("handlers.message_handler.get_user_history", side_effect=lambda uid: list(self.history)), \
              patch("handlers.message_handler.get_user_slots", side_effect=lambda uid: dict(slots)), \
              patch("handlers.message_handler.update_user_slots", side_effect=_merge), \
+             patch("handlers.message_handler.clear_user_slots", side_effect=lambda uid: slots.update({k: "" for k in slots})), \
              patch("handlers.message_handler.append_user_history", side_effect=lambda uid, role, text: self.history.append({"role": role, "text": text})), \
              patch("handlers.message_handler.create_job_flex_card") as flex, \
              patch("handlers.message_handler._is_staffed_hours", return_value=False), \
@@ -3353,9 +3372,14 @@ class MultiTurnRoundFourUnderstandingTests(_RoundFourSessionMixin, unittest.Test
         r = self._say("日領的")
         self.assertIn("班別都可以", " ".join(r["buttons"]))
 
-    def test_first_time_exclusion_still_goes_to_ai(self):
+    def test_first_time_exclusion_is_applied(self):
+        # 使用者 2026-09-23（第五輪）決定：第一次就講「不要夜班」也要真的排除
+        # （原本交給 AI）。只有夜班的職缺排掉，還有其他班別的保留。
         r = self._say("理貨不要夜班的工作")
-        self.assertTrue(r["ai"])
+        self.assertFalse(r["ai"])
+        self.assertEqual(sorted(r["titles"]), ["丙理貨月領假日", "甲理貨日領早班"])
+        self.assertEqual(self.session_slots["exclude"], "shift:大夜班")
+        self.assertIn("排除：大夜班", r["text"])
 
 
 class MultiTurnRoundFourFlowTests(_RoundFourSessionMixin, unittest.TestCase):
@@ -3419,10 +3443,10 @@ class MultiTurnRoundFourFlowTests(_RoundFourSessionMixin, unittest.TestCase):
 
     def test_no_match_lists_a_drop_button_for_every_condition(self):
         r = self._say("台中理貨有日領、做四休二的嗎")
-        self.assertIn("清空條件", r["buttons"])
+        self.assertIn(h.RESET_DIRECT_TEXT, r["buttons"])
         self.assertNotIn("新莊工作", r["buttons"])
         self.assertEqual(
-            r["buttons"], ["地區都可以", "類型都可以", "休假方式都可以", "發薪方式都可以", "清空條件"])
+            r["buttons"], ["地區都可以", "類型都可以", "休假方式都可以", "發薪方式都可以", h.RESET_DIRECT_TEXT])
         # 每一顆按鈕按下去都要真的拿掉那一項、不會又得到同一句回覆
         for button in r["buttons"][:-1]:
             before = dict(self.session_slots)
@@ -3445,11 +3469,12 @@ class MultiTurnRoundFourFlowTests(_RoundFourSessionMixin, unittest.TestCase):
     def test_change_buttons_offer_values_that_have_jobs(self):
         self._say("桃園理貨的工作")
         r = self._say(h.CHANGE_LOCATION_TEXT)
-        self.assertEqual(r["buttons"], ["桃園市的工作", "新北市的工作", "台中市的工作", "地區都可以"])
+        # 第五輪起不列目前已經選的桃園市
+        self.assertEqual(r["buttons"], ["新北市的工作", "台中市的工作", "地區都可以"])
         r = self._say(h.CHANGE_SHIFT_TEXT)
         self.assertEqual(r["buttons"], ["早班的工作", "大夜班的工作", "班別都可以"])
         r = self._say(h.CHANGE_CATEGORY_TEXT)
-        self.assertIn("理貨/倉儲的工作", r["buttons"])
+        self.assertNotIn("理貨/倉儲的工作", r["buttons"])  # 目前選的類型不列
         self.assertIn("外送的工作", r["buttons"])
         self.assertFalse(r["ai"])
 
@@ -3647,6 +3672,89 @@ class MultiTurnRoundFiveLocationTests(_RoundFourSessionMixin, unittest.TestCase)
         for button in r["buttons"]:
             self.assertTrue(button.endswith("都可以"), button)
             self.assertNotIn("八德", button)
+
+
+class MultiTurnRoundFiveFlowTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第五輪多輪對話測試第三批：使用者這一輪的四個決定（排除條件、只講廠商、
+    兩個類型都算、新類型）跟流程修正。"""
+
+    def _jobs(self):
+        return [
+            self._job("桃園理貨早班", ["理貨人員"], "甲物流", ["桃園市"], ["桃園市中壢區"], "月領", "", "排休", "早班"),
+            self._job("桃園理貨夜班", ["理貨人員"], "乙物流", ["桃園市"], ["桃園市楊梅區"], "月領", "", "排休", "夜班"),
+            self._job("桃園蝦皮門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市中壢區"], "月領", "", "週休二日", "早班"),
+            self._job("桃園外送", ["外送員"], "Uber", ["桃園市"], ["桃園市中壢區"], "週領", "", "自由報班", "彈性排班"),
+            self._job("台北客服", ["文字客服"], "丙客服", ["台北市"], ["台北市中山區"], "月領", "", "週休二日", "早班"),
+            self._job("台北設備", ["設備人員"], "丁設施", ["台北市"], ["台北市大安區"], "月領", "", "週休二日", "早班"),
+            self._job("美光作業員", ["作業員"], "美光(桃園)", ["桃園市"], ["桃園市龜山區"], "月領", "交通車", "做二休二", "日班,夜班"),
+        ]
+
+    def test_first_time_exclusion_of_a_shift(self):
+        self._say("桃園理貨的工作")
+        r = self._say("不要夜班")
+        self.assertEqual(r["titles"], ["桃園理貨早班"])
+        self.assertIn("排除：大夜班", r["text"])
+        self.assertFalse(r["ai"])
+
+    def test_exclusion_of_a_category(self):
+        self._say("桃園的工作")
+        r = self._say("除了外送都可以")
+        self.assertNotIn("桃園外送", r["titles"])
+        self.assertEqual(self.session_slots["exclude"], "category:外送")
+
+    def test_exclusion_is_lifted_when_the_value_is_asked_for_again(self):
+        self._say("桃園的工作")
+        self._say("除了外送都可以")
+        r = self._say("外送的工作")
+        self.assertEqual(r["titles"], ["桃園外送"])
+        self.assertEqual(self.session_slots["exclude"], "")
+
+    def test_saying_no_to_a_vendor_excludes_it(self):
+        self._say("桃園門市的工作")
+        r = self._say("不要蝦皮")
+        self.assertNotIn("桃園蝦皮門市", r["titles"])
+        self.assertFalse(r["ai"])
+
+    def test_no_a_change_to_b_lists_directly(self):
+        self._say("桃園外送的工作")
+        r = self._say("不要外送了 改門市")
+        self.assertFalse(r["ai"])
+        self.assertEqual(self.session_slots["category"], "門市")
+        self.assertEqual(r["titles"], ["桃園蝦皮門市"])
+
+    def test_vendor_alone_lists_that_vendor(self):
+        r = self._say("美光")
+        self.assertFalse(r["ai"])
+        self.assertEqual(r["titles"], ["美光作業員"])
+        r = self._say("那Uber呢")
+        self.assertEqual(r["titles"], ["桃園外送"])
+
+    def test_new_categories_are_searchable(self):
+        r = self._say("台北客服的工作")
+        self.assertEqual(r["titles"], ["台北客服"])
+        r = self._say("設備人員呢")
+        self.assertEqual(r["titles"], ["台北設備"])
+
+    def test_two_categories_both_count(self):
+        r = self._say("桃園理貨或門市都可以")
+        self.assertEqual(sorted(r["titles"]), ["桃園理貨夜班", "桃園理貨早班", "桃園蝦皮門市"])
+        self.assertIn("理貨/倉儲或門市", r["text"])
+
+    def test_change_menu_leaves_out_the_current_choice(self):
+        self._say("桃園理貨的工作")
+        r = self._say(h.CHANGE_CATEGORY_TEXT)
+        self.assertNotIn("理貨/倉儲的工作", r["buttons"])
+
+    def test_reset_button_clears_without_asking_again(self):
+        self._say("桃園理貨的工作")
+        r = self._say(h.RESET_DIRECT_TEXT)
+        self.assertIn("清空", r["text"])
+        self.assertEqual(self.session_slots, dict(location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude=""))
+
+    def test_apply_names_the_job(self):
+        self.history.append({"role": "招募顧問沛沛", "text": "📋【職缺名稱：桃園理貨早班 ｜ 理貨人員】\n\n👉 立即填寫線上履歷：\nhttps://example.com/a"})
+        r = self._say(h.APPLY_TEXT)
+        self.assertIn("「桃園理貨早班」", r["text"])
 
 
 if __name__ == "__main__":
