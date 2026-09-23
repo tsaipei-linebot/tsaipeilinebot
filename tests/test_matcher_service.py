@@ -1269,5 +1269,43 @@ class RoundSixUnderstandingMatcherTests(unittest.TestCase):
         self.assertEqual(m.classify_condition_utterance("你們有交通車嗎"), "demand")
 
 
+class RoundSixExclusionLocationMatcherTests(unittest.TestCase):
+    """第六輪多輪對話測試第二批（matcher 端）。"""
+
+    def test_pay_frequency_and_channel_together_mean_both(self):
+        self.assertEqual(m.combine_pay_labels(["日領", "現金"], "日領現金的工作"), "日領+現金")
+        self.assertEqual(m.combine_pay_labels(["日領", "現金"], "日領或現金都可以"), "日領|現金")
+        jobs = [{"領薪方式": "日領,現金"}, {"領薪方式": "月領,週領,現金"}]
+        self.assertEqual(m.filter_jobs_by_pay_label(jobs, "日領+現金"), [jobs[0]])
+
+    def test_shift_exclusion_ignores_part_time_flag(self):
+        evening_part_time = {"班別": "晚班", "全/兼職": "兼職"}
+        self.assertTrue(m.job_is_excluded(evening_part_time, {"shift": {"晚班"}}))
+
+    def test_category_exclusion_keeps_jobs_with_another_category(self):
+        forklift = {"職務類別": "倉儲人員,作業員"}
+        operator = {"職務類別": "作業員"}
+        self.assertFalse(m.job_is_excluded(forklift, {"category": {"製造/作業員"}}))
+        self.assertTrue(m.job_is_excluded(operator, {"category": {"製造/作業員"}}))
+
+    def test_sub_role_exclusion(self):
+        c = m.clause_clean_text
+        self.assertEqual(m.detect_negated_subroles(c("不要外場")), {"外場人員"})
+        self.assertEqual(m.detect_negated_category(c("不要外場")), "")
+        self.assertTrue(m.job_is_excluded({"職務類別": "外場人員"}, {"role": {"外場人員"}}))
+        self.assertFalse(m.job_is_excluded({"職務類別": "內場人員,外場人員"}, {"role": {"外場人員"}}))
+
+    def test_each_occurrence_of_a_shared_district_uses_its_own_county(self):
+        jobs = [
+            {"縣市": "新竹市", "行政區": "新竹市東區"}, {"縣市": "台南市", "行政區": "台南市東區"},
+            {"縣市": "台中市", "行政區": "台中市東區"},
+        ]
+        self.assertEqual(m.extract_current_target_location("新竹東區或台南東區的餐飲", "", jobs), "新竹市東區|台南市東區")
+
+    def test_county_plus_district_ending_in_ku_is_not_doubled(self):
+        jobs = [{"縣市": "嘉義市", "行政區": "嘉義市西區"}, {"縣市": "台中市", "行政區": "台中市東區"}, {"縣市": "新竹市", "行政區": "新竹市東區"}]
+        self.assertEqual(m.extract_current_target_location("嘉義市東區", "", jobs), "嘉義市東區")
+
+
 if __name__ == "__main__":
     unittest.main()

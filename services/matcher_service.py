@@ -487,41 +487,50 @@ def extract_current_target_location(raw_msg: str, history_text: str = "", active
         district_index = build_district_county_full_index(active_jobs)
         district_names = _district_full_names(active_jobs)
         context_county = resolve_county_for_location(context_location, active_jobs) if context_location else ""
-        for district_core, counties in district_index.items():
-            pos = raw_msg.find(district_core)
-            if pos == -1 or _keyword_is_negated(raw_msg, district_core):
-                continue
-            span = (pos, pos + len(district_core))
-            if any(s < span[1] and span[0] < e and not (s <= span[0] and span[1] <= e) for s, e, _ in county_spans):
-                continue
-            typed = next((f"{district_core}{s}" for s in ("區", "鄉", "鎮", "市") if f"{district_core}{s}" in raw_msg), "")
-            names = district_names.get(district_core, {})
-            if typed and len(counties) > 1:
-                # 講了「大同鄉」就只看真的叫大同鄉的縣市（台北市是大同區）；剩一個
-                # 時要組完整寫法，不然只寫「大同」會連台北的一起比對到。
-                narrowed = {c for c in counties if names.get(c, typed) == typed}
-                if len(narrowed) == 1:
-                    only = next(iter(narrowed))
-                    matches.append((pos, district_core, f"{only}{typed}"))
+        for district_core, all_counties in district_index.items():
+            # 同一個區名可能出現好幾次（「新竹東區或台南東區」），每一次各自判斷
+            positions = [i for i in range(len(raw_msg)) if raw_msg.startswith(district_core, i)]
+            for pos in positions:
+                if _negation_at(raw_msg, pos, pos + len(district_core)):
                     continue
-                counties = narrowed or counties
-            # 句子裡緊接在區名前面講了別的縣市（「台中市大安區」，資料裡的
-            # 大安區只有台北市）：照求職者講的縣市組完整寫法，找不到就老實說
-            # 沒有，不能推台北的職缺（第五輪測試）。
-            named_before = [full for s, e, full in county_spans if 0 <= pos - e <= 1]
-            if named_before and not (set(named_before) & counties):
-                matches.append((pos, district_core, f"{named_before[-1]}{typed or district_core + '區'}"))
-                continue
-            if len(counties) == 1:
-                matches.append((pos, district_core, district_core))
-                continue
-            # 同一個區名在好幾個縣市都有（例如台北市、基隆市都有中山區）時，
-            # 原本一律跳過，「台北市中山區」就退回成「整個台北」。這句話本身
-            # 有講是哪個縣市時，組成「台北市中山區」精準比對；沒講的話，看
-            # 上一輪記住的地區在哪個縣市（先問「台北」再問「中山區呢」）。
-            qualified = _qualify_ambiguous_district(raw_msg, district_core, counties, context_county, names)
-            if qualified:
-                matches.append((pos, district_core, qualified))
+                counties = set(all_counties)
+                span = (pos, pos + len(district_core))
+                if any(s < span[1] and span[0] < e and not (s <= span[0] and span[1] <= e) for s, e, _ in county_spans):
+                    continue
+                typed = next((f"{district_core}{s}" for s in ("區", "鄉", "鎮", "市") if raw_msg.startswith(f"{district_core}{s}", pos)), "")
+                if district_core[-1] in ("區", "鄉", "鎮", "市"):
+                    typed = typed or district_core
+                names = district_names.get(district_core, {})
+                if typed and len(counties) > 1:
+                    # 講了「大同鄉」就只看真的叫大同鄉的縣市（台北市是大同區）；剩一個
+                    # 時要組完整寫法，不然只寫「大同」會連台北的一起比對到。
+                    narrowed = {c for c in counties if names.get(c, typed) == typed}
+                    if len(narrowed) == 1:
+                        only = next(iter(narrowed))
+                        matches.append((pos, district_core, f"{only}{typed}"))
+                        continue
+                    counties = narrowed or counties
+                # 句子裡緊接在區名前面講了縣市（「台中市大安區」「台中市北區」）：
+                # 照求職者講的縣市組完整寫法。資料裡沒有這個縣市的這個區時，
+                # 找不到就老實說沒有，不能推別的縣市的職缺（第五、六輪測試）。
+                named_before = [full for s, e, full in county_spans if 0 <= pos - e <= 1]
+                if named_before:
+                    county_full = next((c for c in reversed(named_before) if c in counties), named_before[-1])
+                    if len(counties) == 1 and county_full in counties:
+                        matches.append((pos, district_core, district_core))
+                    else:
+                        matches.append((pos, district_core, f"{county_full}{names.get(county_full) or typed or district_core + '區'}"))
+                    continue
+                if len(counties) == 1:
+                    matches.append((pos, district_core, district_core))
+                    continue
+                # 同一個區名在好幾個縣市都有（例如台北市、基隆市都有中山區）時，
+                # 原本一律跳過，「台北市中山區」就退回成「整個台北」。這句話本身
+                # 有講是哪個縣市時，組成「台北市中山區」精準比對；沒講的話，看
+                # 上一輪記住的地區在哪個縣市（先問「台北」再問「中山區呢」）。
+                qualified = _qualify_ambiguous_district(raw_msg, district_core, counties, context_county, names)
+                if qualified:
+                    matches.append((pos, district_core, qualified))
 
     if len(matches) > 1:
         matches = [m for m in matches if m[2] != "桃園" and m[2] not in _COUNTY_CORE_TO_FULL] or matches
@@ -961,11 +970,16 @@ def extract_shift_preference(text: str) -> str:
     return labels[0] if labels else ""
 
 
-def job_shift_labels(job: dict) -> set:
+def job_shift_labels(job: dict, include_derived: bool = True) -> set:
+    """include_derived=False 時只看「班別」欄位本身：排除班別時（「不要晚班」）
+    不能因為「全/兼職」欄位是兼職就算成「還有其他班別可選」（第六輪測試：
+    只有晚班的兼職職缺排不掉）。"""
     labels = set()
     for token in re.split(r'[,，、\s()（）]+', str(job.get("班別") or "")):
         if token.strip():
             labels.update(extract_shift_labels(token))
+    if not include_derived:
+        return labels
     if "兼職" in str(job.get("全/兼職") or ""):
         labels.add("兼職/工讀")
     # 「彈性排班」原本沒有任何職缺的班別會被歸到這一類，求職者講「自己排班」
@@ -1036,8 +1050,23 @@ def filter_jobs_by_leave_label(jobs: list, label: str) -> list:
 
 
 def filter_jobs_by_pay_label(jobs: list, label: str) -> list:
-    wanted = {clean_text_for_search(part) for part in label.split("|")}
-    return [j for j in jobs if wanted & _job_pay_method_tokens(j)]
+    """「日領|週領」符合其中一個就算；「日領+現金」（發薪頻率跟發薪管道一起講，
+    例如「日領現金的工作」）兩個都要有。"""
+    alternatives = [
+        {clean_text_for_search(p) for p in alt.split("+") if p}
+        for alt in label.split("|") if alt
+    ]
+    return [j for j in jobs if any(alt <= _job_pay_method_tokens(j) for alt in alternatives)]
+
+
+def combine_pay_labels(labels: list, text: str = "") -> str:
+    """同一句話講了發薪頻率跟發薪管道（「日領現金」），代表兩個都要：存成
+    「日領+現金」。用「或」連起來（「日領或現金都可以」）時維持符合一個就算。"""
+    frequency = [l for l in labels if l in _PAY_FREQUENCY_LABELS]
+    channel = [l for l in labels if l not in _PAY_FREQUENCY_LABELS]
+    if frequency and channel and not any(w in text for w in ("或", "還是", "都可以", "都行")):
+        return "|".join(f"{f}+{c}" for f in frequency for c in channel)
+    return "|".join(labels)
 
 
 def filter_jobs_by_benefit_label(jobs: list, label: str) -> list:
@@ -1061,7 +1090,7 @@ def job_is_excluded(job: dict, exclusions: dict) -> bool:
         if not values:
             continue
         if dim == "shift":
-            labels = job_shift_labels(job)
+            labels = job_shift_labels(job, include_derived=False)
             if labels and labels <= values:
                 return True
         elif dim == "leave":
@@ -1081,7 +1110,17 @@ def job_is_excluded(job: dict, exclusions: dict) -> bool:
             if values & set(_job_benefit_tokens(job)):
                 return True
         elif dim == "category":
-            if any(job_matches_category_filter(job, v, allow_relaxed=False) for v in values):
+            # 職缺同時屬於其他類型時不排除：「不要作業員」不排掉職務類別是
+            # 「倉儲人員,作業員」的職缺（第六輪測試）
+            if any(job_matches_category_filter(job, v, allow_relaxed=False) for v in values) and not any(
+                job_matches_category_filter(job, other, allow_relaxed=False)
+                for other in DIRECT_INTERCEPT_ROUTABLE_CATEGORIES if other not in values
+            ):
+                return True
+        elif dim == "role":
+            # 「不要外場」只排掉職務類別只有外場的職缺，不是整個餐飲類
+            roles = {r.strip() for r in re.split(r"[,，、]", str(job.get("職務類別") or "")) if r.strip()}
+            if roles and roles <= values:
                 return True
         elif dim == "brand":
             if any(job_matches_brand(job, v) for v in values):
@@ -1318,10 +1357,25 @@ def detect_category_label(clean_input: str) -> str:
     return ""
 
 
+# 類型底下的細項職務：「不要外場」是不要外場這種職務，不是不要整個餐飲類
+# （第六輪測試：原本連內場的職缺都一起清掉）。值是 Notion「職務類別」的寫法。
+SUBROLE_WORDS = {
+    "外場": "外場人員", "內場": "內場人員", "文字客服": "文字客服", "電話客服": "電話客服",
+    "搬運": "搬運工", "品保": "品保人員", "檢驗": "檢驗人員",
+}
+
+
+def detect_negated_subroles(clean_input: str) -> set:
+    return {role for word, role in SUBROLE_WORDS.items() if word in clean_input and _keyword_is_negated(clean_input, word)}
+
+
 def detect_negated_category(clean_input: str) -> str:
-    """偵測使用者是否明確表示排除某個工作類別（例如「除了外送」），回傳被排除的類別標籤，沒有則回傳空字串"""
+    """偵測使用者是否明確表示排除某個工作類別（例如「除了外送」），回傳被排除的類別標籤，沒有則回傳空字串。
+    只否定了細項職務（「不要外場」）不算否定整個類型，見 detect_negated_subroles()。"""
     for label, keywords in CATEGORY_KEYWORDS.items():
         for kw in keywords:
+            if kw in SUBROLE_WORDS:
+                continue
             if kw in clean_input and _keyword_is_negated(clean_input, kw):
                 return label
     return ""
