@@ -1018,5 +1018,98 @@ class RoundFourLocationPrecisionTests(unittest.TestCase):
         self.assertTrue(m.job_matches_category_filter(restaurant, "餐飲/服務"))
 
 
+class RoundFiveUnderstandingMatcherTests(unittest.TestCase):
+    """第五輪多輪對話測試第一批（matcher 端）：更多否定說法、非常/非…不可、
+    沒有標點時否定詞不越界、廠商誤判、別名、放寬只放寬講到的值。"""
+
+    def _jobs(self):
+        return [
+            {"系統廠商名稱": "M打烊班", "職缺名稱": "M打烊班"},
+            {"系統廠商名稱": "文華", "職缺名稱": "文華"},
+            {"系統廠商名稱": "美光(桃園)", "職缺名稱": "美光(桃園)_堆高機"},
+            {"系統廠商名稱": "蝦皮(威獅)(時薪)", "職缺名稱": "蝦皮(威獅)(時薪)"},
+            {"系統廠商名稱": "台灣大哥大客服", "職缺名稱": "台灣大哥大客服"},
+        ]
+
+    def test_more_ways_to_say_no(self):
+        for text in ["沒有夜班的工作", "我不能上夜班", "夜班不行", "夜班就不要了", "不用上夜班", "拒絕夜班", "不接受夜班"]:
+            self.assertEqual(m.extract_shift_labels(text), [], text)
+            self.assertEqual(m.extract_shift_labels(text, negated=True), ["大夜班"], text)
+        self.assertEqual(m.extract_shift_labels("有沒有夜班"), ["大夜班"])
+        self.assertEqual(m.detect_pay_method_labels("能不能日領"), ["日領"])
+        self.assertEqual(m.extract_shift_labels("沒有經驗夜班可以嗎"), ["大夜班"])
+
+    def test_fei_is_not_always_negation(self):
+        self.assertEqual(m.detect_pay_method_labels("我非常需要日領"), ["日領"])
+        self.assertEqual(m.detect_pay_method_labels("非日領不可"), ["日領"])
+        self.assertFalse(m.has_negative_intent("我非常想找桃園的理貨工作"))
+        self.assertTrue(m.has_negative_intent("非夜班"))
+
+    def test_negation_does_not_spill_without_punctuation(self):
+        self.assertEqual(m.detect_pay_method_labels("不要夜班日領就好"), ["日領"])
+        self.assertEqual(m.extract_shift_labels("不要夜班跟大夜", negated=True), ["大夜班"])
+        cc = m.clause_clean_text("不要外送，理貨呢")
+        self.assertEqual(m.detect_category_label(cc), "理貨/倉儲")
+        self.assertEqual(m.detect_negated_category(cc), "外送")
+
+    def test_negated_vendor_is_not_the_brand(self):
+        jobs = self._jobs()
+        for text in ["不要蝦皮", "除了蝦皮以外的", "蝦皮以外的"]:
+            self.assertEqual(m.detect_brand_label(text, jobs), "", text)
+            self.assertEqual(m.detect_negated_brand(text, jobs), "蝦皮", text)
+        self.assertEqual(m.detect_brand_label("不要美光的", jobs), "")
+        self.assertEqual(m.detect_negated_brand("不要美光的", jobs), "美光")
+
+    def test_shift_words_and_streets_are_not_vendors(self):
+        jobs = self._jobs()
+        self.assertEqual(m.detect_brand_label("我想找打烊班", jobs), "")
+        self.assertEqual(m.detect_brand_label("有打烊班嗎", jobs), "")
+        self.assertEqual(m.detect_brand_label("我住文華路附近", jobs), "")
+        self.assertEqual(m.extract_shift_labels("我想找打烊班"), ["晚班"])
+
+    def test_brand_aliases(self):
+        jobs = self._jobs()
+        self.assertEqual(m.detect_brand_label("shopee有缺嗎", jobs), "蝦皮")
+        self.assertEqual(m.detect_brand_label("優步", jobs), "Uber")
+        self.assertEqual(m.detect_brand_label("台哥大有缺嗎", jobs), "台灣大哥大")
+        self.assertTrue(m.job_matches_brand(jobs[4], "台灣大哥大"))
+        self.assertTrue(m._brand_matches_text("台積電", "台積電"))
+
+    def test_everyday_shift_words(self):
+        self.assertEqual(m.extract_shift_labels("桃園有白天班的嗎"), ["早班"])
+        self.assertEqual(m.extract_shift_labels("晚上的"), ["晚班"])
+        self.assertEqual(m.extract_shift_labels("週末可以上的"), ["假日班"])
+        self.assertEqual(m.extract_shift_labels("休六日"), [])
+
+    def test_seeker_side_category_words(self):
+        for text, label in [("檢驗人員的工作", "製造/作業員"), ("品保", "製造/作業員"), ("搬運的工作", "理貨/倉儲")]:
+            self.assertEqual(m.detect_category_label(m.clean_text_for_search(text)), label, text)
+
+    def test_relax_only_the_named_value(self):
+        c = m.clean_text_for_search
+        self.assertEqual(m.detect_relax_labels(c("我不需要日領，月領就好")), {"pay": {"日領"}})
+        self.assertEqual(m.detect_relax_labels(c("不一定要雙週領")), {"pay": {"雙週領"}})
+        self.assertEqual(m.detect_relax_labels(c("休假方式不一定")), {"leave": {"*"}})
+
+    def test_more_scoped_broaden_words(self):
+        c = m.clean_text_for_search
+        self.assertEqual(m.detect_scoped_broaden_dimensions(c("什麼班都可以")), {"shift"})
+        self.assertEqual(m.detect_scoped_broaden_dimensions(c("地方都可以")), {"location"})
+        self.assertEqual(m.detect_scoped_broaden_dimensions(c("哪家都可以")), {"brand"})
+        self.assertEqual(m.detect_scoped_broaden_dimensions(c("縣市不限")), {"location"})
+
+    def test_question_markers(self):
+        self.assertEqual(m.classify_condition_utterance("週領是每週幾"), "question")
+        self.assertEqual(m.classify_condition_utterance("倉儲會很累嗎"), "question")
+        self.assertEqual(m.classify_condition_utterance("作業員是做什麼的"), "question")
+        self.assertEqual(m.classify_condition_utterance("早班還是晚班都可以"), "demand")
+
+    def test_short_message_does_not_match_faq(self):
+        faqs = [{"question": "面試要帶什麼", "answer": "x"}]
+        self.assertIsNone(m.find_high_confidence_faq_match(faqs, "要"))
+        self.assertIsNone(m.find_high_confidence_faq_match(faqs, "什麼"))
+        self.assertIsNotNone(m.find_high_confidence_faq_match(faqs, "請問面試要帶什麼"))
+
+
 if __name__ == "__main__":
     unittest.main()
