@@ -1028,9 +1028,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             )
 
         _handoff = "" if raw_msg.startswith("查看職缺詳情") else detect_handoff_reason(raw_msg)
-        if _handoff and _ai_mode == "on" and _needs_ai_understanding():
+        if _handoff and _handoff != "human" and _ai_mode == "on" and _needs_ai_understanding():
             # 關鍵字判斷會把求職者誤判成要轉專員（第八輪測試 34 次：「我們公司倒閉了，需要找新
-            # 工作」「薪水會扣勞健保嗎」）：開了 AI 需求單時，以 AI 的判斷為準
+            # 工作」「薪水會扣勞健保嗎」）：開了 AI 需求單時，以 AI 的判斷為準。明講要找真人／
+            # 專員的不讓 AI 推翻（第三次多輪考試：「我要找專員」被 AI 當成找工作）
             _handoff_form = _ai_form()
             if _handoff_form is not None:
                 _handoff = (_handoff_form["handoff_reason"] or _handoff) if _handoff_form["intent"] == "轉專員" else ""
