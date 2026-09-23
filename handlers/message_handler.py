@@ -37,7 +37,7 @@ from services.matcher_service import (
     filter_jobs_by_shift_label, extract_shift_labels, extract_leave_labels,
     detect_pay_method_labels, detect_benefit_labels, detect_relax_dimensions,
     classify_condition_utterance, build_benefit_keyword_index, INFO_INTENT_PREFIX,
-    job_shift_labels, SHIFT_SYNONYMS,
+    job_shift_labels, SHIFT_SYNONYMS, job_matches_location, ambiguous_district_choices,
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -67,6 +67,7 @@ CHANGE_LOCATION_TEXT = "我想換地區"
 CHANGE_SHIFT_TEXT = "我想換班別"
 CHANGE_CATEGORY_TEXT = "我想換工作類型"
 APPLY_TEXT = "我要應徵"
+BRAND_CHOICE_SUFFIX = "這家廠商的工作"
 _APPLY_URL_RE = re.compile(r"立即填寫線上履歷：\s*(\S+)")
 
 # 一次最多顯示幾張職缺卡片（步驟 1c）。結果比這個多、又分散在好幾個縣市
@@ -75,10 +76,7 @@ _CARD_LIMIT = 4
 
 
 def _filter_by_location(jobs: list, location: str) -> list:
-    if not location:
-        return list(jobs)
-    loc_clean = location.replace("台", "臺")
-    return [j for j in jobs if location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
+    return [j for j in jobs if job_matches_location(j, location)]
 
 
 def _job_counties(job: dict) -> list:
@@ -454,7 +452,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         ]
         scoped_broaden_dims = detect_scoped_broaden_dimensions(clean_input)
 
-        extracted_loc = extract_current_target_location(raw_msg, "", active_jobs)
+        # 上一輪記住的地區拿來判斷「中山區呢」是台北還是基隆的中山區
+        extracted_loc = extract_current_target_location(
+            raw_msg, "", active_jobs, context_location=user_slots.get("location", ""))
+        district_choices = [] if extracted_loc else ambiguous_district_choices(raw_msg, active_jobs)
         negated_loc = detect_negated_location(raw_msg, active_jobs)
         detected_category_this_turn = detect_category_label(clean_input)
         detected_brand_this_turn = detect_brand_label(raw_msg, active_jobs)
@@ -636,12 +637,36 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             brand_slot_update = ""
             detected_brand = user_slots.get("brand", "")
 
-        # 廠商名稱剛好也是地名（例如廠商「新興(代招)」vs 高雄市新興區）時，
-        # 這句話講的是廠商，不能把它當成新地區、蓋掉原本鎖定的地區。
+        # 廠商名稱剛好也是地名（例如廠商「新興(代招)」vs 高雄市新興區）時：
+        # - 句子裡地名後面接著「區/鄉/鎮」（「新興區有嗎」）→ 講的是地區；
+        # - 句子裡有「廠商」「公司」→ 講的是廠商，不能把它當成新地區、蓋掉
+        #   原本鎖定的地區；
+        # - 已經鎖定地區、這家廠商在那個地區就有職缺（先問「新北的工作」再問
+        #   「新興有匯款的嗎」，新興(代招)就在新北）→ 講的是廠商；
+        # - 都沒有 → 分不出來，下面步驟 0-3b 讓求職者自己選（兩個都先不記）。
+        location_brand_choice = None
         if extracted_loc and detected_brand_this_turn and clean_text_for_search(extracted_loc) in clean_text_for_search(detected_brand_this_turn):
-            extracted_loc = ""
-            current_location = _locked_location
-            location_slot_update = ""
+            if any(f"{extracted_loc}{suffix}" in raw_msg for suffix in ("區", "鄉", "鎮")):
+                detected_brand_this_turn = ""
+                detected_brand = user_slots.get("brand", "")
+                brand_slot_update = ""
+                is_location_only_turn = (
+                    not (detected_category_this_turn or any(this_turn_labels.values()))
+                    and not is_negative and _utterance_kind != "question"
+                )
+            else:
+                _brand_in_locked_location = bool(_locked_location) and any(
+                    job_matches_brand(j, detected_brand_this_turn) and job_matches_location(j, _locked_location)
+                    for j in active_jobs
+                )
+                if not any(w in raw_msg for w in ("廠商", "公司", "這家")) and not _brand_in_locked_location:
+                    location_brand_choice = (extracted_loc, detected_brand_this_turn)
+                    detected_brand_this_turn = ""
+                    detected_brand = user_slots.get("brand", "")
+                    brand_slot_update = ""
+                extracted_loc = ""
+                current_location = _locked_location
+                location_slot_update = ""
 
         # 換了廠商、這句話又沒提到類別時，上一輪鎖定的類別只在新廠商真的有
         # 這個類別的職缺時才沿用。實測：「蝦皮門市有工作嗎」→「美光有交通車
@@ -697,6 +722,32 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 使用者 2026-09-23 定的原則：「只要不確定的就跳出選項給求職者選擇」。
         # 按鈕送回來的文字都是我們自己組的固定句型，保證下一輪會被判斷成確定
         # 的意思，不會再問一次。
+        _place_choice_reply, _place_choice_buttons = "", []
+        if location_brand_choice:
+            _choice_loc, _choice_brand = location_brand_choice
+            _place_choice_reply = f"想跟您確認一下 😊 您說的「{_choice_loc}」是指{resolve_county_for_location(_choice_loc, active_jobs)}{_choice_loc}區這個地區，還是「{_choice_brand}」這家廠商呢？"
+            _place_choice_buttons = [
+                QuickReplyButton(action=MessageAction(label=f"📍 {_choice_loc}區"[:20], text=f"{_choice_loc}區的工作")),
+                QuickReplyButton(action=MessageAction(label=f"🏢 {_choice_brand}"[:20], text=f"{_choice_brand}{BRAND_CHOICE_SUFFIX}")),
+            ]
+        elif district_choices:
+            _place_choice_reply = f"想跟您確認一下 😊 {'、'.join(district_choices)}都有職缺，請問您說的是哪一個呢？"
+            _place_choice_buttons = [
+                QuickReplyButton(action=MessageAction(label=f"📍 {choice}"[:20], text=f"{choice}的工作"))
+                for choice in district_choices[:12]
+            ]
+        if _place_choice_reply:
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", _place_choice_reply)
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                text=_place_choice_reply, quick_reply=QuickReply(items=_place_choice_buttons),
+            ))
+            log_ai_decision_event(
+                path="direct_intercept", intercept_type="place_clarify",
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
+            return
+
         if pending_intent_clarify:
             _clarify_labels = [l for labels in pending_intent_clarify.values() for l in labels]
             _clarify_label_text = "、".join(f"「{l}」" for l in _clarify_labels)
@@ -1115,8 +1166,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 這句話在設定/調整找工作的條件：講了班別等條件、只講了地區、或明講
         # 「地區／類型／廠商都可以」（放寬按鈕送回來的就是這種句子，原本
         # 「類型都可以」會落到 AI）。
+        # 「地區還是廠商」反問的廠商按鈕（BRAND_CHOICE_SUFFIX）直接列出那家
+        # 廠商的職缺。求職者自己只打廠商名稱（「康寧」）時刻意維持落到 AI
+        # 的既有行為，使用者沒有決定要改。
+        _is_brand_only_turn = bool(detected_brand_this_turn) and raw_msg.strip().endswith(BRAND_CHOICE_SUFFIX)
         _condition_turn = bool(
-            _has_secondary_intent or is_location_only_turn
+            _has_secondary_intent or is_location_only_turn or _is_brand_only_turn
             or scoped_broaden_dims & {"location", "category", "brand"}
         )
 
