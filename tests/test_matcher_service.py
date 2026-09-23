@@ -307,10 +307,12 @@ class CategoryMatchingIgnoresInternalNamingConventionTests(unittest.TestCase):
     def test_genuine_store_job_still_matches_via_public_title(self):
         # 反過來確認：真的門市類職缺（職缺名稱(對外) 本身就有「門市」）仍然
         # 要能正常命中，不能因為這次修正而連真正命中的情況都一起壞掉。
+        # 職務類別照真實資料填「門市人員」：第五輪起職務類別有填時，寬鬆比對
+        # 也不看對外職缺名稱（見 _job_extended_category_text）。
         job = self._job_with_internal_naming(
             internal_title="蝦皮店到店門市夥伴",
             public_title="🧡蝦皮店到店門市夥伴",
-            category="倉儲人員",
+            category="門市人員",
         )
         self.assertTrue(m.job_matches_category_filter(job, "門市", "蝦皮", allow_relaxed=True))
 
@@ -333,7 +335,7 @@ class CategoryMatchingIgnoresInternalNamingConventionTests(unittest.TestCase):
         store_job = self._job_with_internal_naming(
             internal_title="蝦皮店到店門市夥伴",
             public_title="🧡蝦皮店到店門市夥伴",
-            category="倉儲人員",
+            category="門市人員",
         )
         result = m.filter_jobs_by_category_tiered(
             [equipment_job, customer_service_job, backoffice_job, store_job], "門市", "蝦皮"
@@ -866,7 +868,8 @@ class MultiTurnRoundThreeMatcherFixTests(unittest.TestCase):
 
     def test_equipment_staff_is_not_counted_as_manufacturing(self):
         job = {"職缺名稱(對外)": "【雙北基宜】知名企業設備人員", "職務類別": "設備人員"}
-        self.assertEqual(m.distinct_routable_categories_for_jobs([job]), [])
+        # 第五輪起設備人員有自己的「設備/技術」類型（使用者決定），但仍然不算製造/作業員
+        self.assertEqual(m.distinct_routable_categories_for_jobs([job]), ["設備/技術"])
 
     def test_packing_job_is_warehouse_not_manufacturing(self):
         job = {"職缺名稱(對外)": "電商物流理貨包裝員", "職務類別": "理貨人員"}
@@ -938,7 +941,7 @@ class RoundFourUnderstandingMatcherTests(unittest.TestCase):
         self.assertEqual(m.detect_relax_dimensions(c("日領的就好")), set())
 
     def test_condition_words_broaden_all_secondary(self):
-        self.assertEqual(m.detect_scoped_broaden_dimensions(m.clean_text_for_search("條件都不限")), {"leave", "pay", "benefit", "shift"})
+        self.assertEqual(m.detect_scoped_broaden_dimensions(m.clean_text_for_search("條件都不限")), {"leave", "pay", "benefit", "shift", "exclude"})
 
     def test_question_or_demand(self):
         self.assertEqual(m.classify_condition_utterance("可以預支薪水嗎"), "question")
@@ -985,7 +988,8 @@ class RoundFourLocationPrecisionTests(unittest.TestCase):
     def test_earliest_district_wins(self):
         jobs = self._jobs()
         self.assertEqual(m.extract_current_target_location("台南市安南區的工作", "", jobs), "安南")
-        self.assertEqual(m.extract_current_target_location("中壢或八德", "", jobs), "中壢")
+        # 使用者 2026-09-23（第五輪）決定：用「或」連起來的兩個地區都算
+        self.assertEqual(m.extract_current_target_location("中壢或八德", "", jobs), "中壢|八德")
 
     def test_ambiguous_district_uses_context_county(self):
         jobs = self._jobs() + [{"縣市": "台北市", "行政區": "台北市中山區", "_location_search_text": "臺北市臺北市中山區"},
@@ -1016,6 +1020,196 @@ class RoundFourLocationPrecisionTests(unittest.TestCase):
         self.assertFalse(m.job_matches_category_filter(clothing, "餐飲/服務"))
         self.assertTrue(m.job_matches_category_filter(clothing, "門市"))
         self.assertTrue(m.job_matches_category_filter(restaurant, "餐飲/服務"))
+
+
+class RoundFiveUnderstandingMatcherTests(unittest.TestCase):
+    """第五輪多輪對話測試第一批（matcher 端）：更多否定說法、非常/非…不可、
+    沒有標點時否定詞不越界、廠商誤判、別名、放寬只放寬講到的值。"""
+
+    def _jobs(self):
+        return [
+            {"系統廠商名稱": "M打烊班", "職缺名稱": "M打烊班"},
+            {"系統廠商名稱": "文華", "職缺名稱": "文華"},
+            {"系統廠商名稱": "美光(桃園)", "職缺名稱": "美光(桃園)_堆高機"},
+            {"系統廠商名稱": "蝦皮(威獅)(時薪)", "職缺名稱": "蝦皮(威獅)(時薪)"},
+            {"系統廠商名稱": "台灣大哥大客服", "職缺名稱": "台灣大哥大客服"},
+        ]
+
+    def test_more_ways_to_say_no(self):
+        for text in ["沒有夜班的工作", "我不能上夜班", "夜班不行", "夜班就不要了", "不用上夜班", "拒絕夜班", "不接受夜班"]:
+            self.assertEqual(m.extract_shift_labels(text), [], text)
+            self.assertEqual(m.extract_shift_labels(text, negated=True), ["大夜班"], text)
+        self.assertEqual(m.extract_shift_labels("有沒有夜班"), ["大夜班"])
+        self.assertEqual(m.detect_pay_method_labels("能不能日領"), ["日領"])
+        self.assertEqual(m.extract_shift_labels("沒有經驗夜班可以嗎"), ["大夜班"])
+
+    def test_fei_is_not_always_negation(self):
+        self.assertEqual(m.detect_pay_method_labels("我非常需要日領"), ["日領"])
+        self.assertEqual(m.detect_pay_method_labels("非日領不可"), ["日領"])
+        self.assertFalse(m.has_negative_intent("我非常想找桃園的理貨工作"))
+        self.assertTrue(m.has_negative_intent("非夜班"))
+
+    def test_negation_does_not_spill_without_punctuation(self):
+        self.assertEqual(m.detect_pay_method_labels("不要夜班日領就好"), ["日領"])
+        self.assertEqual(m.extract_shift_labels("不要夜班跟大夜", negated=True), ["大夜班"])
+        cc = m.clause_clean_text("不要外送，理貨呢")
+        self.assertEqual(m.detect_category_label(cc), "理貨/倉儲")
+        self.assertEqual(m.detect_negated_category(cc), "外送")
+
+    def test_negated_vendor_is_not_the_brand(self):
+        jobs = self._jobs()
+        for text in ["不要蝦皮", "除了蝦皮以外的", "蝦皮以外的"]:
+            self.assertEqual(m.detect_brand_label(text, jobs), "", text)
+            self.assertEqual(m.detect_negated_brand(text, jobs), "蝦皮", text)
+        self.assertEqual(m.detect_brand_label("不要美光的", jobs), "")
+        self.assertEqual(m.detect_negated_brand("不要美光的", jobs), "美光")
+
+    def test_shift_words_and_streets_are_not_vendors(self):
+        jobs = self._jobs()
+        self.assertEqual(m.detect_brand_label("我想找打烊班", jobs), "")
+        self.assertEqual(m.detect_brand_label("有打烊班嗎", jobs), "")
+        self.assertEqual(m.detect_brand_label("我住文華路附近", jobs), "")
+        self.assertEqual(m.extract_shift_labels("我想找打烊班"), ["晚班"])
+
+    def test_brand_aliases(self):
+        jobs = self._jobs()
+        self.assertEqual(m.detect_brand_label("shopee有缺嗎", jobs), "蝦皮")
+        self.assertEqual(m.detect_brand_label("優步", jobs), "Uber")
+        self.assertEqual(m.detect_brand_label("台哥大有缺嗎", jobs), "台灣大哥大")
+        self.assertTrue(m.job_matches_brand(jobs[4], "台灣大哥大"))
+        self.assertTrue(m._brand_matches_text("台積電", "台積電"))
+
+    def test_everyday_shift_words(self):
+        self.assertEqual(m.extract_shift_labels("桃園有白天班的嗎"), ["早班"])
+        self.assertEqual(m.extract_shift_labels("晚上的"), ["晚班"])
+        self.assertEqual(m.extract_shift_labels("週末可以上的"), ["假日班"])
+        self.assertEqual(m.extract_shift_labels("休六日"), [])
+
+    def test_seeker_side_category_words(self):
+        for text, label in [("檢驗人員的工作", "製造/作業員"), ("品保", "製造/作業員"), ("搬運的工作", "理貨/倉儲")]:
+            self.assertEqual(m.detect_category_label(m.clean_text_for_search(text)), label, text)
+
+    def test_relax_only_the_named_value(self):
+        c = m.clean_text_for_search
+        self.assertEqual(m.detect_relax_labels(c("我不需要日領，月領就好")), {"pay": {"日領"}})
+        self.assertEqual(m.detect_relax_labels(c("不一定要雙週領")), {"pay": {"雙週領"}})
+        self.assertEqual(m.detect_relax_labels(c("休假方式不一定")), {"leave": {"*"}})
+
+    def test_more_scoped_broaden_words(self):
+        c = m.clean_text_for_search
+        self.assertEqual(m.detect_scoped_broaden_dimensions(c("什麼班都可以")), {"shift"})
+        self.assertEqual(m.detect_scoped_broaden_dimensions(c("地方都可以")), {"location"})
+        self.assertEqual(m.detect_scoped_broaden_dimensions(c("哪家都可以")), {"brand"})
+        self.assertEqual(m.detect_scoped_broaden_dimensions(c("縣市不限")), {"location"})
+
+    def test_question_markers(self):
+        self.assertEqual(m.classify_condition_utterance("週領是每週幾"), "question")
+        self.assertEqual(m.classify_condition_utterance("倉儲會很累嗎"), "question")
+        self.assertEqual(m.classify_condition_utterance("作業員是做什麼的"), "question")
+        self.assertEqual(m.classify_condition_utterance("早班還是晚班都可以"), "demand")
+
+    def test_short_message_does_not_match_faq(self):
+        faqs = [{"question": "面試要帶什麼", "answer": "x"}]
+        self.assertIsNone(m.find_high_confidence_faq_match(faqs, "要"))
+        self.assertIsNone(m.find_high_confidence_faq_match(faqs, "什麼"))
+        self.assertIsNotNone(m.find_high_confidence_faq_match(faqs, "請問面試要帶什麼"))
+
+
+class RoundFiveLocationMatcherTests(unittest.TestCase):
+    """第五輪多輪對話測試第二批：地名。"""
+
+    def _jobs(self):
+        return [
+            {"縣市": "台北市", "行政區": "台北市大安區,台北市大同區,台北市中山區"},
+            {"縣市": "台中市", "行政區": "台中市西屯區,台中市西區,台中市北區"},
+            {"縣市": "台南市", "行政區": "台南市中西區,台南市北區"},
+            {"縣市": "新竹縣", "行政區": "新竹縣竹北市,新竹縣竹東鎮"},
+            {"縣市": "新竹市", "行政區": "新竹市北區,新竹市東區"},
+            {"縣市": "苗栗縣", "行政區": "苗栗縣苗栗市,苗栗縣頭份市"},
+            {"縣市": "宜蘭縣", "行政區": "宜蘭縣大同鄉,宜蘭縣礁溪鄉"},
+            {"縣市": "基隆市", "行政區": "基隆市中山區"},
+            {"縣市": "桃園市", "行政區": "桃園市中壢區,桃園市八德區,桃園市平鎮區"},
+        ]
+
+    def _loc(self, text):
+        return m.extract_current_target_location(text, "", self._jobs())
+
+    def test_named_county_is_not_ignored(self):
+        self.assertEqual(self._loc("台中市大安區有工作嗎"), "台中市大安區")
+        self.assertEqual(self._loc("台北市大安區"), "大安")
+
+    def test_district_does_not_straddle_county_name(self):
+        self.assertEqual(self._loc("台中西屯"), "西屯")
+        self.assertEqual(self._loc("台中西區"), "西區")  # 這組資料只有台中有西區
+        self.assertEqual(self._loc("新竹北區"), "新竹市北區")
+        self.assertEqual(self._loc("新竹東區"), "東區")
+
+    def test_county_seat_city_is_not_the_whole_county(self):
+        self.assertEqual(self._loc("苗栗市的工作"), "苗栗縣苗栗市")
+        self.assertEqual(self._loc("苗栗縣的工作"), "苗栗")
+        job = {"縣市": "苗栗縣", "行政區": "苗栗縣頭份市", "_location_search_text": "苗栗縣苗栗縣頭份市"}
+        self.assertFalse(m.job_matches_location(job, "苗栗縣苗栗市"))
+
+    def test_real_district_suffix_is_used(self):
+        self.assertEqual(self._loc("大同鄉有工作嗎"), "宜蘭縣大同鄉")
+        self.assertEqual(self._loc("大同區"), "台北市大同區")
+        self.assertEqual(m.ambiguous_district_choices("中山區有工作嗎", self._jobs()), ["台北市中山區", "基隆市中山區"])
+
+    def test_home_versus_work_place(self):
+        self.assertEqual(self._loc("我住在桃園想去新竹上班"), "新竹")
+        self.assertEqual(self._loc("我住中壢想去台北上班"), "台北")
+        self.assertEqual(self._loc("我住台北"), "台北")
+
+    def test_two_places_both_count(self):
+        self.assertEqual(self._loc("桃園或新竹都可以"), "桃園|新竹")
+        self.assertEqual(self._loc("中壢跟八德"), "中壢|八德")
+        job = {"_location_search_text": "新竹市東區"}
+        self.assertTrue(m.job_matches_location(job, "桃園|新竹"))
+
+    def test_negating_a_qualified_location(self):
+        self.assertTrue(m.location_is_negated("不要中山區", "台北市中山區", self._jobs()))
+        self.assertTrue(m.location_is_negated("不要台北市中山區", "台北市中山區", self._jobs()))
+        self.assertFalse(m.location_is_negated("中山區呢", "台北市中山區", self._jobs()))
+
+
+class RoundFiveFlowMatcherTests(unittest.TestCase):
+    """第五輪多輪對話測試第三批（matcher 端）：新類型、兩個類型都算、排除條件。"""
+
+    def test_new_categories(self):
+        c = m.clean_text_for_search
+        self.assertEqual(m.detect_category_label(c("台北客服的工作")), "客服/行政")
+        self.assertEqual(m.detect_category_label(c("行政人員")), "客服/行政")
+        self.assertEqual(m.detect_category_label(c("設備人員的工作")), "設備/技術")
+        self.assertTrue(m.job_matches_category_filter({"職務類別": "文字客服"}, "客服/行政", allow_relaxed=False))
+        self.assertTrue(m.job_matches_category_filter({"職務類別": "設備人員"}, "設備/技術", allow_relaxed=False))
+
+    def test_categories_in_the_order_they_are_said(self):
+        c = m.clean_text_for_search
+        self.assertEqual(m.detect_category_labels(c("理貨或門市都可以")), ["理貨/倉儲", "門市"])
+        self.assertEqual(m.detect_category_labels(c("蝦皮外送理貨")), ["外送", "理貨/倉儲"])
+
+    def test_two_categories_both_count(self):
+        jobs = [{"職務類別": "理貨人員"}, {"職務類別": "門市人員"}, {"職務類別": "作業員"}]
+        self.assertEqual(len(m.filter_jobs_by_category_tiered(jobs, "理貨/倉儲|門市")), 2)
+
+    def test_public_title_ignored_when_category_is_filled(self):
+        ramen = {"職缺名稱(對外)": "日式連鎖拉麵門市人員", "職務類別": "內場人員,外場人員"}
+        self.assertFalse(m.job_matches_category_filter(ramen, "門市", allow_relaxed=True))
+        self.assertTrue(m.job_matches_category_filter(ramen, "餐飲/服務", allow_relaxed=True))
+
+    def test_exclusions_keep_jobs_that_have_other_options(self):
+        night_only = {"班別": "夜班"}
+        both = {"班別": "早班,夜班"}
+        self.assertTrue(m.job_is_excluded(night_only, {"shift": {"大夜班"}}))
+        self.assertFalse(m.job_is_excluded(both, {"shift": {"大夜班"}}))
+        self.assertTrue(m.job_is_excluded({"領薪方式": "日領,匯款"}, {"pay": {"日領"}}))
+        self.assertFalse(m.job_is_excluded({"領薪方式": "日領,月領,匯款"}, {"pay": {"日領"}}))
+        self.assertTrue(m.job_is_excluded({"職務類別": "外送員"}, {"category": {"外送"}}))
+        self.assertTrue(m.job_is_excluded({"系統廠商名稱": "蝦皮門市"}, {"brand": {"蝦皮"}}))
+        only_zhongli = {"縣市": "桃園市", "行政區": "桃園市中壢區", "_location_search_text": "桃園市桃園市中壢區"}
+        two = {"縣市": "桃園市", "行政區": "桃園市中壢區,桃園市八德區", "_location_search_text": "桃園市桃園市中壢區桃園市八德區"}
+        self.assertTrue(m.job_is_excluded(only_zhongli, {"location": {"中壢"}}))
+        self.assertFalse(m.job_is_excluded(two, {"location": {"中壢"}}))
 
 
 if __name__ == "__main__":
