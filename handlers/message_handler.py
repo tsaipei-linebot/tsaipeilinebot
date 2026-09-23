@@ -823,8 +823,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             return not (_is_program_phrase(raw_msg) or is_precise_hit(raw_msg, active_jobs))
 
         def _ai_form():
-            """同一句話只問 AI 一次；AI 失敗或逾時回傳 None，照原本的流程走。"""
-            if "form" in _ai_state:
+            """同一句話只問 AI 一次（中間被改寫成別的句子就重問）；AI 失敗或逾時回傳 None，照原本的流程走。"""
+            if "form" in _ai_state and _ai_state.get("message") == raw_msg:
                 return _ai_state["form"]
             _ai_state["form"], _ai_state["latency"], _ai_state["message"] = None, 0.0, raw_msg
             if _ai_mode != "on" or not _needs_ai_understanding():
