@@ -9297,3 +9297,106 @@ curl -s -w "\nHTTP %{http_code}\n" -X POST "<服務網址>/api/job-portal/send-m
 （直接呼叫函式的測試驗不到這一段），以及兩個模板 render 後確實有出現
 格式選項、預設勾在 PDF。全部測試（`python3 -m unittest discover -s
 tests -p "test_*.py"`）2324 個全數通過。
+
+## 【待辦計畫】職缺維護系統整個搬離 GAS 到 GCP（2026-09-23 決定，尚未動工）
+
+**這一節是計畫，不是已完成的事。** 2026-09-23 使用者明確決定要把職缺維護
+系統（`job-portal-gas-project`）整個搬到材霈平台，含薪資補款、職缺維護、
+專案合約三條流程。實作還沒開始，下次接手從這裡讀起。
+
+已經完成的只有**階段 1（薪資補款通知信改由平台用 SMTP 寄）**，見上一節。
+
+### 使用者已經拍板的四個決定
+
+1. **Notion 不搬**。職缺資料繼續住在 Notion——招募機器人沛沛也是直接讀
+   Notion，職缺改存 Firestore 的話沛沛整套要跟著改，影響範圍太大；而且
+   同仁本來就會直接開 Notion 看。**只搬「流程」，不搬「職缺資料」**。
+2. **歷史資料全部匯入 Firestore**，試算表封存（不是留在試算表當唯讀）。
+3. **財務仍然需要一份試算表**。所以平台寫入 Firestore 之後要**同步一列
+   回試算表**給財務看，不能只存在平台裡。
+4. LINE webhook 的切換由使用者**挑沒有同仁使用的時段**執行。
+
+### GAS 上目前有什麼（盤點結果）
+
+| 模組 | 行數 | 內容 |
+|---|---|---|
+| `程式碼.js` | 1,577 | LINE webhook 入口、PIN 登入、組織表、doPost 路由 |
+| `Project_Job.js` | 1,813 | 職缺維護：AI 產生文案、主管核准、寫入 Notion |
+| `Project_Salary.js` | 1,259 | 薪資補款：送出、核准、PDF、寄信 |
+| `Project_BatchEnhance.js` | 431 | 定時批次用 AI 優化職缺文案 |
+| `ProjectWorkflowService.js` | 204 | 專案合約送出 |
+
+外部相依：Netlify 表單前端、Google Sheet（員工主管組織表／薪資補款紀錄／
+專案合約紀錄）、Notion（職缺）、Google Drive（佐證照片）、一個獨立的 LINE
+官方帳號。
+
+**平台已經有全部需要的零件**，沒有任何一項要從零開始：Notion client
+（`services/notion_service.py`，讀寫都有）、Vertex AI（`services/ai_service.py`）、
+LINE SDK ＋ `services/flex_service.py`、Firestore、Cloud Storage
+（`hr/storage.py`、`delivery/storage.py` 的既有寫法）、SMTP
+（`services/email_service.py`）、平台帳號與權限系統、Cloud Scheduler。
+
+### 使用者要先準備的六件事
+
+1. **把試算表分享「編輯者」權限給 Cloud Run 服務帳戶**（目前只有檢視者）。
+   因為決定 3，平台之後要寫回試算表。服務帳戶信箱用
+   `gcloud run services describe recruitment-bot --region=asia-east1
+   --project=tsaipei-505807 --format="value(spec.template.spec.serviceAccountName)"`
+   查，印出空白就是用預設的運算服務帳戶。**PR 3 之前要完成。**
+2. **取得那個 LINE 官方帳號的 Channel access token 與 Channel secret**。
+   token 在 GAS 指令碼屬性 `LINE_CHANNEL_ACCESS_TOKEN`；secret 要去 LINE
+   Developers 後台拿。GAS 因為讀不到 HTTP 標頭沒辦法做官方簽章驗證（改用
+   網址密鑰的土法），**平台可以改用正規的簽章驗證**，但需要 Channel
+   secret。**PR 5 之前要完成。**
+3. **查資料量**：補款紀錄幾筆、Drive 佐證照片幾張多大（決定要不要分批）。
+4. **切換前把待審核的清空**⚠️：核准卡片是 GAS 推出去的、按鈕回到 GAS。
+   切換後卡片改由平台發，**切換前已發出、還沒被按的舊卡片按下去會沒反應**。
+   所以切換當天之前要請主管把待審核的補款單全部審完。
+5. **安排切換時段**：真正有空窗的只有最後一步（LINE webhook 改指向）。
+6. **舊系統保留多久**：建議切換後 GAS 先停用不刪、試算表先封存不刪，跑順
+   一個月再清掉，隨時退得回去。
+
+### 階段 2（薪資補款）拆成 7 個 PR
+
+每個 PR 都可以獨立上線、獨立退回。
+
+| # | 內容 | 上線後的影響 |
+|---|---|---|
+| 1 | 資料層：Firestore 結構＋一次性匯入程式（試算表 22 欄全搬）＋`/me`、`/finance` 改讀 Firestore（留開關可切回讀試算表） | 畫面一樣，資料來源換了 |
+| 2 | 照片搬家：Drive → Cloud Storage，舊連結繼續可用 | 無感 |
+| 3 | 試算表同步：平台寫入後同步一列給財務看 | 還不會被觸發 |
+| 4 | 送出流程：表單不再轉手給 GAS，直接寫 Firestore、照片直接進 GCS、後端重算金額 | 送出改由平台處理 |
+| 5 | 核准流程：平台版 LINE 卡片＋webhook 接按鈕＋核准/退回＋寄信 | ⚠️ 要配合準備事項 4、5 |
+| 6 | PDF 產生：平台自己產存查單 | 順便解決批次下載逾時 |
+| 7 | 收尾：拿掉平台對 GAS 的呼叫、`Project_Salary.js` 停用 | GAS 退場 |
+
+**PR 3 一定要在 PR 4 之前上線**——否則平台開始接手寫資料的那一刻，財務的
+試算表就停止更新了。
+
+**PR 1、PR 2 不需要等使用者完成任何準備事項**，隨時可以開工。
+
+### 薪資補款紀錄的欄位（匯入 Firestore 時的對照）
+
+試算表「薪資補款紀錄」分頁共 22 欄，順序照 `Project_Salary.js` 的
+`SalarySheetService._buildRecordFromRow()`：
+
+A 補款單號、B 申請時間、C 申請人姓名、D 申請人 LINE ID、E 員工姓名、
+F 身分證、G 廠商/店家、H 申請日、I 付款日、J 扣款月份、K 補請款月份、
+L 是否可請款、M 補款方式、N 加項總額、O 扣項總額、P 實補總額、Q 備註、
+R 審核狀態、S 核准主管、T 核准時間、U 佐證照片網址、V 匯費。
+
+### 還沒問到答案的問題
+
+**匯入歷史資料時遇到不乾淨的資料要怎麼處理？** 選項：(a) 原樣照搬、
+(b) 能自動修的就修、修不了的列清單（建議）、(c) 有問題就停下來全部給
+使用者看過。**開工前要先問到答案。**
+
+### 階段 3、4（更後面，還沒細拆）
+
+- **階段 3：職缺維護**。Netlify 表單收進平台（**PIN 登入直接廢掉**，改用
+  現有平台帳號，順便解決 `job_portal_sso.py` 那層銜接）、AI 產生文案改用
+  平台的 Vertex AI、核准卡片搬到平台、寫 Notion 用平台的 client、批次強化
+  改用 Cloud Scheduler。做完可以拿掉 `Project_Job.js` 與
+  `Project_BatchEnhance.js`。
+- **階段 4：專案合約＋關燈**。最後一條流程搬完，LINE webhook 改指向平台，
+  GAS 專案停用。
