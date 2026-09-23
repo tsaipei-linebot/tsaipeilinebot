@@ -105,7 +105,22 @@
     </tbody>
 </table>
 {% else %}
-<p class="empty">目前沒有符合條件的車輛。</p>
+<div class="empty-state">
+    {% if not has_any_vehicle %}
+    <div class="empty-state-title">還沒有任何車輛資料</div>
+    <p class="empty-state-text">系統裡目前一台車都沒有，請先按右上角的「新增車輛」建立第一筆。</p>
+    {% elif active_filter_descriptions %}
+    <div class="empty-state-title">🔍 找不到符合的車輛</div>
+    <p class="empty-state-text">
+        找不到{% for description in active_filter_descriptions %}{% if not loop.first %}、{% endif %}<strong>{{ description }}</strong>{% endfor %}的車輛。
+    </p>
+    <p class="empty-state-text">請確認有沒有打錯字，或按下面的按鈕看全部車輛。</p>
+    <p class="empty-state-actions"><a class="btn btn-primary" href="/delivery/vehicles">清除篩選，顯示全部車輛</a></p>
+    {% else %}
+    <div class="empty-state-title">找不到符合的車輛</div>
+    <p class="empty-state-text">這個條件目前沒有符合的車輛。</p>
+    {% endif %}
+</div>
 {% endif %}
 
 <p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>

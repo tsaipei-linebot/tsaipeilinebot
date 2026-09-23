@@ -13,6 +13,7 @@ from delivery.config import (
     WHEEL_TYPES,
 )
 from delivery.templating import templates
+from delivery.vehicle_filter_summary import describe_vehicle_filters
 from delivery.vehicle_report import EVENT_ERROR_MESSAGES
 from delivery.vehicle_status_report import build_fleet_status_report
 
@@ -56,11 +57,31 @@ def vehicle_list(
             if v["rider_cooperation_type"] and v["rider_cooperation_type"]["id"] == cooperation_type
         ]
     service_area_map = {a["id"]: a["name"] for a in repository.list_vehicle_service_areas(include_inactive=True)}
+    cooperation_types = repository.list_cooperation_types()
+    # 「找不到符合的車輛」的提示要分得出兩件事：系統裡本來就一台車都沒有
+    # （第一次使用），還是有車、只是這組條件沒有符合的。後者才需要提示
+    # 使用者檢查條件/清除篩選。有結果時不會多查這一趟（bool(vehicles)
+    # 先短路掉）。
+    has_any_vehicle = bool(vehicles) or bool(repository.list_vehicles())
     return templates.TemplateResponse(
         request,
         "vehicle_list.html",
         {
             "user": current_user(request),
+            "has_any_vehicle": has_any_vehicle,
+            "active_filter_descriptions": describe_vehicle_filters(
+                vehicle_no=vehicle_no,
+                vendor=vendor,
+                status=status,
+                wheel_type=wheel_type,
+                service_area=service_area,
+                cooperation_type=cooperation_type,
+                vendor_map=VENDOR_MAP,
+                vehicle_status_map=VEHICLE_STATUS_MAP,
+                wheel_type_map=WHEEL_TYPE_MAP,
+                service_area_map=service_area_map,
+                cooperation_type_map={c["id"]: c["name"] for c in cooperation_types},
+            ),
             "vendors": VENDORS,
             "vehicle_statuses": VEHICLE_STATUSES,
             "vehicle_status_map": VEHICLE_STATUS_MAP,
@@ -69,7 +90,7 @@ def vehicle_list(
             "wheel_type_map": WHEEL_TYPE_MAP,
             "service_areas": repository.list_vehicle_service_areas(),
             "service_area_map": service_area_map,
-            "cooperation_types": repository.list_cooperation_types(),
+            "cooperation_types": cooperation_types,
             "vehicles": vehicles,
             "filter_vehicle_no": vehicle_no,
             "filter_vendor": vendor,

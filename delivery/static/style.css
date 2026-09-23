@@ -778,6 +778,26 @@ body {
 
 .empty { color: var(--muted); font-size: 14px; }
 
+/* 查詢/篩選沒有結果時的提示區塊（2026-09-23 新增）。
+   原本只有上面的 .empty（淺灰 14px 小字），在一排篩選控制項後面很容易
+   被整個忽略，使用者回報「查詢不到好像不會跳任何資訊」。這個版本有底色
+   跟邊框，一眼看得到，內容也會把這次套用的條件唸回來。目前用在車輛清單
+   （delivery/templates/vehicle_list.html），其他清單頁之後要改也是直接
+   套這組樣式。 */
+.empty-state {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    box-shadow: var(--shadow-sm);
+    padding: 24px 20px;
+    margin: 16px 0;
+    text-align: center;
+}
+.empty-state-title { font-size: 16px; font-weight: 600; color: var(--ink); margin-bottom: 8px; }
+.empty-state-text { color: var(--text); font-size: 14px; margin: 4px 0; }
+.empty-state-text strong { color: var(--brand-dark); }
+.empty-state-actions { margin-top: 16px; margin-bottom: 0; }
+
 /* 使用說明頁（templates/help.html）：一段一個功能區塊的說明文章排版。 */
 .help-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
 .help-section {
