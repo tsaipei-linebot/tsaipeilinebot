@@ -16,7 +16,13 @@ SESSIONS_COLLECTION = "user_sessions"
 # exclude：求職者要排除的條件（「不要夜班」「除了外送」，使用者 2026-09-23
 # 第五輪決定真的幫忙排除），格式「shift:大夜班;category:外送」，見
 # handlers/message_handler.py 的 _parse_exclusions()。
-DEFAULT_SLOTS = {"location": "", "category": "", "shift": "", "leave": "", "brand": "", "pay": "", "benefit": "", "exclude": ""}
+# worktype/salary：全職兼職、薪資下限（使用者 2026-09-23 第六輪決定新增）。
+# shown：剛給求職者看過的職缺（「看更多」翻頁、「這個有交通車嗎」用），格式見
+# handlers/message_handler.py 的 _parse_shown()。
+DEFAULT_SLOTS = {
+    "location": "", "category": "", "shift": "", "leave": "", "brand": "", "pay": "", "benefit": "", "exclude": "",
+    "worktype": "", "salary": "", "shown": "",
+}
 
 # ==========================================
 # 槽位三態機制的「清除」訊號
@@ -59,7 +65,7 @@ def _normalize_session(raw: dict, now: float) -> tuple:
     return session, True
 
 
-def _merge_slot_updates(slots: dict, location: str = "", category: str = "", shift: str = "", leave: str = "", brand: str = "", pay: str = "", benefit: str = "", exclude: str = "") -> dict:
+def _merge_slot_updates(slots: dict, location: str = "", category: str = "", shift: str = "", leave: str = "", brand: str = "", pay: str = "", benefit: str = "", exclude: str = "", worktype: str = "", salary: str = "", shown: str = "") -> dict:
     """三態機制的純邏輯部分：
     - 傳入空字串或不傳：這句話沒提到這個維度，維持原值
     - 傳入 CLEAR_SLOT：使用者明確表示不限/取消，清空該維度
@@ -76,6 +82,9 @@ def _merge_slot_updates(slots: dict, location: str = "", category: str = "", shi
         ("pay", pay),
         ("benefit", benefit),
         ("exclude", exclude),
+        ("worktype", worktype),
+        ("salary", salary),
+        ("shown", shown),
     ]:
         if not value:
             continue
@@ -156,9 +165,9 @@ def _run_in_transaction(user_id: str, mutate):
     return _txn(transaction)
 
 
-def update_user_slots(user_id: str, location: str = "", category: str = "", shift: str = "", leave: str = "", brand: str = "", pay: str = "", benefit: str = "", exclude: str = "") -> dict:
+def update_user_slots(user_id: str, location: str = "", category: str = "", shift: str = "", leave: str = "", brand: str = "", pay: str = "", benefit: str = "", exclude: str = "", worktype: str = "", salary: str = "", shown: str = "") -> dict:
     def _mutate(session):
-        session["slots"] = _merge_slot_updates(session["slots"], location, category, shift, leave, brand, pay, benefit, exclude)
+        session["slots"] = _merge_slot_updates(session["slots"], location, category, shift, leave, brand, pay, benefit, exclude, worktype, salary, shown)
         return session["slots"]
 
     return _run_in_transaction(user_id, _mutate)

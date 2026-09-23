@@ -443,9 +443,9 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         }
         old_slots = dict(location="", category="", shift="", leave="", brand="蝦皮")
 
-        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude=""):
+        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude="", worktype="", salary="", shown=""):
             merged = dict(old_slots)
-            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit), ("exclude", exclude)]:
+            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit), ("exclude", exclude), ("worktype", worktype), ("salary", salary), ("shown", shown)]:
                 if value == h.CLEAR_SLOT:
                     merged[key] = ""
                 elif value:
@@ -2248,8 +2248,8 @@ class MultiTurnLockedCategoryPersistenceTests(unittest.TestCase):
         session_slots = dict(location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude="")
         history = []
 
-        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude=""):
-            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit), ("exclude", exclude)]:
+        def _merge_slots(user_id, location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude="", worktype="", salary="", shown=""):
+            for key, value in [("location", location), ("category", category), ("shift", shift), ("leave", leave), ("brand", brand), ("pay", pay), ("benefit", benefit), ("exclude", exclude), ("worktype", worktype), ("salary", salary), ("shown", shown)]:
                 if value == h.CLEAR_SLOT:
                     session_slots[key] = ""
                 elif value:
@@ -3301,7 +3301,10 @@ class _RoundFourSessionMixin:
         qr = messages[0].quick_reply
         buttons = [item.action.text for item in qr.items] if qr else []
         titles = [j["職缺名稱"] for j in flex.call_args[0][0]] if flex.called else []
-        return dict(text=text, buttons=buttons, titles=titles, ai=ai.called)
+        # 卡片上的快速回覆（「看更多」掛在最後一則訊息上）
+        card_qr = getattr(messages[-1], "quick_reply", None) if len(messages) > 1 else None
+        card_buttons = [item.action.text for item in card_qr.items] if isinstance(getattr(card_qr, "items", None), list) else []
+        return dict(text=text, buttons=buttons, titles=titles, ai=ai.called, card_buttons=card_buttons)
 
 
 class MultiTurnRoundFourUnderstandingTests(_RoundFourSessionMixin, unittest.TestCase):
@@ -3752,7 +3755,8 @@ class MultiTurnRoundFiveFlowTests(_RoundFourSessionMixin, unittest.TestCase):
         self._say("桃園理貨的工作")
         r = self._say(h.RESET_DIRECT_TEXT)
         self.assertIn("清空", r["text"])
-        self.assertEqual(self.session_slots, dict(location="", category="", shift="", leave="", brand="", pay="", benefit="", exclude=""))
+        # 第六輪起多了記住看過哪些職缺的槽位，清空時一樣全部清掉
+        self.assertTrue(all(v == "" for v in self.session_slots.values()), self.session_slots)
 
     def test_apply_names_the_job(self):
         self.history.append({"role": "招募顧問沛沛", "text": "📋【職缺名稱：桃園理貨早班 ｜ 理貨人員】\n\n👉 立即填寫線上履歷：\nhttps://example.com/a"})
@@ -3919,6 +3923,120 @@ class MultiTurnRoundSixExclusionTests(_RoundFourSessionMixin, unittest.TestCase)
         self.assertEqual(self.session_slots["category"], "不限")
         r = self._say("中壢")
         self.assertNotIn("想看哪一種", r["text"])
+
+
+
+class MultiTurnRoundSixNewFeatureTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第六輪多輪對話測試第三批：使用者決定的四項新功能——「看更多」、問剛才
+    看到的職缺、全職/兼職篩選、薪資篩選。"""
+
+    def _jobs(self):
+        def job(name, vendor, district, worktype, salary, benefit="", detail=""):
+            j = self._job(name, ["理貨人員"], vendor, ["桃園市"], [district], "月領", benefit, "排休", "早班")
+            j.update({"全/兼職": worktype, "薪資": salary, "排版工作說明": detail})
+            return j
+        return [
+            job("甲理貨", "甲物流", "桃園市中壢區", "全職", "時薪230", "交通車"),
+            job("乙理貨", "乙物流", "桃園市楊梅區", "兼職", "時薪196~215", "", "📋【職缺名稱：乙理貨】\n・提供員工宿舍（需付水電）"),
+            job("丙理貨", "丙物流", "桃園市八德區", "全職,兼職", "月薪\\$36,000~\\$40,000"),
+            job("丁理貨", "丁物流", "桃園市龜山區", "兼職", "200/H"),
+            job("戊理貨", "戊物流", "桃園市蘆竹區", "全職", "日班薪資 32000 夜班薪資 38000"),
+            job("己理貨", "己物流", "桃園市大園區", "全職", "月薪33-38k"),
+        ]
+
+    def test_more_than_four_says_total_and_pages(self):
+        r = self._say("桃園理貨的工作")
+        self.assertEqual(r["titles"], ["甲理貨", "乙理貨", "丙理貨", "丁理貨"])
+        self.assertIn("共 6 筆", r["text"])
+        self.assertEqual(r["card_buttons"], [h.MORE_JOBS_TEXT])
+        r = self._say(h.MORE_JOBS_TEXT)
+        self.assertEqual(r["titles"], ["戊理貨", "己理貨"])
+        self.assertIn("共 6 筆", r["text"])
+        self.assertNotIn(h.MORE_JOBS_TEXT, r["card_buttons"])
+        r = self._say("還有嗎")
+        self.assertIn("都已經列給您看囉", r["text"])
+        self.assertIn("我想換地區", r["buttons"])
+
+    def test_typed_more_wordings_page_too(self):
+        self._say("桃園理貨的工作")
+        r = self._say("還有其他的嗎？")
+        self.assertEqual(r["titles"], ["戊理貨", "己理貨"])
+
+    def test_more_without_shown_jobs_keeps_old_flow(self):
+        r = self._say("還有嗎")
+        self.assertNotIn("接下來", r["text"])
+
+    def test_this_one_asks_which_when_several_were_shown(self):
+        self._say("桃園理貨的工作")
+        r = self._say("這個有交通車嗎")
+        self.assertIn("哪一筆", r["text"])
+        self.assertEqual(r["buttons"], ["第1個有交通車嗎", "第2個有交通車嗎", "第3個有交通車嗎", "第4個有交通車嗎"])
+        r = self._say(r["buttons"][0])
+        self.assertIn("甲物流", r["text"])
+        self.assertIn("交通車：有", r["text"])
+        self.assertFalse(r["ai"])
+
+    def test_ordinal_questions_use_that_jobs_data(self):
+        self._say("桃園理貨的工作")
+        r = self._say("第一個薪水多少")
+        self.assertIn("薪資：時薪230", r["text"])
+        r = self._say("第2個有宿舍嗎")
+        self.assertIn("員工宿舍", r["text"])
+        r = self._say("第三個有交通車嗎")
+        self.assertIn("沒有寫到", r["text"])
+
+    def test_plural_question_answers_each_shown_job(self):
+        self._say("桃園理貨的工作")
+        r = self._say("這些有交通車嗎")
+        for vendor in ("甲物流", "乙物流", "丙物流", "丁物流"):
+            self.assertIn(vendor, r["text"])
+
+    def test_this_one_after_viewing_detail_is_that_job(self):
+        self._say("桃園理貨的工作")
+        self._say("查看職缺詳情 丙理貨")
+        r = self._say("這個薪水多少")
+        self.assertIn("丙物流", r["text"])
+        self.assertNotIn("甲物流", r["text"])
+
+    def test_ordinal_alone_opens_the_detail(self):
+        self._say("桃園理貨的工作")
+        r = self._say("第二個")
+        self.assertIn("乙理貨", r["text"])
+        self.assertIn("線上履歷", r["text"])
+
+    def test_filler_that_is_a_search(self):
+        self._say("桃園理貨的工作")
+        r = self._say("那個 我想問有交通車的工作嗎")
+        self.assertNotIn("哪一筆", r["text"])
+        self.assertEqual(self.session_slots["benefit"], "交通車")
+
+    def test_worktype_filter_and_exclusion(self):
+        r = self._say("桃園兼職的理貨工作")
+        self.assertEqual(self.session_slots["worktype"], "兼職")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(sorted(r["titles"]), ["丁理貨", "丙理貨", "乙理貨"])
+        self.assertIn("全職/兼職：兼職", r["text"])
+        self._say("全職兼職都可以")
+        self.assertEqual(self.session_slots["worktype"], "")
+        r = self._say("不要兼職")
+        self.assertEqual(self.session_slots["exclude"], "worktype:兼職")
+        self.assertNotIn("乙理貨", r["titles"])
+        self.assertNotIn("丁理貨", r["titles"])
+        self.assertIn("丙理貨", r["titles"])  # 全職兼職都有的不排掉
+
+    def test_hourly_salary_filter(self):
+        r = self._say("桃園理貨時薪200以上")
+        self.assertEqual(self.session_slots["salary"], "時薪200")
+        self.assertEqual(sorted(r["titles"]), ["丁理貨", "甲理貨"])
+        self.assertIn("時薪200元以上", r["text"])
+
+    def test_monthly_salary_is_not_pay_frequency(self):
+        r = self._say("桃園理貨月薪3萬5以上")
+        self.assertEqual(self.session_slots["salary"], "月薪35000")
+        self.assertEqual(self.session_slots["pay"], "")
+        self.assertEqual(sorted(r["titles"]), ["丙理貨", "戊理貨"])
+        r = self._say("薪資都可以")
+        self.assertEqual(self.session_slots["salary"], "")
 
 
 if __name__ == "__main__":

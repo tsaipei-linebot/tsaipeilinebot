@@ -941,7 +941,8 @@ class RoundFourUnderstandingMatcherTests(unittest.TestCase):
         self.assertEqual(m.detect_relax_dimensions(c("日領的就好")), set())
 
     def test_condition_words_broaden_all_secondary(self):
-        self.assertEqual(m.detect_scoped_broaden_dimensions(m.clean_text_for_search("條件都不限")), {"leave", "pay", "benefit", "shift", "exclude"})
+        # 第六輪起多了全職/兼職跟薪資兩項
+        self.assertEqual(m.detect_scoped_broaden_dimensions(m.clean_text_for_search("條件都不限")), {"leave", "pay", "benefit", "shift", "worktype", "salary", "exclude"})
 
     def test_question_or_demand(self):
         self.assertEqual(m.classify_condition_utterance("可以預支薪水嗎"), "question")
@@ -1244,7 +1245,8 @@ class RoundSixUnderstandingMatcherTests(unittest.TestCase):
         self.assertEqual(m.detect_pay_method_labels("兩週領"), ["雙週領"])
         self.assertEqual(m.extract_leave_labels("休禮拜一"), ["休日一"])
         self.assertEqual(m.extract_shift_labels("早上"), ["早班"])
-        self.assertEqual(m.extract_shift_labels("part time"), ["兼職/工讀"])
+        # 第六輪起全職/兼職獨立成一項，不再算在班別裡
+        self.assertEqual(m.extract_worktype_labels("part time"), ["兼職"])
         self.assertEqual(m.extract_shift_labels("I accept anything"), [])
         self.assertEqual(m.detect_category_label(m.clean_text_for_search("送貨的工作")), "外送")
         self.assertEqual(m.detect_category_label(m.clean_text_for_search("櫃台")), "門市")
@@ -1305,6 +1307,54 @@ class RoundSixExclusionLocationMatcherTests(unittest.TestCase):
     def test_county_plus_district_ending_in_ku_is_not_doubled(self):
         jobs = [{"縣市": "嘉義市", "行政區": "嘉義市西區"}, {"縣市": "台中市", "行政區": "台中市東區"}, {"縣市": "新竹市", "行政區": "新竹市東區"}]
         self.assertEqual(m.extract_current_target_location("嘉義市東區", "", jobs), "嘉義市東區")
+
+
+
+class RoundSixNewFeatureMatcherTests(unittest.TestCase):
+    """第六輪第三批：全職/兼職、薪資篩選（matcher 端）。"""
+
+    def test_salary_wordings(self):
+        cases = {
+            "時薪200以上": ["時薪200"], "月薪3萬5": ["月薪35000"], "月薪三萬五以上的工作": ["月薪35000"],
+            "薪水要有四萬": ["月薪40000"], "35k以上": ["月薪35000"], "一個月3萬2": ["月薪32000"],
+            "時薪兩百五": ["時薪250"], "200以上": ["時薪200"],
+        }
+        for text, expected in cases.items():
+            self.assertEqual(m.detect_salary_labels(text), expected, text)
+
+    def test_numbers_that_are_not_salary(self):
+        for text in ("早上8點上班", "我有2個小孩", "時薪多少", "我今年30歲", "時薪200以下", "做一休一 2天"):
+            self.assertEqual(m.detect_salary_labels(text), [], text)
+
+    def test_job_salary_text_formats(self):
+        cases = {
+            "時薪\\$196~215": [("時薪", 196)], "月薪33-38k": [("月薪", 33000)],
+            "月薪\\$31,500-32,100": [("月薪", 31500)], "年薪120萬起": [("月薪", 100000)],
+            "日班薪資 42500  夜班薪資 49000": [("月薪", 42500), ("月薪", 49000)],
+            "月薪35000元 早班時薪\\$196 晚班時薪\\$250": [("月薪", 35000), ("時薪", 196), ("時薪", 250)],
+            "兼職196/ h   全職32000": [("時薪", 196), ("月薪", 32000)],
+            "196+14工時獎金": [("時薪", 196)], "蝦皮內勤(測試)": [],
+        }
+        for text, expected in cases.items():
+            self.assertEqual([(k, round(v)) for k, v in m.job_salary_levels({"薪資": text})], expected, text)
+
+    def test_salary_filter_uses_the_lowest_of_each_part(self):
+        jobs = [{"薪資": "時薪196~215"}, {"薪資": "時薪230"}, {"薪資": "日班 30000 夜班 36000"}, {"薪資": "月薪40000"}]
+        self.assertEqual(m.filter_jobs_by_salary_label(jobs, "時薪200"), [jobs[1]])
+        self.assertEqual(m.filter_jobs_by_salary_label(jobs, "月薪35000"), [jobs[2], jobs[3]])
+        self.assertEqual(m.format_salary_label("月薪35000"), "月薪35,000元以上")
+
+    def test_salary_words_are_not_pay_frequency(self):
+        self.assertEqual(m.detect_pay_method_labels(m.mask_salary_phrases("月薪3萬5")), [])
+        self.assertEqual(m.detect_pay_method_labels(m.mask_salary_phrases("日領 時薪200")), ["日領"])
+
+    def test_worktype(self):
+        self.assertEqual(m.extract_worktype_labels("正職早班"), ["全職"])
+        self.assertEqual(m.extract_shift_labels("正職早班"), ["早班"])
+        self.assertEqual(m.extract_worktype_labels("不要兼職", negated=True), ["兼職"])
+        self.assertEqual(m.job_worktype_labels({"全/兼職": "全職,兼職"}), {"全職", "兼職"})
+        self.assertTrue(m.job_is_excluded({"全/兼職": "兼職"}, {"worktype": {"兼職"}}))
+        self.assertFalse(m.job_is_excluded({"全/兼職": "全職,兼職"}, {"worktype": {"兼職"}}))
 
 
 if __name__ == "__main__":

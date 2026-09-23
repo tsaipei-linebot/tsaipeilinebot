@@ -18,6 +18,7 @@ def _tokenize_search_terms(text: str) -> list:
     candidates = list(dict.fromkeys([
         *LOCATION_CANDIDATES,
         *[syn for syns in SHIFT_SYNONYMS.values() for syn in syns],
+        *[syn for syns in WORKTYPE_SYNONYMS.values() for syn in syns],
         "早上",  # SHIFT_SYNONYMS 只收「早上班」，這裡額外保留原本就有涵蓋的單獨「早上」寫法
         "週休", "周休", "見紅休", "休六日", "四休二", "4休2", "做四休二", "作四休二", "做二休二", "四班二輪", "排休", "輪休",
         "高時薪", "高薪", "時薪高", "日領", "週領", "短期",
@@ -850,9 +851,16 @@ SHIFT_SYNONYMS = {
     "晚班": ["晚班", "小夜", "中班", "下午班", "打烊班", "打烊", "晚上的班", "晚上班", "晚上上班", "晚上"],
     "大夜班": ["大夜", "夜班", "大夜班", "深夜班", "通宵", "半夜", "nightshift"],
     "假日班": ["假日班", "假日", "週末班", "周休兼職", "假日兼職", "週末", "周末", "六日的班", "六日班", "六日上班", "六日可以上"],
-    "兼職/工讀": ["兼職", "打工", "工讀", "pt", "短期工讀", "學生工讀", "兼差", "parttime"],
     "輪班": ["輪班", "四班二輪", "二班二輪", "輪三班", "三班輪", "早晚輪班"],
     "彈性排班": ["彈性排班", "自由排班", "排班彈性", "時段彈性", "不限時段", "自己排班", "自己排時間"]
+}
+
+# 全職/兼職（使用者 2026-09-23 第六輪決定新增這個篩選）。原本「兼職」算在
+# 班別裡，「全職早班」沒辦法兩個都要、「全職」完全聽不懂；改成獨立一項，
+# 比對職缺的「全/兼職」欄位。
+WORKTYPE_SYNONYMS = {
+    "全職": ["全職", "正職", "fulltime", "正式員工"],
+    "兼職": ["兼職", "打工", "工讀", "pt", "短期工讀", "學生工讀", "兼差", "parttime"],
 }
 
 # 休假制度分類。順序有意義：extract_leave_preference() 一次只回傳第一個
@@ -971,17 +979,14 @@ def extract_shift_preference(text: str) -> str:
 
 
 def job_shift_labels(job: dict, include_derived: bool = True) -> set:
-    """include_derived=False 時只看「班別」欄位本身：排除班別時（「不要晚班」）
-    不能因為「全/兼職」欄位是兼職就算成「還有其他班別可選」（第六輪測試：
-    只有晚班的兼職職缺排不掉）。"""
+    """include_derived=False 時只看「班別」欄位本身，不算推導出來的彈性排班。
+    （全職/兼職第六輪起是獨立一項，見 job_worktype_labels。）"""
     labels = set()
     for token in re.split(r'[,，、\s()（）]+', str(job.get("班別") or "")):
         if token.strip():
             labels.update(extract_shift_labels(token))
     if not include_derived:
         return labels
-    if "兼職" in str(job.get("全/兼職") or ""):
-        labels.add("兼職/工讀")
     # 「彈性排班」原本沒有任何職缺的班別會被歸到這一類，求職者講「自己排班」
     # 永遠找不到；休假方式是自由報班、班別寫彈性的都算（第六輪測試）
     if "自由報班" in str(job.get("休假方式") or "") or "彈性" in str(job.get("班別") or ""):
@@ -1079,6 +1084,180 @@ def filter_jobs_by_shift_label(jobs: list, label: str) -> list:
     return [j for j in jobs if wanted & job_shift_labels(j)]
 
 
+def extract_worktype_labels(text: str, negated: bool = False) -> list:
+    return _find_label_mentions(text, WORKTYPE_SYNONYMS.items(), negated)
+
+
+def job_worktype_labels(job: dict) -> set:
+    value = str(job.get("全/兼職") or "")
+    return {label for label in WORKTYPE_SYNONYMS if label in value}
+
+
+def filter_jobs_by_worktype_label(jobs: list, label: str) -> list:
+    wanted = set(label.split("|"))
+    return [j for j in jobs if wanted & job_worktype_labels(j)]
+
+
+# ---------------- 薪資（使用者 2026-09-23 第六輪決定新增這個篩選）----------------
+# 求職者講「時薪200以上」「月薪3萬5」，職缺的「薪資」欄位是同仁手打的文字
+# （「時薪\$196~215」「月薪33-38k」「日班 42500 夜班 49000」「年薪120萬起」），
+# 兩邊都先轉成數字再比。標籤存成「時薪200」「月薪35000」（意思是至少這麼多）。
+_CN_DIGIT = {"一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_AMOUNT_RE = re.compile(
+    r"(?P<num>\d+(?:\.\d+)?|[一二兩三四五六七八九十])\s*(?:(?P<unit>萬|w|W|k|K|千|百)(?P<tail>\d(?!\d)|[一二三四五六七八九](?![萬千百]))?)?"
+)
+_UNIT_MULTIPLIER = {"萬": 10000, "w": 10000, "W": 10000, "k": 1000, "K": 1000, "千": 1000, "百": 100}
+_SALARY_KIND_WORDS = [
+    ("時薪", "時薪"), ("時給", "時薪"), ("每小時", "時薪"), ("一小時", "時薪"),
+    ("月薪", "月薪"), ("月入", "月薪"), ("每月", "月薪"), ("一個月", "月薪"), ("底薪", "月薪"), ("月領", "月薪"),
+    ("年薪", "年薪"),
+]
+_SALARY_GENERIC_WORDS = ("薪水", "薪資", "待遇", "起薪", "賺", "收入", "工資", "領")
+_SALARY_MIN_MARKERS = ("以上", "起跳", "起", "up", "+", "多", "左右")
+_SALARY_RANGE_CONNECTOR_RE = re.compile(r"^\s*(?:[~～\-–—]|至|到)\s*$")
+
+
+def _normalize_salary_text(text: str) -> str:
+    text = str(text or "").translate(str.maketrans("０１２３４５６７８９．", "0123456789."))
+    text = text.replace("\\", "").replace("$", "").replace("NT", "").replace("nt", "")
+    return re.sub(r"(?<=\d)[,，](?=\d{3})", "", text)
+
+
+def _amounts(text: str) -> list:
+    """[(開始位置, 結束位置, 數值, 有沒有單位)]。中文數字一定要帶單位才算
+    （「一個月」「一小時」的「一」不是金額）。"""
+    found = []
+    for m in _AMOUNT_RE.finditer(text):
+        num, unit, tail = m.group("num"), m.group("unit"), m.group("tail")
+        if not num[0].isdigit() and not unit:
+            continue
+        value = float(num) if num[0].isdigit() else _CN_DIGIT[num]
+        if unit:
+            multiplier = _UNIT_MULTIPLIER[unit]
+            value *= multiplier
+            if tail:
+                value += (int(tail) if tail.isdigit() else _CN_DIGIT[tail]) * multiplier / 10
+        found.append((m.start(), m.end(), value, bool(unit)))
+    return found
+
+
+def _salary_kind_before(text: str) -> str:
+    best, best_pos = "", -1
+    for word, kind in _SALARY_KIND_WORDS:
+        pos = text.rfind(word)
+        if pos > best_pos:
+            best, best_pos = kind, pos
+    return best
+
+
+def _kind_by_magnitude(value: float) -> str:
+    if 100 <= value < 2000:
+        return "時薪"
+    if 15000 <= value <= 300000:
+        return "月薪"
+    if value > 300000:
+        return "年薪"
+    return ""
+
+
+def _salary_label(kind: str, value: float) -> str:
+    if kind == "年薪":
+        kind, value = "月薪", value / 12
+    if kind == "時薪" and 100 <= value < 2000:
+        return f"時薪{int(value)}"
+    if kind == "月薪" and 15000 <= value <= 300000:
+        return f"月薪{int(value)}"
+    return ""
+
+
+def detect_salary_labels(text: str) -> list:
+    """「時薪200以上」「月薪3萬5」「薪水要有四萬」「35k以上」→ ["時薪200"] / ["月薪35000"]。
+    一定要有講到薪水（時薪/月薪/薪水…）、帶單位（萬/k），或講「以上／起」，
+    才算在講薪資：不能把「8點上班」「2個人」當成薪資。「以下」不支援。"""
+    text = _normalize_salary_text(text)
+    labels = []
+    previous_end = 0
+    for start, end, value, has_unit in _amounts(text):
+        before = text[max(previous_end, start - 6):start]
+        after = text[end:end + 3].lstrip()
+        previous_end = end
+        if after.startswith("以下") or after.startswith(("點", "歲", "號", "樓", "個", "天", "人", "年", "小時", "分", "休", "班")):
+            continue
+        kind = _salary_kind_before(before)
+        mentioned = bool(kind) or any(w in before for w in _SALARY_GENERIC_WORDS) or has_unit or (
+            after.startswith(_SALARY_MIN_MARKERS) or after.startswith("元以上")
+        )
+        if not mentioned:
+            continue
+        label = _salary_label(kind or _kind_by_magnitude(value), value)
+        if label and label not in labels:
+            labels.append(label)
+    return labels
+
+
+def mask_salary_phrases(text: str) -> str:
+    """「月薪3萬5」是在講薪資多少，不是在講要月領：找發薪方式前先把後面接著
+    金額的「月薪／時薪」拿掉（「日領 時薪200」的日領照算）。"""
+    return re.sub(r"(時薪|月薪|月入|年薪|底薪)(?=\s*[:：]?\s*\$?\s*[\d０-９一二兩三四五六七八九十])", " ", str(text or ""))
+
+
+def job_salary_levels(job: dict) -> list:
+    """職缺「薪資」欄位的每一段薪資 → [(時薪/月薪, 這一段的最低值)]。
+    範圍（196~215、33-38k）取最低的那個；好幾段的（日班 42500 夜班 49000、
+    早班時薪196 晚班時薪250）每段各自算。年薪換成月薪。"""
+    text = _normalize_salary_text(job.get("薪資") or "")
+    amounts = _amounts(text)
+    levels = []
+    i = 0
+    previous_end = 0
+    while i < len(amounts):
+        start, end, value, has_unit = amounts[i]
+        segment_before = text[previous_end:start]
+        if segment_before.rstrip().endswith("+"):
+            # 「196+14工時獎金」的 14 不是另一段薪資
+            previous_end = end
+            i += 1
+            continue
+        if i + 1 < len(amounts) and _SALARY_RANGE_CONNECTOR_RE.match(text[end:amounts[i + 1][0]]):
+            upper = amounts[i + 1]
+            if upper[3] and not has_unit and value < 1000:
+                # 「33-38k」：單位寫在後面那個數字
+                value *= upper[2] / float(re.match(r"\d+(?:\.\d+)?", text[upper[0]:upper[1]]).group())
+            end = upper[1]
+            i += 1
+        kind = _salary_kind_before(segment_before) or _kind_by_magnitude(value)
+        if kind == "年薪":
+            kind, value = "月薪", value / 12
+        if (kind == "時薪" and 100 <= value < 2000) or (kind == "月薪" and 15000 <= value <= 300000):
+            levels.append((kind, value))
+        previous_end = end
+        i += 1
+    return levels
+
+
+def filter_jobs_by_salary_label(jobs: list, label: str) -> list:
+    """「時薪200」：職缺有一段時薪的最低值至少 200 就算。只寫時薪的職缺不跟
+    月薪比（換算要假設每月工時，不確定就不猜）。「|」符合其中一個就算。"""
+    wanted = []
+    for alt in label.split("|"):
+        m = re.match(r"(時薪|月薪)(\d+)$", alt)
+        if m:
+            wanted.append((m.group(1), int(m.group(2))))
+    return [
+        j for j in jobs
+        if any(kind == w_kind and value >= w_min for kind, value in job_salary_levels(j) for w_kind, w_min in wanted)
+    ]
+
+
+def format_salary_label(label: str) -> str:
+    """「時薪200|月薪35000」→「時薪200元以上或月薪35,000元以上」"""
+    parts = []
+    for alt in label.split("|"):
+        m = re.match(r"(時薪|月薪)(\d+)$", alt)
+        parts.append(f"{m.group(1)}{int(m.group(2)):,}元以上" if m else alt)
+    return "或".join(parts)
+
+
 _PAY_FREQUENCY_LABELS = {"日領", "週領", "雙週領", "月領"}
 
 
@@ -1091,6 +1270,11 @@ def job_is_excluded(job: dict, exclusions: dict) -> bool:
             continue
         if dim == "shift":
             labels = job_shift_labels(job, include_derived=False)
+            if labels and labels <= values:
+                return True
+        elif dim == "worktype":
+            # 「不要兼職」不排掉全職、兼職都有的職缺
+            labels = job_worktype_labels(job)
             if labels and labels <= values:
                 return True
         elif dim == "leave":
@@ -1156,6 +1340,8 @@ _SCOPED_BROADEN_DIMENSION_WORDS = {
     "leave": ["休假方式", "休假制度", "休假"],
     "pay": ["發薪方式", "領薪方式", "發薪", "領薪"],
     "benefit": ["福利"],
+    "worktype": ["全職兼職", "全兼職", "全職或兼職", "兼職或全職", "全職跟兼職", "兼職全職"],
+    "salary": ["薪資", "薪水", "待遇", "時薪", "月薪"],
     "exclude": ["排除的條件", "排除條件"],
     "secondary_all": ["其他條件", "條件"],
 }
@@ -1171,7 +1357,7 @@ def detect_scoped_broaden_dimensions(clean_input: str) -> set:
                 break
     if "secondary_all" in dims:
         dims.discard("secondary_all")
-        dims.update({"leave", "pay", "benefit", "shift", "exclude"})
+        dims.update({"leave", "pay", "benefit", "shift", "worktype", "salary", "exclude"})
     return dims
 
 
@@ -1197,6 +1383,8 @@ def detect_relax_labels(clean_input: str, benefit_keywords=()) -> dict:
                + [(k, label) for label, kws in PAY_METHOD_SYNONYMS.items() for k in kws],
         "benefit": [("福利", "*")] + [(k, k) for k in benefit_keywords],
         "shift": [("班別", "*")] + [(k, label) for label, kws in SHIFT_SYNONYMS.items() for k in kws],
+        "worktype": [(k, label) for label, kws in WORKTYPE_SYNONYMS.items() for k in kws],
+        "salary": [(w, "*") for w in ("薪資", "薪水", "待遇", "時薪", "月薪")],
     }
     relaxed = {}
     for dim, pairs in words.items():
@@ -1486,6 +1674,7 @@ def _label_words() -> set:
     return {
         clean_text_for_search(k).lower()
         for keywords in list(SHIFT_SYNONYMS.values()) + [kws for _, kws in LEAVE_BUCKETS] + list(PAY_METHOD_SYNONYMS.values())
+        + list(WORKTYPE_SYNONYMS.values())
         for k in keywords
     }
 
@@ -1886,6 +2075,7 @@ def build_ai_job_candidates(active_jobs: list, query_text: str, current_location
     for key, label_filter in [
         ("shift", filter_jobs_by_shift_label), ("leave", filter_jobs_by_leave_label),
         ("pay", filter_jobs_by_pay_label), ("benefit", filter_jobs_by_benefit_label),
+        ("worktype", filter_jobs_by_worktype_label), ("salary", filter_jobs_by_salary_label),
     ]:
         if slots.get(key):
             narrowed = label_filter(active_jobs, slots[key])
