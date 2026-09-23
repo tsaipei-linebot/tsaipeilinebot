@@ -28,6 +28,7 @@ from services.matcher_service import (
     build_progressive_question, build_ai_job_candidates, build_ai_faq_candidates,
     job_matches_category_filter, has_negative_intent, extract_numeric_salary_preference,
     detect_negated_location, detect_negated_category, has_recognizable_category_or_brand_keyword,
+    is_plain_shortcut_query,
     CATEGORY_KEYWORDS, KNOWN_BRANDS, find_high_confidence_faq_match,
     find_county_level_alternative_jobs, find_same_county_district_labels,
     resolve_county_for_location, find_benefit_matched_jobs, find_pay_method_matched_jobs
@@ -568,6 +569,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             elif detected_brand == "momo":
                 is_momo_intent = True
 
+        # 快速通道只接單純的句子（HANDOFF.md 第 84 項）：多講了其他條件（「momo有兼職嗎」）
+        # 就交給後面的 AI 決策，AI 看得到全兼職、班別、休假等欄位。
+        is_plain_query = is_plain_shortcut_query(raw_msg, active_jobs)
+        if not is_plain_query:
+            is_delivery_intent = is_store_intent = is_momo_intent = False
+
         direct_matches = []
         # 這三個分支各自的「類別/廠商比對通過、但還沒篩地區」候選池，供地區
         # 精準比對落空時，退一步找「同縣市」還有沒有符合條件的職缺用（見下面
@@ -666,7 +673,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             loc_clean = current_location.replace("台", "臺")
             benefit_jobs = [j for j in benefit_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
 
-        if matched_benefit_keyword and benefit_jobs:
+        if matched_benefit_keyword and benefit_jobs and is_plain_shortcut_query(raw_msg, active_jobs, [matched_benefit_keyword]):
             reply_text = f"有的！沛沛為您找到有「{matched_benefit_keyword}」的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
             append_user_history(user_id, "求職者", raw_msg)
             append_user_history(user_id, "招募顧問沛沛", reply_text)
@@ -688,7 +695,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 也要在這裡直接誠實回覆「目前沒有」，不能讓這句話落到下面的 AI
         # 決策保底流程重蹈覆轍。
         matched_pay_method_label, pay_method_jobs = find_pay_method_matched_jobs(raw_msg, active_jobs) if not is_negative else ("", [])
-        if matched_pay_method_label:
+        if matched_pay_method_label and is_plain_query:
             if current_location:
                 loc_clean = current_location.replace("台", "臺")
                 pay_method_jobs = [j for j in pay_method_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]

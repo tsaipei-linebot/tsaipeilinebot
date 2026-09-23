@@ -564,6 +564,61 @@ KNOWN_BRANDS = {
 }
 
 
+# 快速通道只接「只講地區＋類型／廠商／福利／發薪方式」的單純句子（使用者 2026-09-23
+# 決定，HANDOFF.md 第 84 項）：把句子裡程式本來就認得的詞（地名、類型、廠商、發薪
+# 方式、這句命中的福利詞）跟語助詞拿掉，還剩別的字，代表求職者多講了其他條件
+# （例如「momo有兼職嗎」的「兼職」），交給 AI 看完整職缺資料判斷，不走快速通道。
+# 語助詞清單不需要補齊：漏掉的字只會讓句子交給 AI 處理，不會推錯。
+_SHORTCUT_FILLER_WORDS = [
+    "有沒有", "請問", "我想找", "我想要", "我要找", "想找", "想要", "我要", "還有", "附近", "一下",
+    "工作", "職缺", "可以", "看看", "推薦", "你們", "那邊", "那裡", "這邊", "沒有",
+    "有", "嗎", "呢", "的", "啊", "阿", "喔", "哦", "耶", "欸", "那", "請", "在", "缺", "找", "要", "我", "做", "嘛", "沒", "選",
+]
+
+
+def _shortcut_known_place_words() -> list:
+    from services.job_listing_submit_service import TAIWAN_CITY_DISTRICTS
+    words = set(LOCATION_CANDIDATES)
+    for county, districts in TAIWAN_CITY_DISTRICTS.items():
+        words.update({county, county[:2]})
+        for full in districts:
+            core = full[len(county):] if full.startswith(county) else full
+            words.update({full, core})
+            if len(core) > 2:
+                words.add(core[:-1])
+    return [w for w in words if len(w) >= 2]
+
+
+_SHORTCUT_PLACE_WORDS = None
+
+
+def is_plain_shortcut_query(raw_msg: str, active_jobs: list = None, extra_words: list = None) -> bool:
+    """句子是不是只有程式認得的地名、類型、廠商、發薪方式（加上語助詞）。"""
+    global _SHORTCUT_PLACE_WORDS
+    if _SHORTCUT_PLACE_WORDS is None:
+        _SHORTCUT_PLACE_WORDS = _shortcut_known_place_words()
+    words = list(_SHORTCUT_PLACE_WORDS) + list(extra_words or [])
+    for keywords in CATEGORY_KEYWORDS.values():
+        words += keywords
+    for synonyms in KNOWN_BRANDS.values():
+        words += synonyms
+    for synonyms in PAY_METHOD_SYNONYMS.values():
+        words += synonyms
+    for j in active_jobs or []:
+        vendor = str(j.get("系統廠商名稱") or "").strip()
+        if vendor:
+            words += [vendor, _vendor_core_name(vendor)]
+    rest = clean_text_for_search(raw_msg)
+    for w in sorted({clean_text_for_search(x) for x in words if x}, key=len, reverse=True):
+        if w:
+            rest = rest.replace(w, "")
+    for w in _SHORTCUT_FILLER_WORDS:
+        rest = rest.replace(w, "")
+    # 縣市、行政區的「市／區／縣」字尾拿掉地名後會落單
+    rest = re.sub(r"[市區縣鎮鄉~～…\.。:：;；\"'「」😊🙏]+", "", rest)
+    return not rest
+
+
 def has_recognizable_category_or_brand_keyword(clean_input: str) -> bool:
     """統一意圖判斷來源：檢查文字是否包含任何已知工作類別（CATEGORY_KEYWORDS）
     或廠商（KNOWN_BRANDS）關鍵字。取代原本在 message_handler.py 另外維護、

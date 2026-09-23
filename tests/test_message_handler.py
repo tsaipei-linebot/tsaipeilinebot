@@ -14,6 +14,7 @@ _stub_gcp.install()
 
 from linebot.models import QuickReplyButton, MessageAction, TextSendMessage
 from handlers import message_handler as h
+from services.matcher_service import is_plain_shortcut_query
 
 
 class BuildQuickReplyButtonsTests(unittest.TestCase):
@@ -1412,6 +1413,61 @@ class ExpandedBroadenPhraseTests(unittest.TestCase):
         self.assertEqual(kwargs.get("brand"), h.CLEAR_SLOT)
         self.assertEqual(kwargs.get("location"), "")
         self.assertEqual(kwargs.get("category"), "")
+
+
+class PlainShortcutQueryTests(unittest.TestCase):
+    """快速通道只接單純的句子（使用者 2026-09-23 決定，HANDOFF.md 第 84 項）：實測
+    「Momo有兼職嗎」被 momo 快速通道直接推了全職職缺，後面的「兼職」完全沒看。
+    句子多講了其他條件就交給 AI；只講地區＋類型／廠商照樣走快速通道秒回。"""
+
+    def _momo_job(self):
+        return {
+            "職缺名稱": "粉色電商理貨員", "_internal_title": "粉色電商理貨員", "_parsed_title": "粉色電商理貨員",
+            "職缺名稱(對外)": "粉色電商理貨員", "_job_category": "倉儲人員", "職務類別": "倉儲人員",
+            "系統廠商名稱": "momo", "全/兼職": "全職", "_search_text": "momo電商理貨員桃園倉儲",
+            "_location_search_text": "桃園市", "縣市": "桃園市", "行政區": "桃園市楊梅區",
+        }
+
+    def _run(self, text, slots=None):
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-user-plain-shortcut"
+        event.message.text = text
+        line_bot_api = MagicMock()
+        slots = slots or dict(location="桃園", category="", shift="", leave="", brand="")
+        control_message = TextSendMessage(text="AI 決策的控制組回覆")
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=[self._momo_job()]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", return_value=[]), \
+             patch("handlers.message_handler.get_user_slots", return_value=slots), \
+             patch("handlers.message_handler.update_user_slots", return_value=slots), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.create_job_flex_card", return_value="FLEX_CARD"), \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages", return_value=control_message) as mock_ai:
+            h.process_user_message(event, line_bot_api)
+        return mock_ai, line_bot_api
+
+    def test_momo_with_extra_condition_goes_to_ai(self):
+        mock_ai, _ = self._run("Momo有兼職嗎")
+        mock_ai.assert_called_once()
+
+    def test_plain_momo_question_still_uses_shortcut(self):
+        mock_ai, line_bot_api = self._run("桃園有momo嗎？")
+        mock_ai.assert_not_called()
+        args, _ = line_bot_api.reply_message.call_args
+        self.assertEqual(args[1][-1], "FLEX_CARD")
+
+    def test_pay_method_with_extra_condition_goes_to_ai(self):
+        mock_ai, _ = self._run("有日領的兼職嗎")
+        mock_ai.assert_called_once()
+
+    def test_is_plain_shortcut_query_examples(self):
+        jobs = [self._momo_job()]
+        for text in ["桃園外送", "我想找桃園的外送工作", "桃園市中壢區外送", "momo理貨", "中壢有momo嗎？", "新竹縣 竹北沒缺嗎"]:
+            self.assertTrue(is_plain_shortcut_query(text, jobs), text)
+        for text in ["Momo有兼職嗎", "外送員薪水多少", "桃園外送晚班", "門市需要經驗嗎", "有日領的兼職嗎"]:
+            self.assertFalse(is_plain_shortcut_query(text, jobs), text)
 
 
 class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
