@@ -18,7 +18,6 @@ def _tokenize_search_terms(text: str) -> list:
     candidates = list(dict.fromkeys([
         *LOCATION_CANDIDATES,
         *[syn for syns in SHIFT_SYNONYMS.values() for syn in syns],
-        *[syn for syns in WORKTYPE_SYNONYMS.values() for syn in syns],
         "早上",  # SHIFT_SYNONYMS 只收「早上班」，這裡額外保留原本就有涵蓋的單獨「早上」寫法
         "週休", "周休", "見紅休", "休六日", "四休二", "4休2", "做四休二", "作四休二", "做二休二", "四班二輪", "排休", "輪休",
         "高時薪", "高薪", "時薪高", "日領", "週領", "短期",
@@ -31,132 +30,33 @@ def _tokenize_search_terms(text: str) -> list:
 
 def has_negative_intent(text: str) -> bool:
     """判斷是否帶有否定、排除或不要的語氣"""
-    clean = _strip_benign_negation_lookalikes(clean_text_for_search(text))
-    negative_words = [
-        "除了", "不要", "不想", "排除", "不考慮", "不想要", "除了這個", "除了這些", "換別的",
-        "不能", "不接受", "拒絕", "無法", "不可以", "以外", "之外", "沒有", "不行", "不用上",
-    ]
-    if any(w in clean for w in negative_words):
-        return True
-    # 「非」只在「非夜班」這種用法算否定；「非常」不算，「非日領不可」是
-    # 雙重否定（一定要日領），也不算。
-    return "非" in clean and "不可" not in clean
+    clean = clean_text_for_search(text)
+    negative_words = ["除了", "不要", "不想", "排除", "不考慮", "不想要", "除了這個", "除了這些", "換別的", "非"]
+    return any(w in clean for w in negative_words)
 
 
 # ==========================================
 # 否定詞位置感知：判斷某個關鍵字是不是「緊接在否定詞之後」出現
 # 用來區分「不要新莊了改看桃園」裡的「新莊」（被排除）跟「桃園」（正向意圖）
 # ==========================================
-# 第五輪測試補上「沒有夜班的工作」「我不能上夜班」「不接受夜班」這些說法：
-# 原本清單沒收，反而被當成「要夜班」。
-NEGATION_TRIGGERS = [
-    "不要", "不想要", "不想", "除了", "排除", "不考慮",
-    "沒有", "不能", "不接受", "拒絕", "不做", "不上", "無法", "不可以", "不喜歡", "不用上", "不需要上",
-    # 第七輪測試：「沒辦法上夜班」「不方便上夜班」「討厭夜班」「NO夜班」「❌夜班」原本都被當成要夜班
-    "沒辦法", "沒法", "不方便", "不太能", "不適合", "討厭", "受不了", "不愛", "不會做", "no", "❌", "🙅", "不太想", "不太要",
-]
-
-# 長得像否定詞、其實不是的說法：「有沒有夜班」（在問）、「能不能日領」、
-# 「非常想找」。判斷前先拿掉。
-_BENIGN_NEGATION_LOOKALIKES = [
-    "有沒有", "能不能", "可不可以", "要不要", "是不是", "會不會", "非常", "沒有也", "不做不行",
-    "沒有工作經驗", "沒有經驗", "沒有證照", "沒有駕照", "沒有機車", "沒有車",
-]
-
-# 否定詞放在後面的說法：「夜班不行」「夜班就不要了」「蝦皮以外的」。
-_POSTFIX_NEGATION_RE = re.compile(
-    r'^(?:以外|之外)|^(?:的|就|我|也|都|是|真的|比較|先|要){0,2}'
-    r'(?:不行|不要|不考慮|免了|沒辦法|不可以|不能|不接受|排除|不喜歡'
-    # 第六輪測試：「假日不上班」「夜班不做」「夜班做不來」「週末要休息」
-    r'|不上班|不能上班|不能上|沒辦法上|不做|做不來|做不了|休息'
-    # 第七輪測試：「夜班不方便」「夜班不太行」「夜班免」「夜班pass」「夜班NG」「夜班❌」
-    r'|不方便|不太行|不太能|不適合|免|pass|ng|不ok|no|❌|🙅|✖|x)(?:了|啦|喔|耶|欸|吧|呢)*$'
-)
-# 只剩否定詞的子句：「夜班 不要」「夜班，不行」（中間有空格或逗號，第六輪
-# 測試：新住民打字常這樣空格，原本意思整個反過來、被當成要夜班）
-_NEGATION_ONLY_CLAUSE_RE = re.compile(
-    r'^(?:我|就|也|都|真的|先)?(?:不要|不行|不想|不考慮|不喜歡|不接受|不可以|不能|沒辦法|免了'
-    r'|不方便|不太行|不ok|免|pass|ng|no|x|❌|🙅|✖)(?:了|啦|喔|耶|欸|吧|呢)*$'
-)
-
-
-def _strip_benign_negation_lookalikes(window: str) -> str:
-    for phrase in _BENIGN_NEGATION_LOOKALIKES:
-        window = window.replace(phrase, "_" * len(phrase))
-    return window
-
-
-def _negation_trigger_end(clean: str, start: int) -> int:
-    """關鍵字（從 start 開始）前面同一個子句裡的否定詞結束位置，沒有則 -1。"""
-    window_start = max(0, start - 6)
-    window = clean[window_start:start]
-    # 否定詞只管到同一個子句：「不要蝦皮了 高雄有什麼」裡的「高雄」不該被
-    # 前一個子句的「不要」波及（實測會把高雄當成被排除的地區清掉）。
-    pieces = _CLAUSE_BREAK_RE.split(window)
-    offset = window_start + len(window) - len(pieces[-1])
-    segment = _strip_benign_negation_lookalikes(pieces[-1])
-    best = -1
-    for trigger in NEGATION_TRIGGERS:
-        pos = segment.rfind(trigger)
-        if pos != -1:
-            best = max(best, offset + pos + len(trigger))
-    # 「不是兼職的」「不是要夜班」（第七輪測試：原本意思相反，被記成要兼職）。
-    # 只在「不是」緊接在關鍵字前面時算：「我不是學生想找全職」的全職不算。
-    if re.search(r"不是(要|做|找|想要|想找)?$", segment):
-        best = max(best, offset + len(segment))
-    return best
-
-
-def _negation_at(clean: str, start: int, end: int) -> bool:
-    """clean[start:end] 這個關鍵字是不是被否定：前面同一個子句有否定詞，
-    或後面緊接著「不行／就不要了／以外」。「非夜班」算否定，「非日領不可」
-    是雙重否定、不算。"""
-    after_pieces = _CLAUSE_BREAK_RE.split(clean[end:end + 14])
-    after = after_pieces[0]
-    window = _CLAUSE_BREAK_RE.split(clean[max(0, start - 6):start])[-1]
-    if window.replace("非常", "").endswith("非"):
-        return "不可" not in after
-    trigger_end = _negation_trigger_end(clean, start)
-    if trigger_end != -1:
-        # 「沒有日領的話週領也行」「沒有交通車也沒關係」是條件句／放寬，不是
-        # 不要日領、不要交通車（第六輪測試：原本被記成排除，反而藏掉職缺）
-        if clean[max(0, trigger_end - 2):trigger_end] == "沒有" and after.startswith(("的話", "也")):
-            return False
-        return True
-    if _POSTFIX_NEGATION_RE.match(after):
-        return True
-    return after in ("", "的") and len(after_pieces) > 1 and bool(_NEGATION_ONLY_CLAUSE_RE.match(after_pieces[1]))
+NEGATION_TRIGGERS = ["不要", "不想要", "不想", "除了", "排除", "不考慮", "非"]
 
 
 def _keyword_is_negated(text: str, keyword: str) -> bool:
-    """檢查 keyword 在 text 中的出現位置是不是被否定（見 _negation_at）。
+    """檢查 keyword 在 text 中的出現位置，往前 6 個字內有沒有出現否定詞。
     有的話代表使用者是在講「不要/除了 這個關鍵字」，屬於被排除的意圖，不應該當成正向需求採用。
     """
     idx = text.find(keyword)
     if idx == -1:
         return False
-    return _negation_at(text, idx, idx + len(keyword))
-
-
-def clause_clean_text(text: str) -> str:
-    """依標點切成子句、各自清理後用「|」接起來：clean_text_for_search 會把
-    逗號吃掉，「不要外送，理貨呢」直接清理會讓理貨前面碰到「不要」。"""
-    # 英文字之間的空格不算子句分隔：「part time」「LADY M」
-    text = re.sub(r'(?<=[A-Za-z])\s+(?=[A-Za-z])', '', str(text or ""))
-    return "|".join(clean_text_for_search(part) for part in _CLAUSE_PUNCT_RE.split(text))
-
-
-# 「了」當子句結尾（「不要蝦皮了」），但「除了」本身就是否定詞，不能被切開。
-_CLAUSE_BREAK_RE = re.compile(r'[，,。！!？?\s、；;|]|(?<!除)了')
-_CLAUSE_PUNCT_RE = re.compile(r'[，,。！!？?\s、；;]+')
+    window_start = max(0, idx - 6)
+    window = text[window_start:idx]
+    return any(trigger in window for trigger in NEGATION_TRIGGERS)
 
 LOCATION_CANDIDATES = [
     "板橋", "新莊", "三重", "中和", "永和", "土城", "蘆洲", "樹林", "汐止", "林口", "泰山", "五股", "三峽", "鶯歌",
     "桃園", "中壢", "龜山", "蘆竹", "大園", "八德", "平鎮", "楊梅", "龍潭",
-    "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆",
-    # 原本沒收錄的縣市：實測「花蓮有週休二日的工作嗎」抓不到地區，直接回
-    # 「有的！」推薦台北/新北的職缺。
-    "花蓮", "台東", "臺東", "南投", "雲林", "澎湖", "金門", "馬祖", "連江",
+    "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄", "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆"
 ]
 
 # LOCATION_CANDIDATES 裡屬於「縣市層級」（不是行政區層級）的詞——用來讓
@@ -167,7 +67,6 @@ LOCATION_CANDIDATES = [
 _LOCATION_COUNTY_LEVEL_NAMES = {
     "台北", "臺北", "新北", "台中", "臺中", "台南", "臺南", "高雄",
     "新竹", "彰化", "嘉義", "苗栗", "宜蘭", "屏東", "基隆",
-    "花蓮", "台東", "臺東", "南投", "雲林", "澎湖", "金門", "馬祖", "連江",
 }
 
 # 行政區/城市關鍵字 -> 所屬縣市，只給「同縣市鄰近地區退讓建議」這個功能用
@@ -179,7 +78,7 @@ LOCATION_TO_COUNTY = {
     "板橋": "新北市", "新莊": "新北市", "三重": "新北市", "中和": "新北市", "永和": "新北市",
     "土城": "新北市", "蘆洲": "新北市", "樹林": "新北市", "汐止": "新北市", "林口": "新北市",
     "泰山": "新北市", "五股": "新北市", "三峽": "新北市", "鶯歌": "新北市", "新北": "新北市",
-    "桃園": "桃園市", "桃園區": "桃園市", "中壢": "桃園市", "龜山": "桃園市", "蘆竹": "桃園市", "大園": "桃園市",
+    "桃園": "桃園市", "中壢": "桃園市", "龜山": "桃園市", "蘆竹": "桃園市", "大園": "桃園市",
     "八德": "桃園市", "平鎮": "桃園市", "楊梅": "桃園市", "龍潭": "桃園市",
     "台北": "台北市", "臺北": "台北市",
     "台中": "台中市", "臺中": "台中市",
@@ -192,13 +91,6 @@ LOCATION_TO_COUNTY = {
     "宜蘭": "宜蘭縣",
     "屏東": "屏東縣",
     "基隆": "基隆市",
-    "花蓮": "花蓮縣",
-    "台東": "台東縣", "臺東": "台東縣",
-    "南投": "南投縣",
-    "雲林": "雲林縣",
-    "澎湖": "澎湖縣",
-    "金門": "金門縣",
-    "馬祖": "連江縣", "連江": "連江縣",
 }
 
 
@@ -247,79 +139,6 @@ def _strip_admin_suffix(s: str) -> str:
     if len(s) >= 3 and s[-1] in ("市", "縣", "區", "鄉", "鎮"):
         return s[:-1]
     return s
-
-
-def _split_district_token_full(token: str, fallback_county_full: str = "") -> tuple:
-    """跟 _split_district_token() 一樣，但回傳縣市全名（「新竹縣」而不是
-    「新竹」）：新竹縣/新竹市、嘉義縣/嘉義市共用同一個核心字，只存核心字
-    的話，竹北（新竹縣）還原成全名時會變成新竹市，同縣市退讓建議因此推了
-    新竹市的職缺。"""
-    token = token.strip()
-    if not token:
-        return "", ""
-    for full in _COUNTY_FULL_NAMES:
-        for variant in {full, full.replace("台", "臺")}:
-            if token.startswith(variant):
-                return full, _strip_admin_suffix(token[len(variant):].strip())
-    return fallback_county_full, _strip_admin_suffix(token)
-
-
-def _normalize_county_full(name: str) -> str:
-    name = str(name or "").strip().replace("臺", "台")
-    return name if name in _COUNTY_FULL_NAMES else ""
-
-
-def _job_county_fulls(job: dict) -> list:
-    tokens = [_normalize_county_full(c) for c in re.split(r'[,，、\s]+', str(job.get("縣市") or ""))]
-    return [c for c in tokens if c]
-
-
-def _job_district_pairs(job: dict) -> set:
-    """這筆職缺的 (縣市全名, 行政區核心字) 組合。行政區沒寫縣市前綴、「縣市」
-    欄位又列了好幾個縣市時，縣市留空（不知道是哪一個）。"""
-    counties = _job_county_fulls(job)
-    fallback = counties[0] if len(counties) == 1 else ""
-    pairs = set()
-    for token in re.split(r'[,，、\s]+', str(job.get("行政區") or "")):
-        county_full, district_core = _split_district_token_full(token, fallback)
-        if district_core:
-            pairs.add((county_full, district_core))
-    return pairs
-
-
-def build_district_county_full_index(active_jobs: list) -> dict:
-    """跟 build_district_county_index() 一樣，但縣市存全名（見
-    _split_district_token_full() 說明）。"""
-    index = {}
-    for job in active_jobs or []:
-        for county_full, district_core in _job_district_pairs(job):
-            if county_full:
-                index.setdefault(district_core, set()).add(county_full)
-    return index
-
-
-def job_matches_location(job: dict, location: str) -> bool:
-    """職缺是不是在這個地區。先用原本的 _location_search_text 字串比對；
-    「台北市中山區」這種帶縣市的完整寫法再用結構化欄位比一次：職缺的
-    「行政區」只寫「中山區」、「縣市」又列了好幾個縣市時，字串比對會
-    漏掉（「臺北市新北市中山區板橋區」裡沒有「臺北市中山區」）。"""
-    if not location:
-        return True
-    if "|" in location:
-        return any(job_matches_location(job, part) for part in location.split("|") if part)
-    search = job.get("_location_search_text", "")
-    loc_clean = location.replace("台", "臺")
-    if location in search or loc_clean in search:
-        return True
-    county_full = next((f for f in _COUNTY_FULL_NAMES if location.replace("臺", "台").startswith(f)), "")
-    rest = location.replace("臺", "台")[len(county_full):] if county_full else ""
-    if not county_full or not rest:
-        return False
-    district_core = _strip_admin_suffix(rest)
-    pairs = _job_district_pairs(job)
-    return (county_full, district_core) in pairs or (
-        ("", district_core) in pairs and county_full in _job_county_fulls(job)
-    )
 
 
 def _split_district_token(token: str, fallback_county_core: str = "") -> tuple:
@@ -378,16 +197,12 @@ def resolve_county_for_location(location: str, active_jobs: list = None) -> str:
     county = LOCATION_TO_COUNTY.get(location, "")
     if county:
         return county
-    # 「台北市中山區」「嘉義縣」這種本身就帶完整縣市名稱的地點。
-    for full in _COUNTY_FULL_NAMES:
-        if location.startswith(full) or location.startswith(full.replace("台", "臺")):
-            return full
     if not active_jobs:
         return ""
-    counties = build_district_county_full_index(active_jobs).get(location, set())
+    counties = build_district_county_index(active_jobs).get(location, set())
     if len(counties) != 1:
         return ""
-    return next(iter(counties))
+    return _COUNTY_CORE_TO_FULL.get(next(iter(counties)), "")
 
 
 def find_county_level_alternative_jobs(category_matched_jobs: list, target_location: str, active_jobs: list = None) -> list:
@@ -451,7 +266,7 @@ def find_same_county_district_labels(same_county_jobs: list, target_location: st
     return labels
 
 
-def extract_current_target_location(raw_msg: str, history_text: str = "", active_jobs: list = None, context_location: str = "") -> str:
+def extract_current_target_location(raw_msg: str, history_text: str = "", active_jobs: list = None) -> str:
     """從使用者最新訊息擷取鎖定地區（避免被對話歷史中的範例字詞干擾，並跳過被否定的地名）[cite: 1]
 
     分三輪、精準度由高到低檢查，刻意不是單純「查完 LOCATION_CANDIDATES 全部
@@ -464,269 +279,28 @@ def extract_current_target_location(raw_msg: str, history_text: str = "", active
     只有兩者都沒查到時，才退回「縣市層級」的詞。同一個行政區名稱同時存在於
     多個縣市時（例如「東區」台中、台南都有），動態索引保守跳過不猜，讓這句話
     落到既有的 AI 決策保底流程，不要冒著答非所問的風險猜一個。"""
-    # 一句話裡可能同時出現好幾個行政區層級的地名，全部找出來再挑：
-    # - 跟縣市同名的地名（「桃園」；職缺資料裡的「宜蘭市」「苗栗市」核心字
-    #   也是「宜蘭」「苗栗」）句子裡還有更精確的地名時不算：「桃園市八德區」
-    #   原本照清單順序先命中桃園、「宜蘭縣礁溪鄉」先命中宜蘭，變成整個縣市。
-    # - 被另一個較長地名整個包住的不算；跨在縣市名稱上的不算（「台中西屯」
-    #   裡的「中西」、「新竹北區」裡的「竹北」，第五輪測試）。
-    # - 「住在X想去Y上班」的 X 是住的地方，有其他地名時不算。
-    # - 其餘挑最早出現的（「台南市安南區」的「安南」比「南區」早出現）；
-    #   「桃園或新竹都可以」這種用「或／跟」連起來的，全部都算，存成
-    #   「桃園|新竹」（使用者 2026-09-23 決定）。
-    county_spans = _county_mentions(raw_msg)
-    matches = []
     for loc in LOCATION_CANDIDATES:
         if loc in _LOCATION_COUNTY_LEVEL_NAMES:
             continue
-        pos = raw_msg.find(loc)
-        if pos == -1 or _keyword_is_negated(raw_msg, loc):
-            continue
-        # 「桃園區」是桃園市底下的一個區，不是整個桃園市。
-        value = "桃園區" if loc == "桃園" and "桃園區" in raw_msg else loc.replace("臺", "台")
-        matches.append((pos, loc, value))
-
-    # 縣轄市（「苗栗市」「宜蘭市」）：原本變成整個苗栗縣。
-    for seat_core, county_full in _COUNTY_SEAT_CITIES.items():
-        for variant in {seat_core, seat_core.replace("台", "臺")}:
-            pos = raw_msg.find(f"{variant}市")
-            if pos != -1 and not _keyword_is_negated(raw_msg, f"{variant}市"):
-                matches.append((pos, f"{variant}市", f"{county_full}{seat_core}市"))
+        if loc in raw_msg and not _keyword_is_negated(raw_msg, loc):
+            return loc.replace("臺", "台")
 
     if active_jobs:
-        district_index = build_district_county_full_index(active_jobs)
-        district_names = _district_full_names(active_jobs)
-        context_county = resolve_county_for_location(context_location, active_jobs) if context_location else ""
-        for district_core, all_counties in district_index.items():
-            # 同一個區名可能出現好幾次（「新竹東區或台南東區」），每一次各自判斷
-            positions = [i for i in range(len(raw_msg)) if raw_msg.startswith(district_core, i)]
-            for pos in positions:
-                if _negation_at(raw_msg, pos, pos + len(district_core)):
-                    continue
-                counties = set(all_counties)
-                span = (pos, pos + len(district_core))
-                if any(s < span[1] and span[0] < e and not (s <= span[0] and span[1] <= e) for s, e, _ in county_spans):
-                    continue
-                typed = next((f"{district_core}{s}" for s in ("區", "鄉", "鎮", "市") if raw_msg.startswith(f"{district_core}{s}", pos)), "")
-                if district_core[-1] in ("區", "鄉", "鎮", "市"):
-                    typed = typed or district_core
-                names = district_names.get(district_core, {})
-                if typed and len(counties) > 1:
-                    # 講了「大同鄉」就只看真的叫大同鄉的縣市（台北市是大同區）；剩一個
-                    # 時要組完整寫法，不然只寫「大同」會連台北的一起比對到。
-                    narrowed = {c for c in counties if names.get(c, typed) == typed}
-                    if len(narrowed) == 1:
-                        only = next(iter(narrowed))
-                        matches.append((pos, district_core, f"{only}{typed}"))
-                        continue
-                    counties = narrowed or counties
-                # 句子裡緊接在區名前面講了縣市（「台中市大安區」「台中市北區」）：
-                # 照求職者講的縣市組完整寫法。資料裡沒有這個縣市的這個區時，
-                # 找不到就老實說沒有，不能推別的縣市的職缺（第五、六輪測試）。
-                # 中間只能隔空白：「新北或桃園」「台中、彰化」的或／、是在列兩個
-                # 地方，不是「新北市的桃園區」（第八輪測試）。只講「新竹」「嘉義」
-                # 時縣跟市都算，「新竹竹北」的竹北在新竹縣，不能組成新竹市竹北區。
-                named_before = []
-                for s, e, full in county_spans:
-                    if 0 <= pos - e <= 1 and not raw_msg[e:pos].strip():
-                        if raw_msg[s:e] in ("新竹", "嘉義"):
-                            named_before.extend(f"{raw_msg[s:e]}{suffix}" for suffix in ("市", "縣"))
-                        else:
-                            named_before.append(full)
-                if named_before:
-                    county_full = next((c for c in reversed(named_before) if c in counties), named_before[-1])
-                    if len(counties) == 1 and county_full in counties:
-                        matches.append((pos, district_core, district_core))
-                    else:
-                        matches.append((pos, district_core, f"{county_full}{names.get(county_full) or typed or district_core + '區'}"))
-                    continue
-                if len(counties) == 1:
-                    matches.append((pos, district_core, district_core))
-                    continue
-                # 同一個區名在好幾個縣市都有（例如台北市、基隆市都有中山區）時，
-                # 原本一律跳過，「台北市中山區」就退回成「整個台北」。這句話本身
-                # 有講是哪個縣市時，組成「台北市中山區」精準比對；沒講的話，看
-                # 上一輪記住的地區在哪個縣市（先問「台北」再問「中山區呢」）。
-                qualified = _qualify_ambiguous_district(raw_msg, district_core, counties, context_county, names)
-                if qualified:
-                    matches.append((pos, district_core, qualified))
+        district_index = build_district_county_index(active_jobs)
+        # 依地名長度由長到短檢查，避免短地名先命中、蓋掉更精確的地名。
+        for district_core in sorted(district_index.keys(), key=len, reverse=True):
+            if len(district_index[district_core]) != 1:
+                continue
+            if district_core in raw_msg and not _keyword_is_negated(raw_msg, district_core):
+                return district_core
 
-    if len(matches) > 1:
-        matches = [m for m in matches if m[2] != "桃園" and m[2] not in _COUNTY_CORE_TO_FULL] or matches
-        matches = [
-            m for m in matches
-            if not any(
-                o[0] <= m[0] and m[0] + len(m[1]) <= o[0] + len(o[1]) and len(o[1]) > len(m[1])
-                for o in matches
-            )
-        ]
-
-    county_matches = []
     for loc in LOCATION_CANDIDATES:
         if loc not in _LOCATION_COUNTY_LEVEL_NAMES:
             continue
-        # 每個出現的位置都看：「不要新竹縣了，新竹市有嗎」第一個新竹被否定、
-        # 第二個才是要找的（第七輪測試）
-        pos = raw_msg.find(loc)
-        while pos != -1 and _negation_at(raw_msg, pos, pos + len(loc) + (1 if raw_msg[pos + len(loc):pos + len(loc) + 1] in ("縣", "市") else 0)):
-            pos = raw_msg.find(loc, pos + 1)
-        if pos == -1:
-            continue
-        # 後面緊接著行政區的縣市名只是在修飾那個區（「台中市西屯區」）
-        loc_end = pos + len(loc)
-        if any(
-            (0 <= m[0] - loc_end <= 1 and not raw_msg[loc_end:m[0]].strip("縣市 ")) or pos <= m[0] < loc_end
-            for m in matches
-        ):
-            continue
-        value = loc.replace("臺", "台")
-        # 新竹、嘉義的縣跟市是兩個不同的縣市，求職者有講清楚時要分開，
-        # 原本「嘉義縣」會連嘉義市的職缺一起列出。
-        if loc in ("新竹", "嘉義"):
-            for full in (f"{loc}縣", f"{loc}市"):
-                if raw_msg.find(full) == pos:
-                    value = full
-        county_matches.append((pos, loc, value))
+        if loc in raw_msg and not _keyword_is_negated(raw_msg, loc):
+            return loc.replace("臺", "台")
 
-    everything = sorted(matches + county_matches)
-    not_home = [m for m in everything if "住" not in raw_msg[max(0, m[0] - 3):m[0]]]
-    if not_home and len(not_home) < len(everything):
-        matches = [m for m in matches if m in not_home]
-        county_matches = [m for m in county_matches if m in not_home]
-        everything = not_home
-
-    if len(everything) > 1:
-        chosen = [everything[0]]
-        for m in everything[1:]:
-            between = raw_msg[chosen[-1][0] + len(chosen[-1][1]):m[0]]
-            if any(c in between for c in ("或", "跟", "和", "、", "還是", "及", "/")) and m[2] not in [c[2] for c in chosen]:
-                chosen.append(m)
-        if len(chosen) > 1:
-            return "|".join(c[2] for c in chosen)
-
-    if matches:
-        return min(matches, key=lambda m: (m[0], -len(m[1])))[2]
-    if county_matches:
-        return county_matches[0][2]
     return ""
-
-
-# 跟縣同名的縣轄市：「苗栗市」是苗栗縣底下的一個市，不是整個苗栗縣。
-_COUNTY_SEAT_CITIES = {
-    "苗栗": "苗栗縣", "彰化": "彰化縣", "南投": "南投縣", "屏東": "屏東縣",
-    "宜蘭": "宜蘭縣", "花蓮": "花蓮縣", "台東": "台東縣",
-}
-
-
-def _county_mentions(raw_msg: str) -> list:
-    """句子裡講到的縣市：(開始, 結束, 縣市全名)。只講核心字「新竹」「嘉義」
-    時縣跟市都算。"""
-    spans = []
-    for full in _COUNTY_FULL_NAMES:
-        for variant in {full, full.replace("台", "臺")}:
-            pos = raw_msg.find(variant)
-            while pos != -1:
-                spans.append((pos, pos + len(variant), full))
-                pos = raw_msg.find(variant, pos + 1)
-    for full in _COUNTY_FULL_NAMES:
-        core = full[:-1]
-        for variant in {core, core.replace("台", "臺")}:
-            pos = raw_msg.find(variant)
-            while pos != -1:
-                if not any(s == pos for s, _, _ in spans):
-                    spans.append((pos, pos + len(variant), full))
-                pos = raw_msg.find(variant, pos + 1)
-    return spans
-
-
-def _district_full_names(active_jobs: list) -> dict:
-    """{行政區核心字: {縣市全名: 行政區完整名稱}}，例如 {"大同": {"台北市": "大同區",
-    "宜蘭縣": "大同鄉"}}：組完整寫法時用真正的「區/鄉/鎮/市」，不能一律用「區」。"""
-    names = {}
-    for job in active_jobs or []:
-        counties = _job_county_fulls(job)
-        fallback = counties[0] if len(counties) == 1 else ""
-        for token in re.split(r'[,，、\s]+', str(job.get("行政區") or "")):
-            token = token.strip()
-            county_full, district_core = _split_district_token_full(token, fallback)
-            if not district_core or not county_full:
-                continue
-            rest = token
-            for variant in {county_full, county_full.replace("台", "臺")}:
-                if rest.startswith(variant):
-                    rest = rest[len(variant):]
-            names.setdefault(district_core, {})[county_full] = rest.strip()
-    return names
-
-
-def _qualify_ambiguous_district(raw_msg: str, district_core: str, counties: set, context_county: str = "", names: dict = None) -> str:
-    """counties 是縣市全名。句子裡講了完整縣市名（「新竹縣」）優先；只講
-    核心字（「台北」）時要剛好只對到一個縣市；都沒講時用 context_county
-    （上一輪記住的地區所在縣市）。"""
-    variants = lambda c: {c, c.replace("台", "臺")}
-    exact = [c for c in counties if any(v in raw_msg for v in variants(c))]
-    core = [c for c in counties if any(v[:-1] in raw_msg for v in variants(c))]
-    if len(exact) == 1:
-        county_full = exact[0]
-    elif not exact and len(core) == 1:
-        county_full = core[0]
-    elif not exact and not core and context_county in counties:
-        county_full = context_county
-    else:
-        return ""
-    if names and names.get(county_full):
-        return f"{county_full}{names[county_full]}"
-    if district_core[-1] in ("區", "鄉", "鎮", "市"):
-        return f"{county_full}{district_core}"
-    for suffix in ("區", "鄉", "鎮", "市"):
-        if f"{district_core}{suffix}" in raw_msg:
-            return f"{county_full}{district_core}{suffix}"
-    return f"{county_full}{district_core}區"
-
-
-def ambiguous_district_choices(raw_msg: str, active_jobs: list = None) -> list:
-    """句子裡講了一個好幾個縣市都有的區名（「中山區」台北、基隆都有），又
-    沒辦法從句子或上一輪的地區判斷是哪一個時，回傳可以選的完整寫法（例如
-    ["台北市中山區", "基隆市中山區"]），讓求職者自己選（使用者 2026-09-23 定
-    的原則）。只在區名後面真的接著「區/鄉/鎮」時才算，避免「中山路」這種
-    地址誤判。完整寫法用資料裡真正的名稱（台北市大同「區」、宜蘭縣大同
-    「鄉」），講了「大同鄉」就只剩宜蘭縣、不用問。"""
-    if not active_jobs:
-        return []
-    names = _district_full_names(active_jobs)
-    for district_core, counties in build_district_county_full_index(active_jobs).items():
-        if len(counties) < 2:
-            continue
-        typed = next((f"{district_core}{s}" for s in ("區", "鄉", "鎮") if f"{district_core}{s}" in raw_msg), "")
-        if district_core[-1] in ("區", "鄉", "鎮") and district_core in raw_msg:
-            typed = district_core
-        if not typed or _keyword_is_negated(raw_msg, typed):
-            continue
-        core_names = names.get(district_core, {})
-        options = [c for c in _COUNTY_FULL_NAMES if c in counties and core_names.get(c, typed) in (typed, district_core)]
-        if len(options) < 2:
-            continue
-        return [f"{c}{core_names.get(c, typed)}" for c in options]
-    return []
-
-
-def location_is_negated(raw_msg: str, locked_location: str, active_jobs: list = None) -> bool:
-    """這句話是不是在否定目前記住的地區。記住的是「台北市中山區」這種完整
-    寫法時，「不要中山區」「不要台北市中山區」也算（原本比不到）。"""
-    if not locked_location:
-        return False
-    negated = detect_negated_location(raw_msg, active_jobs)
-    if negated and (negated == locked_location or negated in locked_location):
-        return True
-    for part in locked_location.split("|"):
-        core = part
-        for full in _COUNTY_FULL_NAMES:
-            if core.startswith(full):
-                core = core[len(full):]
-        for candidate in {part, core, _strip_admin_suffix(core)}:
-            if candidate and candidate in raw_msg and _keyword_is_negated(raw_msg, candidate):
-                return True
-    return False
 
 
 def detect_negated_location(raw_msg: str, active_jobs: list = None) -> str:
@@ -750,10 +324,6 @@ def detect_negated_location(raw_msg: str, active_jobs: list = None) -> str:
         if loc not in _LOCATION_COUNTY_LEVEL_NAMES:
             continue
         if loc in raw_msg and _keyword_is_negated(raw_msg, loc):
-            # 「不要新竹縣」只排除新竹縣，不能連新竹市一起（第七輪測試：嘉義同理）
-            for suffix in ("縣", "市"):
-                if f"{loc}{suffix}" in raw_msg and _keyword_is_negated(raw_msg, f"{loc}{suffix}"):
-                    return f"{loc}{suffix}".replace("臺", "台")
             return loc.replace("臺", "台")
 
     return ""
@@ -778,13 +348,15 @@ def build_benefit_keyword_index(active_jobs: list) -> dict:
     填上福利關鍵字，系統下一次讀取職缺資料就自動認得，不需要改程式碼。"""
     index = {}
     for job in active_jobs:
-        for token in _job_benefit_tokens(job):
+        benefit_field = str(job.get("福利") or "").strip()
+        if not benefit_field:
+            continue
+        for token in re.split(r'[,，、\s]+', benefit_field):
+            token = token.strip()
+            if not token:
+                continue
             index.setdefault(token, []).append(job)
     return index
-
-
-def _job_benefit_tokens(job: dict) -> list:
-    return [t.strip() for t in re.split(r'[,，、\s]+', str(job.get("福利") or "")) if t.strip()]
 
 
 def find_benefit_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
@@ -830,32 +402,24 @@ def find_benefit_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
 # 任何自由文字欄位，杜絕 AI 自行從行銷文案延伸推論的風險。
 # ==========================================
 PAY_METHOD_SYNONYMS = {
-    "日領": ["日領", "當日領", "當天領", "日結", "做一天領一天", "天天領", "每天領", "dailypay"],
-    "週領": ["週領", "周領", "週結", "周結", "weeklypay"],
-    "雙週領": ["雙週領", "雙周領", "兩週領", "兩周領", "兩個禮拜領"],
-    "月領": ["月領", "月薪", "領月薪", "月薪制"],
+    "日領": ["日領", "當日領", "當天領", "日結"],
+    "週領": ["週領", "周領"],
+    "雙週領": ["雙週領", "雙周領"],
+    "月領": ["月領"],
     "年薪": ["年薪", "年領"],
     "現金": ["現金"],
     "匯款": ["匯款", "轉帳"],
-    # Notion「領薪方式」欄位真實存在的選項，原本沒收錄，問到會落到 AI。
-    "街口": ["街口"],
-    "預支": ["預支", "借支"],
 }
-
-
-def detect_pay_method_labels(text: str, negated: bool = False) -> list:
-    """「雙週領」裡面包含「週領」：被較長關鍵字涵蓋的不重複算。"""
-    return _find_label_mentions(text, PAY_METHOD_SYNONYMS.items(), negated)
 
 
 def detect_pay_method_label(text: str) -> str:
     """從文字中判斷求職者指定的發薪方式，跳過被否定的詞（例如「不要日領的」）。"""
-    labels = detect_pay_method_labels(text)
-    return labels[0] if labels else ""
-
-
-def _job_pay_method_tokens(job: dict) -> set:
-    return {clean_text_for_search(t) for t in re.split(r'[,，、\s]+', str(job.get("領薪方式") or "")) if t.strip()}
+    clean = clean_text_for_search(text)
+    for label, synonyms in PAY_METHOD_SYNONYMS.items():
+        for syn in synonyms:
+            if clean_text_for_search(syn) in clean and not _keyword_is_negated(text, syn):
+                return label
+    return ""
 
 
 def find_pay_method_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
@@ -870,754 +434,42 @@ def find_pay_method_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
     label = detect_pay_method_label(raw_msg)
     if not label:
         return "", []
-    # 逐一比對欄位裡的每個選項，不用子字串：避免「週領」命中「雙週領」。
-    return label, filter_jobs_by_pay_label(active_jobs, label)
+    label_clean = clean_text_for_search(label)
+    matched = [j for j in active_jobs if label_clean in clean_text_for_search(str(j.get("領薪方式") or ""))]
+    return label, matched
 
 
 # 班別同義詞清單：獨立成模組常數，讓 extract_shift_preference 跟 _tokenize_search_terms
 # 共用同一份來源，避免兩處各自維護、覆蓋範圍不一致。
 SHIFT_SYNONYMS = {
-    "早班": ["早班", "早上班", "白班", "日班", "常日班", "正常班", "全日班", "白天班", "白天", "早上的班", "早上上班", "上午班", "早上", "dayshift"],
-    "晚班": ["晚班", "小夜", "中班", "下午班", "打烊班", "打烊", "晚上的班", "晚上班", "晚上上班", "晚上"],
-    "大夜班": ["大夜", "夜班", "大夜班", "深夜班", "通宵", "半夜", "nightshift"],
-    "假日班": ["假日班", "假日", "週末班", "周休兼職", "假日兼職", "週末", "周末", "六日的班", "六日班", "六日上班", "六日可以上"],
-    "輪班": ["輪班", "四班二輪", "二班二輪", "輪三班", "三班輪", "早晚輪班"],
-    "彈性排班": ["彈性排班", "自由排班", "排班彈性", "時段彈性", "不限時段", "自己排班", "自己排時間"]
+    "早班": ["早班", "早上班", "白班", "日班", "常日班", "正常班"],
+    "晚班": ["晚班", "小夜", "中班", "下午班"],
+    "大夜班": ["大夜", "夜班", "大夜班", "深夜班", "通宵"],
+    "假日班": ["假日班", "假日", "週末班", "周休兼職", "假日兼職"],
+    "兼職/工讀": ["兼職", "打工", "工讀", "pt", "短期工讀", "學生工讀", "兼差"],
+    "輪班": ["輪班", "四班二輪", "二班二輪", "輪三班"],
+    "彈性排班": ["彈性排班", "自由排班", "排班彈性", "時段彈性", "不限時段"]
 }
-
-# 全職/兼職（使用者 2026-09-23 第六輪決定新增這個篩選）。原本「兼職」算在
-# 班別裡，「全職早班」沒辦法兩個都要、「全職」完全聽不懂；改成獨立一項，
-# 比對職缺的「全/兼職」欄位。
-WORKTYPE_SYNONYMS = {
-    "全職": ["全職", "正職", "fulltime", "正式員工"],
-    "兼職": ["兼職", "打工", "工讀", "pt", "短期工讀", "學生工讀", "兼差", "parttime"],
-}
-
-# 休假制度分類。順序有意義：extract_leave_preference() 一次只回傳第一個
-# 命中的分類（給職缺欄位的單一值分類用），「四三輪休」要排在「排休」
-# （含「輪休」）前面。做四休二跟做二休二是不同的班表（使用者 2026-09-23
-# 決定分開）。刻意不收「休假日」：「你們休假日也要上班嗎」是在問問題，
-# 不是要找週休二日的職缺。
-LEAVE_BUCKETS = [
-    # 「週末休」「假日休息」「假日不上班」「六日休」是在講休假，不是要假日班
-    # （第六輪測試：原本被當成要假日班，意思整個反過來）
-    ("週休二日", ["週休", "周休", "見紅休", "固定休六日", "休六日", "休雙休",
-               "週末休", "周末休", "週末放假", "假日休息", "假日休", "假日不上班", "週末不上班",
-               "六日休", "週六日休", "六日固定休", "週末要休息", "假日要休息",
-               # 「固定休假日」是假日固定休，不是要假日班（使用者 2026-09-23 實測回報）
-               "固定休假日", "休假日固定", "假日固定休", "休假日休", "休假日要休", "要休假日", "休假日不上班"]),
-    ("做四休二", ["四休二", "4休2", "作四休二", "做四休二", "做4休2", "4天休2天", "四天休二天", "四天休兩天"]),
-    # 不收「四班二輪」：那是班別（輪班），原本同時被當成休假做二休二，把唯一
-    # 一筆四班二輪（永豐餘，排休）藏起來（第六輪測試）
-    ("做二休二", ["做二休二", "作二休二", "二休二", "2休2", "做2休2", "做兩休兩", "兩天休兩天", "2天休2天"]),
-    ("做三休三", ["做三休三", "作三休三", "三休三", "3休3", "做3休3"]),
-    ("四三輪休", ["四三輪休"]),
-    ("休日一", ["固定休日一", "休日一", "休禮拜一", "固定休週一", "休週一", "週一休", "禮拜一休"]),
-    ("自由報班", ["自由報班"]),
-    ("排休", ["排休", "輪休", "排班休", "月休八天", "月休8天"]),
-]
-
-
-_LIST_CONNECTORS = ("跟", "和", "或", "及", "與", "還有", "也不要", "")
-_POSITIVE_MARKERS = ("就好", "就可以", "可以", "為主", "優先", "比較好", "也行", "也可以", "的就好", "都好")
-
-
-def _span_is_negated(clean: str, start: int, end: int = None, hits=()) -> bool:
-    end = start + 1 if end is None else end
-    if not _negation_at(clean, start, end):
-        return False
-    # 沒有標點時，一個「不要」原本會一路管到後面：「不要夜班日領就好」連日領
-    # 都被當成不要。否定詞跟這個詞中間夾著另一個條件詞時：中間是「跟/和/或」
-    # 這種列舉（「不要夜班跟大夜」）才算一起否定；這個詞後面接著「就好／
-    # 可以」時是新的正向要求。
-    trigger_end = _negation_trigger_end(clean, start)
-    if trigger_end == -1:
-        return True
-    between = [h for h in hits if h[0] >= trigger_end and h[1] <= start]
-    if not between:
-        return True
-    connector = clean[max(h[1] for h in between):start]
-    after = _CLAUSE_BREAK_RE.split(clean[end:end + 8])[0]
-    if any(after.startswith(m) for m in _POSITIVE_MARKERS):
-        return False
-    return connector in _LIST_CONNECTORS
-
-
-def _find_label_mentions(text: str, label_keywords, negated: bool = False) -> list:
-    """回傳這段文字提到的所有標籤（依出現順序）。一段文字被較長的關鍵字
-    涵蓋時只算較長的那個：「雙週領」不會同時算成週領、「假日班」不會同時
-    算成早班（「日班」）、「四三輪休」不會同時算成排休（「輪休」）。
-    否定詞只看每個關鍵字自己所在的子句：「不要夜班，日領的就好」的日領
-    沒有被否定。negated=True 時反過來只回傳被否定的標籤。"""
-    # 先依標點切成子句再各自清理：clean_text_for_search 會把逗號吃掉，
-    # 「不要夜班，日領的就好」直接清理會讓日領前面 6 個字碰到「不要」。
-    clean = clause_clean_text(text)
-    hits = []
-    for label, keywords in label_keywords:
-        for keyword in keywords:
-            kw = clean_text_for_search(keyword).lower()
-            if not kw:
-                continue
-            start = clean.find(kw)
-            while start != -1:
-                # 英文關鍵字要整個字：「pt」不能從「accept」裡面抓出來（第六輪測試）
-                is_latin = kw.isascii() and kw.isalpha()
-                before = clean[start - 1] if start > 0 else ""
-                after = clean[start + len(kw)] if start + len(kw) < len(clean) else ""
-                if not (is_latin and ((before.isascii() and before.isalpha()) or (after.isascii() and after.isalpha()))):
-                    hits.append((start, start + len(kw), label))
-                start = clean.find(kw, start + 1)
-    kept = [
-        h for h in hits
-        if not any(o[0] <= h[0] and h[1] <= o[1] and (o[1] - o[0]) > (h[1] - h[0]) for o in hits)
-    ]
-    # 「中間夾著另一個條件詞」要看所有種類的條件詞：「不要夜班日領就好」
-    # 找發薪方式時，中間的「夜班」是班別。
-    other_hits = kept + _condition_word_hits(clean)
-    labels = []
-    for start, end, label in sorted(kept):
-        if _span_is_negated(clean, start, end, other_hits) == negated and label not in labels:
-            labels.append(label)
-    return labels
-
-
-def _condition_word_hits(clean: str) -> list:
-    words = _label_words() | {clean_text_for_search(k).lower() for kws in CATEGORY_KEYWORDS.values() for k in kws}
-    hits = []
-    for w in words:
-        if not w:
-            continue
-        start = clean.find(w)
-        while start != -1:
-            hits.append((start, start + len(w), w))
-            start = clean.find(w, start + 1)
-    return hits
-
-
-def extract_shift_labels(text: str, negated: bool = False) -> list:
-    # 先把休假說法遮掉：「週末休」裡的「週末」不是要假日班
-    text = str(text or "")
-    for _, keywords in LEAVE_BUCKETS:
-        for kw in keywords:
-            if any(w in kw for w in ("週末", "周末", "假日", "六日")):
-                text = text.replace(kw, "　" * len(kw))
-    # 「休假日」是休息的日子，不是要假日班；「休假日也可以上班」才是
-    text = re.sub(r"休假日(?!\s*(也|都)?\s*(可以|能|要|會)?\s*上)", "　　　", text)
-    return _find_label_mentions(text, SHIFT_SYNONYMS.items(), negated)
 
 
 def extract_shift_preference(text: str) -> str:
     """從文字中判斷求職者偏好的時段/班別（支援同義詞與工時縮寫）[cite: 1]"""
-    labels = extract_shift_labels(text)
-    return labels[0] if labels else ""
-
-
-def job_shift_labels(job: dict, include_derived: bool = True) -> set:
-    """include_derived=False 時只看「班別」欄位本身，不算推導出來的彈性排班。
-    （全職/兼職第六輪起是獨立一項，見 job_worktype_labels。）"""
-    labels = set()
-    for token in re.split(r'[,，、\s()（）]+', str(job.get("班別") or "")):
-        if token.strip():
-            labels.update(extract_shift_labels(token))
-    if not include_derived:
-        return labels
-    # 「彈性排班」原本沒有任何職缺的班別會被歸到這一類，求職者講「自己排班」
-    # 永遠找不到；休假方式是自由報班、班別寫彈性的都算（第六輪測試）
-    if "自由報班" in str(job.get("休假方式") or "") or "彈性" in str(job.get("班別") or ""):
-        labels.add("彈性排班")
-    return labels
-
+    clean = clean_text_for_search(text).lower()
+    for label, keys in SHIFT_SYNONYMS.items():
+        if any(k.lower() in clean for k in keys):
+            return label
+    return ""
 
 def extract_leave_preference(text: str) -> str:
     """從文字中判斷求職者偏好的休假制度（支援多種休假模式）[cite: 1]"""
     clean = clean_text_for_search(text)
-    for label, keywords in LEAVE_BUCKETS:
-        if any(clean_text_for_search(k) in clean for k in keywords):
-            return label
+    if any(k in clean for k in ["週休", "周休", "見紅休", "固定休六日", "休六日", "休假日", "休雙休"]):
+        return "週休二日"
+    if any(k in clean for k in ["四休二", "4休2", "作四休二", "做四休二", "四班二輪", "做二休二", "2休2"]):
+        return "四休二"
+    if any(k in clean for k in ["排休", "輪休", "排班休", "月休八天", "月休8天"]):
+        return "排休"
     return ""
-
-
-def extract_leave_labels(text: str, negated: bool = False) -> list:
-    return _find_label_mentions(text, LEAVE_BUCKETS, negated)
-
-
-def _classify_all_leave_labels(text: str) -> set:
-    """一筆職缺的「休假方式」欄位可能同時填了兩種制度（例如同仁實際填過
-    「做二休二,排休」，代表這筆職缺依班別不同分別適用這兩種休假制度）。
-    extract_leave_preference() 一次只會依優先順序判斷出「第一個命中」的
-    一種分類，直接對整串欄位值呼叫一次，「排休」就會因為「週休/四休二」
-    的關鍵字檢查排在前面且先命中「做二休二」而完全被忽略，導致求職者問
-    「有排休的工作嗎」時，這筆其實也真的有排休的職缺永遠比對不到。這裡
-    改成先用逗號/頓號/空白拆開欄位裡的每一段分別判斷，再加上對整串欄位值
-    判斷一次當保險（涵蓋「做二休二」這種本身就帶有頓號可能被拆壞的最小
-    單位寫法），回傳「這筆職缺實際涵蓋的所有休假制度分類」。"""
-    labels = set()
-    for token in re.split(r'[,，、\s]+', str(text or "")):
-        token = token.strip()
-        if not token:
-            continue
-        label = extract_leave_preference(token)
-        if label:
-            labels.add(label)
-    whole_label = extract_leave_preference(str(text or ""))
-    if whole_label:
-        labels.add(whole_label)
-    return labels
-
-
-def find_leave_matched_jobs(raw_msg: str, active_jobs: list) -> tuple:
-    """依 extract_leave_preference() 判斷出的休假制度，直接比對職缺結構化的
-    「休假方式」欄位，完全不看任何自由文字欄位。跟 find_pay_method_matched_jobs()
-    是同一種寫法：刻意重複使用 extract_leave_preference() 這同一套分類邏輯，
-    同時套用在求職者的話跟職缺自己的「休假方式」欄位值上——確保兩邊都歸類到
-    同一個標準用語才算符合，不需要另外維護一份對照表。回傳 (休假制度標籤,
-    符合的職缺清單)；沒有命中休假關鍵字則回傳 ("", [])。"""
-    if not active_jobs:
-        return "", []
-    label = extract_leave_preference(raw_msg)
-    if not label:
-        return "", []
-    return label, filter_jobs_by_leave_label(active_jobs, label)
-
-
-# 下面「依標籤篩選」的函式，給跨輪記住的條件用：條件是上一輪講的，這一句
-# 話裡已經沒有那個詞，不能再從訊息重新判斷。標籤可以是「日領|週領」這種
-# 用「|」分隔的多個值（求職者講「日領或週領都可以」），符合其中一個就算。
-def filter_jobs_by_leave_label(jobs: list, label: str) -> list:
-    wanted = set(label.split("|"))
-    return [j for j in jobs if wanted & _classify_all_leave_labels(j.get("休假方式") or "")]
-
-
-def filter_jobs_by_pay_label(jobs: list, label: str) -> list:
-    """「日領|週領」符合其中一個就算；「日領+現金」（發薪頻率跟發薪管道一起講，
-    例如「日領現金的工作」）兩個都要有。"""
-    alternatives = [
-        {clean_text_for_search(p) for p in alt.split("+") if p}
-        for alt in label.split("|") if alt
-    ]
-    return [j for j in jobs if any(alt <= _job_pay_method_tokens(j) for alt in alternatives)]
-
-
-def combine_pay_labels(labels: list, text: str = "") -> str:
-    """同一句話講了發薪頻率跟發薪管道（「日領現金」），代表兩個都要：存成
-    「日領+現金」。用「或」連起來（「日領或現金都可以」）時維持符合一個就算。"""
-    frequency = [l for l in labels if l in _PAY_FREQUENCY_LABELS]
-    channel = [l for l in labels if l not in _PAY_FREQUENCY_LABELS]
-    if frequency and channel and not any(w in text for w in ("或", "還是", "都可以", "都行")):
-        return "|".join(f"{f}+{c}" for f in frequency for c in channel)
-    return "|".join(labels)
-
-
-def filter_jobs_by_benefit_label(jobs: list, label: str) -> list:
-    wanted = set(label.split("|"))
-    return [j for j in jobs if wanted & set(_job_benefit_tokens(j))]
-
-
-def filter_jobs_by_shift_label(jobs: list, label: str) -> list:
-    wanted = set(label.split("|"))
-    return [j for j in jobs if wanted & job_shift_labels(j)]
-
-
-def extract_worktype_labels(text: str, negated: bool = False) -> list:
-    return _find_label_mentions(text, WORKTYPE_SYNONYMS.items(), negated)
-
-
-def job_worktype_labels(job: dict) -> set:
-    value = str(job.get("全/兼職") or "")
-    return {label for label in WORKTYPE_SYNONYMS if label in value}
-
-
-def filter_jobs_by_worktype_label(jobs: list, label: str) -> list:
-    wanted = set(label.split("|"))
-    return [j for j in jobs if wanted & job_worktype_labels(j)]
-
-
-# ---------------- 薪資（使用者 2026-09-23 第六輪決定新增這個篩選）----------------
-# 求職者講「時薪200以上」「月薪3萬5」，職缺的「薪資」欄位是同仁手打的文字
-# （「時薪\$196~215」「月薪33-38k」「日班 42500 夜班 49000」「年薪120萬起」），
-# 兩邊都先轉成數字再比。標籤存成「時薪200」「月薪35000」（意思是至少這麼多）。
-_CN_DIGIT = {"一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
-_AMOUNT_RE = re.compile(
-    r"(?P<num>\d+(?:\.\d+)?|[一二兩三四五六七八九十])\s*(?:(?P<unit>萬|w|W|k|K|千|百)(?P<tail>\d(?!\d)|[一二三四五六七八九](?![萬千百]))?)?"
-)
-_UNIT_MULTIPLIER = {"萬": 10000, "w": 10000, "W": 10000, "k": 1000, "K": 1000, "千": 1000, "百": 100}
-_SALARY_KIND_WORDS = [
-    ("時薪", "時薪"), ("時給", "時薪"), ("每小時", "時薪"), ("一小時", "時薪"),
-    ("月薪", "月薪"), ("月入", "月薪"), ("每月", "月薪"), ("一個月", "月薪"), ("底薪", "月薪"), ("月領", "月薪"),
-    ("年薪", "年薪"),
-    # 日薪：職缺的薪資欄位都寫時薪或月薪，沒辦法比，不記成條件（第七輪測試：
-    # 「日薪1500以上」原本被當成時薪 1,500）
-    ("日薪", "日薪"), ("日領", "日薪"), ("一天", "日薪"), ("每天", "日薪"), ("一日", "日薪"),
-]
-# 「我卡債50萬」「我想存30萬」「欠了20萬」不是在講想要的薪水
-_SALARY_NOT_WAGE_WORDS = ("欠", "債", "存", "借", "貸", "賠", "罰", "繳", "花了", "買", "賣", "罰單", "存款", "負債")
-_SALARY_GENERIC_WORDS = ("薪水", "薪資", "待遇", "起薪", "賺", "收入", "工資", "領")
-_SALARY_MIN_MARKERS = ("以上", "起跳", "起", "up", "+", "多", "左右")
-_SALARY_RANGE_CONNECTOR_RE = re.compile(r"^\s*(?:[~～\-–—]|至|到)\s*$")
-
-
-def _normalize_salary_text(text: str) -> str:
-    text = str(text or "").translate(str.maketrans("０１２３４５６７８９．", "0123456789."))
-    text = text.replace("\\", "").replace("$", "").replace("NT", "").replace("nt", "")
-    return re.sub(r"(?<=\d)[,，](?=\d{3})", "", text)
-
-
-def _amounts(text: str) -> list:
-    """[(開始位置, 結束位置, 數值, 有沒有單位)]。中文數字一定要帶單位才算
-    （「一個月」「一小時」的「一」不是金額）。"""
-    found = []
-    for m in _AMOUNT_RE.finditer(text):
-        num, unit, tail = m.group("num"), m.group("unit"), m.group("tail")
-        if not num[0].isdigit() and not unit:
-            continue
-        value = float(num) if num[0].isdigit() else _CN_DIGIT[num]
-        if unit:
-            multiplier = _UNIT_MULTIPLIER[unit]
-            value *= multiplier
-            if tail:
-                value += (int(tail) if tail.isdigit() else _CN_DIGIT[tail]) * multiplier / 10
-        found.append((m.start(), m.end(), value, bool(unit)))
-    return found
-
-
-def _salary_kind_before(text: str) -> str:
-    best, best_pos = "", -1
-    for word, kind in _SALARY_KIND_WORDS:
-        pos = text.rfind(word)
-        if pos > best_pos:
-            best, best_pos = kind, pos
-    return best
-
-
-def _kind_by_magnitude(value: float) -> str:
-    if 100 <= value < 2000:
-        return "時薪"
-    if 15000 <= value <= 300000:
-        return "月薪"
-    if value > 300000:
-        return "年薪"
-    return ""
-
-
-def _salary_label(kind: str, value: float) -> str:
-    if kind == "年薪":
-        kind, value = "月薪", value / 12
-    if kind == "時薪" and 100 <= value < 2000:
-        return f"時薪{int(value)}"
-    if kind == "月薪" and 15000 <= value <= 300000:
-        return f"月薪{int(value)}"
-    return ""
-
-
-def detect_salary_labels(text: str) -> list:
-    """「時薪200以上」「月薪3萬5」「薪水要有四萬」「35k以上」→ ["時薪200"] / ["月薪35000"]。
-    一定要有講到薪水（時薪/月薪/薪水…）、帶單位（萬/k），或講「以上／起」，
-    才算在講薪資：不能把「8點上班」「2個人」當成薪資。「以下」不支援。"""
-    text = _normalize_salary_text(text)
-    labels = []
-    previous_end = 0
-    for start, end, value, has_unit in _amounts(text):
-        before = text[max(previous_end, start - 6):start]
-        after = text[end:end + 4].lstrip()
-        previous_end = end
-        # 「100多公斤」「200多人」「8點」「30歲」不是薪資
-        if after.startswith("以下") or re.match(r"多?(點|歲|號|樓|個|天|人|年|小時|分|休|班|公斤|kg|公分|cm|次|台|張|件)", after):
-            continue
-        if any(w in text[max(0, start - 6):start] for w in _SALARY_NOT_WAGE_WORDS):
-            continue
-        kind = _salary_kind_before(before)
-        # 只有單位（「50萬」）還不夠：要講到薪水，或講「以上／起」「的工作」
-        mentioned = bool(kind) or any(w in before for w in _SALARY_GENERIC_WORDS) or (
-            after.startswith(_SALARY_MIN_MARKERS) or after.startswith("元以上")
-        ) or (has_unit and re.match(r"(元)?(的)?(工作|職缺)|(元)?(也|就)(可以|行|好)", after))
-        if not mentioned:
-            continue
-        label = _salary_label(kind or _kind_by_magnitude(value), value)
-        if label and label not in labels:
-            labels.append(label)
-    return labels
-
-
-def mask_salary_phrases(text: str) -> str:
-    """「月薪3萬5」「月薪至少三萬」「月薪多少」是在講薪資多少，不是在講要月領：
-    找發薪方式前先把這種「月薪／時薪」拿掉（「日領 時薪200」的日領照算）。
-    「上個月薪水」的「月薪」是剛好連在一起的字，也拿掉（第七輪測試）。"""
-    text = re.sub(r"個月薪", "個月 薪", str(text or ""))
-    return re.sub(
-        r"(時薪|月薪|月入|年薪|底薪)(?=\s*(?:[:：]|要|至少|最少|大概|約|有|高|多少|起|破|超過|\$|[\d０-９一二兩三四五六七八九十]))",
-        " ", text)
-
-
-_VAGUE_SALARY_RE = re.compile(r"高薪|高時薪|薪水高|薪資高|時薪高|月薪高|待遇好|薪水好|薪水多|錢多|時薪最高|薪水最高|最高的時薪|最高薪")
-_DAILY_SALARY_RE = re.compile(r"(日薪|日領|一天|每天|一日)\s*\$?\s*[\d一二兩三四五六七八九十]")
-
-
-def detect_unparsed_salary_request(text: str) -> str:
-    """有講到薪資、但沒辦法變成篩選條件的說法：「薪水高一點」→ "vague"、
-    「日薪1500」→ "daily"，其他 → ""。呼叫端用來提醒求職者可以怎麼講。"""
-    text = _normalize_salary_text(text)
-    if _DAILY_SALARY_RE.search(text) and not detect_salary_labels(text):
-        return "daily"
-    if _VAGUE_SALARY_RE.search(clean_text_for_search(text)) and not detect_salary_labels(text):
-        return "vague"
-    return ""
-
-
-def job_salary_levels(job: dict) -> list:
-    """職缺「薪資」欄位的每一段薪資 → [(時薪/月薪, 這一段的最低值)]。
-    範圍（196~215、33-38k）取最低的那個；好幾段的（日班 42500 夜班 49000、
-    早班時薪196 晚班時薪250）每段各自算。年薪換成月薪。"""
-    text = _normalize_salary_text(job.get("薪資") or "")
-    amounts = _amounts(text)
-    levels = []
-    i = 0
-    previous_end = 0
-    while i < len(amounts):
-        start, end, value, has_unit = amounts[i]
-        segment_before = text[previous_end:start]
-        if segment_before.rstrip().endswith("+"):
-            # 「196+14工時獎金」的 14 不是另一段薪資
-            previous_end = end
-            i += 1
-            continue
-        if i + 1 < len(amounts) and _SALARY_RANGE_CONNECTOR_RE.match(text[end:amounts[i + 1][0]]):
-            upper = amounts[i + 1]
-            if upper[3] and not has_unit and value < 1000:
-                # 「33-38k」：單位寫在後面那個數字
-                value *= upper[2] / float(re.match(r"\d+(?:\.\d+)?", text[upper[0]:upper[1]]).group())
-            end = upper[1]
-            i += 1
-        kind = _salary_kind_before(segment_before) or _kind_by_magnitude(value)
-        if kind == "年薪":
-            kind, value = "月薪", value / 12
-        if (kind == "時薪" and 100 <= value < 2000) or (kind == "月薪" and 15000 <= value <= 300000):
-            levels.append((kind, value))
-        previous_end = end
-        i += 1
-    return levels
-
-
-def filter_jobs_by_salary_label(jobs: list, label: str) -> list:
-    """「時薪200」：職缺有一段時薪的最低值至少 200 就算。只寫時薪的職缺不跟
-    月薪比（換算要假設每月工時，不確定就不猜）。「|」符合其中一個就算。"""
-    wanted = []
-    for alt in label.split("|"):
-        m = re.match(r"(時薪|月薪)(\d+)$", alt)
-        if m:
-            wanted.append((m.group(1), int(m.group(2))))
-    return [
-        j for j in jobs
-        if any(kind == w_kind and value >= w_min for kind, value in job_salary_levels(j) for w_kind, w_min in wanted)
-    ]
-
-
-def format_salary_label(label: str) -> str:
-    """「時薪200|月薪35000」→「時薪200元以上或月薪35,000元以上」"""
-    parts = []
-    for alt in label.split("|"):
-        m = re.match(r"(時薪|月薪)(\d+)$", alt)
-        parts.append(f"{m.group(1)}{int(m.group(2)):,}元以上" if m else alt)
-    return "或".join(parts)
-
-
-_PAY_FREQUENCY_LABELS = {"日領", "週領", "雙週領", "月領"}
-
-
-def job_is_excluded(job: dict, exclusions: dict) -> bool:
-    """求職者要排除的條件（使用者 2026-09-23 第五輪決定真的幫忙排除）。
-    exclusions 是 {維度: 值集合}。職缺本身還有其他選項時不排除：
-    「不要夜班」不排掉「早班、夜班」都有的職缺，只排掉只有夜班的。"""
-    for dim, values in exclusions.items():
-        if not values:
-            continue
-        if dim == "shift":
-            labels = job_shift_labels(job, include_derived=False)
-            if labels and labels <= values:
-                return True
-        elif dim == "worktype":
-            # 「不要兼職」不排掉全職、兼職都有的職缺
-            labels = job_worktype_labels(job)
-            if labels and labels <= values:
-                return True
-        elif dim == "leave":
-            labels = _classify_all_leave_labels(job.get("休假方式") or "")
-            if labels and labels <= values:
-                return True
-        elif dim == "pay":
-            # 發薪頻率（日領/週領/月領）跟發薪管道（匯款/現金）分開看：
-            # 「不要日領」只排掉發薪頻率只有日領的職缺。
-            tokens = set(_job_pay_method_tokens(job))
-            wanted = {clean_text_for_search(v) for v in values}
-            frequency = {t for t in tokens if t in _PAY_FREQUENCY_LABELS}
-            for group in (frequency, tokens - frequency):
-                if group & wanted and group <= wanted:
-                    return True
-        elif dim == "benefit":
-            if values & set(_job_benefit_tokens(job)):
-                return True
-        elif dim == "category":
-            # 職缺同時屬於其他類型時不排除：「不要作業員」不排掉職務類別是
-            # 「倉儲人員,作業員」的職缺（第六輪測試）
-            if any(job_matches_category_filter(job, v, allow_relaxed=False) for v in values) and not any(
-                job_matches_category_filter(job, other, allow_relaxed=False)
-                for other in DIRECT_INTERCEPT_ROUTABLE_CATEGORIES if other not in values
-            ):
-                return True
-        elif dim == "role":
-            # 「不要外場」只排掉職務類別只有外場的職缺，不是整個餐飲類
-            roles = {r.strip() for r in re.split(r"[,，、]", str(job.get("職務類別") or "")) if r.strip()}
-            if roles and roles <= values:
-                return True
-        elif dim == "brand":
-            if any(job_matches_brand(job, v) for v in values):
-                return True
-        elif dim == "location":
-            for v in values:
-                if not job_matches_location(job, v):
-                    continue
-                # 職缺還有其他地點時不排除：「不要中壢」不排掉中壢、八德都有的職缺
-                pairs = _job_district_pairs(job)
-                others = [p for p in pairs if not job_matches_location(
-                    {"縣市": p[0], "行政區": f"{p[0]}{p[1]}", "_location_search_text": clean_text_for_search(f"{p[0]}{p[1]}")}, v)]
-                # 縣市欄有、行政區沒寫到的縣市也算其他地點（第七輪測試：「不要新竹市」
-                # 把台中沒寫行政區的老鼎旺也排掉）
-                paired_counties = {p[0] for p in pairs}
-                others += [c for c in _job_county_fulls(job) if c and c not in paired_counties and not job_matches_location(
-                    {"縣市": c, "行政區": "", "_location_search_text": clean_text_for_search(c)}, v)]
-                if not others:
-                    return True
-    return False
-
-
-def detect_benefit_labels(raw_msg: str, active_jobs: list, negated: bool = False) -> list:
-    """福利關鍵字清單從職缺資料動態長出來（見 build_benefit_keyword_index）。"""
-    keywords = [(k, [k]) for k in build_benefit_keyword_index(active_jobs or []) if len(k) >= 2]
-    return _find_label_mentions(raw_msg, keywords, negated)
-
-
-# 「都可以」要清掉哪一項（使用者 2026-09-23 決定：只清句子裡提到的那一項，
-# 沒講清楚是哪一項時只清類型/廠商、保留地區）。例如「班別都可以啦」只清
-# 班別，不能像原本一樣連地區、類型、廠商一起清掉。「條件都不限」「不限
-# 條件」這種講法清掉休假/發薪/福利/班別。
-_SCOPED_BROADEN_DIMENSION_WORDS = {
-    "location": ["地區", "地點", "區域", "哪裡", "地方", "縣市", "哪邊"],
-    "category": ["類型", "類別", "職種", "工作內容", "什麼工作", "什麼職缺", "哪種工作", "做什麼"],
-    "brand": ["廠商", "公司", "品牌", "哪家", "哪間", "哪個廠商"],
-    "shift": ["班別", "時段", "早晚班", "上班時間", "什麼班", "哪個班", "哪一班", "幾點的班"],
-    "leave": ["休假方式", "休假制度", "休假"],
-    "pay": ["發薪方式", "領薪方式", "發薪", "領薪"],
-    "benefit": ["福利"],
-    "worktype": ["全職兼職", "全兼職", "全職或兼職", "兼職或全職", "全職跟兼職", "兼職全職"],
-    "salary": ["薪資", "薪水", "待遇", "時薪", "月薪"],
-    "exclude": ["排除的條件", "排除條件"],
-    "secondary_all": ["其他條件", "條件"],
-}
-_BROADEN_SUFFIXES = ["都可以", "都行", "都好", "不限", "都不限", "隨便", "沒差", "都沒差", "無所謂", "都無所謂", "都ok"]
-
-
-def detect_scoped_broaden_dimensions(clean_input: str) -> set:
-    dims = set()
-    for dim, words in _SCOPED_BROADEN_DIMENSION_WORDS.items():
-        for word in words:
-            if f"不限{word}" in clean_input or any(f"{word}{suffix}" in clean_input for suffix in _BROADEN_SUFFIXES):
-                dims.add(dim)
-                break
-    if "secondary_all" in dims and not re.sub(r"排除的?條件", "", clean_input).count("條件"):
-        # 「排除的條件都可以」裡面也有「條件都可以」：只清排除條件，不是其他條件
-        # 全部清掉（第七輪測試：按了這顆按鈕班別、發薪、薪資都被清掉）
-        dims.discard("secondary_all")
-    if "secondary_all" in dims:
-        dims.discard("secondary_all")
-        dims.update({"leave", "pay", "benefit", "shift", "worktype", "salary", "exclude"})
-    return dims
-
-
-# 「不一定要週休」「日領沒有就算了」「不需要交通車」這種「我不一定要這個
-# 條件」的說法。原本否定詞清單沒收，條件反而又被記一次、一字不差地重問。
-# 這類說法依「不確定就讓求職者選」的原則（使用者 2026-09-23），先問要不要
-# 拿掉這個條件，不自己猜。
-_RELAX_PREFIXES = ["不一定要", "不一定", "不用", "不需要", "不必"]
-_RELAX_SUFFIXES = [
-    "不一定", "沒有也沒關係", "沒有也沒差", "沒有也可以", "沒有也行", "沒有就算了", "就算了",
-    "不用也行", "不用也可以", "不需要", "不用",
-]
-
-
-def detect_relax_labels(clean_input: str, benefit_keywords=()) -> dict:
-    """{維度: 被放寬的標籤集合}。講的是「休假方式」這種整個維度的說法時，
-    集合是 {"*"}（整項放寬）；講的是某個值（「不一定要日領」）時只放寬那個
-    值——原本整個維度一起放寬，記住雙週領時講「不一定要日領」會問要不要
-    拿掉雙週領，「我不需要日領，月領就好」連月領都丟掉。"""
-    words = {
-        "leave": [("休假方式", "*"), ("休假", "*")] + [(k, label) for label, kws in LEAVE_BUCKETS for k in kws],
-        "pay": [(w, "*") for w in ("發薪方式", "領薪方式", "發薪", "領薪")]
-               + [(k, label) for label, kws in PAY_METHOD_SYNONYMS.items() for k in kws],
-        "benefit": [("福利", "*")] + [(k, k) for k in benefit_keywords],
-        "shift": [("班別", "*")] + [(k, label) for label, kws in SHIFT_SYNONYMS.items() for k in kws],
-        "worktype": [(k, label) for label, kws in WORKTYPE_SYNONYMS.items() for k in kws],
-        "salary": [(w, "*") for w in ("薪資", "薪水", "待遇", "時薪", "月薪")],
-    }
-    relaxed = {}
-    for dim, pairs in words.items():
-        matched = []
-        for word, label in pairs:
-            w = clean_text_for_search(word).lower()
-            if w and (
-                any(f"{p}{w}" in clean_input for p in _RELAX_PREFIXES)
-                or any(f"{w}{s}" in clean_input for s in _RELAX_SUFFIXES)
-                or f"沒有{w}也" in clean_input
-            ):
-                matched.append((w, label))
-        # 被較長的詞包住的不算：「不一定要雙週領」不會同時算成週領
-        labels = {label for w, label in matched if not any(w != o and w in o for o, _ in matched)}
-        if labels:
-            relaxed[dim] = labels
-    return relaxed
-
-
-def detect_relax_dimensions(clean_input: str, benefit_keywords=()) -> set:
-    return set(detect_relax_labels(clean_input, benefit_keywords))
-
-
-# 同一句話可能是「在找工作」也可能是「在問規定」（「可以預支薪水嗎」「交通車
-# 有哪些站點」「週領是禮拜幾發」）。原本只要講到就記成篩選條件、直接回職缺
-# 卡片。依使用者 2026-09-23 定的原則：確定是在找工作才直接篩；分不出來就
-# 回傳 "question"，由呼叫端給按鈕讓求職者自己選。INFO_INTENT_PREFIX 是
-# 「了解規定」那顆按鈕送回來的固定開頭，看到就當成單純問問題、不記條件。
-INFO_INTENT_PREFIX = "想了解"
-_JOB_WORDS = ["工作", "職缺", "缺人", "有缺", "徵人", "在徵", "應徵"]
-_QUESTION_MARKERS = [
-    "怎麼", "如何", "哪些", "哪裡", "哪幾", "幾點", "幾號", "幾天", "禮拜幾", "星期幾",
-    "是什麼", "什麼時候", "多少", "規定", "流程", "站點", "還是", "多久", "為什麼",
-    "週幾", "周幾", "哪天", "哪一天", "何時", "會很", "累不累", "辛不辛苦", "要準備", "證照", "需要什麼", "什麼意思",
-    "做什麼", "什麼樣", "內容",
-]
-_DEMAND_WORDS = ["有沒有", "我要", "想要", "只要", "要找", "想找", "就好"]
-
-
-# 問公司／沛沛本身的問題（第六輪測試：「你們假日有上班嗎」被記成假日班、
-# 「客服電話幾號」「可以找真人客服嗎」被當成要找客服類的工作）
-_META_ALWAYS = ("真人", "機器人", "客服電話", "轉接", "專員", "你是誰", "材霈是")
-_META_ADDRESSEE = ("你們", "貴公司", "材霈", "沛沛", "妳們")
-_META_TOPICS = ("有人", "回覆", "上班嗎", "營業", "休息嗎", "在嗎", "地址", "在哪", "電話", "辦公室", "幾點", "客服")
-
-
-# 不是在找工作的人：在職員工問薪水/請假/離職、面試完問結果、雇主想徵人
-# （第七輪測試：原本句子裡有地區/廠商就直接推職缺）。交給 FAQ/AI，不記條件。
-_NOT_SEEKER_RE = re.compile(
-    r"(薪水|薪資|工資|加班費).{0,6}(少|還沒|沒收到|沒轉|沒匯|沒算|欠|扣)|被欠薪|欠薪|扣薪|少算"
-    r"|想離職|要離職|想請假|要請假|請喪假|請病假|派到.{0,8}(的員工|上班)|我是你們派"
-    r"|面試.{0,6}(結果|通知|怎麼樣|過了嗎)|什麼時候(會)?通知|應徵了.{0,10}(通知|結果|回覆)"
-    r"|我是廠商|我們(公司|工廠|餐廳|店|廠).{0,12}(缺|徵|找人|請人|需要)|想徵人|幫忙找人|可以派人|想請.{0,4}人"
-)
-
-
-# 要轉給真人專員的情況（使用者 2026-09-23 第七輪決定：程式直接回固定句，
-# 並記進「求職者提問追蹤」讓同仁回頭處理）。順序有意義：先比對到的算。
-_HANDOFF_PATTERNS = [
-    ("business", re.compile(
-        r"我是廠商|我們(公司|工廠|餐廳|店|廠|門市).{0,12}(缺|徵|找人|請人|需要)|想徵人|幫忙找人|可以派人|派人來"
-        r"|人力需求|派遣合作|談合作|想合作|合作洽詢|業務洽詢")),
-    ("privacy", re.compile(r"刪除.{0,4}(個資|資料|紀錄)|個資.{0,4}刪|不要再(傳|發|打)|停止(傳送|發送|聯絡)|取消(訂閱|通知)")),
-    ("complaint", re.compile(
-        r"檢舉|投訴|申訴|客訴|勞工局|勞檢|提告|告你們|很爛|太爛|爛透|垃圾公司|封鎖你|騙子|詐騙集團|你們是詐騙(?!嗎)|就是詐騙")),
-    ("employee", re.compile(
-        r"(薪水|薪資|工資|加班費).{0,6}((?<!多)少(了|算|給|發|匯)|還沒|沒收到|沒轉|沒匯|沒算|欠|扣)|被欠薪|欠薪|扣薪|少算"
-        r"|想離職|要離職|想請假|要請假|請喪假|請病假|派到.{0,8}(的員工|上班)|我是你們派")),
-    ("interview", re.compile(r"面試.{0,6}(結果|通知|怎麼樣|過了嗎|有過)|什麼時候(會)?通知|應徵了.{0,10}(通知|結果|回覆)")),
-    ("human", re.compile(r"真人|找專員|請專員|轉接|人工客服|找人工|有人在嗎|打(電話)?給我|聯絡我|跟人講|跟人說")),
-]
-HANDOFF_REASON_NAMES = {
-    "business": "業務詢問", "privacy": "個資/停止聯繫", "complaint": "抱怨/客訴",
-    "employee": "在職員工", "interview": "面試/應徵進度", "human": "要找真人",
-}
-
-
-def detect_handoff_reason(raw_msg: str) -> str:
-    text = str(raw_msg or "")
-    for reason, pattern in _HANDOFF_PATTERNS:
-        if pattern.search(text):
-            return reason
-    return ""
-
-
-# 看起來像否定、但認不出是不是否定的字（使用者 2026-09-23 第七輪決定：這種時候
-# 先問「要還是不要」，不自己猜）。先拿掉意思是肯定的說法。
-_NEGATION_HINT_RE = re.compile(r"不|沒|没|免|no|ng|❌|✖|🙅")
-_NOT_NEGATION_PHRASES = (
-    "沒有的話", "不的話", "沒有也沒關係", "不錯", "不限", "不拘", "沒問題", "沒關係", "沒差", "免費", "不用太", "的話", "不一定", "不會累", "都不錯",
-    "沒有也", "有沒有", "能不能", "可不可以", "要不要", "是不是", "會不會", "不管",
-)
-
-
-def detect_uncertain_negation(text: str) -> list:
-    """[(維度, 標籤)]：這句話講到這個條件（被當成想要），附近卻有「不／沒／免／NO／❌」
-    這種像否定的字。已經認得是否定的不算。"""
-    clean = clause_clean_text(text)
-    for phrase in _NOT_NEGATION_PHRASES:
-        clean = clean.replace(phrase, "_" * len(phrase))
-    found = []
-    hits = _condition_word_hits(clean)
-    for dim, pairs in (
-        ("shift", list(SHIFT_SYNONYMS.items())), ("leave", LEAVE_BUCKETS),
-        ("pay", list(PAY_METHOD_SYNONYMS.items())), ("worktype", list(WORKTYPE_SYNONYMS.items())),
-    ):
-        wanted = set(_find_label_mentions(text, pairs))
-        for label, keywords in pairs:
-            if label not in wanted or (dim, label) in found:
-                continue
-            for kw in keywords:
-                k = clean_text_for_search(kw).lower()
-                i = clean.find(k) if k else -1
-                while i != -1:
-                    # 前面只看到上一個條件詞為止：「不要夜班日領就好」的「不」是夜班的
-                    start = max([0, i - 5] + [e for st, e, _ in hits if e <= i and not (st <= i < e)])
-                    after_end = min([i + len(k) + 3] + [st for st, e, _ in hits if st >= i + len(k)])
-                    window = clean[start:i] + "|" + clean[i + len(k):after_end]
-                    if _NEGATION_HINT_RE.search(window):
-                        found.append((dim, label))
-                        break
-                    i = clean.find(k, i + 1)
-                if (dim, label) in found:
-                    break
-    return found
-
-
-def classify_condition_utterance(raw_msg: str) -> str:
-    text = raw_msg.strip()
-    if text.startswith(INFO_INTENT_PREFIX):
-        return "info"
-    if _NOT_SEEKER_RE.search(text):
-        return "info"
-    if any(w in text for w in _META_ALWAYS) or (
-        any(w in text for w in _META_ADDRESSEE) and any(w in text for w in _META_TOPICS)
-        and not any(w in text for w in _JOB_WORDS)
-    ):
-        return "info"
-    clean = clean_text_for_search(text)
-    if any(w in clean for w in _JOB_WORDS):
-        return "demand"
-    # 「早班還是晚班都可以」是在講條件，不是在問問題（「還是」是問句標記）
-    if any(w in clean for w in ("都可以", "都行", "都好", "都ok", "也可以", "也行")):
-        return "demand"
-    # 「還是新竹」「算了還是桃園」是改口，不是在問（第六輪測試）
-    for prefix in ("算了還是", "那還是", "還是"):
-        if clean.startswith(prefix):
-            clean = clean[len(prefix):]
-            if not any(m in clean for m in _QUESTION_MARKERS) and not text.endswith(("嗎", "?", "？")):
-                return "demand"
-    if any(m in clean for m in _QUESTION_MARKERS):
-        return "question"
-    if re.search(r"有.{0,10}[嗎呢]", text) or any(w in clean for w in _DEMAND_WORDS):
-        return "demand"
-    if text.endswith(("嗎", "?", "？")):
-        return "question"
-    return "demand"
-
-
-def text_mentions_pay_label(text: str, label: str) -> bool:
-    clean = clean_text_for_search(text)
-    return any(clean_text_for_search(syn) in clean for syn in PAY_METHOD_SYNONYMS.get(label, [label]))
 
 def extract_numeric_salary_preference(text: str) -> dict:
     """解析文字中的具體數值型薪資需求（例如：時薪200以上、月薪4萬以上）[cite: 1]"""
@@ -1646,41 +498,12 @@ def extract_salary_preference(text: str) -> bool:
     return any(k in clean for k in ["高時薪", "時薪高", "高薪", "時薪最高", "薪水高", "時薪多少", "200以上", "時薪破百"])
 
 CATEGORY_KEYWORDS = {
-    "外送": ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作", "司機", "隨車", "送貨", "騎手"],
-    # 「服飾」「專櫃」是門市（服飾店、百貨專櫃），不是餐飲：原本放在餐飲/
-    # 服務，問「服飾店」會推餐廳內場。
-    "門市": ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店", "櫃檯", "櫃臺", "專櫃", "服飾"],
-    "製造/作業員": ["製造", "製造業", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技廠", "電子廠", "品管", "包裝員", "品保", "品檢", "檢驗"],
-    "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "倉庫", "物流", "堆高機", "貼標", "搬運"],
-    # 刻意不收單獨的「服務」：「有交通車接送服務嗎」會被誤判成要找餐飲類，
-    # 把原本鎖定的作業員/理貨類別換掉。
-    "餐飲/服務": ["餐飲", "服務員", "服務生", "服務業", "服務類", "餐廳", "廚房", "內場", "外場", "洗碗", "助手"],
-    # 使用者 2026-09-23（第五輪）決定新增的兩個類型：職務類別填「文字客服」
-    # 「行政人員」「設備人員」的職缺原本不屬於任何類型，求職者問「客服的
-    # 工作」只能丟給 AI。
-    # 不收「辦公室」：「辦公室在哪裡」是在問地址（第六輪測試）
-    "客服/行政": ["客服", "文字客服", "電話客服", "行政", "文書", "助理", "內勤", "文員"],
-    "設備/技術": ["設備", "維修", "機電", "水電", "設施", "修繕", "保養"],
+    "外送": ["外送", "外送員", "配送員", "巡貨司機", "送貨司機", "外送工作", "司機", "隨車"],
+    "門市": ["門市", "店員", "門市人員", "蝦皮門市", "智取店", "店到店", "櫃檯"],
+    "製造/作業員": ["製造", "製造業", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技廠", "電子廠", "品管", "包裝員"],
+    "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "物流", "堆高機", "貼標"],
+    "餐飲/服務": ["餐飲", "服務", "廚房", "內場", "外場", "專櫃", "服飾", "洗碗", "助手"],
 }
-
-
-def detect_category_labels(clean_input: str) -> list:
-    """句子裡提到的所有類型（沒被否定的），依出現順序。原本只回傳
-    CATEGORY_KEYWORDS 字典順序的第一個：「蝦皮外送理貨」「理貨或門市都可以」
-    挑的都是字典裡排前面的，不是求職者先講的。"""
-    hits = []
-    for label, keywords in CATEGORY_KEYWORDS.items():
-        for raw_kw in keywords:
-            # 關鍵字也要清理（台→臺）：「櫃台」原本比不到清理過的「櫃臺」
-            kw = clean_text_for_search(raw_kw)
-            pos = clean_input.find(kw)
-            if pos != -1 and not _keyword_is_negated(clean_input, kw):
-                hits.append((pos, -len(kw), label))
-    labels = []
-    for _, _, label in sorted(hits):
-        if label not in labels:
-            labels.append(label)
-    return labels
 
 
 def detect_category_label(clean_input: str) -> str:
@@ -1699,25 +522,10 @@ def detect_category_label(clean_input: str) -> str:
     return ""
 
 
-# 類型底下的細項職務：「不要外場」是不要外場這種職務，不是不要整個餐飲類
-# （第六輪測試：原本連內場的職缺都一起清掉）。值是 Notion「職務類別」的寫法。
-SUBROLE_WORDS = {
-    "外場": "外場人員", "內場": "內場人員", "文字客服": "文字客服", "電話客服": "電話客服",
-    "搬運": "搬運工", "品保": "品保人員", "檢驗": "檢驗人員",
-}
-
-
-def detect_negated_subroles(clean_input: str) -> set:
-    return {role for word, role in SUBROLE_WORDS.items() if word in clean_input and _keyword_is_negated(clean_input, word)}
-
-
 def detect_negated_category(clean_input: str) -> str:
-    """偵測使用者是否明確表示排除某個工作類別（例如「除了外送」），回傳被排除的類別標籤，沒有則回傳空字串。
-    只否定了細項職務（「不要外場」）不算否定整個類型，見 detect_negated_subroles()。"""
+    """偵測使用者是否明確表示排除某個工作類別（例如「除了外送」），回傳被排除的類別標籤，沒有則回傳空字串"""
     for label, keywords in CATEGORY_KEYWORDS.items():
         for kw in keywords:
-            if kw in SUBROLE_WORDS:
-                continue
             if kw in clean_input and _keyword_is_negated(clean_input, kw):
                 return label
     return ""
@@ -1726,16 +534,10 @@ def category_search_keywords(category_label: str) -> list:
     """依已知工作類別 slot 回傳對應關鍵字清單[cite: 1]"""
     mapping = {
         "外送": ["外送", "外送員", "司機", "配送", "配送員", "送貨", "隨車"],
-        "門市": ["門市", "店員", "門市人員", "店到店", "智取店", "櫃檯", "專櫃", "服飾"],
-        # 不收「設備」「包裝」：「設備人員」（蝦皮內勤的維修外勤）跟「電商物流
-        # 理貨包裝員」會被誤判成作業員，蝦皮類型反問因此多出一個點下去只看到
-        # 設備人員的「蝦皮製造/作業員」選項。
-        "製造/作業員": ["製造", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技", "電子", "品檢", "品保", "品管", "檢驗"],
-        "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "倉庫", "物流", "堆高機", "進貨", "出貨", "搬運"],
-        # 不收單獨的「服務」：「行業別＝服務業」的門市職缺會被誤判成餐飲。
-        "餐飲/服務": ["餐飲", "服務員", "服務生", "服務人員", "廚房", "內場", "外場", "洗碗", "助手"],
-        "客服/行政": ["客服", "行政", "文書", "助理", "文員"],
-        "設備/技術": ["設備", "維修", "機電", "水電", "設施", "修繕"],
+        "門市": ["門市", "店員", "門市人員", "店到店", "智取店", "櫃檯"],
+        "製造/作業員": ["製造", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技", "電子", "設備", "品檢", "包裝"],
+        "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "物流", "堆高機", "進貨", "出貨"],
+        "餐飲/服務": ["餐飲", "服務", "廚房", "內場", "外場", "專櫃", "服飾", "店員", "外送"]
     }
     return mapping.get(category_label, [])
 
@@ -1745,10 +547,6 @@ def _vendor_core_name(vendor_name: str) -> str:
     正式名稱後面用括號、連字號、加號加註分店/職務/代招等備註方便管理，
     但求職者不會把這些內部備註打進訊息裡，只比對完整名稱會永遠對不上。"""
     core = re.split(r'[（(_\-+]', vendor_name)[0].strip()
-    if not core and re.fullmatch(r"[\s（(]*(代招|測試|時薪|月薪)?[\s）)]*", vendor_name or ""):
-        # 廠商名稱只填了「(代招)」：原本退回整串「(代招)」，任何提到「代招」的
-        # 句子都被當成這家廠商（第七輪測試：「什麼是代招」之後只剩代招職缺）
-        return ""
     return core or vendor_name
 
 
@@ -1756,37 +554,13 @@ def _vendor_core_name(vendor_name: str) -> str:
 # 「這句話有沒有提到已知品牌」的地方（例如統一意圖判斷）共用同一份清單，
 # 避免各處各自維護、覆蓋範圍不一致。
 KNOWN_BRANDS = {
-    "蝦皮": ["蝦皮", "spx", "shopee"],
+    "蝦皮": ["蝦皮", "spx"],
     "momo": ["momo", "富邦", "富昇"],
-    # 「coupung」是 Notion 上真實存在的錯字廠商名稱，先收錄讓它比對得到。
-    "Coupang": ["coupang", "酷澎", "coupung"],
-    # 系統廠商名稱是「PChome理貨」，沒有括號可切出「PChome」，求職者打
-    # 「PChome」永遠比對不到。
-    "PChome": ["pchome", "網家"],
-    # 「Uber」實測回報：Notion 上真實的系統廠商名稱是「UBER DRIECT」（同仁
-    # 打字時把 DIRECT 打成 DRIECT）、「Uber(COSTCO)」、「uber 站所小幫手」
-    # 這幾種各自不同的完整寫法，求職者只會打最簡短的「Uber」，
-    # detect_brand_label() 原本只有「完整廠商名稱比對」或「核心名稱比對」
-    # （用括號/底線/連字號切開來取前段）這兩種比對方式，「UBER DRIECT」
-    # 沒有括號可以切、核心名稱等於完整字串，永遠對不上單純的「Uber」，
-    # 導致外送分支的廠商窄化形同沒生效、混進蝦皮的外送職缺。這裡補上
-    # 白名單，求職者打「Uber」就能直接命中所有 Uber 系列的職缺。
-    "Uber": ["uber", "優步"],
+    "Coupang": ["coupang", "酷澎"],
     "美光": ["美光", "micron"],
     "欣興": ["欣興"],
     "台積電": ["台積電", "tsmc"],
-    "宏達電": ["宏達電", "htc"],
-    # 第五輪測試：求職者會打簡稱「台哥大」「微風」，系統廠商名稱是
-    # 「台灣大哥大客服」「微風集團」，核心名稱比對對不到。
-    "台灣大哥大": ["台灣大哥大", "台哥大"],
-    "微風": ["微風"],
-    # 第六輪測試：廠商名稱帶廠區/公司字尾，求職者只講品牌：
-    # 「呷哺呷哺」「強茂永安廠(代招)」「高力熱能／高力熱處理」「三澧企業」
-    "呷哺呷哺": ["呷哺"],
-    "強茂": ["強茂"],
-    "高力": ["高力"],
-    "瑪諾": ["瑪諾"],
-    "三澧": ["三澧"],
+    "宏達電": ["宏達電", "htc"]
 }
 
 
@@ -1799,59 +573,9 @@ def has_recognizable_category_or_brand_keyword(clean_input: str) -> bool:
     return any(k in clean_input for k in all_category_keywords) or any(k in clean_input for k in all_brand_keywords)
 
 
-# 廠商名稱後面接著這些字時是路名，不是廠商：「我住文華路附近」不是廠商「文華」。
-_STREET_SUFFIXES = ("路", "街", "大道", "巷", "段")
-
-
-def _vendor_mentions(normalized: str, active_jobs: list):
-    """(核心名稱, 比對到的字串) 清單：句子裡提到的系統廠商名稱。廠商名稱
-    本身有空格（「LADY M」）時，依子句切開的文字裡會被切斷，另外用沒切開的
-    文字比一次。"""
-    found = []
-    joined = normalized.replace("|", "")
-    for j in active_jobs or []:
-        v_name = str(j.get("系統廠商名稱") or "").strip()
-        if not v_name or len(v_name) < 2:
-            continue
-        v_core_name = _vendor_core_name(v_name)
-        for candidate in (clean_text_for_search(v_name), clean_text_for_search(v_core_name)):
-            if not candidate or len(candidate) < 2:
-                continue
-            pos = normalized.find(candidate)
-            text_for_candidate = normalized
-            if pos == -1:
-                pos = joined.find(candidate)
-                text_for_candidate = joined
-            if pos == -1 or text_for_candidate[pos + len(candidate):].startswith(_STREET_SUFFIXES):
-                continue
-            found.append((v_core_name, candidate))
-    return found
-
-
-def _label_words() -> set:
-    return {
-        clean_text_for_search(k).lower()
-        for keywords in list(SHIFT_SYNONYMS.values()) + [kws for _, kws in LEAVE_BUCKETS] + list(PAY_METHOD_SYNONYMS.values())
-        + list(WORKTYPE_SYNONYMS.values())
-        for k in keywords
-    }
-
-
 def detect_brand_label(text: str, active_jobs: list = None) -> str:
     """動態從訊息辨識求職者詢問之特定廠商或品牌（嚴格排除行業別與疑問詞）[cite: 1]"""
-    # 依子句清理，否定詞才不會越過逗號（見 clause_clean_text）。
-    normalized = clause_clean_text(text)
-
-    # 0. 先認知名品牌家族。實測：求職者點「蝦皮外送」「蝦皮門市」按鈕，原本
-    #    會先比對到系統廠商名稱「蝦皮外送(支援)」「蝦皮門市」，廠商被鎖成
-    #    「蝦皮外送」「蝦皮門市」這種帶類別字的名稱，下一句換問「那理貨呢」
-    #    就篩不到任何職缺。而且比對結果取決於 Notion 職缺的排列順序。廠商
-    #    一律記品牌本身（蝦皮），類別交給類別槽位管。
-    for brand_key, synonyms in KNOWN_BRANDS.items():
-        for syn in synonyms:
-            syn_clean = clean_text_for_search(syn)
-            if syn_clean in normalized and not _keyword_is_negated(normalized, syn_clean):
-                return brand_key
+    normalized = clean_text_for_search(text)
 
     # 1. 優先精準比對 Notion 資料庫中現有的所有系統廠商名稱（含核心名稱比對，
     #    避免同仁加註的內部後綴導致完整名稱永遠比對不到）[cite: 1]
@@ -1862,18 +586,23 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
     #    的品牌篩選/評分都是拿 brand 去對已清理過括號的 _search_text 做字串比對，
     #    帶括號的完整名稱幾乎永遠比對不到，導致品牌保底機制形同虛設。回傳核心名稱
     #    才能讓同一品牌旗下所有地區的職缺都能被正確篩選/加分到。
-    #    同時命中好幾個廠商名稱時，取比對到的字串最長的那個（最精確），不取
-    #    Notion 列表裡剛好排在前面的那個。被否定的（「不要美光」）不算：原本
-    #    「不要蝦皮」反而把廠商鎖成蝦皮。
     if active_jobs:
-        best_name, best_len = "", 0
-        for v_core_name, candidate in _vendor_mentions(normalized, active_jobs):
-            if _keyword_is_negated(normalized, candidate):
-                continue
-            if len(candidate) > best_len:
-                best_name, best_len = v_core_name, len(candidate)
-        if best_name:
-            return best_name
+        for j in active_jobs:
+            v_name = str(j.get("系統廠商名稱") or "").strip()
+            if v_name and len(v_name) >= 2:
+                v_core_name = _vendor_core_name(v_name)
+                v_clean = clean_text_for_search(v_name)
+                if v_clean and v_clean in normalized:
+                    return v_core_name
+
+                v_core_clean = clean_text_for_search(v_core_name)
+                if v_core_clean and len(v_core_clean) >= 2 and v_core_clean in normalized:
+                    return v_core_name
+
+    # 2. 常見知名廠商白名單[cite: 1]
+    for brand_key, synonyms in KNOWN_BRANDS.items():
+        if any(syn in normalized for syn in synonyms):
+            return brand_key
 
     # 3. 自然語言動態抽取[cite: 1]
     match = re.search(r'(?:有|想找|請問有|有沒有)\s*([a-zA-Z0-9\u4e00-\u9fa5]{2,8}?)\s*(?:嗎|的工作|職缺|廠|$)', text)
@@ -1910,14 +639,7 @@ def detect_brand_label(text: str, active_jobs: list = None) -> str:
                     matches_known_vendor = True
                     break
 
-        # 抓到的詞裡有班別/休假/發薪用語時不是廠商：有一筆職缺的廠商欄位
-        # 填成「M打烊班」，「我想找打烊班」原本被當成廠商、還一路記住。
-        has_label_word = any(w and w in extracted_clean for w in _label_words())
-        if (
-            extracted and not is_category_word and matches_known_vendor and not has_label_word
-            and not any(token in extracted for token in invalid_tokens)
-            and not _keyword_is_negated(normalized, extracted_clean)
-        ):
+        if extracted and not is_category_word and matches_known_vendor and not any(token in extracted for token in invalid_tokens):
             return extracted
 
     return ""
@@ -1952,14 +674,9 @@ def _job_extended_category_text(job: dict) -> str:
     # 是門市類別。職務類別的寬鬆比對只能信任真正結構化、對外一致的欄位
     # （職缺名稱(對外)／職務類別／行業別），跟地區比對只信任「行政區」欄位、
     # 不信任自由文字地址的原則一致。
-    # 「職務類別」有填時寬鬆比對一樣不看對外職缺名稱（跟嚴格比對同一個
-    # 原則，見 job_matches_category_filter）：晶旺、全家餐飲的對外名稱寫
-    # 「門市人員」，職務類別其實是內場/外場，問「雅萱廠有門市的工作嗎」
-    # 原本會推這兩筆（第五輪測試）。
-    category_field = job.get("職務類別", "") or job.get("_job_category", "")
     fields = [
-        "" if category_field else job.get("職缺名稱(對外)", ""),
-        category_field,
+        job.get("職缺名稱(對外)", ""),
+        job.get("職務類別", ""),
         job.get("行業別", ""),
     ]
     return clean_text_for_search(" ".join(str(x or "") for x in fields))
@@ -1973,37 +690,13 @@ def _brand_matches_text(text: str, brand_label: str) -> bool:
     text = clean_text_for_search(text)
     if not brand_label:
         return True
-    if brand_label in KNOWN_BRANDS:
-        # 同義詞也要清理（台→臺）：原本「台積電」永遠比對不到清理過的「臺積電」。
-        return any(clean_text_for_search(k) in text for k in KNOWN_BRANDS[brand_label])
+    if brand_label == "蝦皮":
+        return any(k in text for k in ["蝦皮", "spx"])
+    if brand_label == "momo":
+        return any(k in text for k in ["momo", "富邦", "富昇"])
+    if brand_label == "Coupang":
+        return any(k in text for k in ["coupang", "酷澎"])
     return clean_text_for_search(brand_label) in text
-
-
-def job_matches_brand(job: dict, brand_label: str) -> bool:
-    """只比對職缺自己的廠商/職缺名稱欄位，不比對含地區跟行銷文案的
-    _search_text。實測：廠商「新興(代招)」在新北五股，但 _search_text 比對
-    會把地址在高雄市新興區的其他廠商職缺也算成「新興」。"""
-    if not brand_label:
-        return True
-    fields = [job.get("系統廠商名稱"), job.get("職缺名稱"), job.get("職缺名稱(對外)"), job.get("_internal_title")]
-    brand_text = " ".join(str(f) for f in fields if f)
-    if not brand_text.strip():
-        brand_text = job.get("_search_text", "")
-    return _brand_matches_text(brand_text, brand_label)
-
-
-def detect_negated_brand(text: str, active_jobs: list = None) -> str:
-    """「不要蝦皮了」「不要美光的」這種明確排除廠商的說法，回傳被排除的廠商。"""
-    normalized = clause_clean_text(text)
-    for brand_key, synonyms in KNOWN_BRANDS.items():
-        for syn in synonyms:
-            syn_clean = clean_text_for_search(syn)
-            if syn_clean in normalized and _keyword_is_negated(normalized, syn_clean):
-                return brand_key
-    for v_core_name, candidate in _vendor_mentions(normalized, active_jobs):
-        if _keyword_is_negated(normalized, candidate):
-            return v_core_name
-    return ""
 
 def _category_matches_text(text: str, category_label: str) -> bool:
     keywords = category_search_keywords(category_label)
@@ -2015,12 +708,6 @@ def _category_matches_text(text: str, category_label: str) -> bool:
 def job_matches_category_filter(job: dict, category_label: str, brand_label: str = "", allow_relaxed: bool = True) -> bool:
     if not category_label or category_label == "不限":
         return True
-    if "|" in category_label:
-        # 「理貨|門市」：求職者講「理貨或門市都可以」（使用者 2026-09-23 決定兩個都算）
-        return any(
-            job_matches_category_filter(job, part, brand_label, allow_relaxed)
-            for part in category_label.split("|") if part
-        )
 
     internal_title, public_title, category = _job_title_and_category_text(job)
     primary_text = " ".join([internal_title, public_title, category])
@@ -2030,18 +717,9 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
     # 「蝦皮內勤(北北基宜)門市裝潢工程外勤專員」，職務類別其實是「設備
     # 人員」），不代表職務本身真的是門市類別。廠商比對不受影響，職缺名稱
     # 通常確實會帶到真正的廠商名稱，繼續信任 primary_text。
-    # 「職務類別」有填時只看這個欄位：對外職缺名稱是招募文案，實測「作業員」
-    # 職缺的對外名稱寫「電商物流理貨包裝」，會被當成理貨類別嚴格命中。
-    # 沒填職務類別的職缺才退回看對外名稱。
-    primary_category_text = category or public_title
+    primary_category_text = " ".join([public_title, category])
     extended_text = _job_extended_search_text(job)
     extended_category_text = _job_extended_category_text(job)
-    if category_label == "餐飲/服務" and "餐飲" not in clean_text_for_search(job.get("行業別", "")):
-        # 「服務人員」是很泛的職務類別：服飾店（佐丹奴）、百貨服務台（微風）、
-        # 客服都會填。行業別不是餐飲業時不算餐飲/服務，不然問「內場」會推
-        # 服飾店門市（第四輪按鈕爬蟲測到）。
-        primary_category_text = primary_category_text.replace("服務人員", "")
-        extended_category_text = extended_category_text.replace("服務人員", "")
 
     if category_label == "門市":
         if _job_has_delivery_conflict(job):
@@ -2060,39 +738,18 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
         # 但職務類別絕對不能用含「工作內容(對外)」自由文字的 extended_text，
         # 否則「設備人員」職缺只因為工作說明裡寫到「各區門市據點」就會被
         # 誤判成門市類別（該欄位只是在講到職地點遍布全台，不是職務類別）。
-        relaxed_category_match = _category_matches_text(extended_category_text, "門市") and not _has_other_strict_category(
-            job, primary_category_text, "門市")
+        relaxed_category_match = _category_matches_text(extended_category_text, "門市")
         relaxed_brand_match = True if not brand_label else _brand_matches_text(extended_text, brand_label)
         return relaxed_category_match and relaxed_brand_match
 
     if _category_matches_text(primary_category_text, category_label):
         return True
 
-    return allow_relaxed and _category_matches_text(extended_category_text, category_label) and not _has_other_strict_category(
-        job, primary_category_text, category_label)
-
-
-def _has_other_strict_category(job: dict, primary_category_text: str, category_label: str) -> bool:
-    """職務類別有填、而且明確是別的類型（外送員、門市人員）時，不能只因為行業別
-    是「物流業」就在寬鬆比對算成理貨（第七輪測試：「台北理貨」推了蝦皮外送跟
-    門市，回覆還說符合理貨）。"""
-    if not str(job.get("職務類別") or job.get("_job_category") or "").strip():
-        return False
-    return any(
-        _category_matches_text(primary_category_text, other)
-        for other in DIRECT_INTERCEPT_ROUTABLE_CATEGORIES if other != category_label
-    )
+    return allow_relaxed and _category_matches_text(extended_category_text, category_label)
 
 def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label: str = "") -> list:
     if not category_label or category_label == "不限":
         return list(jobs)
-    if "|" in category_label:
-        # 每個類型各自分嚴格/寬鬆，再合併（保留原本順序）
-        picked = set()
-        for part in category_label.split("|"):
-            if part:
-                picked.update(id(j) for j in filter_jobs_by_category_tiered(jobs, part, brand_label))
-        return [j for j in jobs if id(j) in picked]
 
     strict_matches = [
         j for j in jobs
@@ -2104,30 +761,6 @@ def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label:
     return [
         j for j in jobs
         if job_matches_category_filter(j, category_label, brand_label, allow_relaxed=True)
-    ]
-
-
-# 目前唯一有各自專屬「精準工種直達攔截」分支的類別（見 handlers/message_handler.py），
-# 只有這幾種才適合拿來當「蝦皮職缺類型反問」的按鈕選項——求職者點下按鈕、把
-# 這個類別名稱送回來時，一定要能命中對應的直達攔截分支，不能落回同一個反問，
-# 否則會卡在無限循環。像「設備人員」這種目前還沒有專屬分支的類別，刻意不
-# 單獨列成按鈕，統一併進「全部類型都看看」保底選項，不會完全看不到，只是
-# 不能精準篩選。「餐飲/服務」原本也是這種情況，實測發現「類別+福利/發薪/
-# 休假方式」合併問時會混進不相關廠商的職缺，補上專屬候選池分支後，現在
-# 也適合列進來。
-DIRECT_INTERCEPT_ROUTABLE_CATEGORIES = ["外送", "門市", "理貨/倉儲", "製造/作業員", "餐飲/服務", "客服/行政", "設備/技術"]
-
-
-def distinct_routable_categories_for_jobs(jobs: list) -> list:
-    """找出這批職缺實際涵蓋 DIRECT_INTERCEPT_ROUTABLE_CATEGORIES 裡的哪幾種
-    類別（依該清單順序回傳，刻意用嚴格比對 allow_relaxed=False，只信任
-    結構化的「職務類別」／「職缺名稱(對外)」欄位，不看自由文字，避免誤判
-    ——見 job_matches_category_filter() 的欄位信任原則說明）。供「蝦皮職缺
-    類型反問」判斷要不要問、要問哪幾個選項使用：同一時間蝦皮如果只有一種
-    類型在招，不需要多問；有兩種以上才需要讓求職者選。"""
-    return [
-        label for label in DIRECT_INTERCEPT_ROUTABLE_CATEGORIES
-        if any(job_matches_category_filter(j, label, allow_relaxed=False) for j in jobs)
     ]
 
 def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", slots: dict = None) -> int:
@@ -2146,10 +779,8 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
     # 這個職缺真的位於該地區（詳見 _location_search_text 的欄位說明）。
     location_text = job.get("_location_search_text", "")
     if current_location:
-        if any(
-            clean_text_for_search(part) and clean_text_for_search(part) in location_text
-            for part in current_location.split("|")
-        ):
+        loc = clean_text_for_search(current_location)
+        if loc and loc in location_text:
             score += 40
 
     # 2. 廠商權重加分[cite: 1]
@@ -2189,11 +820,13 @@ def _score_job_for_ai(job: dict, query_text: str, current_location: str = "", sl
             score += 35
 
     # 4. 班別精準加減分
-    # 用跟直達篩選同一套班別分類（_job_shift_labels）判斷，原本用單字比對，
-    # 「假日班」的「日」會被當成早班加分。班別可能是「早班|晚班」多個值。
     shift_slot = slots.get("shift", "")
     if shift_slot and shift_slot != "不限":
-        if set(shift_slot.split("|")) & job_shift_labels(job):
+        if shift_slot == "早班" and any(k in shift_text for k in ["早", "日", "白", "常日"]):
+            score += 40
+        elif shift_slot in ["晚班", "大夜班"] and any(k in shift_text for k in ["晚", "夜", "小夜", "大夜"]):
+            score += 40
+        elif shift_slot == "假日班" and any(k in shift_text for k in ["假日", "兼職", "pt", "PT"]):
             score += 40
 
     # 5. 休假制度加減分[cite: 1]
@@ -2241,18 +874,6 @@ def build_ai_job_candidates(active_jobs: list, query_text: str, current_location
         return []
 
     slots = slots or {}
-    # 記住的班別/休假/發薪/福利條件先篩一次再排序：原本只當成加減分，AI
-    # 拿到的候選清單還是混著不符合的職缺，會推薦不是日領的職缺給講過要日領
-    # 的求職者。某一項篩完是空的就不篩那一項，留給 AI 判斷怎麼退讓推薦。
-    for key, label_filter in [
-        ("shift", filter_jobs_by_shift_label), ("leave", filter_jobs_by_leave_label),
-        ("pay", filter_jobs_by_pay_label), ("benefit", filter_jobs_by_benefit_label),
-        ("worktype", filter_jobs_by_worktype_label), ("salary", filter_jobs_by_salary_label),
-    ]:
-        if slots.get(key):
-            narrowed = label_filter(active_jobs, slots[key])
-            if narrowed:
-                active_jobs = narrowed
     scored = [(_score_job_for_ai(job, query_text, current_location, slots), idx, job) for idx, job in enumerate(active_jobs)]
     scored.sort(key=lambda x: (-x[0], x[1]))
     positive = [item for item in scored if item[0] > 0]
@@ -2309,9 +930,7 @@ def find_high_confidence_faq_match(faq_list: list, query_text: str, min_question
         q_clean = clean_text_for_search(faq.get("question", ""))
         if not q_clean or len(q_clean) < min_question_length:
             continue
-        # 求職者的話很短（「要」「什麼」「薪水」）時不算「FAQ 問題包住整句」：
-        # 原本回「要」會跳出「面試要帶什麼」的答案。
-        if q_clean in query_clean or (len(query_clean) >= min_question_length and query_clean in q_clean):
+        if q_clean in query_clean or query_clean in q_clean:
             if len(q_clean) > best_len:
                 best_match, best_len = faq, len(q_clean)
 

@@ -122,20 +122,15 @@ def format_clean_location(job: dict, target_location: str = "", same_county_scop
     # 1. 使用者有明確指定行政區時，優先顯示該行政區——命中不只一個就全部列出，
     #    不要只回傳第一個找到的，避免職缺涵蓋範圍很廣時漏掉其他相符的地方。
     if target_location:
-        # 地區可能是「桃園|新竹」多個（求職者講「桃園或新竹都可以」）
-        target_norms = [_normalize_tai(t) for t in target_location.split("|") if t]
-        matched_districts = [
-            d for d in dist_list
-            if any(t in _normalize_tai(d) or _normalize_tai(d) in t for t in target_norms)
-        ]
+        target_norm = _normalize_tai(target_location)
+        matched_districts = [d for d in dist_list if target_norm in _normalize_tai(d) or _normalize_tai(d) in target_norm]
         if matched_districts:
             return "、".join(dict.fromkeys(matched_districts))
 
         county_list = [c.strip() for c in re.split(r'[,，、\s]+', county) if c.strip()]
-        # 「桃園|新竹」兩個地區都在這筆職缺的縣市裡時兩個都列（原本只列第一個）
-        matched_counties = [c for c in county_list if any(t in _normalize_tai(c) or _normalize_tai(c) in t for t in target_norms)]
-        if matched_counties:
-            return f"{'、'.join(matched_counties)} {suffix}".strip()
+        for c in county_list:
+            if target_norm in _normalize_tai(c) or _normalize_tai(c) in target_norm:
+                return f"{c} {suffix}".strip()
 
     # 2. 「同縣市退讓建議」專用：先把行政區範圍縮小到這個縣市底下（用職缺原始、
     #    尚未去除縣市前綴的行政區文字比對，才不會漏掉本來就沒有前綴的一般職缺），
@@ -187,8 +182,7 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "", sa
     for job in jobs[:10]:
         public_job_title = str(job.get("職缺名稱(對外)") or job.get("職缺名稱") or job.get("職務類別") or "優質職缺").strip()
         # Notion 唯一識別鍵：職缺名稱 (內部名稱)
-        # 同名的職缺第二筆起是「名稱（2）」（message_handler._assign_detail_keys）
-        unique_internal_title = str(job.get("_detail_key") or job.get("職缺名稱") or job.get("_internal_title") or public_job_title).strip()
+        unique_internal_title = str(job.get("職缺名稱") or job.get("_internal_title") or public_job_title).strip()
         
         display_location = format_clean_location(job, target_location, same_county_scope)
         salary = str(job.get("薪資") or "依公司規定").strip()
