@@ -16,6 +16,15 @@ from linebot.models import QuickReplyButton, MessageAction, TextSendMessage
 from handlers import message_handler as h
 
 
+def _reply_text_and_buttons(reply):
+    """回傳 (第一則文字, 快速回覆按鈕文字, 有沒有職缺卡片)。"""
+    messages = reply if isinstance(reply, list) else [reply]
+    first = messages[0]
+    qr = getattr(first, "quick_reply", None)
+    buttons = [item.action.text for item in qr.items] if qr else []
+    return first.text, buttons, len(messages) > 1
+
+
 class BuildQuickReplyButtonsTests(unittest.TestCase):
     def setUp(self):
         self.fallback = [QuickReplyButton(action=MessageAction(label="fallback", text="fallback"))]
@@ -1159,7 +1168,9 @@ class StoreIntentLocationMatchTests(unittest.TestCase):
         mock_flex_card.assert_not_called()
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, buttons, _ = _reply_text_and_buttons(args[1])
+        self.assertIn("沒有八德", text)
+        self.assertEqual(buttons, ["地區都可以"])
 
 
 class BareLocationFollowupContinuesContextTests(unittest.TestCase):
@@ -1219,9 +1230,9 @@ class BareLocationFollowupContinuesContextTests(unittest.TestCase):
         self.assertIn(matching_job, matched_jobs_arg)
         self.assertNotIn(unrelated_job, matched_jobs_arg)
 
-    def test_bare_location_message_without_prior_context_falls_through_to_ai(self):
-        # 沒有任何前一輪鎖定的類別/廠商時，單純問地區不該被誤攔進精準工種直達，
-        # 維持原本會落到 AI 決策的行為。
+    def test_bare_location_message_without_prior_context_gives_honest_answer(self):
+        # 沒有任何前一輪鎖定的類別/廠商時，單純問地區不該被誤攔進精準工種直達
+        # （不能硬套某個類型的職缺）。
         event = MagicMock()
         event.reply_token = "valid-reply-token"
         event.source.user_id = "test-user-bare-location-no-context"
@@ -1242,7 +1253,12 @@ class BareLocationFollowupContinuesContextTests(unittest.TestCase):
 
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, buttons, has_cards = _reply_text_and_buttons(args[1])
+        # 使用者 2026-09-23 決定只講地區時直接列該地區職缺；這裡完全沒有職缺，
+        # 老實說沒有，不推其他地區的職缺。
+        self.assertFalse(has_cards)
+        self.assertIn("沒有八德", text)
+        self.assertIn("清空條件", buttons)
 
     def test_faq_question_not_hijacked_by_persisted_category(self):
         # 持續鎖定「門市」類別，但這句話是問發薪日（FAQ 類問題，抓不到地名），
@@ -1422,9 +1438,9 @@ class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
             "_location_search_text": "桃園市",
         }
 
-    def test_bare_location_followup_without_match_falls_through_to_ai(self):
+    def test_bare_location_followup_without_match_asks_to_relax(self):
         # 延續前一輪 momo 脈絡、這句話本身沒提到 momo，momo 職缺實際上又不在
-        # 台南——不該裝作找到符合條件的職缺，要老實落到 AI 決策。
+        # 台南——不該裝作找到符合條件的職缺，要老實說沒有。
         momo_job = self._momo_job_in_taoyuan_only()
         event = MagicMock()
         event.reply_token = "valid-reply-token"
@@ -1446,11 +1462,14 @@ class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
 
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, buttons, has_cards = _reply_text_and_buttons(args[1])
+        self.assertFalse(has_cards)
+        self.assertIn("台南", text)
+        self.assertEqual(buttons, ["地區都可以"])
 
-    def test_explicit_momo_mention_without_location_match_also_falls_through_to_ai(self):
+    def test_explicit_momo_mention_without_location_match_also_asks_to_relax(self):
         # 使用者確認拿掉整段退讓，這句話本身真的有講「momo」時，地區沒有
-        # 精準命中一樣要落到 AI 決策，不再退讓顯示全部 momo 職缺。
+        # 精準命中一樣要老實說沒有，不再退讓顯示全部 momo 職缺。
         momo_job = self._momo_job_in_taoyuan_only()
         event = MagicMock()
         event.reply_token = "valid-reply-token"
@@ -1472,7 +1491,10 @@ class MomoIntentLocationFallbackRemovedTests(unittest.TestCase):
 
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, buttons, has_cards = _reply_text_and_buttons(args[1])
+        self.assertFalse(has_cards)
+        self.assertIn("台南", text)
+        self.assertEqual(buttons, ["地區都可以"])
 
     def test_momo_with_no_location_specified_still_shows_all_momo_jobs(self):
         # 使用者根本沒指定地區時（例如單純問「有momo的職缺嗎」），不算「找不到
@@ -1617,7 +1639,7 @@ class WarehouseManufacturingShopeeDirectInterceptTests(unittest.TestCase):
         # 「蝦皮門市」組合已經由既有的門市分支（含品牌篩選）處理，不該被新的
         # 純蝦皮攔截搶走——這裡用一筆只有理貨/倉儲職缺（沒有門市職缺）的資料，
         # 驗證「蝦皮門市」問法不會誤配對到不相關的理貨/倉儲職缺，也不會被
-        # 誤判成 shopee 直達攔截找到職缺，而是照原本邏輯落到 AI 決策。
+        # 誤判成 shopee 直達攔截找到職缺。
         warehouse_job = self._warehouse_job()
         control_message = TextSendMessage(text="落到一般流程由AI決策的控制組回覆")
         event = MagicMock()
@@ -1638,7 +1660,11 @@ class WarehouseManufacturingShopeeDirectInterceptTests(unittest.TestCase):
 
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, buttons, has_cards = _reply_text_and_buttons(args[1])
+        # 蝦皮沒有門市職缺：老實說沒有，不推那筆理貨/倉儲職缺（原本落到 AI）
+        self.assertFalse(has_cards)
+        self.assertIn("蝦皮門市", text)
+        self.assertIn("清空條件", buttons)
 
     def test_negated_warehouse_mention_falls_through_to_ai(self):
         job = self._warehouse_job()
@@ -2768,9 +2794,9 @@ class CountyLevelFallbackRecommendationTests(unittest.TestCase):
         matched_jobs_arg = mock_flex_card.call_args[0][0]
         self.assertIn(alt_momo_job, matched_jobs_arg)
 
-    def test_no_fallback_when_no_alternative_in_same_county_falls_through_to_ai(self):
-        # 同縣市也找不到替代方案時，維持原本行為，落到 AI 決策，不能因為
-        # 新增這個功能就連「真的什麼都沒有」的情況都跟著壞掉。
+    def test_no_fallback_when_no_alternative_in_same_county_asks_to_relax(self):
+        # 同縣市也找不到替代方案時，不能因為新增這個功能就連「真的什麼都
+        # 沒有」的情況都跟著壞掉——老實說沒有，讓求職者選要不要放寬。
         unrelated_job = {
             "職缺名稱": "蝦皮台南門市人員", "_internal_title": "蝦皮台南門市人員",
             "_parsed_title": "蝦皮台南門市人員", "職缺名稱(對外)": "蝦皮台南門市人員",
@@ -2799,7 +2825,11 @@ class CountyLevelFallbackRecommendationTests(unittest.TestCase):
 
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, buttons, has_cards = _reply_text_and_buttons(args[1])
+        # 原本落到 AI；現在老實說八德沒有，讓求職者自己決定要不要放寬地區。
+        self.assertFalse(has_cards)
+        self.assertIn("八德", text)
+        self.assertEqual(buttons, ["地區都可以"])
 
 
 class DynamicDistrictRecognitionRegressionTests(unittest.TestCase):
@@ -3168,7 +3198,7 @@ class PayMethodKeywordDirectInterceptTests(unittest.TestCase):
         args, _ = line_bot_api.reply_message.call_args
         self.assertEqual(args[1], control_message)
 
-    def test_no_pay_method_keyword_falls_through_to_ai(self):
+    def test_no_pay_method_keyword_lists_location_jobs(self):
         shopee_job = self._job()
         event = MagicMock()
         event.reply_token = "valid-reply-token"
@@ -3190,13 +3220,15 @@ class PayMethodKeywordDirectInterceptTests(unittest.TestCase):
 
         line_bot_api.reply_message.assert_called_once()
         args, _ = line_bot_api.reply_message.call_args
-        self.assertEqual(args[1], control_message)
+        text, _, has_cards = _reply_text_and_buttons(args[1])
+        # 使用者 2026-09-23 決定：只講地區時直接列出該地區的職缺（原本落到 AI）
+        self.assertTrue(has_cards)
+        self.assertIn("台北", text)
+        self.assertNotIn("發薪方式", text)
 
 
-class MultiTurnRoundFourUnderstandingTests(unittest.TestCase):
-    """第四輪多輪對話測試：依使用者 2026-09-23 定的原則「只要不確定的就跳出
-    選項給求職者選擇」修正的對話流程——問規定還是找工作、放寬說法、否定詞
-    只管自己的子句、一句話講多個值、班別當篩選條件、回覆講出用了哪些條件。"""
+class _RoundFourSessionMixin:
+    """會保留槽位/對話紀錄的多輪測試環境（跟真實 LINE 對話一樣跨輪記住條件）。"""
 
     def _job(self, 職缺名稱, 職務類別, 系統廠商名稱, 縣市, 行政區, 領薪方式="", 福利="", 休假方式="", 班別=""):
         job = MultiTurnLockedCategoryPersistenceTests._job(
@@ -3249,6 +3281,12 @@ class MultiTurnRoundFourUnderstandingTests(unittest.TestCase):
         buttons = [item.action.text for item in qr.items] if qr else []
         titles = [j["職缺名稱"] for j in flex.call_args[0][0]] if flex.called else []
         return dict(text=text, buttons=buttons, titles=titles, ai=ai.called)
+
+
+class MultiTurnRoundFourUnderstandingTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第四輪多輪對話測試：依使用者 2026-09-23 定的原則「只要不確定的就跳出
+    選項給求職者選擇」修正的對話流程——問規定還是找工作、放寬說法、否定詞
+    只管自己的子句、一句話講多個值、班別當篩選條件、回覆講出用了哪些條件。"""
 
     def test_question_about_condition_asks_before_filtering(self):
         r = self._say("週領是禮拜幾發")
@@ -3317,6 +3355,113 @@ class MultiTurnRoundFourUnderstandingTests(unittest.TestCase):
     def test_first_time_exclusion_still_goes_to_ai(self):
         r = self._say("理貨不要夜班的工作")
         self.assertTrue(r["ai"])
+
+
+class MultiTurnRoundFourFlowTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第四輪多輪對話測試第二批：對話流程——先問地區、只講地區直接列、
+    查無結果時每一項條件都能拿掉、放寬也能選地區/類型/廠商、蝦皮反問沿用
+    記住的條件、「換地區/換班別/換工作類型」「我要應徵」按鈕。"""
+
+    def _jobs(self):
+        return [
+            self._job("桃園理貨1", ["理貨人員"], "甲物流", ["桃園市"], ["桃園市中壢區"], "日領", "", "排休", "早班"),
+            self._job("桃園理貨2", ["理貨人員"], "乙物流", ["桃園市"], ["桃園市楊梅區"], "週領", "", "排休", "夜班"),
+            self._job("新北理貨1", ["理貨人員"], "丙物流", ["新北市"], ["新北市五股區"], "月領", "", "週休二日", "早班"),
+            self._job("新北理貨2", ["理貨人員"], "丁物流", ["新北市"], ["新北市林口區"], "月領", "", "週休二日", "晚班"),
+            self._job("台中理貨", ["理貨人員"], "戊物流", ["台中市"], ["台中市西屯區"], "月領", "", "週休二日", "早班"),
+            self._job("桃園作業員", ["作業員"], "己科技", ["桃園市"], ["桃園市中壢區"], "月領", "", "做四休二", "日班,夜班"),
+            self._job("桃園門市", ["門市人員"], "蝦皮門市", ["桃園市"], ["桃園市中壢區"], "月領", "", "排休", "早班,晚班"),
+            self._job("桃園蝦皮理貨", ["倉儲人員"], "蝦皮威獅", ["桃園市"], ["桃園市楊梅區"], "週領", "", "排休", "早班"),
+            self._job("桃園外送", ["外送員"], "Uber", ["桃園市"], ["桃園市中壢區"], "週領", "", "自由報班", "彈性排班"),
+            self._job("桃園餐飲", ["內場人員"], "漢來", ["桃園市"], ["桃園市中壢區"], "月領", "", "排休", "早班"),
+        ]
+
+    def test_asks_location_first_when_results_span_counties(self):
+        r = self._say("理貨的工作")
+        self.assertIn("哪個地區", r["text"])
+        self.assertEqual(r["titles"], [])
+        self.assertEqual(r["buttons"][:3], ["桃園市的工作", "新北市的工作", "台中市的工作"])
+        self.assertEqual(r["buttons"][-1], "地區都可以")
+        r = self._say("新北市的工作")
+        self.assertEqual(sorted(r["titles"]), ["新北理貨1", "新北理貨2"])
+
+    def test_anywhere_is_remembered_and_not_asked_again(self):
+        self._say("理貨的工作")
+        r = self._say("地區都可以")
+        self.assertEqual(self.session_slots["location"], h.ANY_LOCATION)
+        self.assertEqual(len(r["titles"]), 4)
+        r = self._say("週休二日的")
+        self.assertEqual(sorted(r["titles"]), ["台中理貨", "新北理貨1", "新北理貨2"])
+
+    def test_location_only_turn_asks_category_when_mixed(self):
+        r = self._say("桃園")
+        self.assertFalse(r["ai"])
+        self.assertIn("想看哪一種", r["text"])
+        self.assertIn("理貨/倉儲的工作", r["buttons"])
+        self.assertEqual(r["buttons"][-1], "類型都可以")
+        r = self._say("理貨/倉儲的工作")
+        self.assertEqual(sorted(r["titles"]), ["桃園理貨1", "桃園理貨2", "桃園蝦皮理貨"])
+        r = self._say("類型都可以")
+        self.assertEqual(len(r["titles"]), 4)
+        self.assertEqual(self.session_slots["category"], "")
+
+    def test_location_only_turn_lists_directly_when_few(self):
+        r = self._say("新北有缺嗎")
+        self.assertEqual(sorted(r["titles"]), ["新北理貨1", "新北理貨2"])
+
+    def test_relax_offers_location_and_every_button_resolves(self):
+        self._say("台中的工作")
+        r = self._say("日領的")
+        self.assertIn("地區都可以", r["buttons"])
+        r = self._say("地區都可以")
+        self.assertEqual(r["titles"], ["桃園理貨1"])
+
+    def test_no_match_lists_a_drop_button_for_every_condition(self):
+        r = self._say("台中理貨有日領、做四休二的嗎")
+        self.assertIn("清空條件", r["buttons"])
+        self.assertNotIn("新莊工作", r["buttons"])
+        self.assertEqual(
+            r["buttons"], ["地區都可以", "類型都可以", "休假方式都可以", "發薪方式都可以", "清空條件"])
+        # 每一顆按鈕按下去都要真的拿掉那一項、不會又得到同一句回覆
+        for button in r["buttons"][:-1]:
+            before = dict(self.session_slots)
+            after = self._say(button)
+            self.assertNotEqual(after["text"], r["text"])
+            self.session_slots.clear()
+            self.session_slots.update(before)
+
+    def test_shopee_uses_remembered_category(self):
+        self._say("桃園門市的工作")
+        r = self._say("那蝦皮呢")
+        self.assertNotIn("想看哪一種", r["text"])
+        self.assertEqual(r["titles"], ["桃園門市"])
+
+    def test_shopee_clarify_only_offers_categories_matching_remembered_conditions(self):
+        self._say("桃園週領的工作")
+        r = self._say("蝦皮有工作嗎")
+        self.assertEqual(r["titles"], ["桃園蝦皮理貨"])
+
+    def test_change_buttons_offer_values_that_have_jobs(self):
+        self._say("桃園理貨的工作")
+        r = self._say(h.CHANGE_LOCATION_TEXT)
+        self.assertEqual(r["buttons"], ["桃園市的工作", "新北市的工作", "台中市的工作", "地區都可以"])
+        r = self._say(h.CHANGE_SHIFT_TEXT)
+        self.assertEqual(r["buttons"], ["早班的工作", "大夜班的工作", "班別都可以"])
+        r = self._say(h.CHANGE_CATEGORY_TEXT)
+        self.assertIn("理貨/倉儲的工作", r["buttons"])
+        self.assertIn("外送的工作", r["buttons"])
+        self.assertFalse(r["ai"])
+
+    def test_apply_button_returns_last_detail_link(self):
+        self.history.append({"role": "招募顧問沛沛", "text": "📋【職缺名稱：桃園理貨1】\n\n👉 立即填寫線上履歷：\nhttps://example.com/apply?x=1"})
+        r = self._say(h.APPLY_TEXT)
+        self.assertIn("https://example.com/apply?x=1", r["text"])
+        self.assertFalse(r["ai"])
+
+    def test_apply_button_without_detail_asks_to_pick_a_job(self):
+        r = self._say(h.APPLY_TEXT)
+        self.assertIn("了解詳細內容", r["text"])
+        self.assertFalse(r["ai"])
 
 
 if __name__ == "__main__":
