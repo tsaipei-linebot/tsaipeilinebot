@@ -39,6 +39,7 @@ from services.matcher_service import (
     classify_condition_utterance, build_benefit_keyword_index, INFO_INTENT_PREFIX,
     clause_clean_text, detect_relax_labels,
     job_shift_labels, SHIFT_SYNONYMS, job_matches_location, ambiguous_district_choices,
+    location_is_negated,
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
@@ -584,23 +585,33 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             "不限地區", "不限地點", "哪裡都", "全台", "全區", "不挑地區", "不挑地點",
         ])
 
+        _is_additive = any(k in clean_input for k in [
+            "也可以", "也行", "也ok", "也好", "也沒關係", "也沒差", "也能接受", "也不錯", "也可",
+        ])
+
         _locked_location = user_slots.get("location", "")
         if _locked_location == ANY_LOCATION:
             _locked_location = ""
-        if extracted_loc:
+        if extracted_loc and _is_additive and _locked_location and extracted_loc not in _locked_location.split("|"):
+            # 「平鎮也可以啦」：跟記住的地區合併（使用者 2026-09-23 決定兩個都算）
+            current_location = f"{_locked_location}|{extracted_loc}"
+            location_slot_update = current_location
+        elif extracted_loc:
             current_location = extracted_loc
             location_slot_update = extracted_loc
         elif explicit_any_location:
             # 明確表示不限地區 → 存 ANY_LOCATION，之後就不會再問地區
             current_location = ""
             location_slot_update = ANY_LOCATION
-        elif negated_loc and negated_loc == _locked_location:
+        elif location_is_negated(raw_msg, _locked_location, active_jobs):
             # 否定了目前鎖定的那個地區 → 真正清空槽位，而不是只在本輪暫時忽略
             current_location = ""
             location_slot_update = CLEAR_SLOT
         else:
             current_location = _locked_location
             location_slot_update = ""
+        # 給求職者看的地區文字：「桃園|新竹」寫成「桃園或新竹」
+        current_location_text = current_location.replace("|", "或")
         location_known = bool(current_location) or (
             location_slot_update == ANY_LOCATION
             or (location_slot_update == "" and user_slots.get("location", "") == ANY_LOCATION)
@@ -612,9 +623,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         #   原本記住的合併成「日領|週領」。
         # - 「班別都可以」→ 清掉。
         # - 「不要夜班」→ 只從記住的值裡拿掉夜班，其他的保留。
-        _is_additive = any(k in clean_input for k in [
-            "也可以", "也行", "也ok", "也好", "也沒關係", "也沒差", "也能接受", "也不錯", "也可",
-        ])
 
         def _label_slot(dim):
             locked = user_slots.get(dim, "")
@@ -761,6 +769,24 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 for dim in _LABEL_DIMENSION_ORDER if values[dim] and dim != skip
             ]
 
+        _effective_category = detected_category_from_text if detected_category_from_text and detected_category_from_text != "不限" else ""
+
+        def _search_jobs(skip=None):
+            """用目前生效的全部條件（類型、廠商、地區、班別/休假/發薪/福利）
+            篩職缺；skip 指定跳過其中一項（location/category/brand 或班別等
+            標籤維度）。類型要先在全部職缺上篩、再篩地區，跟步驟 1c 的候選池
+            一致：filter_jobs_by_category_tiered() 在嚴格比對找不到時會退回
+            寬鬆比對，先篩地區的話，某個地區剛好沒有嚴格符合的職缺，就會混進
+            只是工作說明提到類型字眼的職缺。"""
+            category = _effective_category if skip != "category" else ""
+            brand = detected_brand if skip != "brand" else ""
+            jobs = filter_jobs_by_category_tiered(active_jobs, category, brand) if category else list(active_jobs)
+            if brand:
+                jobs = [j for j in jobs if job_matches_brand(j, brand)]
+            if skip != "location":
+                jobs = _filter_by_location(jobs, current_location)
+            return _apply_label_filters(jobs, skip=skip)
+
         # ---------------- 步驟 0-3b：分不出意思時讓求職者自己選 ----------------
         # 使用者 2026-09-23 定的原則：「只要不確定的就跳出選項給求職者選擇」。
         # 按鈕送回來的文字都是我們自己組的固定句型，保證下一輪會被判斷成確定
@@ -774,6 +800,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 QuickReplyButton(action=MessageAction(label=f"🏢 {_choice_brand}"[:20], text=f"{_choice_brand}{BRAND_CHOICE_SUFFIX}")),
             ]
         elif district_choices:
+            # 只列在目前其他條件下真的有職缺的選項：原本記住「理貨」再問
+            # 「中山區呢」，兩個選項點下去都是沒有（第五輪測試）。
+            _scope_for_choices = _search_jobs(skip="location")
+            district_choices = [
+                c for c in district_choices if any(job_matches_location(j, c) for j in _scope_for_choices)
+            ] or district_choices
             _place_choice_reply = f"想跟您確認一下 😊 {'、'.join(district_choices)}都有職缺，請問您說的是哪一個呢？"
             _place_choice_buttons = [
                 QuickReplyButton(action=MessageAction(label=f"📍 {choice}"[:20], text=f"{choice}的工作"))
@@ -853,24 +885,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
             )
             return
-
-        _effective_category = detected_category_from_text if detected_category_from_text and detected_category_from_text != "不限" else ""
-
-        def _search_jobs(skip=None):
-            """用目前生效的全部條件（類型、廠商、地區、班別/休假/發薪/福利）
-            篩職缺；skip 指定跳過其中一項（location/category/brand 或班別等
-            標籤維度）。類型要先在全部職缺上篩、再篩地區，跟步驟 1c 的候選池
-            一致：filter_jobs_by_category_tiered() 在嚴格比對找不到時會退回
-            寬鬆比對，先篩地區的話，某個地區剛好沒有嚴格符合的職缺，就會混進
-            只是工作說明提到類型字眼的職缺。"""
-            category = _effective_category if skip != "category" else ""
-            brand = detected_brand if skip != "brand" else ""
-            jobs = filter_jobs_by_category_tiered(active_jobs, category, brand) if category else list(active_jobs)
-            if brand:
-                jobs = [j for j in jobs if job_matches_brand(j, brand)]
-            if skip != "location":
-                jobs = _filter_by_location(jobs, current_location)
-            return _apply_label_filters(jobs, skip=skip)
 
         # ---------------- 步驟 0-3c：「換地區／換班別／換工作類型」「我要應徵」按鈕 ----------------
         # 列出的選項只列「其他條件不變、換成這個真的有職缺」的值，按下去送出
@@ -983,7 +997,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             matched_show_all = _search_jobs()
 
             _show_all_scope = [s for s in [
-                current_location, _brand_for_filter,
+                current_location_text, _brand_for_filter,
                 _known_category_for_filter if _known_category_for_filter != "不限" else "",
             ] if s] + _label_condition_parts()
             _show_all_scope_text = f"符合「{'・'.join(_show_all_scope)}」" if _show_all_scope else ""
@@ -1086,10 +1100,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 「候選池」（不篩地區、不直接回覆），地區／福利／發薪方式／休假方式
         # 這四項全部挪到後面統一疊加篩選（見下方步驟 1b/1c），才能讓「蝦皮」
         # 加上「公司車」這種合併問法正確同時生效。
-        # `_pool_query_phrase`：給「詢問求職者可以放寬哪個條件」那段重組按鈕
-        # 文字用——只要把這個詞、地區、還沒被放寬的其他關鍵字組成一句話，
-        # 重新送進這個函式就能自然命中同一個候選池，不需要另外寫路由邏輯，
-        # 跟蝦皮反問／全域重置確認是同一種「按鈕文字完全自己控制」的精神。
         def _brand_plus_suffix(brand: str, suffix: str) -> str:
             """組合廠商名稱跟類別字尾當候選池描述文字/按鈕重組文字。實測回報：
             如果 detected_brand 剛好命中的是「完整職缺廠商名稱」（例如某筆
@@ -1103,7 +1113,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
 
         _pool = []
         _pool_desc = ""
-        _pool_query_phrase = ""
 
         if is_delivery_intent:
             for j in active_jobs:
@@ -1119,7 +1128,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 混進蝦皮/Uber 的職缺，沒有任何提示這不是使用者指定的廠商。
                 _pool = [j for j in _pool if job_matches_brand(j, detected_brand)]
             _pool_desc = _brand_plus_suffix(detected_brand, "外送")
-            _pool_query_phrase = _pool_desc
 
         elif is_store_intent:
             # 改用 detected_brand（這輪偵測到的，或延續前一輪鎖定的廠商），
@@ -1129,12 +1137,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _store_brand = detected_brand
             _pool = filter_jobs_by_category_tiered(active_jobs, "門市", _store_brand)
             _pool_desc = _brand_plus_suffix(_store_brand, "門市")
-            _pool_query_phrase = _pool_desc
 
         elif is_momo_intent:
             _pool = [j for j in active_jobs if job_matches_brand(j, "momo")]
             _pool_desc = "momo"
-            _pool_query_phrase = "momo"
 
         elif is_warehouse_intent or is_manufacturing_intent:
             _category_label_for_intent = "理貨/倉儲" if is_warehouse_intent else "製造/作業員"
@@ -1148,7 +1154,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 廠商的職缺，答非所問。
                 _pool = [j for j in _pool if job_matches_brand(j, detected_brand)]
             _pool_desc = _brand_plus_suffix(detected_brand, _category_label_for_intent)
-            _pool_query_phrase = _brand_plus_suffix(detected_brand, "理貨" if is_warehouse_intent else "作業員")
 
         elif is_food_service_intent:
             _pool = filter_jobs_by_category_tiered(active_jobs, "餐飲/服務")
@@ -1158,18 +1163,15 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 另外手動篩一次。
                 _pool = [j for j in _pool if job_matches_brand(j, detected_brand)]
             _pool_desc = _brand_plus_suffix(detected_brand, "餐飲/服務")
-            _pool_query_phrase = _pool_desc
 
         elif is_shopee_intent:
             _pool = [j for j in active_jobs if job_matches_brand(j, "蝦皮")]
             _pool_desc = "蝦皮"
-            _pool_query_phrase = "蝦皮"
             if _effective_category:
                 # 已經鎖定類型（例如先問「門市的工作」再問「蝦皮呢」）時沿用，
                 # 不再問一次「想看哪一種類型」。
                 _pool = filter_jobs_by_category_tiered(_pool, _effective_category, "蝦皮")
                 _pool_desc = _brand_plus_suffix("蝦皮", _effective_category)
-                _pool_query_phrase = _pool_desc
 
         def _resolve_intercept_type():
             if is_delivery_intent:
@@ -1266,7 +1268,6 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             if detected_brand:
                 _pool = [j for j in _pool if job_matches_brand(j, detected_brand)]
             _pool_desc = _brand_plus_suffix(detected_brand, _locked_category_for_secondary) if _locked_category_for_secondary else detected_brand
-            _pool_query_phrase = _pool_desc
 
         _has_pool_intent = _has_category_pool_intent or _is_locked_context_pool_intent
 
@@ -1290,7 +1291,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _shopee_known_categories = distinct_routable_categories_for_jobs(_shopee_scope) if _shopee_scope else []
             if len(_shopee_known_categories) >= 2:
                 _shopee_category_emoji = {"外送": "🚚", "門市": "🏬", "理貨/倉儲": "📦", "製造/作業員": "🏭", "餐飲/服務": "🍽️"}
-                _shopee_where = f"在{current_location}" if current_location else ""
+                _shopee_where = f"在{current_location_text}" if current_location else ""
                 clarify_reply = f"蝦皮{_shopee_where}目前有{'、'.join(_shopee_known_categories)}這幾種職缺在招募，請問您想看哪一種呢？😊"
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", clarify_reply)
@@ -1343,7 +1344,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _loc_filtered = _filter_by_location(_effective_pool, current_location)
 
             _fully_filtered = _apply_secondary_filters(_loc_filtered)
-            _scope_desc_bits = [b for b in [current_location, _pool_desc if _has_pool_intent else ""] if b]
+            _scope_desc_bits = [b for b in [current_location_text, _pool_desc if _has_pool_intent else ""] if b]
 
             # ---------------- 不知道地區、職缺又分散在好幾個縣市：先問地區 ----------------
             # 使用者 2026-09-23 決定。結果少到一次看得完時不問。
@@ -1372,7 +1373,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             if is_location_only_turn and not _pool_category and not _pool_brand and len(_fully_filtered) > _CARD_LIMIT:
                 _location_categories = distinct_routable_categories_for_jobs(_fully_filtered)
                 if len(_location_categories) >= 2:
-                    ask_category_reply = f"{current_location}目前有{'、'.join(_location_categories)}這幾種職缺，請問您想看哪一種呢？😊"
+                    ask_category_reply = f"{current_location_text}目前有{'、'.join(_location_categories)}這幾種職缺，請問您想看哪一種呢？😊"
                     append_user_history(user_id, "求職者", raw_msg)
                     append_user_history(user_id, "招募顧問沛沛", ask_category_reply)
                     _category_emoji = {"外送": "🚚", "門市": "🏬", "理貨/倉儲": "📦", "製造/作業員": "🏭", "餐飲/服務": "🍽️"}
@@ -1393,7 +1394,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             if _fully_filtered:
                 # 講清楚用了哪些條件：條件會跨輪記住，求職者不一定記得上一輪
                 # 講過日領，看到結果變少會以為是沒有職缺。
-                _applied = [b for b in [current_location, _pool_desc if _has_pool_intent else ""] if b] + _secondary_desc_parts()
+                _applied = [b for b in [current_location_text, _pool_desc if _has_pool_intent else ""] if b] + _secondary_desc_parts()
                 _applied_text = f"符合「{'・'.join(_applied)}」的" if _applied else "符合條件的"
                 reply_text = f"有的！沛沛為您找到{_applied_text}推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
                 append_user_history(user_id, "求職者", raw_msg)
@@ -1468,7 +1469,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 ("pay", "發薪方式", _pay_label),
             ]
             _scope_dimensions = [
-                ("location", "地區", current_location),
+                ("location", "地區", current_location_text),
                 ("category", "類型", _pool_category if _has_pool_intent else ""),
                 ("brand", "廠商", _pool_brand if _has_pool_intent else ""),
             ]
@@ -1517,22 +1518,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", clarify_reply)
 
-                _remaining_keywords = {
-                    dim: label.replace("|", " ") for dim, label in
-                    {"shift": _shift_label, "leave": _leave_label, "benefit": _benefit_label, "pay": _pay_label}.items()
-                }
                 relax_buttons = []
                 for dim, name, label in _relaxable:
-                    if dim in _remaining_keywords:
-                        _kept = [_remaining_keywords[d] for d, _, _ in _dimensions if d != dim and _remaining_keywords[d]]
-                        # 條件會跨輪記住，所以按鈕文字要明講「X都可以」把放寬的
-                        # 那一項清掉，不能只是不提——不然記住的條件還在，按下去
-                        # 會得到一模一樣的反問。
-                        _relax_text = " ".join(filter(None, [_pool_query_phrase, current_location] + _kept + [f"{name}都可以"]))
-                    else:
-                        # 地區/類型/廠商都記在槽位裡，只要講「X都可以」清掉那一項，
-                        # 其他條件下一輪會自動沿用。
-                        _relax_text = f"{name}都可以"
+                    # 條件都記在槽位裡，按鈕只要講「X都可以」清掉那一項，其他條件
+                    # 下一輪會自動沿用。原本把廠商/地區/其他條件也重新組進按鈕
+                    # 文字，去掉空白後會黏出別的詞：「做三休三 發薪方式都可以」
+                    # 黏出廠商「三發」、「新興 發薪方式都可以」又問一次新興是地區
+                    # 還是廠商（第五輪按鈕爬蟲測到）。
+                    _relax_text = f"{name}都可以"
                     relax_buttons.append(QuickReplyButton(action=MessageAction(
                         label=f"{_relax_emoji[dim]} {name}可以彈性",
                         text=_relax_text,
@@ -1541,7 +1534,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 保底選項：班別/休假/福利/發薪方式全部放寬、只看廠商/類別/地區。
                 # 只有一項條件時，放寬那一項就等於全部放寬，不重複列一次。
                 _active_secondary_count = sum(1 for _, _, label in _dimensions if label)
-                _catchall_text = " ".join(filter(None, [_pool_query_phrase, current_location, "其他條件都可以"]))
+                _catchall_text = "其他條件都可以"
                 if _loc_filtered and _active_secondary_count > 1:
                     relax_buttons.append(QuickReplyButton(action=MessageAction(label="👀 都可以，看看其他", text=_catchall_text)))
 

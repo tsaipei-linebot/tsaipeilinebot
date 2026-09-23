@@ -1918,8 +1918,9 @@ class CompoundSecondaryFilterTests(unittest.TestCase):
         self.assertIn("週休二日", reply_msg.text)
         self.assertIn("公司車", reply_msg.text)
         button_texts = {b.action.text for b in reply_msg.quick_reply.items}
-        # 條件會跨輪記住，按鈕文字要明講把放寬的那一項清掉（「X都可以」）。
-        self.assertEqual(button_texts, {"蝦皮 公司車 休假方式都可以", "蝦皮 週休二日 福利都可以", "蝦皮 其他條件都可以"})
+        # 條件會跨輪記住，按鈕只講「X都可以」把放寬的那一項清掉；不再把
+        # 廠商/其他條件重新組進去（第五輪測試：黏在一起會被誤讀成別的廠商）。
+        self.assertEqual(button_texts, {"休假方式都可以", "福利都可以", "其他條件都可以"})
 
     def test_relaxing_leave_shows_job_matching_remaining_benefit_condition(self):
         jobs = self._shopee_jobs()
@@ -3604,6 +3605,48 @@ class MultiTurnRoundFiveUnderstandingTests(_RoundFourSessionMixin, unittest.Test
         self.assertTrue(r["ai"])
         r = self._say("請問面試要帶什麼")
         self.assertEqual(r["text"], "面試請攜帶身分證")
+
+
+class MultiTurnRoundFiveLocationTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第五輪多輪對話測試第二批：地名（多輪）。"""
+
+    def _jobs(self):
+        return [
+            self._job("八德門市", ["門市人員"], "甲門市", ["桃園市"], ["桃園市八德區"], "月領"),
+            self._job("平鎮門市", ["門市人員"], "乙門市", ["桃園市"], ["桃園市平鎮區"], "月領"),
+            self._job("新竹門市", ["門市人員"], "丙門市", ["新竹市"], ["新竹市東區"], "月領"),
+            self._job("台北中山門市", ["門市人員"], "丁門市", ["台北市"], ["台北市中山區"], "月領"),
+            self._job("基隆中山理貨", ["理貨人員"], "戊物流", ["基隆市"], ["基隆市中山區"], "月領"),
+        ]
+
+    def test_also_ok_adds_a_second_place(self):
+        self._say("八德門市的工作")
+        r = self._say("平鎮也可以啦")
+        self.assertEqual(self.session_slots["location"], "八德|平鎮")
+        self.assertEqual(sorted(r["titles"]), ["八德門市", "平鎮門市"])
+        self.assertIn("八德或平鎮", r["text"])
+
+    def test_two_places_in_one_sentence(self):
+        r = self._say("八德或新竹的門市")
+        self.assertEqual(sorted(r["titles"]), ["八德門市", "新竹門市"])
+
+    def test_saying_no_to_a_qualified_location_clears_it(self):
+        self._say("台北市中山區的門市")
+        self.assertEqual(self.session_slots["location"], "台北市中山區")
+        self._say("不要中山區")
+        self.assertEqual(self.session_slots["location"], "")
+
+    def test_ambiguous_district_choices_follow_remembered_conditions(self):
+        self._say("理貨的工作")
+        r = self._say("中山區呢")
+        self.assertEqual(r["buttons"], ["基隆市中山區的工作"])
+
+    def test_relax_buttons_are_fixed_phrases(self):
+        self._say("八德門市的工作")
+        r = self._say("有日領的嗎")
+        for button in r["buttons"]:
+            self.assertTrue(button.endswith("都可以"), button)
+            self.assertNotIn("八德", button)
 
 
 if __name__ == "__main__":
