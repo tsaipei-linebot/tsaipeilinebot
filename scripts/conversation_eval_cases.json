@@ -1,14 +1,9316 @@
 [
-  {"id": "範例-桃園理貨再加新竹", "note": "基本流程＋也可以", "turns": [
-    {"say": "桃園 理貨", "slots": {"location": "桃園", "category": "理貨/倉儲"}, "jobs": true},
-    {"say": "晚上有空的那種", "slots_has": {"shift": ["晚班"]}, "slots": {"location": "桃園", "category": "理貨/倉儲"}},
-    {"say": "不要外送喔", "slots_has": {"exclude": ["category:外送"]}, "slots": {"category": "理貨/倉儲"}}
-  ]},
-  {"id": "範例-問問題不改條件", "note": "問句裡的詞不能當條件", "turns": [
-    {"say": "桃園作業員", "slots": {"location": "桃園", "category": "製造/作業員"}},
-    {"say": "那邊有冷氣設備嗎", "slots": {"location": "桃園", "category": "製造/作業員"}}
-  ]},
-  {"id": "範例-新北或桃園", "note": "兩個縣市", "turns": [
-    {"say": "新北或桃園的工作", "slots": {"location": ["新北", "桃園"]}}
-  ]}
+ {
+  "id": "範例-桃園理貨再加新竹",
+  "note": "基本流程＋也可以",
+  "turns": [
+   {
+    "say": "桃園 理貨",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上有空的那種",
+    "slots_has": {
+     "shift": [
+      "晚班"
+     ]
+    },
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    }
+   },
+   {
+    "say": "不要外送喔",
+    "slots_has": {
+     "exclude": [
+      "category:外送"
+     ]
+    },
+    "slots": {
+     "category": "理貨/倉儲"
+    }
+   }
+  ]
+ },
+ {
+  "id": "範例-問問題不改條件",
+  "note": "問句裡的詞不能當條件",
+  "turns": [
+   {
+    "say": "桃園作業員",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    }
+   },
+   {
+    "say": "那邊有冷氣設備嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    }
+   }
+  ]
+ },
+ {
+  "id": "範例-新北或桃園",
+  "note": "兩個縣市",
+  "turns": [
+   {
+    "say": "新北或桃園的工作",
+    "slots": {
+     "location": [
+      "新北",
+      "桃園"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話A-一般-打招呼後桃園理貨晚班",
+  "note": "先打招呼、再分次給地區類型班別，最後問細節條件不變",
+  "turns": [
+   {
+    "say": "你好，我想找工作",
+    "slots": {
+     "location": "",
+     "category": ""
+    }
+   },
+   {
+    "say": "桃園",
+    "slots": {
+     "location": "桃園",
+     "category": ""
+    }
+   },
+   {
+    "say": "理貨的",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班有嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "那邊有供餐嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-一般-台北餐廳兼職假日",
+  "note": "一句講地區類型兼職，再補假日，問時薪跟看詳情條件不變",
+  "turns": [
+   {
+    "say": "台北有餐廳的兼職嗎",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我只有假日有空",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "時薪大概多少",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "查看職缺詳情 上海鄉村宴會廳PT",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "reply_has_any": [
+     "上海鄉村宴會廳PT"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "好 謝謝",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-一般-台中作業員輪班",
+  "note": "有輪班的嗎＝找工作；輪班怎麼輪＝問問題",
+  "turns": [
+   {
+    "say": "台中作業員",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": ""
+    },
+    "jobs": true
+   },
+   {
+    "say": "有輪班的嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "輪班是怎麼輪的",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "查看職缺詳情 惠特科技",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "reply_has_any": [
+     "惠特科技"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "需要自己帶便當嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-一般-台北客服早班週休",
+  "note": "白天上班＝早班、週休二日，最後「要輪班嗎」是問問題",
+  "turns": [
+   {
+    "say": "想找台北的客服工作",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": true
+   },
+   {
+    "say": "白天上班的",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週休二日的有嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "這些要輪班嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-一般-台中外送問機車",
+  "note": "外送員＝外送，問要不要自備機車條件不變，再看詳情",
+  "turns": [
+   {
+    "say": "台中外送員",
+    "slots": {
+     "location": "台中",
+     "category": "外送"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要自備機車嗎",
+    "slots": {
+     "location": "台中",
+     "category": "外送"
+    },
+    "jobs": false
+   },
+   {
+    "say": "查看職缺詳情 Uber(COSTCO)",
+    "slots": {
+     "location": "台中",
+     "category": "外送"
+    },
+    "reply_has_any": [
+     "Uber(COSTCO)"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "油錢有補貼嗎",
+    "slots": {
+     "location": "台中",
+     "category": "外送"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-改條件-桃園換新北再加回桃園",
+  "note": "那新北呢＝換掉；桃園也可以＝加上；最後問問題條件不變",
+  "turns": [
+   {
+    "say": "桃園 理貨",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "那新北呢",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "桃園也可以",
+    "slots": {
+     "location": [
+      "新北",
+      "桃園"
+     ],
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜班",
+    "slots": {
+     "location": [
+      "新北",
+      "桃園"
+     ],
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜班要做到早上幾點",
+    "slots": {
+     "location": [
+      "新北",
+      "桃園"
+     ],
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-改條件-門市改餐飲晚班改早班",
+  "note": "類型、班別各改一次，地區一直保留",
+  "turns": [
+   {
+    "say": "台北 門市",
+    "slots": {
+     "location": "台北",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "還是餐飲好了",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "算了改成早班",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "有員工餐嗎",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "早班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-改條件-晚班加早班再只要早班",
+  "note": "也可以＝加上、只要＝換掉，再加兼職",
+  "turns": [
+   {
+    "say": "台中 餐飲 晚班",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "早班也可以",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務",
+     "shift": [
+      "晚班",
+      "早班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "還是只要早班好了",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務",
+     "shift": "早班",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 老鼎旺(代招)",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務",
+     "shift": "早班",
+     "worktype": "兼職"
+    },
+    "reply_has_any": [
+     "老鼎旺(代招)"
+    ],
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-改條件-薪資交通車再降薪資",
+  "note": "月薪三萬五改三萬，交通車保留；問交通車路線地區不能變中壢",
+  "turns": [
+   {
+    "say": "桃園作業員月薪3萬5以上",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "salary": "月薪35000"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要有交通車的",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "salary": "月薪35000",
+     "benefit": "交通車"
+    },
+    "jobs": true
+   },
+   {
+    "say": "月薪3萬就好",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "salary": "月薪30000",
+     "benefit": "交通車"
+    },
+    "jobs": true
+   },
+   {
+    "say": "交通車有停中壢火車站嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "salary": "月薪30000",
+     "benefit": "交通車"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-改條件-兼職改正職再換類型地區",
+  "note": "正職＝全職，之後類型、地區各改一次，全職保留",
+  "turns": [
+   {
+    "say": "新竹門市兼職",
+    "slots": {
+     "location": "新竹",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "還是找正職好了",
+    "slots": {
+     "location": "新竹",
+     "category": "門市",
+     "worktype": "全職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "那餐飲呢",
+    "slots": {
+     "location": "新竹",
+     "category": "餐飲/服務",
+     "worktype": "全職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "竹北的就好",
+    "slots": {
+     "location": "竹北",
+     "category": "餐飲/服務",
+     "worktype": "全職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "正職有年終嗎",
+    "slots": {
+     "location": "竹北",
+     "category": "餐飲/服務",
+     "worktype": "全職"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-改條件-觀音加楊梅再換大園",
+  "note": "行政區加一個、再換成另一個，加週領後問發薪日",
+  "turns": [
+   {
+    "say": "觀音 理貨",
+    "slots": {
+     "location": "觀音",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "楊梅也可以",
+    "slots": {
+     "location": [
+      "觀音",
+      "楊梅"
+     ],
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "那大園呢",
+    "slots": {
+     "location": "大園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週領",
+    "slots": {
+     "location": "大園",
+     "category": "理貨/倉儲",
+     "pay": "週領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週領是禮拜幾發",
+    "slots": {
+     "location": "大園",
+     "category": "理貨/倉儲",
+     "pay": "週領"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-改條件-一次講四個再逐一調整",
+  "note": "一句話四個條件，班別加大夜、兼職正職都可以拿掉全兼職，其他保留",
+  "turns": [
+   {
+    "say": "我要找桃園的倉庫工作，晚班，兼職，要週領",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班",
+     "worktype": "兼職",
+     "pay": "週領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜也可以",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": [
+      "晚班",
+      "大夜班"
+     ],
+     "worktype": "兼職",
+     "pay": "週領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職正職都可以",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": [
+      "晚班",
+      "大夜班"
+     ],
+     "worktype": "",
+     "pay": "週領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要穿制服嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": [
+      "晚班",
+      "大夜班"
+     ],
+     "worktype": "",
+     "pay": "週領"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-改條件-蝦皮理貨後不限廠商",
+  "note": "先指定蝦皮，再說其他家也可以，地區類型保留",
+  "turns": [
+   {
+    "say": "蝦皮 桃園",
+    "slots": {
+     "location": "桃園",
+     "brand": "蝦皮"
+    }
+   },
+   {
+    "say": "理貨",
+    "slots": {
+     "location": "桃園",
+     "brand": "蝦皮",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不一定要蝦皮，其他家也可以",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "slots_not": {
+     "brand": [
+      "蝦皮"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "那有大夜班嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "slots_not": {
+     "brand": [
+      "蝦皮"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-改條件-台南換高雄再換作業員",
+  "note": "地區換、類型換，再加輪班看詳情",
+  "turns": [
+   {
+    "say": "台南 餐飲",
+    "slots": {
+     "location": "台南",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "高雄呢",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "改找作業員",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "輪班可以",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 強茂永安廠(代招)",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "reply_has_any": [
+     "強茂永安廠(代招)"
+    ],
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-口語-桃圓錯字",
+  "note": "桃圓＝桃園；注音文問薪水是問問題",
+  "turns": [
+   {
+    "say": "桃圓有理貨嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的班可以嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "薪水ㄋ",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "ok 3q",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-口語-英文taoyuan倉庫parttime",
+  "note": "英文地名、part time＝兼職、週結＝週領",
+  "turns": [
+   {
+    "say": "taoyuan 倉庫 part time",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週結的有嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "兼職",
+     "pay": "週領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "OK 那要怎麼應徵",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "兼職",
+     "pay": "週領"
+    },
+    "jobs": false
+   },
+   {
+    "say": "要帶身分證嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "兼職",
+     "pay": "週領"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-口語-北市客服",
+  "note": "北市＝台北，白天的班＝早班，休六日＝週休二日",
+  "turns": [
+   {
+    "say": "北市 客服",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": true
+   },
+   {
+    "say": "白天的班",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要休六日的",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "可以穿便服嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-口語-做業員錯字大夜ok",
+  "note": "做業員＝作業員、大夜也ok＝大夜班，問勞健保條件不變",
+  "turns": [
+   {
+    "say": "台中 做業員 有嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜也ok",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "薪水會扣勞健保嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "大夜有夜點費嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-口語-新北餐廳打工晚上改板橋",
+  "note": "口語一次講四個條件，再更正地區，其他保留",
+  "turns": [
+   {
+    "say": "我想找個打工 新北 餐廳 晚上",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "欸不對 是板橋",
+    "slots": {
+     "location": "板橋",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "好喔 感恩",
+    "slots": {
+     "location": "板橋",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-口語-台北縣作業員夜班",
+  "note": "台北縣＝新北，夜班ok嗎＝要大夜班，站很久嗎是問問題",
+  "turns": [
+   {
+    "say": "台北縣 作業員",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "夜班ok嗎",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "那個要站很久嗎",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "會有加班嗎",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-口語-表情符號高雄餐飲",
+  "note": "夾表情符號、打烊班＝晚班",
+  "turns": [
+   {
+    "say": "高雄🍜餐飲兼職😊",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "有打烊班嗎",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "謝謝你～",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-口語-臺中門市注音",
+  "note": "臺＝台，注音文「有ㄇ」，問英文是問問題",
+  "turns": [
+   {
+    "say": "臺中門市",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班有ㄇ",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要會講英文嗎",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "shift": "晚班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "可以染髮嗎",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "shift": "晚班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-住哪裡-住板橋去桃園倉庫",
+  "note": "住的地方不是工作地區；問交通車從板橋出發地區不能變",
+  "turns": [
+   {
+    "say": "我住板橋，想找桃園的倉庫工作",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "有交通車從板橋出發嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "benefit": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "騎車過去大概要多久",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-住哪裡-住中壢去台北客服",
+  "note": "住中壢不能把地區改成中壢",
+  "turns": [
+   {
+    "say": "我家在中壢，想去台北做客服",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "slots_not": {
+     "location": [
+      "中壢"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "從中壢過去通勤會不會太遠",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": false
+   },
+   {
+    "say": "白天的就好",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-住哪裡-住新竹去竹北餐飲",
+  "note": "住新竹、上班竹北，地區只能是竹北",
+  "turns": [
+   {
+    "say": "住新竹，但想去竹北上班，餐飲",
+    "slots": {
+     "location": "竹北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": "竹北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "有停車位嗎",
+    "slots": {
+     "location": "竹北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-住哪裡-住彰化去台中工廠",
+  "note": "只是問交通車有沒有到彰化，地區不能變彰化、不要加交通車",
+  "turns": [
+   {
+    "say": "我住彰化 想找台中的工廠",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "交通車有到彰化嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "benefit": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "大夜班可以",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-住哪裡-人在高雄找高雄台南",
+  "note": "兩個地區；之後說住鳳山不是改地區",
+  "turns": [
+   {
+    "say": "人在高雄，想找高雄或台南的餐飲",
+    "slots": {
+     "location": [
+      "高雄",
+      "台南"
+     ],
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我住鳳山那邊",
+    "slots": {
+     "location": [
+      "高雄",
+      "台南"
+     ],
+     "category": "餐飲/服務"
+    },
+    "jobs": false
+   },
+   {
+    "say": "兼職的",
+    "slots": {
+     "location": [
+      "高雄",
+      "台南"
+     ],
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "可以只做中午嗎",
+    "slots": {
+     "location": [
+      "高雄",
+      "台南"
+     ],
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-住哪裡-要搬去台中",
+  "note": "現在住台南、下個月搬台中，地區是台中",
+  "turns": [
+   {
+    "say": "目前住台南，下個月搬去台中，想先找台中的門市",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "slots_not": {
+     "location": [
+      "台南"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "可以等我搬過去再上班嗎",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "shift": "晚班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-住哪裡-住林口找林口龜山",
+  "note": "兩個行政區，加上要交通車（要找有這福利的）",
+  "turns": [
+   {
+    "say": "我住林口，上班地點林口或龜山都可以，作業員",
+    "slots": {
+     "location": [
+      "林口",
+      "龜山"
+     ],
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要有交通車的",
+    "slots": {
+     "location": [
+      "林口",
+      "龜山"
+     ],
+     "category": "製造/作業員",
+     "benefit": "交通車"
+    },
+    "jobs": true
+   },
+   {
+    "say": "無塵室會很冷嗎",
+    "slots": {
+     "location": [
+      "林口",
+      "龜山"
+     ],
+     "category": "製造/作業員",
+     "benefit": "交通車"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-問問題-桃園作業員連問四題",
+  "note": "連續問四個問題條件都不變，最後加晚班",
+  "turns": [
+   {
+    "say": "桃園作業員",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "那邊有冷氣嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "jobs": false
+   },
+   {
+    "say": "薪水會扣勞健保嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "jobs": false
+   },
+   {
+    "say": "面試要穿什麼",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "jobs": false
+   },
+   {
+    "say": "加班費怎麼算",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "jobs": false
+   },
+   {
+    "say": "晚班的",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-問問題-新北理貨大夜問細節",
+  "note": "問夜班津貼、累不累、熱不熱條件不變，再看詳情",
+  "turns": [
+   {
+    "say": "新北 理貨 大夜班",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜有夜班津貼嗎",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "會很累嗎",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "倉庫裡面會很熱嗎",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "查看職缺詳情 PChome",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "reply_has_any": [
+     "PChome"
+    ],
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-問問題-問句含其他地區類型",
+  "note": "問句裡的高雄、餐飲、假日、兼職都不能當條件",
+  "turns": [
+   {
+    "say": "台中 門市",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "高雄餐飲假日要上班嗎",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "worktype": "",
+     "shift": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "兼職的時薪大概多少",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "worktype": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "門市要搬貨嗎",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "worktype": ""
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-問問題-台北客服問訓練",
+  "note": "打字速度、教育訓練、被罵都是問問題",
+  "turns": [
+   {
+    "say": "台北客服",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": true
+   },
+   {
+    "say": "打字要多快",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": false
+   },
+   {
+    "say": "有教育訓練嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": false
+   },
+   {
+    "say": "電話客服會常被罵嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": false
+   },
+   {
+    "say": "有績效獎金嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-問問題-問打烊幾點後換地區",
+  "note": "問打烊班幾點下班不改條件；新北有嗎＝找工作換地區，其他保留",
+  "turns": [
+   {
+    "say": "台中 餐飲 晚班",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "打烊班大概幾點可以下班",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "要自己準備黑鞋嗎",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "新北有嗎",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-近況-公司倒閉找作業員",
+  "note": "講公司倒閉不是轉專員，是找工作",
+  "turns": [
+   {
+    "say": "我們公司倒閉了，想在桃園找作業員",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "jobs": true,
+    "reply_not": [
+     "專員"
+    ]
+   },
+   {
+    "say": "越快可以上班越好",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "jobs": false
+   },
+   {
+    "say": "有做二休二的嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "leave": "做二休二"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-近況-要離職找客服",
+  "note": "要離職、不喜歡跟人講話都是近況，不轉專員",
+  "turns": [
+   {
+    "say": "我下個月要離職了，台北有客服嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": true,
+    "reply_not": [
+     "專員"
+    ]
+   },
+   {
+    "say": "我不太喜歡一直跟人講話",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "reply_not": [
+     "專員"
+    ]
+   },
+   {
+    "say": "有文字客服嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": true
+   },
+   {
+    "say": "文字客服要打很快嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-近況-白天要顧小孩",
+  "note": "白天要顧小孩＝不要早班，之後地區類型加上去排除保留",
+  "turns": [
+   {
+    "say": "我是二度就業的媽媽，白天要顧小孩",
+    "slots_has": {
+     "exclude": [
+      "shift:早班"
+     ]
+    },
+    "reply_not": [
+     "專員"
+    ]
+   },
+   {
+    "say": "想在新北找門市",
+    "slots": {
+     "location": "新北",
+     "category": "門市",
+     "exclude": [
+      "shift:早班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的班",
+    "slots": {
+     "location": "新北",
+     "category": "門市",
+     "exclude": [
+      "shift:早班"
+     ],
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "小孩生病可以臨時請假嗎",
+    "slots": {
+     "location": "新北",
+     "category": "門市",
+     "exclude": [
+      "shift:早班"
+     ],
+     "shift": "晚班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-近況-被裁員心情差",
+  "note": "抒發心情不轉專員，之後正常找工作",
+  "turns": [
+   {
+    "say": "被裁員了心情很差",
+    "slots": {
+     "location": "",
+     "category": ""
+    },
+    "jobs": false,
+    "reply_not": [
+     "專員"
+    ]
+   },
+   {
+    "say": "想找高雄的作業員",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "輪班也可以，錢多就好",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-近況-做外送想換門市",
+  "note": "現在做外送不代表要外送；不要再做外送＝排除外送，門市保留",
+  "turns": [
+   {
+    "say": "我現在在做外送但想換工作，想找台北的門市",
+    "slots": {
+     "location": "台北",
+     "category": "門市"
+    },
+    "slots_not": {
+     "category": [
+      "外送"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要再做外送了",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "exclude": [
+      "category:外送"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "門市要輪班嗎",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "exclude": [
+      "category:外送"
+     ]
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-排除-不要大夜也不要兼職",
+  "note": "排除累加（不同維度），問問題時排除保留",
+  "turns": [
+   {
+    "say": "桃園 理貨",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要大夜班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "也不要兼職的",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "exclude": [
+      "shift:大夜班",
+      "worktype:兼職"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "上班地點離火車站近嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "exclude": [
+      "shift:大夜班",
+      "worktype:兼職"
+     ]
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-排除-不要晚班要週領",
+  "note": "排除晚班後再加週領，排除保留",
+  "turns": [
+   {
+    "say": "台北 餐飲",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上不行",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "exclude": [
+      "shift:晚班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "週領的",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "exclude": [
+      "shift:晚班"
+     ],
+     "pay": "週領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週領會被扣手續費嗎",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "exclude": [
+      "shift:晚班"
+     ],
+     "pay": "週領"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-排除-新北除外台北門市",
+  "note": "新北除外＝不去新北，地區是台北",
+  "turns": [
+   {
+    "say": "新北除外，台北的門市",
+    "slots": {
+     "location": "台北",
+     "category": "門市"
+    },
+    "slots_not": {
+     "location": [
+      "新北"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "slots_not": {
+     "location": [
+      "新北"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "可以只排晚上嗎",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-排除-桃園但不要中壢",
+  "note": "排除行政區，後面加類型排除保留",
+  "turns": [
+   {
+    "say": "桃園的工作都可以，但不要中壢",
+    "slots": {
+     "location": "桃園",
+     "exclude": [
+      "location:中壢"
+     ]
+    }
+   },
+   {
+    "say": "理貨",
+    "slots": {
+     "location": "桃園",
+     "exclude": [
+      "location:中壢"
+     ],
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "楊梅那邊的倉庫大嗎",
+    "slots": {
+     "location": "桃園",
+     "exclude": [
+      "location:中壢"
+     ],
+     "category": "理貨/倉儲"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-排除-什麼都可以但不要作業員",
+  "note": "排除類型、類型本身留空",
+  "turns": [
+   {
+    "say": "地點台中，什麼工作都可以，就是不要作業員",
+    "slots": {
+     "location": "台中",
+     "exclude": [
+      "category:製造/作業員"
+     ]
+    },
+    "slots_not": {
+     "category": [
+      "製造/作業員"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職的",
+    "slots": {
+     "location": "台中",
+     "exclude": [
+      "category:製造/作業員"
+     ],
+     "worktype": "兼職"
+    },
+    "slots_not": {
+     "category": [
+      "製造/作業員"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職可以做多久",
+    "slots": {
+     "location": "台中",
+     "exclude": [
+      "category:製造/作業員"
+     ],
+     "worktype": "兼職"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-排除-高雄作業員不要輪班不要兼職",
+  "note": "一句排除一個、再補一個（不同維度）",
+  "turns": [
+   {
+    "say": "高雄 作業員 不要輪班",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "exclude": [
+      "shift:輪班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職的也不要",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "exclude": [
+      "shift:輪班",
+      "worktype:兼職"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "需要考試嗎",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "exclude": [
+      "shift:輪班",
+      "worktype:兼職"
+     ]
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-排除-不排斥夜班是要",
+  "note": "不排斥夜班＝可以大夜，不是排除",
+  "turns": [
+   {
+    "say": "不排斥夜班，桃園作業員",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "slots_not": {
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "做二休二可以",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "大夜班",
+     "leave": "做二休二"
+    },
+    "jobs": true
+   },
+   {
+    "say": "做二休二一個月休幾天",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "大夜班",
+     "leave": "做二休二"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-排除-不要兼職不要大夜",
+  "note": "排除全兼職跟班別累加",
+  "turns": [
+   {
+    "say": "新北 作業員",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要兼職",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "exclude": [
+      "worktype:兼職"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜班也不要",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "exclude": [
+      "worktype:兼職",
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "有三節獎金嗎",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "exclude": [
+      "worktype:兼職",
+      "shift:大夜班"
+     ]
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-放寬-新竹理貨沒有改地區都可以",
+  "note": "沒有要老實說並給放寬按鈕，按地區都可以後類型保留",
+  "turns": [
+   {
+    "say": "新竹 理貨",
+    "slots": {
+     "location": "新竹",
+     "category": "理貨/倉儲"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "地區都可以",
+    "slots": {
+     "category": "理貨/倉儲"
+    },
+    "slots_not": {
+     "location": [
+      "新竹"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "slots_not": {
+     "location": [
+      "新竹"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-放寬-台中客服沒有改類型都可以",
+  "note": "類型都可以後地區保留",
+  "turns": [
+   {
+    "say": "台中 客服",
+    "slots": {
+     "location": "台中",
+     "category": "客服/行政"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "類型都可以",
+    "slots": {
+     "location": "台中"
+    },
+    "slots_not": {
+     "category": [
+      "客服/行政"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "這些都要面試嗎",
+    "slots": {
+     "location": "台中"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-放寬-做四休二沒有改休假都可以",
+  "note": "休假方式都可以後再改做二休二",
+  "turns": [
+   {
+    "say": "台中 作業員 做四休二",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "leave": "做四休二"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "休假方式都可以",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "leave": ""
+    },
+    "jobs": true
+   },
+   {
+    "say": "那做二休二呢",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "leave": "做二休二"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-放寬-日領沒有加週領",
+  "note": "沒有日領後說週領也可以＝兩個都要，再改只要週領",
+  "turns": [
+   {
+    "say": "台北 餐飲 日領",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "pay": "日領"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "週領也可以",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "pay": [
+      "日領",
+      "週領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "那就只要週領",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "pay": "週領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週領是領現金還是匯款",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "pay": "週領"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-放寬-苗栗作業員沒有加新竹",
+  "note": "沒有職缺後加一個地區",
+  "turns": [
+   {
+    "say": "苗栗 作業員",
+    "slots": {
+     "location": "苗栗",
+     "category": "製造/作業員"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "新竹也可以",
+    "slots": {
+     "location": [
+      "苗栗",
+      "新竹"
+     ],
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "需要會看圖嗎",
+    "slots": {
+     "location": [
+      "苗栗",
+      "新竹"
+     ],
+     "category": "製造/作業員"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-放寬-基隆作業員沒有全台都可以",
+  "note": "全台都可以＝拿掉地區，類型保留",
+  "turns": [
+   {
+    "say": "基隆 作業員",
+    "slots": {
+     "location": "基隆",
+     "category": "製造/作業員"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "全台都可以",
+    "slots": {
+     "category": "製造/作業員"
+    },
+    "slots_not": {
+     "location": [
+      "基隆"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "要有交通車",
+    "slots": {
+     "category": "製造/作業員",
+     "benefit": "交通車"
+    },
+    "slots_not": {
+     "location": [
+      "基隆"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-放寬-時間都可以拿掉班別",
+  "note": "時間都可以＝班別都可以，其他保留",
+  "turns": [
+   {
+    "say": "桃園 理貨 做四休二",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "leave": "做四休二"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "休假怎樣都行",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "leave": ""
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "時間都可以",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": ""
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-按鈕-看更多兩次再看詳情",
+  "note": "看更多職缺連按兩次條件不變，再按詳情",
+  "turns": [
+   {
+    "say": "桃園 理貨",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 蝦皮物流觀音倉",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "reply_has_any": [
+     "蝦皮物流觀音倉"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "這個是做什麼的",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-按鈕-清空條件重新找",
+  "note": "清空之後新條件不能帶到舊的",
+  "turns": [
+   {
+    "say": "台北 餐飲",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "清空條件重新找",
+    "slots": {
+     "location": "",
+     "category": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "高雄 門市",
+    "slots": {
+     "location": "高雄",
+     "category": "門市",
+     "shift": ""
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-按鈕-類型都可以再看更多",
+  "note": "新竹理貨沒有，按類型都可以地區保留，再看更多",
+  "turns": [
+   {
+    "say": "新竹 理貨",
+    "slots": {
+     "location": "新竹",
+     "category": "理貨/倉儲"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "類型都可以",
+    "slots": {
+     "location": "新竹"
+    },
+    "slots_not": {
+     "category": [
+      "理貨/倉儲"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "新竹"
+    },
+    "slots_not": {
+     "category": [
+      "理貨/倉儲"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-按鈕-一開始就看詳情",
+  "note": "第一句就是詳情按鈕，之後正常找工作",
+  "turns": [
+   {
+    "say": "查看職缺詳情 美光(台中)_OP",
+    "slots": {
+     "location": "",
+     "category": ""
+    },
+    "reply_has_any": [
+     "美光(台中)_OP"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "台中 作業員",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜班",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-按鈕-班別都可以再地區都可以",
+  "note": "逐一拿掉班別、地區，類型保留",
+  "turns": [
+   {
+    "say": "桃園 作業員 晚班",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "班別都可以",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": ""
+    },
+    "jobs": true
+   },
+   {
+    "say": "地區都可以",
+    "slots": {
+     "category": "製造/作業員",
+     "shift": ""
+    },
+    "slots_not": {
+     "location": [
+      "桃園"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "category": "製造/作業員"
+    },
+    "slots_not": {
+     "location": [
+      "桃園"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-按鈕-詳情後問發薪日再看更多",
+  "note": "詳情頁的問題按鈕是問問題，之後看更多照原本功能",
+  "turns": [
+   {
+    "say": "台中 門市",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 蝦皮門市",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "reply_has_any": [
+     "蝦皮門市"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "發薪日是什麼時候？",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "jobs": false
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-按鈕-外送詳情後地區都可以",
+  "note": "看完詳情按地區都可以，類型保留",
+  "turns": [
+   {
+    "say": "高雄 外送",
+    "slots": {
+     "location": "高雄",
+     "category": "外送"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 蝦皮外送(承攬)",
+    "slots": {
+     "location": "高雄",
+     "category": "外送"
+    },
+    "reply_has_any": [
+     "蝦皮外送(承攬)"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "地區都可以",
+    "slots": {
+     "category": "外送"
+    },
+    "slots_not": {
+     "location": [
+      "高雄"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-按鈕-品牌詳情後清空",
+  "note": "LADY M 品牌搜尋、看詳情、清空",
+  "turns": [
+   {
+    "say": "台北 LADY M",
+    "slots": {
+     "location": "台北",
+     "brand": "LADY M"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 LADY M",
+    "slots": {
+     "location": "台北",
+     "brand": "LADY M"
+    },
+    "reply_has_any": [
+     "LADY M"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "清空條件重新找",
+    "slots": {
+     "location": "",
+     "brand": "",
+     "category": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "台中 餐飲",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務",
+     "brand": ""
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-混合-保全沒有改作業員",
+  "note": "保全沒有這類職缺要說沒有，之後改作業員地區保留",
+  "turns": [
+   {
+    "say": "台中有保全的工作嗎",
+    "slots": {
+     "location": "台中",
+     "category": ""
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "那作業員呢",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "作業員要搬重物嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-混合-找工作中途在職薪水問題",
+  "note": "在職員工薪資問題轉專員，條件不變，之後繼續找",
+  "turns": [
+   {
+    "say": "桃園 理貨",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "對了我上個月的薪水少了兩千",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "專員"
+    ]
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-混合-找工作中途要真人",
+  "note": "要真人轉專員，條件保留，再問問題條件還在",
+  "turns": [
+   {
+    "say": "台北 門市 兼職",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我想直接跟真人講",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "專員"
+    ]
+   },
+   {
+    "say": "兼職一週最少要排幾天",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-混合-清潔工沒有改餐飲洗碗",
+  "note": "清潔沒有對應類型要說沒有；洗碗＝餐飲",
+  "turns": [
+   {
+    "say": "高雄有清潔工嗎",
+    "slots": {
+     "location": "高雄",
+     "category": ""
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "那餐廳洗碗的呢",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話A-混合-廠商徵才",
+  "note": "廠商要徵人轉專員，不列職缺、不記條件",
+  "turns": [
+   {
+    "say": "你好，我們是桃園的工廠，想找你們幫忙招作業員",
+    "slots": {
+     "location": "",
+     "category": ""
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "專員"
+    ]
+   },
+   {
+    "say": "大概要十個人，做大夜班",
+    "slots": {
+     "location": "",
+     "category": "",
+     "shift": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "你們的服務費怎麼算",
+    "slots": {
+     "location": "",
+     "category": ""
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-口語-西屯餐飲錯字",
+  "note": "台中西屯＝西屯；錯字「餐廰」",
+  "turns": [
+   {
+    "say": "台中西屯 餐廰 的工作",
+    "slots": {
+     "location": "西屯",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼差可以嗎",
+    "slots": {
+     "location": "西屯",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "一小時多少錢",
+    "slots": {
+     "location": "西屯",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-排除-月薪不要改週領",
+  "note": "不要月領＝排除月領，之後問問題排除保留",
+  "turns": [
+   {
+    "say": "桃園 理貨 不要月領",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "exclude": [
+      "pay:月領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "有日領最好",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "exclude": [
+      "pay:月領"
+     ],
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "日領要扣稅嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "exclude": [
+      "pay:月領"
+     ],
+     "pay": "日領"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話A-問問題-薪資怎麼算後加薪資條件",
+  "note": "問薪資怎麼算條件不變；時薪200以上是條件",
+  "turns": [
+   {
+    "say": "台北 餐飲",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "薪水是怎麼算的",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "salary": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "時薪200以上的",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "salary": "時薪200"
+    },
+    "jobs": true
+   },
+   {
+    "say": "時薪有含加班費嗎",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "salary": "時薪200"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話B-反問類型回都可以",
+  "note": "只講地區→沛沛問類型→回「都可以」＝類型都可以，再補班別",
+  "turns": [
+   {
+    "say": "桃園",
+    "slots": {
+     "location": "桃園"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "哪一種",
+     "類型"
+    ]
+   },
+   {
+    "say": "都可以",
+    "slots": {
+     "location": "桃園",
+     "category": "不限"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班就好",
+    "slots": {
+     "location": "桃園",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-反問地區回隨便",
+  "note": "只講類型→沛沛問地區→回「隨便」＝地區都可以，按看更多",
+  "turns": [
+   {
+    "say": "我想找理貨",
+    "slots": {
+     "category": "理貨/倉儲",
+     "location": ""
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "地區",
+     "哪裡",
+     "縣市"
+    ]
+   },
+   {
+    "say": "隨便",
+    "slots": {
+     "location": "不限",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "不限",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-反問地區按按鈕再排除白天",
+  "note": "問地區→照按鈕文字回→「白天不行」排除早班，其他保留",
+  "turns": [
+   {
+    "say": "倉儲理貨的工作",
+    "slots": {
+     "category": "理貨/倉儲"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "地區",
+     "哪裡",
+     "縣市"
+    ]
+   },
+   {
+    "say": "桃園市的工作",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "白天不行",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "exclude": [
+      "shift:早班"
+     ]
+    },
+    "slots_not": {
+     "shift": [
+      "早班"
+     ]
+    }
+   },
+   {
+    "say": "晚班有嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-反問類型按按鈕再改兼職",
+  "note": "問類型→按「製造/作業員的工作」→問兼職→改回全職，地區類型保留",
+  "turns": [
+   {
+    "say": "新北",
+    "slots": {
+     "location": "新北"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "哪一種",
+     "類型"
+    ]
+   },
+   {
+    "say": "製造/作業員的工作",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "有兼職的嗎",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "全職好了",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "worktype": "全職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-同名區回都可以",
+  "note": "「北區」三個縣市都有→問哪一個→回都可以＝三個都看→再補類型",
+  "turns": [
+   {
+    "say": "北區有工作嗎",
+    "jobs": false,
+    "reply_has_any": [
+     "哪一個"
+    ],
+    "slots": {
+     "location": ""
+    }
+   },
+   {
+    "say": "都可以",
+    "slots": {
+     "location": [
+      "台中市北區",
+      "台南市北區",
+      "新竹市北區"
+     ]
+    }
+   },
+   {
+    "say": "外送",
+    "slots": {
+     "location": [
+      "台中市北區",
+      "台南市北區",
+      "新竹市北區"
+     ],
+     "category": "外送"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-同名區按按鈕",
+  "note": "「東區」問哪一個→按台南市東區→再講餐飲",
+  "turns": [
+   {
+    "say": "東區",
+    "jobs": false,
+    "reply_has_any": [
+     "台南市東區"
+    ]
+   },
+   {
+    "say": "台南市東區的工作",
+    "slots": {
+     "location": "台南市東區"
+    }
+   },
+   {
+    "say": "餐飲",
+    "slots": {
+     "location": "台南市東區",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的",
+    "slots": {
+     "location": "台南市東區",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話B-換班別選單按按鈕",
+  "note": "條件齊全→按「我想換班別」→照按鈕回「早班的工作」，地區類型保留",
+  "turns": [
+   {
+    "say": "台北 餐飲 晚班",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我想換班別",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "班別"
+    ]
+   },
+   {
+    "say": "早班的工作",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-換班別選單回都可以",
+  "note": "換班別選單回「都可以」＝班別都可以，只清班別",
+  "turns": [
+   {
+    "say": "桃園 理貨 大夜班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我想換班別",
+    "jobs": false,
+    "reply_has_any": [
+     "班別"
+    ]
+   },
+   {
+    "say": "都可以",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": ""
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-清空確認回不要",
+  "note": "打「清空條件」→沛沛確認→回「不要」條件全部保留→再換班別",
+  "turns": [
+   {
+    "say": "台中 作業員 早班",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "清空條件",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "清空"
+    ]
+   },
+   {
+    "say": "不要",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "那大夜班呢",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-清空確認回好",
+  "note": "打「清空條件」→沛沛確認→回「好」全部清掉→重新找",
+  "turns": [
+   {
+    "say": "高雄 餐飲 兼職",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "清空條件",
+    "jobs": false,
+    "reply_has_any": [
+     "清空"
+    ]
+   },
+   {
+    "say": "好",
+    "slots": {
+     "location": "",
+     "category": "",
+     "worktype": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "台南 餐飲",
+    "slots": {
+     "location": "台南",
+     "category": "餐飲/服務",
+     "worktype": ""
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-換地區選單回都可以",
+  "note": "換地區選單回「都可以」＝地區都可以，類型保留",
+  "turns": [
+   {
+    "say": "新竹 門市",
+    "slots": {
+     "location": "新竹",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我想換地區",
+    "slots": {
+     "location": "新竹",
+     "category": "門市"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "地區"
+    ]
+   },
+   {
+    "say": "都可以",
+    "slots": {
+     "location": "不限",
+     "category": "門市"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-沒職缺按放寬按鈕",
+  "note": "條件太多找不到→老實說沒有→按「發薪方式都可以」只拿掉發薪→再加兼職",
+  "turns": [
+   {
+    "say": "桃園 餐飲 日領",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "pay": "日領"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "發薪方式都可以",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "pay": ""
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-沒職缺回都可以要問哪一項",
+  "note": "找不到職缺之後只回「都可以」分不出哪一項→要問清楚、條件不動→再按類型都可以",
+  "turns": [
+   {
+    "say": "台中 客服",
+    "slots": {
+     "location": "台中",
+     "category": "客服/行政"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "都可以",
+    "slots": {
+     "location": "台中",
+     "category": "客服/行政"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "哪一項",
+     "哪一個",
+     "類型都可以"
+    ]
+   },
+   {
+    "say": "類型都可以",
+    "slots": {
+     "location": "台中",
+     "category": "不限"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-反問類型回晚班就好",
+  "note": "沛沛問類型時回「晚班就好」→記晚班、地區保留→再回類型",
+  "turns": [
+   {
+    "say": "台北",
+    "slots": {
+     "location": "台北"
+    },
+    "jobs": false
+   },
+   {
+    "say": "晚班就好",
+    "slots": {
+     "location": "台北",
+     "shift": "晚班"
+    }
+   },
+   {
+    "say": "餐飲",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-反問地區回白天不行",
+  "note": "沛沛問地區時回「白天不行」→排除早班、類型保留→再回地區",
+  "turns": [
+   {
+    "say": "門市的工作",
+    "slots": {
+     "category": "門市"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "地區",
+     "哪裡",
+     "縣市"
+    ]
+   },
+   {
+    "say": "白天不行",
+    "slots": {
+     "category": "門市",
+     "exclude": [
+      "shift:早班"
+     ]
+    }
+   },
+   {
+    "say": "台北",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "exclude": [
+      "shift:早班"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-夜班不要又要又不要",
+  "note": "「不要夜班」→「其實夜班也可以」→「還是不要好了」",
+  "turns": [
+   {
+    "say": "桃園 理貨",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要夜班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "slots_not": {
+     "shift": [
+      "大夜班"
+     ]
+    }
+   },
+   {
+    "say": "其實夜班也可以",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "slots_not": {
+     "exclude": [
+      "shift:大夜班"
+     ]
+    }
+   },
+   {
+    "say": "還是不要好了",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "slots_has": {
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "slots_not": {
+     "shift": [
+      "大夜班"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-晚班早班來回改",
+  "note": "晚班→「晚班太晚了早班好了」→「還是晚班好了」，地區類型不動",
+  "turns": [
+   {
+    "say": "新北 餐飲",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "算了晚班太晚了，早班好了",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "欸還是晚班好了",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-類型換掉又加回",
+  "note": "作業員→「不要作業員了改餐飲」→「作業員也可以啦」變兩種",
+  "turns": [
+   {
+    "say": "台中 作業員",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要作業員了，改餐飲",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "作業員也可以啦",
+    "slots": {
+     "location": "台中",
+     "category": [
+      "餐飲/服務",
+      "製造/作業員"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-兩地拿掉一個又加回",
+  "note": "桃園或新竹→「新竹不要好了」→「新竹還是可以」",
+  "turns": [
+   {
+    "say": "桃園或新竹的門市",
+    "slots": {
+     "location": [
+      "桃園",
+      "新竹"
+     ],
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "新竹不要好了",
+    "slots_has": {
+     "location": [
+      "桃園"
+     ]
+    },
+    "slots_not": {
+     "location": [
+      "新竹"
+     ]
+    },
+    "slots": {
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "新竹還是可以",
+    "slots": {
+     "location": [
+      "桃園",
+      "新竹"
+     ],
+     "category": "門市"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-排除行政區又取消",
+  "note": "新北門市→「三重太遠不要」→「三重也可以啦」取消排除",
+  "turns": [
+   {
+    "say": "新北 門市",
+    "slots": {
+     "location": "新北",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "三重太遠了不要",
+    "slots": {
+     "category": "門市"
+    },
+    "slots_has": {
+     "exclude": [
+      "location:三重"
+     ]
+    },
+    "slots_not": {
+     "location": [
+      "三重"
+     ]
+    }
+   },
+   {
+    "say": "三重也可以啦",
+    "slots": {
+     "category": "門市"
+    },
+    "slots_not": {
+     "exclude": [
+      "location:三重"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話B-發薪加一個又改回",
+  "note": "日領→「週領也可以」→「還是只要日領好了」",
+  "turns": [
+   {
+    "say": "桃園 理貨 日領",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週領也可以",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "pay": [
+      "日領",
+      "週領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "還是只要日領好了",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "pay": "日領"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-排除類型又改口",
+  "note": "台中但不要作業員→「作業員其實也可以」→「還是餐飲好了」",
+  "turns": [
+   {
+    "say": "台中的工作，不要作業員",
+    "slots": {
+     "location": "台中",
+     "exclude": [
+      "category:製造/作業員"
+     ]
+    },
+    "slots_not": {
+     "category": [
+      "製造/作業員"
+     ]
+    }
+   },
+   {
+    "say": "作業員其實也可以",
+    "slots": {
+     "location": "台中"
+    },
+    "slots_not": {
+     "exclude": [
+      "category:製造/作業員"
+     ]
+    }
+   },
+   {
+    "say": "還是餐飲好了",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-晚班改不行再改早班",
+  "note": "晚班→「晚上要顧小孩，晚班不行」→「那早班呢」",
+  "turns": [
+   {
+    "say": "新竹 餐飲 晚班",
+    "slots": {
+     "location": "新竹",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "等等，晚上我要顧小孩，晚班不行",
+    "slots": {
+     "location": "新竹",
+     "category": "餐飲/服務"
+    },
+    "slots_not": {
+     "shift": [
+      "晚班"
+     ]
+    }
+   },
+   {
+    "say": "那早班呢",
+    "slots": {
+     "location": "新竹",
+     "category": "餐飲/服務",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-廠商徵才再自己找",
+  "note": "一開始是廠商要徵人（轉專員、不能記成理貨）→接著自己找桃園理貨",
+  "turns": [
+   {
+    "say": "我們是物流公司，想請你們幫忙找倉庫的人",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "location": "",
+     "category": ""
+    }
+   },
+   {
+    "say": "另外我自己也在找工作，桃園理貨",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-在職薪水少再找工作",
+  "note": "找工作中途講在職薪水問題→轉專員、條件不動→再加晚班要正常",
+  "turns": [
+   {
+    "say": "新竹 餐飲 兼職",
+    "slots": {
+     "location": "新竹",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我現在在你們派的店上班，上個月薪水少了兩千",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "location": "新竹",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    }
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "新竹",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-客訴後再加班別",
+  "note": "找工作中途客訴→轉專員、條件不動→再講早班",
+  "turns": [
+   {
+    "say": "桃園 作業員",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "你們上次那個專員講話很兇，我要投訴",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    }
+   },
+   {
+    "say": "早班的",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-要真人再找客服",
+  "note": "一開始要找真人→轉專員→接著找台北客服",
+  "turns": [
+   {
+    "say": "我想跟真人講話",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "台北的客服工作",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": true
+   },
+   {
+    "say": "全職",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "worktype": "全職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-刪個資後又想找",
+  "note": "講刪個資→轉專員、條件不動→改口還是想看晚班",
+  "turns": [
+   {
+    "say": "台中 門市",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "請把我的資料刪掉，不要再傳訊息給我",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    }
+   },
+   {
+    "say": "算了，我還是想看看台中門市的晚班",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-薪水沒匯再找高雄",
+  "note": "薪水還沒匯→轉專員→接著找高雄餐飲",
+  "turns": [
+   {
+    "say": "薪水還沒匯進來是怎樣",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "那高雄有餐飲的工作嗎",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-問面試結果不記廠商",
+  "note": "問面試結果（轉專員，不能把美光記成廠商條件）→接著找台中作業員",
+  "turns": [
+   {
+    "say": "我上禮拜去美光面試，什麼時候會通知結果",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "brand": "",
+     "category": ""
+    }
+   },
+   {
+    "say": "有沒有台中的作業員",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "brand": ""
+    },
+    "jobs": true
+   },
+   {
+    "say": "早班就好",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-餐廳老闆徵人再幫家人找",
+  "note": "餐廳老闆要派人（轉專員、不記條件）→再幫女兒找台北門市兼職",
+  "turns": [
+   {
+    "say": "我是餐廳老闆，想找你們配合派兼職人員",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "category": "",
+     "worktype": ""
+    }
+   },
+   {
+    "say": "好，另外我女兒想找台北的門市兼職",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-問地區時要專員",
+  "note": "沛沛問地區時說要找專員→轉專員→再回地區，類型要還在",
+  "turns": [
+   {
+    "say": "理貨",
+    "slots": {
+     "category": "理貨/倉儲"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "地區",
+     "哪裡",
+     "縣市"
+    ]
+   },
+   {
+    "say": "我要找專員",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "category": "理貨/倉儲"
+    }
+   },
+   {
+    "say": "桃園",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-在職請假再找楊梅",
+  "note": "在職員工問請假（轉專員、不記蝦皮）→接著問楊梅理貨",
+  "turns": [
+   {
+    "say": "我在蝦皮倉庫上班，明天想請假要找誰",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "brand": "",
+     "category": ""
+    }
+   },
+   {
+    "say": "順便問一下楊梅有理貨的缺嗎",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜班",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-被裁員再找桃園",
+  "note": "「我被裁員了」是近況不是轉專員→接著找桃園→理貨",
+  "turns": [
+   {
+    "say": "我被裁員了",
+    "reply_not": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "location": "",
+     "category": ""
+    }
+   },
+   {
+    "say": "桃園有什麼工作",
+    "slots": {
+     "location": "桃園"
+    }
+   },
+   {
+    "say": "理貨",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-公司倒閉找新工作",
+  "note": "公司倒閉要找新工作＝找工作，不轉專員→補地區→補類型",
+  "turns": [
+   {
+    "say": "我們公司倒閉了，需要找新工作",
+    "reply_not": [
+     "專員"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "台中",
+    "slots": {
+     "location": "台中"
+    }
+   },
+   {
+    "say": "作業員",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-要離職順便問理貨",
+  "note": "要離職（近況）＋桃園有理貨嗎＝找工作→加晚上→加週領",
+  "turns": [
+   {
+    "say": "我要離職了，桃園有理貨嗎",
+    "reply_not": [
+     "專員"
+    ],
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週領的",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班",
+     "pay": "週領"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-以前做過不是現在要的",
+  "note": "以前在美光做作業員（經歷）→現在想找新北餐飲，不能記成作業員或美光",
+  "turns": [
+   {
+    "say": "我之前在美光做過作業員，現在想找新北的餐飲",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "brand": ""
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-白天顧小孩排除早班",
+  "note": "剛生小孩白天要顧＝排除早班→補地區→補類型",
+  "turns": [
+   {
+    "say": "最近剛生完小孩，白天要顧小孩",
+    "slots_has": {
+     "exclude": [
+      "shift:早班"
+     ]
+    },
+    "slots_not": {
+     "shift": [
+      "早班"
+     ]
+    },
+    "reply_not": [
+     "專員"
+    ]
+   },
+   {
+    "say": "新北的",
+    "slots": {
+     "location": "新北"
+    },
+    "slots_has": {
+     "exclude": [
+      "shift:早班"
+     ]
+    }
+   },
+   {
+    "say": "門市",
+    "slots": {
+     "location": "新北",
+     "category": "門市"
+    },
+    "slots_has": {
+     "exclude": [
+      "shift:早班"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-家人在別處上班",
+  "note": "老公在桃園上班是別人的事，要找的是台北→補類型",
+  "turns": [
+   {
+    "say": "我老公在桃園上班，我想找台北的工作",
+    "slots": {
+     "location": "台北"
+    },
+    "slots_not": {
+     "location": [
+      "桃園"
+     ]
+    }
+   },
+   {
+    "say": "餐飲",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-剛退伍沒經驗",
+  "note": "剛退伍沒做過（近況）→問台中不用經驗的作業員→早班就好",
+  "turns": [
+   {
+    "say": "我剛退伍，什麼都沒做過",
+    "reply_not": [
+     "專員"
+    ],
+    "jobs": false,
+    "slots": {
+     "location": "",
+     "category": ""
+    }
+   },
+   {
+    "say": "台中有沒有不用經驗的作業員",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "早班就好",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-保全沒有改作業員",
+  "note": "保全沒有→回覆含沒有→改作業員→補台中",
+  "turns": [
+   {
+    "say": "有保全的工作嗎",
+    "reply_has_any": [
+     "沒有"
+    ],
+    "jobs": false,
+    "slots": {
+     "category": ""
+    }
+   },
+   {
+    "say": "那作業員呢",
+    "slots": {
+     "category": "製造/作業員"
+    }
+   },
+   {
+    "say": "台中",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-桃園清潔沒有改理貨",
+  "note": "桃園清潔沒有→不能硬塞類型→改問桃園理貨",
+  "turns": [
+   {
+    "say": "桃園有清潔的工作嗎",
+    "reply_has_any": [
+     "沒有"
+    ],
+    "slots": {
+     "category": ""
+    }
+   },
+   {
+    "say": "那桃園的理貨呢",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-會計沒有改客服行政",
+  "note": "會計沒有（不能硬塞客服/行政）→自己說客服行政也可以→補台北",
+  "turns": [
+   {
+    "say": "我想當會計",
+    "reply_has_any": [
+     "沒有"
+    ],
+    "jobs": false,
+    "slots": {
+     "category": ""
+    }
+   },
+   {
+    "say": "那客服行政也可以",
+    "slots": {
+     "category": "客服/行政"
+    }
+   },
+   {
+    "say": "台北",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-美髮沒有改門市",
+  "note": "新竹美髮沒有→改新竹門市",
+  "turns": [
+   {
+    "say": "新竹有美髮的工作嗎",
+    "reply_has_any": [
+     "沒有"
+    ],
+    "slots": {
+     "category": ""
+    }
+   },
+   {
+    "say": "那新竹的門市",
+    "slots": {
+     "location": "新竹",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "全職",
+    "slots": {
+     "location": "新竹",
+     "category": "門市",
+     "worktype": "全職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-中途問清潔工條件不動",
+  "note": "已有台中作業員→問清潔工（沒有、條件不動）→改門市",
+  "turns": [
+   {
+    "say": "台中 作業員",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "有沒有清潔工",
+    "reply_has_any": [
+     "沒有"
+    ],
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員"
+    }
+   },
+   {
+    "say": "那門市呢",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-新竹東區直接找",
+  "note": "縣市＋同名區（新竹東區）不用再問是哪一個",
+  "turns": [
+   {
+    "say": "新竹東區的門市",
+    "slots": {
+     "location": "新竹市東區",
+     "category": "門市"
+    },
+    "jobs": true,
+    "reply_not": [
+     "哪一個"
+    ]
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": "新竹市東區",
+     "category": "門市",
+     "worktype": "兼職"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話B-中山區餐飲只有台北有",
+  "note": "中山區＋餐飲：只有台北中山區有餐飲，不用問",
+  "turns": [
+   {
+    "say": "中山區的餐飲",
+    "slots": {
+     "location": "台北市中山區",
+     "category": "餐飲/服務"
+    },
+    "jobs": true,
+    "reply_not": [
+     "哪一個"
+    ]
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "台北市中山區",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-中山區問哪一個按台北",
+  "note": "只講中山區→台北/基隆都有→問→按台北→門市",
+  "turns": [
+   {
+    "say": "中山區",
+    "jobs": false,
+    "reply_has_any": [
+     "台北市中山區"
+    ]
+   },
+   {
+    "say": "台北市中山區的工作",
+    "slots": {
+     "location": "台北市中山區"
+    }
+   },
+   {
+    "say": "門市",
+    "slots": {
+     "location": "台北市中山區",
+     "category": "門市"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-桃園中壢是同一個地方",
+  "note": "「桃園中壢」只記中壢→「平鎮也可以」加一個→兼職",
+  "turns": [
+   {
+    "say": "桃園中壢 餐飲",
+    "slots": {
+     "location": "中壢",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "平鎮也可以",
+    "slots": {
+     "location": [
+      "中壢",
+      "平鎮"
+     ],
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": [
+      "中壢",
+      "平鎮"
+     ],
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-台中西屯換北屯",
+  "note": "台中西屯門市→「北屯呢」換地點、類型保留",
+  "turns": [
+   {
+    "say": "台中西屯的門市",
+    "slots": {
+     "location": "西屯",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "北屯呢",
+    "slots": {
+     "location": "北屯",
+     "category": "門市"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-住板橋找新莊",
+  "note": "住的地方不是工作地點：住板橋、想找新莊外送",
+  "turns": [
+   {
+    "say": "我住板橋，想找新莊的外送",
+    "slots": {
+     "location": "新莊",
+     "category": "外送"
+    },
+    "slots_not": {
+     "location": [
+      "板橋"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "早班",
+    "slots": {
+     "location": "新莊",
+     "category": "外送",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-住龜山想去林口",
+  "note": "住龜山、想在林口上班做門市→晚班",
+  "turns": [
+   {
+    "say": "住龜山，想在林口上班，門市",
+    "slots": {
+     "location": "林口",
+     "category": "門市"
+    },
+    "slots_not": {
+     "location": [
+      "龜山"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "林口",
+     "category": "門市",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-新北或桃園改只要桃園",
+  "note": "兩個縣市並列→「只要桃園」→加大夜班",
+  "turns": [
+   {
+    "say": "新北或桃園的理貨",
+    "slots": {
+     "location": [
+      "新北",
+      "桃園"
+     ],
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "只要桃園",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-台北新北拿掉新北",
+  "note": "「台北跟新北的門市都可以」→「不要新北了」",
+  "turns": [
+   {
+    "say": "台北跟新北的門市都可以",
+    "slots": {
+     "location": [
+      "台北",
+      "新北"
+     ],
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要新北了",
+    "slots_has": {
+     "location": [
+      "台北"
+     ]
+    },
+    "slots_not": {
+     "location": [
+      "新北"
+     ]
+    },
+    "slots": {
+     "category": "門市"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-人在台南找高雄再加台南",
+  "note": "人在台南（不是條件）找高雄餐飲→「台南也可以」→早班",
+  "turns": [
+   {
+    "say": "我人在台南，想找高雄的餐飲",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "台南也可以",
+    "slots": {
+     "location": [
+      "高雄",
+      "台南"
+     ],
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "早班",
+    "slots": {
+     "location": [
+      "高雄",
+      "台南"
+     ],
+     "category": "餐飲/服務",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-一開始就說都可以",
+  "note": "第一句就「都可以」分不出是什麼→不能亂列→講桃園→問類型回隨便",
+  "turns": [
+   {
+    "say": "都可以",
+    "jobs": false,
+    "slots": {
+     "location": "",
+     "category": ""
+    }
+   },
+   {
+    "say": "桃園",
+    "slots": {
+     "location": "桃園"
+    },
+    "jobs": false
+   },
+   {
+    "say": "隨便",
+    "slots": {
+     "location": "桃園",
+     "category": "不限"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-列完職缺後說隨便",
+  "note": "列完職缺後「隨便」→地區不能被清掉→再講早班",
+  "turns": [
+   {
+    "say": "台中 餐飲",
+    "slots": {
+     "location": "台中",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "隨便",
+    "slots_has": {
+     "location": [
+      "台中"
+     ]
+    }
+   },
+   {
+    "say": "早班",
+    "slots": {
+     "location": "台中",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-問類型後回都行",
+  "note": "問類型時回「都行」＝類型都可以→兼職",
+  "turns": [
+   {
+    "say": "高雄",
+    "slots": {
+     "location": "高雄"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "哪一種",
+     "類型"
+    ]
+   },
+   {
+    "say": "都行",
+    "slots": {
+     "location": "高雄",
+     "category": "不限"
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": "高雄",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-問地區後回哪裡都可以",
+  "note": "問地區時回「哪裡都可以」→再說「台北就好」",
+  "turns": [
+   {
+    "say": "外送的工作",
+    "slots": {
+     "category": "外送"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "地區",
+     "哪裡",
+     "縣市"
+    ]
+   },
+   {
+    "say": "哪裡都可以",
+    "slots": {
+     "location": "不限",
+     "category": "外送"
+    },
+    "jobs": true
+   },
+   {
+    "say": "台北就好",
+    "slots": {
+     "location": "台北",
+     "category": "外送"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-時間都可以只清班別",
+  "note": "三個條件→「時間都可以」只清班別",
+  "turns": [
+   {
+    "say": "新北 作業員 早班",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "時間都可以",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": ""
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-什麼工作都可以只清類型",
+  "note": "楊梅理貨→「什麼工作都可以」只清類型、地區保留",
+  "turns": [
+   {
+    "say": "楊梅 理貨",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "什麼工作都可以",
+    "slots": {
+     "location": "楊梅"
+    },
+    "slots_not": {
+     "category": [
+      "理貨/倉儲"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-哪裡都可以只要作業員",
+  "note": "第一句就「哪裡都可以，只要是作業員」",
+  "turns": [
+   {
+    "say": "哪裡都可以，只要是作業員",
+    "slots": {
+     "location": "不限",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週領的",
+    "slots": {
+     "location": "不限",
+     "category": "製造/作業員",
+     "pay": "週領"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-四個條件只換地區",
+  "note": "台北餐飲兼職晚班→改新北（其他保留）→改早班（其他保留）",
+  "turns": [
+   {
+    "say": "台北 餐飲 兼職 晚班",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "改成新北",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "早班好了",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-理貨全職週領改日領",
+  "note": "桃園理貨全職週領→加大夜班→改日領（其他保留）",
+  "turns": [
+   {
+    "say": "桃園 理貨 全職 週領",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "全職",
+     "pay": "週領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "大夜班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "全職",
+     "pay": "週領",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "改日領",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "全職",
+     "pay": "日領",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-換地區後沒職缺要老實說",
+  "note": "台中作業員早班週休→換大夜班→換高雄（條件保留，高雄沒有就老實說）",
+  "turns": [
+   {
+    "say": "台中 作業員 早班 週休二日",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "換成大夜班",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "大夜班",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "那高雄呢",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "shift": "大夜班",
+     "leave": "週休二日"
+    },
+    "jobs": false,
+    "reply_has_any": [
+     "沒有"
+    ]
+   }
+  ]
+ },
+ {
+  "id": "對話B-兼職改全職再換類型",
+  "note": "新竹門市兼職→改全職→換餐飲（全職、地區保留）",
+  "turns": [
+   {
+    "say": "新竹 門市 兼職",
+    "slots": {
+     "location": "新竹",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "改全職",
+    "slots": {
+     "location": "新竹",
+     "category": "門市",
+     "worktype": "全職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要門市了，改餐飲",
+    "slots": {
+     "location": "新竹",
+     "category": "餐飲/服務",
+     "worktype": "全職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-加薪資條件其他保留",
+  "note": "新北作業員早班月領→加月薪3萬以上，其他保留",
+  "turns": [
+   {
+    "say": "新北 作業員 早班 月領",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "pay": "月領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "月薪3萬以上",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "pay": "月領",
+     "salary": "月薪30000"
+    }
+   },
+   {
+    "say": "晚班也可以",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": [
+      "早班",
+      "晚班"
+     ],
+     "pay": "月領",
+     "salary": "月薪30000"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話B-縮小到信義區再加晚班",
+  "note": "台北客服早班全職→「信義區就好」→「晚班也可以」",
+  "turns": [
+   {
+    "say": "台北 客服 早班 全職",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "shift": "早班",
+     "worktype": "全職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "信義區就好",
+    "slots": {
+     "location": "信義",
+     "category": "客服/行政",
+     "shift": "早班",
+     "worktype": "全職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班也可以",
+    "slots": {
+     "location": "信義",
+     "category": "客服/行政",
+     "shift": [
+      "早班",
+      "晚班"
+     ],
+     "worktype": "全職"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-不要兼職改全職再縮到中壢",
+  "note": "桃園餐飲兼職晚班→「不要兼職，全職」→「中壢」",
+  "turns": [
+   {
+    "say": "桃園 餐飲 兼職 晚班",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要兼職，要全職",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "worktype": "全職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "中壢",
+    "slots": {
+     "location": "中壢",
+     "category": "餐飲/服務",
+     "worktype": "全職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話B-加早班再拿掉休假",
+  "note": "楊梅理貨週休二日大夜班→「早班也行」→「不一定要週休二日」（沛沛可能先確認，回「好」之後休假要拿掉）",
+  "turns": [
+   {
+    "say": "楊梅 理貨 週休二日 大夜班",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲",
+     "leave": "週休二日",
+     "shift": "大夜班"
+    }
+   },
+   {
+    "say": "早班也行",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲",
+     "leave": "週休二日",
+     "shift": [
+      "大夜班",
+      "早班"
+     ]
+    }
+   },
+   {
+    "say": "不一定要週休二日",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲",
+     "shift": [
+      "大夜班",
+      "早班"
+     ]
+    }
+   },
+   {
+    "say": "好",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲",
+     "leave": "",
+     "shift": [
+      "大夜班",
+      "早班"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-二度就業媽媽只能白天",
+  "note": "二度就業的媽媽，小孩上學才能出門：只能白天、要週休，後面追加地區時前面的班別/休假/類型都要還在",
+  "turns": [
+   {
+    "say": "你好，我想找工作",
+    "slots": {
+     "location": "",
+     "category": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "想在中和附近找，小孩要接送所以只能白天上班",
+    "slots": {
+     "location": "中和",
+     "shift": "早班"
+    }
+   },
+   {
+    "say": "工廠的可以，要週休二日",
+    "slots": {
+     "location": "中和",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 佳必琪",
+    "reply_has_any": [
+     "佳必琪"
+    ],
+    "slots": {
+     "location": "中和",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": "週休二日"
+    }
+   },
+   {
+    "say": "那邊需要一直站著做嗎",
+    "slots": {
+     "location": "中和",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "slots_not": {
+     "shift": [
+      "晚班",
+      "大夜班"
+     ]
+    },
+    "jobs": false
+   },
+   {
+    "say": "中和的比較少，板橋或新店也可以",
+    "slots": {
+     "location": [
+      "中和",
+      "板橋",
+      "新店"
+     ],
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "好 謝謝你",
+    "slots": {
+     "location": [
+      "中和",
+      "板橋",
+      "新店"
+     ],
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-剛退伍要日領存錢",
+  "note": "剛退伍想存錢要日領：先講發薪、再補地區跟類型，改口「夜班也可以」不能變成排除，問住宿不改條件",
+  "turns": [
+   {
+    "say": "剛退伍，想找日領的工作存錢",
+    "slots": {
+     "pay": "日領"
+    },
+    "slots_not": {
+     "salary": [
+      "月薪30000"
+     ]
+    }
+   },
+   {
+    "say": "桃園",
+    "slots": {
+     "location": "桃園",
+     "pay": "日領"
+    }
+   },
+   {
+    "say": "倉庫理貨那種",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "夜班也可以 錢比較多",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "pay": "日領"
+    },
+    "slots_not": {
+     "exclude": [
+      "shift:大夜班"
+     ]
+    }
+   },
+   {
+    "say": "查看職缺詳情 PChome",
+    "reply_has_any": [
+     "PChome"
+    ],
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "pay": "日領"
+    }
+   },
+   {
+    "say": "有包住宿嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "pay": "日領",
+     "benefit": ""
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-大學生找假日打工",
+  "note": "大學生找假日餐廳打工：假日打工＝假日班＋兼職，補時薪下限，最後追加平日晚上",
+  "turns": [
+   {
+    "say": "我是大學生 想找假日打工",
+    "slots": {
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "slots_not": {
+     "leave": [
+      "週休二日"
+     ]
+    }
+   },
+   {
+    "say": "台北",
+    "slots": {
+     "location": "台北",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "餐廳的",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "時薪最少要200",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班",
+     "salary": "時薪200"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 上海鄉村宴會廳PT",
+    "reply_has_any": [
+     "上海鄉村宴會廳PT"
+    ],
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班",
+     "salary": "時薪200"
+    }
+   },
+   {
+    "say": "平日晚上也可以喔 我週三週五晚上沒課",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": [
+      "假日班",
+      "晚班"
+     ],
+     "salary": "時薪200"
+    },
+    "jobs": true
+   },
+   {
+    "say": "好 謝謝",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": [
+      "假日班",
+      "晚班"
+     ],
+     "salary": "時薪200"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-外籍配偶打字很短",
+  "note": "外籍配偶中文不太好、每句都很短：夜班 不要＝排除、錢 每天拿＝日領、有車 載嗎＝問問題，換到中壢沒有要老實說",
+  "turns": [
+   {
+    "say": "工作",
+    "jobs": false
+   },
+   {
+    "say": "桃園",
+    "slots": {
+     "location": "桃園"
+    }
+   },
+   {
+    "say": "工廠",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "夜班 不要",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "slots_not": {
+     "shift": [
+      "大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "錢 每天拿",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "pay": "日領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "有車 載嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "pay": "日領",
+     "benefit": "",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": false
+   },
+   {
+    "say": "中壢",
+    "slots": {
+     "location": "中壢",
+     "category": "製造/作業員",
+     "pay": "日領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "reply_has_any": [
+     "沒有"
+    ]
+   }
+  ]
+ },
+ {
+  "id": "對話C-中年轉職要穩定月薪",
+  "note": "45歲業務轉工廠：以前的工作不算條件，月薪3萬以上不能變成月領，追加週休、排除輪班、提高薪資",
+  "turns": [
+   {
+    "say": "我45歲，之前做業務，想轉到工廠做穩定一點的",
+    "slots": {
+     "location": "",
+     "category": "製造/作業員"
+    }
+   },
+   {
+    "say": "台中，要正職，月薪3萬以上",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "worktype": "全職",
+     "salary": "月薪30000"
+    },
+    "slots_not": {
+     "pay": [
+      "月領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "有勞健保嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "worktype": "全職",
+     "salary": "月薪30000"
+    },
+    "jobs": false
+   },
+   {
+    "say": "最好是週休二日",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "worktype": "全職",
+     "leave": "週休二日",
+     "salary": "月薪30000"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要輪班",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "worktype": "全職",
+     "leave": "週休二日",
+     "salary": "月薪30000",
+     "exclude": [
+      "shift:輪班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 永湖",
+    "reply_has_any": [
+     "永湖"
+    ],
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "worktype": "全職",
+     "leave": "週休二日",
+     "salary": "月薪30000",
+     "exclude": [
+      "shift:輪班"
+     ]
+    }
+   },
+   {
+    "say": "月薪3萬2以上的有嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "worktype": "全職",
+     "leave": "週休二日",
+     "salary": "月薪32000",
+     "exclude": [
+      "shift:輪班"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-住宜蘭想去台北",
+  "note": "住宜蘭想去台北上班：住的地方不是地區；後來改回宜蘭找不到，放寬類型後其他條件要還在",
+  "turns": [
+   {
+    "say": "我住宜蘭，想去台北上班",
+    "slots": {
+     "location": "台北"
+    },
+    "slots_not": {
+     "location": [
+      "宜蘭"
+     ]
+    }
+   },
+   {
+    "say": "客服或行政",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要週休二日的",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "薪水至少32000",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "leave": "週休二日",
+     "salary": "月薪32000"
+    },
+    "jobs": true
+   },
+   {
+    "say": "還是宜蘭有嗎？通勤太遠了",
+    "slots": {
+     "location": "宜蘭",
+     "category": "客服/行政",
+     "leave": "週休二日",
+     "salary": "月薪32000"
+    },
+    "reply_has_any": [
+     "沒有"
+    ]
+   },
+   {
+    "say": "那宜蘭什麼工作都可以",
+    "slots": {
+     "location": "宜蘭",
+     "leave": "週休二日",
+     "salary": "月薪32000"
+    },
+    "slots_not": {
+     "category": [
+      "客服/行政"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-急著找工作一直催",
+  "note": "急著明天上工的人一直催：什麼都可以＝類型不限，看更多、看詳情、問面試都不改條件",
+  "turns": [
+   {
+    "say": "急！！明天就要上班 有沒有馬上能上工的",
+    "slots": {
+     "location": "",
+     "category": ""
+    }
+   },
+   {
+    "say": "新北 什麼都可以",
+    "slots": {
+     "location": "新北"
+    },
+    "slots_not": {
+     "category": [
+      "製造/作業員",
+      "門市",
+      "外送"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "快點 日領的",
+    "slots": {
+     "location": "新北",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 善美的(哲熏廠)",
+    "reply_has_any": [
+     "善美的(哲熏廠)"
+    ],
+    "slots": {
+     "location": "新北",
+     "pay": "日領"
+    }
+   },
+   {
+    "say": "可以今天就去面試嗎 很急",
+    "slots": {
+     "location": "新北",
+     "pay": "日領"
+    },
+    "jobs": false
+   },
+   {
+    "say": "五股的就好",
+    "slots": {
+     "location": "五股",
+     "pay": "日領"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-很挑的人條件一直加",
+  "note": "條件一直加的人：地區→類型→兼職→晚班→時薪→休假，每加一個前面的都要還在；最後休假放寬要一起清排除",
+  "turns": [
+   {
+    "say": "桃園中壢的工作",
+    "slots": {
+     "location": "中壢"
+    },
+    "slots_not": {
+     "location": [
+      "桃園"
+     ]
+    }
+   },
+   {
+    "say": "餐廳的",
+    "slots": {
+     "location": "中壢",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要兼職",
+    "slots": {
+     "location": "中壢",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的班",
+    "slots": {
+     "location": "中壢",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "時薪要210以上",
+    "slots": {
+     "location": "中壢",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班",
+     "salary": "時薪210"
+    },
+    "jobs": true
+   },
+   {
+    "say": "排休不要，要固定休假日",
+    "slots": {
+     "location": "中壢",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班",
+     "leave": "週休二日",
+     "salary": "時薪210",
+     "exclude": [
+      "leave:排休"
+     ]
+    },
+    "slots_not": {
+     "shift": [
+      "假日班"
+     ]
+    },
+    "reply_has_any": [
+     "都可以",
+     "沒有"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "好吧 休假方式都可以",
+    "slots": {
+     "location": "中壢",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班",
+     "leave": "",
+     "salary": "時薪210",
+     "exclude": ""
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-夜貓子找大夜班",
+  "note": "想上大夜班的人：大夜班→林口→倉儲→交通車；問美光薪水不能鎖定廠商，排除美光後放掉交通車",
+  "turns": [
+   {
+    "say": "有大夜班的工作嗎",
+    "slots": {
+     "shift": "大夜班"
+    }
+   },
+   {
+    "say": "林口",
+    "slots": {
+     "location": "林口",
+     "shift": "大夜班"
+    }
+   },
+   {
+    "say": "倉儲的就好",
+    "slots": {
+     "location": "林口",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "有交通車的更好",
+    "slots": {
+     "location": "林口",
+     "category": "理貨/倉儲",
+     "shift": "大夜班",
+     "benefit": "交通車"
+    },
+    "jobs": true
+   },
+   {
+    "say": "美光的薪水怎麼算",
+    "slots": {
+     "location": "林口",
+     "category": "理貨/倉儲",
+     "brand": "",
+     "shift": "大夜班",
+     "benefit": "交通車"
+    },
+    "jobs": false
+   },
+   {
+    "say": "不要美光的",
+    "slots": {
+     "location": "林口",
+     "category": "理貨/倉儲",
+     "brand": "",
+     "shift": "大夜班",
+     "benefit": "交通車",
+     "exclude": [
+      "brand:美光"
+     ]
+    },
+    "jobs": false
+   },
+   {
+    "say": "交通車沒有也沒關係",
+    "slots": {
+     "location": "林口",
+     "category": "理貨/倉儲",
+     "shift": "大夜班",
+     "benefit": "",
+     "exclude": [
+      "brand:美光"
+     ]
+    },
+    "slots_not": {
+     "exclude": [
+      "benefit:交通車"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-高雄學生只有週末",
+  "note": "高雄學生：「假日要上班嗎」是問問題不能記成假日班；後來講只有週末才記，換台南條件保留",
+  "turns": [
+   {
+    "say": "高雄餐飲",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "假日要上班嗎",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務"
+    },
+    "slots_not": {
+     "shift": [
+      "假日班"
+     ]
+    },
+    "jobs": false
+   },
+   {
+    "say": "我只有週末可以，平日要上課",
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務",
+     "shift": "假日班"
+    },
+    "slots_not": {
+     "leave": [
+      "週休二日"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 漢來（焰 牛排館）",
+    "reply_has_any": [
+     "漢來（焰 牛排館）"
+    ],
+    "slots": {
+     "location": "高雄",
+     "category": "餐飲/服務",
+     "shift": "假日班"
+    }
+   },
+   {
+    "say": "那台南呢",
+    "slots": {
+     "location": "台南",
+     "category": "餐飲/服務",
+     "shift": "假日班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "謝啦",
+    "slots": {
+     "location": "台南",
+     "category": "餐飲/服務",
+     "shift": "假日班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-新住民簡體字",
+  "note": "新住民用簡體字、逗號隔開的否定：「夜班，不行」是排除不是要夜班",
+  "turns": [
+   {
+    "say": "桃园 找工作",
+    "slots": {
+     "location": "桃園"
+    }
+   },
+   {
+    "say": "理货",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "夜班，不行",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "slots_not": {
+     "shift": [
+      "大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼职",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "兼職",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "钱 每周领",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "兼職",
+     "pay": "週領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "谢谢",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "worktype": "兼職",
+     "pay": "週領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-餐飲外場轉工廠",
+  "note": "以前做餐廳外場、現在想找工廠：類型取現在想找的；不要夜班＋週領就好要分開；追加太平",
+  "turns": [
+   {
+    "say": "我以前在餐廳做外場，現在想找工廠",
+    "slots": {
+     "category": "製造/作業員"
+    },
+    "slots_not": {
+     "category": [
+      "餐飲/服務"
+     ]
+    }
+   },
+   {
+    "say": "台中大里",
+    "slots": {
+     "location": "大里",
+     "category": "製造/作業員"
+    },
+    "slots_not": {
+     "location": [
+      "台中"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要夜班 週領就好",
+    "slots": {
+     "location": "大里",
+     "category": "製造/作業員",
+     "pay": "週領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "slots_not": {
+     "exclude": [
+      "pay:週領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 力山工業 取消專案獎金",
+    "reply_has_any": [
+     "力山工業 取消專案獎金"
+    ],
+    "slots": {
+     "location": "大里",
+     "category": "製造/作業員",
+     "pay": "週領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    }
+   },
+   {
+    "say": "薪水大概多少",
+    "slots": {
+     "location": "大里",
+     "category": "製造/作業員",
+     "pay": "週領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": false
+   },
+   {
+    "say": "太平也可以",
+    "slots": {
+     "location": [
+      "大里",
+      "太平"
+     ],
+     "category": "製造/作業員",
+     "pay": "週領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-想做會計改行政",
+  "note": "想做會計（沒有這類）要老實說沒有，改找行政後條件正常記住",
+  "turns": [
+   {
+    "say": "我想找會計的工作",
+    "slots": {
+     "category": ""
+    },
+    "reply_has_any": [
+     "沒有"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "那行政可以嗎",
+    "slots": {
+     "category": "客服/行政"
+    }
+   },
+   {
+    "say": "台北信義區",
+    "slots": {
+     "location": "信義",
+     "category": "客服/行政"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要早班 週休二日",
+    "slots": {
+     "location": "信義",
+     "category": "客服/行政",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 (松菸)人事行政人員",
+    "reply_has_any": [
+     "(松菸)人事行政人員"
+    ],
+    "slots": {
+     "location": "信義",
+     "category": "客服/行政",
+     "shift": "早班",
+     "leave": "週休二日"
+    }
+   },
+   {
+    "say": "要穿制服嗎",
+    "slots": {
+     "location": "信義",
+     "category": "客服/行政",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-保全清潔沒有改餐飲",
+  "note": "問保全、清潔（沒有這類）要說沒有且地區不能掉，改找餐廳內場晚班，時薪下限",
+  "turns": [
+   {
+    "say": "台北有保全的缺嗎",
+    "slots": {
+     "location": "台北",
+     "category": ""
+    },
+    "reply_has_any": [
+     "沒有"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "那清潔呢",
+    "slots": {
+     "location": "台北",
+     "category": ""
+    },
+    "reply_has_any": [
+     "沒有"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "好吧 那餐廳內場",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的班",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "時薪220以上",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "晚班",
+     "salary": "時薪220"
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "晚班",
+     "salary": "時薪220"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-只講美光",
+  "note": "只講廠商名稱：記住美光，補地區、夜班，問薪水不改條件，換台中條件保留",
+  "turns": [
+   {
+    "say": "美光",
+    "slots": {
+     "brand": "美光"
+    }
+   },
+   {
+    "say": "桃園",
+    "slots": {
+     "location": "桃園",
+     "brand": "美光"
+    },
+    "jobs": true
+   },
+   {
+    "say": "有夜班嗎",
+    "slots": {
+     "location": "桃園",
+     "brand": "美光",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "薪水多少",
+    "slots": {
+     "location": "桃園",
+     "brand": "美光",
+     "shift": "大夜班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "那台中呢",
+    "slots": {
+     "location": "台中",
+     "brand": "美光",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 美光(台中)_黃光",
+    "reply_has_any": [
+     "美光(台中)_黃光"
+    ],
+    "slots": {
+     "location": "台中",
+     "brand": "美光",
+     "shift": "大夜班"
+    }
+   },
+   {
+    "say": "有交通車嗎",
+    "slots": {
+     "location": "台中",
+     "brand": "美光",
+     "shift": "大夜班",
+     "benefit": ""
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-蝦皮以外的倉儲",
+  "note": "「蝦皮以外的」是排除不是鎖定蝦皮；後來「蝦皮也可以」解除排除但不鎖定",
+  "turns": [
+   {
+    "say": "桃園倉儲",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "蝦皮以外的",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "brand": "",
+     "exclude": [
+      "brand:蝦皮"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "我想上早上的班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "早班",
+     "exclude": [
+      "brand:蝦皮"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "早班",
+     "exclude": [
+      "brand:蝦皮"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "蝦皮也可以啦",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "brand": "",
+     "shift": "早班",
+     "exclude": ""
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-新北或桃園作業員",
+  "note": "「新北或桃園」兩個縣市（不能黏成新北市桃園區），拿掉新北、加新竹、補週休",
+  "turns": [
+   {
+    "say": "新北或桃園的作業員",
+    "slots": {
+     "location": [
+      "新北",
+      "桃園"
+     ],
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "早上的班比較好",
+    "slots": {
+     "location": [
+      "新北",
+      "桃園"
+     ],
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要新北",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "slots_not": {
+     "location": [
+      "新北"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "新竹也可以",
+    "slots": {
+     "location": [
+      "桃園",
+      "新竹"
+     ],
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "週休二日",
+    "slots": {
+     "location": [
+      "桃園",
+      "新竹"
+     ],
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 英特格",
+    "reply_has_any": [
+     "英特格"
+    ],
+    "slots": {
+     "location": [
+      "桃園",
+      "新竹"
+     ],
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": "週休二日"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-新竹竹北再換北區",
+  "note": "「新竹竹北」只算竹北；換「新竹市北區」不能變竹北；後面追加晚班",
+  "turns": [
+   {
+    "say": "新竹竹北有什麼工作",
+    "slots": {
+     "location": "竹北"
+    },
+    "slots_not": {
+     "location": [
+      "新竹市"
+     ]
+    }
+   },
+   {
+    "say": "餐飲的",
+    "slots": {
+     "location": "竹北",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "打工",
+    "slots": {
+     "location": "竹北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "那新竹市北區呢",
+    "slots": {
+     "location": "新竹市北區",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "slots_not": {
+     "location": [
+      "竹北"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 錢都(代招)_時薪",
+    "reply_has_any": [
+     "錢都(代招)_時薪"
+    ],
+    "slots": {
+     "location": "新竹市北區",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    }
+   },
+   {
+    "say": "晚上的班比較好",
+    "slots": {
+     "location": "新竹市北區",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-后里交通車工廠",
+  "note": "后里（簡轉繁不能變後里）找有交通車的工廠、四三輪休、不要夜班",
+  "turns": [
+   {
+    "say": "后里有工作嗎",
+    "slots": {
+     "location": "后里"
+    }
+   },
+   {
+    "say": "工廠 有交通車的",
+    "slots": {
+     "location": "后里",
+     "category": "製造/作業員",
+     "benefit": "交通車"
+    },
+    "jobs": true
+   },
+   {
+    "say": "四三輪休可以",
+    "slots": {
+     "location": "后里",
+     "category": "製造/作業員",
+     "leave": "四三輪休",
+     "benefit": "交通車"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要夜班",
+    "slots": {
+     "location": "后里",
+     "category": "製造/作業員",
+     "leave": "四三輪休",
+     "benefit": "交通車",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 美光(台中)_OP",
+    "reply_has_any": [
+     "美光(台中)_OP"
+    ],
+    "slots": {
+     "location": "后里",
+     "category": "製造/作業員",
+     "leave": "四三輪休",
+     "benefit": "交通車",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    }
+   },
+   {
+    "say": "要穿無塵衣嗎",
+    "slots": {
+     "location": "后里",
+     "category": "製造/作業員",
+     "leave": "四三輪休",
+     "benefit": "交通車",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-固定休假日客服",
+  "note": "「固定休假日」是週休二日不是假日班；後來說假日也可以上班要拿掉週休",
+  "turns": [
+   {
+    "say": "固定休假日的工作",
+    "slots": {
+     "leave": "週休二日"
+    },
+    "slots_not": {
+     "shift": [
+      "假日班"
+     ]
+    }
+   },
+   {
+    "say": "台北",
+    "slots": {
+     "location": "台北",
+     "leave": "週休二日"
+    }
+   },
+   {
+    "say": "客服",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "假日也可以上班啦",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政"
+    },
+    "slots_not": {
+     "leave": [
+      "週休二日"
+     ],
+     "exclude": [
+      "shift:假日班"
+     ]
+    }
+   },
+   {
+    "say": "那早班就好",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-句尾謝謝不丟掉",
+  "note": "每句都加謝謝的人：謝謝不能蓋掉找工作的內容；問第一個有沒有交通車不能變成福利條件",
+  "turns": [
+   {
+    "say": "想找桃園理貨的工作，謝謝",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "reply_not": [
+     "不客氣"
+    ],
+    "jobs": true
+   },
+   {
+    "say": "早班 謝謝",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "早班"
+    },
+    "reply_not": [
+     "不客氣"
+    ],
+    "jobs": true
+   },
+   {
+    "say": "有日領嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "早班",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "第一個有交通車嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "早班",
+     "pay": "日領",
+     "benefit": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "謝謝你",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "早班",
+     "pay": "日領"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-桃園工廠不要夜班日領",
+  "note": "一句講完「不要夜班 日領就好」：夜班排除、日領是要；看更多；最後夜班也可以解除排除",
+  "turns": [
+   {
+    "say": "我要找桃園的工廠 不要夜班 日領就好",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "pay": "日領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "slots_not": {
+     "exclude": [
+      "pay:日領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "還有嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "pay": "日領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 超秦企業",
+    "reply_has_any": [
+     "超秦企業"
+    ],
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "pay": "日領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    }
+   },
+   {
+    "say": "那邊在哪裡",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "pay": "日領",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": false
+   },
+   {
+    "say": "夜班也可以啦 錢多就好",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "pay": "日領",
+     "exclude": ""
+    },
+    "slots_not": {
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-沒有日領週領也行",
+  "note": "「沒有日領的話週領也行」兩個都要不是排除；「沒有交通車也沒關係」不是排除；最後改月領",
+  "turns": [
+   {
+    "say": "新北的倉庫 要日領 沒有日領的話週領也行",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "pay": [
+      "日領",
+      "週領"
+     ]
+    },
+    "slots_not": {
+     "exclude": [
+      "pay:日領",
+      "pay:週領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚班",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "晚班",
+     "pay": [
+      "日領",
+      "週領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 善美的(哲熏廠)",
+    "reply_has_any": [
+     "善美的(哲熏廠)"
+    ],
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "晚班",
+     "pay": [
+      "日領",
+      "週領"
+     ]
+    }
+   },
+   {
+    "say": "沒有交通車也沒關係",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "晚班",
+     "pay": [
+      "日領",
+      "週領"
+     ],
+     "benefit": ""
+    },
+    "slots_not": {
+     "exclude": [
+      "benefit:交通車"
+     ]
+    }
+   },
+   {
+    "say": "我不需要日領了，月領就好",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "晚班",
+     "pay": "月領"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-新莊週末休息",
+  "note": "「週末休息」是週休二日不是假日班；不要夜班；換五股沒有要老實說",
+  "turns": [
+   {
+    "say": "想找週末休息的工作 在新莊",
+    "slots": {
+     "location": "新莊",
+     "leave": "週休二日"
+    },
+    "slots_not": {
+     "shift": [
+      "假日班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "工廠",
+    "slots": {
+     "location": "新莊",
+     "category": "製造/作業員",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要夜班",
+    "slots": {
+     "location": "新莊",
+     "category": "製造/作業員",
+     "leave": "週休二日",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 群旭",
+    "reply_has_any": [
+     "群旭"
+    ],
+    "slots": {
+     "location": "新莊",
+     "category": "製造/作業員",
+     "leave": "週休二日",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    }
+   },
+   {
+    "say": "那五股呢",
+    "slots": {
+     "location": "五股",
+     "category": "製造/作業員",
+     "leave": "週休二日",
+     "exclude": [
+      "shift:大夜班"
+     ]
+    },
+    "reply_has_any": [
+     "沒有"
+    ]
+   }
+  ]
+ },
+ {
+  "id": "對話C-清水四班二輪",
+  "note": "「四班二輪」只算輪班不算做二休二；還有嗎只有一筆；放寬班別跟地區",
+  "turns": [
+   {
+    "say": "台中清水 四班二輪的工廠",
+    "slots": {
+     "location": "清水",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "slots_not": {
+     "leave": [
+      "做二休二"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 永豐餘",
+    "reply_has_any": [
+     "永豐餘"
+    ],
+    "slots": {
+     "location": "清水",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    }
+   },
+   {
+    "say": "薪水怎麼算",
+    "slots": {
+     "location": "清水",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "還有其他的嗎",
+    "slots": {
+     "location": "清水",
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "班別都可以，台中都可以",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": ""
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-白天顧小孩找晚班",
+  "note": "「我白天要顧小孩」＝不要早班（不能記成要早班）；晚上可以；老公的事是聊天",
+  "turns": [
+   {
+    "say": "我白天要顧小孩",
+    "slots_not": {
+     "shift": [
+      "早班"
+     ]
+    }
+   },
+   {
+    "say": "晚上可以 在桃園",
+    "slots": {
+     "location": "桃園",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "餐廳",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職就好",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我老公晚上會在家顧",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-問公司假日跟要真人",
+  "note": "「你們假日有上班嗎」是問公司不是假日班；「可以找真人嗎」轉專員不是客服類職缺",
+  "turns": [
+   {
+    "say": "台南有什麼工作",
+    "slots": {
+     "location": "台南"
+    }
+   },
+   {
+    "say": "你們假日有上班嗎",
+    "slots": {
+     "location": "台南"
+    },
+    "slots_not": {
+     "shift": [
+      "假日班"
+     ]
+    },
+    "jobs": false
+   },
+   {
+    "say": "可以找真人嗎",
+    "slots": {
+     "location": "台南",
+     "category": ""
+    },
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "好 先幫我看台南的餐廳",
+    "slots": {
+     "location": "台南",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上",
+    "slots": {
+     "location": "台南",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-改口還是新竹還是桃園",
+  "note": "「還是新竹」「算了還是桃園」是改口；理貨也可以＝兩種類型都要",
+  "turns": [
+   {
+    "say": "桃園門市",
+    "slots": {
+     "location": "桃園",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "還是新竹",
+    "slots": {
+     "location": "新竹",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "算了還是桃園",
+    "slots": {
+     "location": "桃園",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "理貨也可以",
+    "slots": {
+     "location": "桃園",
+     "category": [
+      "門市",
+      "理貨/倉儲"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "我只能做兼職的",
+    "slots": {
+     "location": "桃園",
+     "category": [
+      "門市",
+      "理貨/倉儲"
+     ],
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 蝦皮物流觀音倉",
+    "reply_has_any": [
+     "蝦皮物流觀音倉"
+    ],
+    "slots": {
+     "location": "桃園",
+     "category": [
+      "門市",
+      "理貨/倉儲"
+     ],
+     "worktype": "兼職"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-一直看更多",
+  "note": "台北餐飲兼職很多筆：看更多、還有嗎、問第二個薪水、加晚班後再看更多",
+  "turns": [
+   {
+    "say": "台北餐飲兼職",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "還有嗎",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "第二個薪水多少",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": false
+   },
+   {
+    "say": "晚班的就好",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "更多",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-月薪條件調高調低",
+  "note": "月薪3萬5不能變月領；調到4萬、再放寬到3萬取新的；日薪、卡債都不是薪資條件",
+  "turns": [
+   {
+    "say": "月薪3萬5以上的工作 台北",
+    "slots": {
+     "location": "台北",
+     "salary": "月薪35000"
+    },
+    "slots_not": {
+     "pay": [
+      "月領"
+     ]
+    }
+   },
+   {
+    "say": "客服",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "salary": "月薪35000"
+    },
+    "jobs": true
+   },
+   {
+    "say": "月薪4萬以上",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "salary": "月薪40000"
+    },
+    "jobs": true
+   },
+   {
+    "say": "3萬也可以",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "salary": "月薪30000"
+    },
+    "jobs": true
+   },
+   {
+    "say": "日薪1500可以嗎",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "salary": "月薪30000"
+    },
+    "jobs": false
+   },
+   {
+    "say": "我卡債50萬 要趕快還錢",
+    "slots": {
+     "location": "台北",
+     "category": "客服/行政",
+     "salary": "月薪30000"
+    },
+    "slots_not": {
+     "salary": [
+      "月薪500000"
+     ]
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-在職員工薪水少了",
+  "note": "在職員工反映薪水少了要轉專員（不能推職缺），之後自己找別的倉庫、排除蝦皮",
+  "turns": [
+   {
+    "say": "我在蝦皮倉庫上班，上個月薪水少了兩千",
+    "slots": {
+     "location": "",
+     "brand": ""
+    },
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "那順便問 楊梅有別的倉庫缺嗎",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要大夜",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲",
+     "shift": "大夜班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要蝦皮",
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲",
+     "brand": "",
+     "shift": "大夜班",
+     "exclude": [
+      "brand:蝦皮"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 Coupung",
+    "reply_has_any": [
+     "Coupung"
+    ],
+    "slots": {
+     "location": "楊梅",
+     "category": "理貨/倉儲",
+     "shift": "大夜班",
+     "exclude": [
+      "brand:蝦皮"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-餐廳老闆想徵人",
+  "note": "餐廳老闆要徵人轉專員；之後幫兒子找台中西屯餐飲兼職晚班",
+  "turns": [
+   {
+    "say": "你好 我是餐廳老闆 想請你們幫忙找人",
+    "slots": {
+     "location": "",
+     "category": ""
+    },
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "另外我兒子也想找工作 台中西屯 餐飲",
+    "slots": {
+     "location": "西屯",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "他還在讀書 只能打工",
+    "slots": {
+     "location": "西屯",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的班",
+    "slots": {
+     "location": "西屯",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-看完職缺要刪個資",
+  "note": "高雄作業員早班看完詳情後要求刪個資、不要再傳訊息：轉專員，不能推職缺",
+  "turns": [
+   {
+    "say": "高雄 作業員",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "早上的班，晚上要陪家人",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 臻鼎 (代招)",
+    "reply_has_any": [
+     "臻鼎 (代招)"
+    ],
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "shift": "早班"
+    }
+   },
+   {
+    "say": "算了 請把我的資料刪掉 不要再傳訊息給我",
+    "slots": {
+     "location": "高雄",
+     "category": "製造/作業員",
+     "shift": "早班"
+    },
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-先客訴再找門市",
+  "note": "先投訴轉專員，接著照常找台北門市全職排休",
+  "turns": [
+   {
+    "say": "你們上次介紹的工作根本跟說的不一樣，我要投訴",
+    "reply_has_any": [
+     "專員"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "不過我還是要找工作 台北 門市",
+    "slots": {
+     "location": "台北",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我要做正職的",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "全職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "排休可以",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "全職",
+     "leave": "排休"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-住中壢想去八德",
+  "note": "「我住中壢，想去桃園市八德區上班」地區是八德；全職、月薪下限；問員工餐不改條件",
+  "turns": [
+   {
+    "say": "我住中壢，想去桃園市八德區上班",
+    "slots": {
+     "location": "八德"
+    },
+    "slots_not": {
+     "location": [
+      "中壢",
+      "桃園"
+     ]
+    }
+   },
+   {
+    "say": "餐廳服務生那種",
+    "slots": {
+     "location": "八德",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要全職",
+    "slots": {
+     "location": "八德",
+     "category": "餐飲/服務",
+     "worktype": "全職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "月薪35000以上",
+    "slots": {
+     "location": "八德",
+     "category": "餐飲/服務",
+     "worktype": "全職",
+     "salary": "月薪35000"
+    },
+    "slots_not": {
+     "pay": [
+      "月領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 品田（代招）（月薪）",
+    "reply_has_any": [
+     "品田（代招）（月薪）"
+    ],
+    "slots": {
+     "location": "八德",
+     "category": "餐飲/服務",
+     "worktype": "全職",
+     "salary": "月薪35000"
+    }
+   },
+   {
+    "say": "有員工餐嗎",
+    "slots": {
+     "location": "八德",
+     "category": "餐飲/服務",
+     "worktype": "全職",
+     "salary": "月薪35000"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-台中西屯門市",
+  "note": "「台中西屯」不能變台南中西區；北屯也可以＝兩個區；晚班",
+  "turns": [
+   {
+    "say": "台中西屯有門市嗎",
+    "slots": {
+     "location": "西屯",
+     "category": "門市"
+    },
+    "slots_not": {
+     "location": [
+      "中西"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "打工就好",
+    "slots": {
+     "location": "西屯",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "北屯也可以",
+    "slots": {
+     "location": [
+      "西屯",
+      "北屯"
+     ],
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "下課後晚上才有空",
+    "slots": {
+     "location": [
+      "西屯",
+      "北屯"
+     ],
+     "category": "門市",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 COLDSTONE(欣露場)",
+    "reply_has_any": [
+     "COLDSTONE(欣露場)"
+    ],
+    "slots": {
+     "location": [
+      "西屯",
+      "北屯"
+     ],
+     "category": "門市",
+     "worktype": "兼職",
+     "shift": "晚班"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-台北中山區彈性排班",
+  "note": "先講台北再講中山區＝台北市中山區；彈性排班；問經驗不改條件",
+  "turns": [
+   {
+    "say": "台北",
+    "slots": {
+     "location": "台北"
+    }
+   },
+   {
+    "say": "中山區呢",
+    "slots": {
+     "location": "台北市中山區"
+    }
+   },
+   {
+    "say": "餐飲兼職",
+    "slots": {
+     "location": "台北市中山區",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "可以自己排時間的",
+    "slots": {
+     "location": "台北市中山區",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "彈性排班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 呷哺-發傳單人員",
+    "reply_has_any": [
+     "呷哺-發傳單人員"
+    ],
+    "slots": {
+     "location": "台北市中山區",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "彈性排班"
+    }
+   },
+   {
+    "say": "需要經驗嗎",
+    "slots": {
+     "location": "台北市中山區",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "彈性排班"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-嘉義都可以再日領",
+  "note": "嘉義之後回「都可以」不能把地區清掉；日領；「夜班沒興趣」不能記成要夜班",
+  "turns": [
+   {
+    "say": "嘉義",
+    "slots": {
+     "location": "嘉義"
+    }
+   },
+   {
+    "say": "都可以",
+    "slots": {
+     "location": "嘉義"
+    }
+   },
+   {
+    "say": "要日領",
+    "slots": {
+     "location": "嘉義",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 和大工業(嘉義廠)",
+    "reply_has_any": [
+     "和大工業(嘉義廠)"
+    ],
+    "slots": {
+     "location": "嘉義",
+     "pay": "日領"
+    }
+   },
+   {
+    "say": "夜班沒興趣",
+    "slots": {
+     "location": "嘉義",
+     "pay": "日領"
+    },
+    "slots_not": {
+     "shift": [
+      "大夜班"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-看完詳情回都可以",
+  "note": "看完詳情後只回「都可以」分不出是哪一項，不能把類型或地區清掉；班別都可以只清班別",
+  "turns": [
+   {
+    "say": "桃園 理貨 早班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "早班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 瀧澤",
+    "reply_has_any": [
+     "瀧澤"
+    ],
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "早班"
+    }
+   },
+   {
+    "say": "都可以",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    }
+   },
+   {
+    "say": "班別都可以",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": ""
+    },
+    "jobs": true
+   },
+   {
+    "say": "週休二日",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-打字很亂的momo",
+  "note": "一個字一個字空格、全形英文：桃 園 理 貨、ＭＯＭＯ；最後不要momo了",
+  "turns": [
+   {
+    "say": "桃 園 理 貨",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "ＭＯＭＯ",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "brand": "momo"
+    },
+    "jobs": true
+   },
+   {
+    "say": "有日領嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "brand": "momo",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "第１個薪水多少",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "brand": "momo",
+     "pay": "日領"
+    },
+    "jobs": false
+   },
+   {
+    "say": "不要momo了",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "brand": "",
+     "pay": "日領",
+     "exclude": [
+      "brand:momo"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-英文找台北假日打工",
+  "note": "用英文打字的人：part time＝兼職、restaurant＝餐飲、weekend＝假日班、時薪下限",
+  "turns": [
+   {
+    "say": "part time job in Taipei",
+    "slots": {
+     "location": "台北",
+     "worktype": "兼職"
+    }
+   },
+   {
+    "say": "restaurant",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "only weekend",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "hourly pay at least 220",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班",
+     "salary": "時薪220"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 上海鄉村宴會廳PT",
+    "reply_has_any": [
+     "上海鄉村宴會廳PT"
+    ],
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班",
+     "salary": "時薪220"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-16歲問年齡再找打工",
+  "note": "16歲先問年齡限制（問問題不記條件），再找台北餐飲打工假日班",
+  "turns": [
+   {
+    "say": "我16歲有年齡限制嗎",
+    "slots": {
+     "location": "",
+     "category": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "想找台北的飲料店或餐廳打工",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "假日才有空",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "爸媽要簽同意書嗎",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "jobs": false
+   },
+   {
+    "say": "查看職缺詳情 全家餐飲(大戶屋 / BBQ / IKIGAI )",
+    "reply_has_any": [
+     "全家餐飲(大戶屋 / BBQ / IKIGAI )"
+    ],
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-台中門市聊天不換條件",
+  "note": "中間聊到媽媽住高雄、昨天大夜班好累，都不能改地區或班別",
+  "turns": [
+   {
+    "say": "台中 門市",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我媽住高雄",
+    "slots": {
+     "location": "台中",
+     "category": "門市"
+    },
+    "slots_not": {
+     "location": [
+      "高雄"
+     ]
+    },
+    "jobs": false
+   },
+   {
+    "say": "要兼職 晚班",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我昨天上大夜班好累",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "slots_not": {
+     "shift": [
+      "大夜班"
+     ]
+    },
+    "jobs": false
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "台中",
+     "category": "門市",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-請喪假再幫妹妹找",
+  "note": "「謝謝，我媽過世了要請喪假」不能回不客氣要轉專員；再幫妹妹找新竹門市兼職假日",
+  "turns": [
+   {
+    "say": "謝謝，我媽過世了要請喪假",
+    "reply_has_any": [
+     "專員"
+    ],
+    "reply_not": [
+     "不客氣"
+    ],
+    "jobs": false
+   },
+   {
+    "say": "另外我妹想找新竹的門市兼職",
+    "slots": {
+     "location": "新竹",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "她只有六日有空",
+    "slots": {
+     "location": "新竹",
+     "category": "門市",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "slots_not": {
+     "leave": [
+      "週休二日"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 米塔",
+    "reply_has_any": [
+     "米塔"
+    ],
+    "slots": {
+     "location": "新竹",
+     "category": "門市",
+     "worktype": "兼職",
+     "shift": "假日班"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-更生人找外送",
+  "note": "有前科問能不能應徵（問問題、不清空條件），找台中外送全職月領",
+  "turns": [
+   {
+    "say": "我出獄後想重新開始，有前科可以應徵嗎",
+    "jobs": false
+   },
+   {
+    "say": "想找台中的外送",
+    "slots": {
+     "location": "台中",
+     "category": "外送"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要自己有機車嗎",
+    "slots": {
+     "location": "台中",
+     "category": "外送"
+    },
+    "jobs": false
+   },
+   {
+    "say": "想做正職 一個月領一次就好",
+    "slots": {
+     "location": "台中",
+     "category": "外送",
+     "worktype": "全職",
+     "pay": "月領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 Uber(COSTCO)",
+    "reply_has_any": [
+     "Uber(COSTCO)"
+    ],
+    "slots": {
+     "location": "台中",
+     "category": "外送",
+     "worktype": "全職",
+     "pay": "月領"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-類型不限後外送也可以",
+  "note": "「類型都可以」之後說「外送也可以」要維持不限，不能變成只要外送",
+  "turns": [
+   {
+    "say": "新竹 類型都可以",
+    "slots": {
+     "location": "新竹",
+     "category": "不限"
+    },
+    "jobs": true
+   },
+   {
+    "say": "外送也可以",
+    "slots": {
+     "location": "新竹",
+     "category": "不限"
+    },
+    "slots_not": {
+     "category": [
+      "外送"
+     ]
+    }
+   },
+   {
+    "say": "晚上的",
+    "slots": {
+     "location": "新竹",
+     "category": "不限",
+     "shift": "晚班"
+    },
+    "slots_not": {
+     "category": [
+      "外送"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "打工性質的",
+    "slots": {
+     "location": "新竹",
+     "category": "不限",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "更多",
+    "slots": {
+     "location": "新竹",
+     "category": "不限",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-日領現金再不要現金",
+  "note": "「日領現金」之後「不要現金」剩日領，不能同時要又排除現金；週領也可以＝加上週領",
+  "turns": [
+   {
+    "say": "桃園 作業員 日領現金的",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員"
+    },
+    "slots_not": {
+     "exclude": [
+      "pay:現金",
+      "pay:日領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要現金",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "白天",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 正新(中壢)",
+    "reply_has_any": [
+     "正新(中壢)"
+    ],
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "pay": "日領"
+    }
+   },
+   {
+    "say": "週領也可以",
+    "slots": {
+     "location": "桃園",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "pay": [
+      "日領",
+      "週領"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-板橋門市六日可上班",
+  "note": "「六日要上班也沒關係」不是要週休也不是排除假日班；早班；問詳情",
+  "turns": [
+   {
+    "say": "板橋 門市",
+    "slots": {
+     "location": "板橋",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "六日要上班也沒關係",
+    "slots": {
+     "location": "板橋",
+     "category": "門市"
+    },
+    "slots_not": {
+     "leave": [
+      "週休二日"
+     ],
+     "exclude": [
+      "shift:假日班"
+     ]
+    }
+   },
+   {
+    "say": "早班",
+    "slots": {
+     "location": "板橋",
+     "category": "門市"
+    },
+    "slots_has": {
+     "shift": [
+      "早班"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 蝦皮門市",
+    "reply_has_any": [
+     "蝦皮門市"
+    ],
+    "slots": {
+     "location": "板橋",
+     "category": "門市"
+    }
+   },
+   {
+    "say": "要會講台語嗎",
+    "slots": {
+     "location": "板橋",
+     "category": "門市"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-理貨門市再拿掉門市",
+  "note": "「理貨，門市也可以」兩種都要；不要門市只剩理貨；日領、夜班",
+  "turns": [
+   {
+    "say": "理貨，門市也可以 在新北",
+    "slots": {
+     "location": "新北",
+     "category": [
+      "理貨/倉儲",
+      "門市"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要門市",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲"
+    },
+    "jobs": true
+   },
+   {
+    "say": "最好做一天領一天",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "我要上夜班",
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "大夜班",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 PChome",
+    "reply_has_any": [
+     "PChome"
+    ],
+    "slots": {
+     "location": "新北",
+     "category": "理貨/倉儲",
+     "shift": "大夜班",
+     "pay": "日領"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-打烊班跟文華路",
+  "note": "「打烊班」是晚班不是廠商M打烊班；「住文華路附近」不是廠商文華",
+  "turns": [
+   {
+    "say": "我想找打烊班",
+    "slots": {
+     "brand": "",
+     "shift": "晚班"
+    }
+   },
+   {
+    "say": "台北 我住文華路附近所以台北最方便",
+    "slots": {
+     "location": "台北",
+     "brand": "",
+     "shift": "晚班"
+    }
+   },
+   {
+    "say": "餐飲",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "打工",
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 松屋",
+    "reply_has_any": [
+     "松屋"
+    ],
+    "slots": {
+     "location": "台北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-shopee跟台哥大",
+  "note": "英文 shopee＝蝦皮、台哥大＝台灣大哥大；換廠商跟類型時地區、班別要保留",
+  "turns": [
+   {
+    "say": "shopee 有缺嗎",
+    "slots": {
+     "brand": "蝦皮"
+    }
+   },
+   {
+    "say": "桃園 倉庫",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "brand": "蝦皮"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "brand": "蝦皮",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 蝦皮(長榮)(時薪)",
+    "reply_has_any": [
+     "蝦皮(長榮)(時薪)"
+    ],
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "brand": "蝦皮",
+     "shift": "晚班"
+    }
+   },
+   {
+    "say": "那桃園有台哥大的門市嗎",
+    "slots": {
+     "location": "桃園",
+     "category": "門市",
+     "brand": "台灣大哥大",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-那個我要兼職",
+  "note": "句首「那個」是發語詞：「那個我要兼職」是要兼職、「那個 請問薪水怎麼算」是問問題",
+  "turns": [
+   {
+    "say": "台北 門市",
+    "slots": {
+     "location": "台北",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "那個我要兼職",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "第三個在哪裡",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": false
+   },
+   {
+    "say": "那個 請問薪水怎麼算",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職"
+    },
+    "jobs": false
+   },
+   {
+    "say": "早上的",
+    "slots": {
+     "location": "台北",
+     "category": "門市",
+     "worktype": "兼職",
+     "shift": "早班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-有小夜班嗎",
+  "note": "「有小夜班嗎」「有兼職嗎」是找工作要記條件；時薪下限；看更多",
+  "turns": [
+   {
+    "say": "新北有小夜班嗎",
+    "slots": {
+     "location": "新北",
+     "shift": "晚班"
+    }
+   },
+   {
+    "say": "餐廳 有兼職嗎",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "時薪210以上",
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班",
+     "salary": "時薪210"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 和牛涮-餐飲服務員",
+    "reply_has_any": [
+     "和牛涮-餐飲服務員"
+    ],
+    "slots": {
+     "location": "新北",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班",
+     "salary": "時薪210"
+    }
+   },
+   {
+    "say": "那桃園呢",
+    "slots": {
+     "location": "桃園",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "晚班",
+     "salary": "時薪210"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-新竹縣改新竹市",
+  "note": "「不要新竹縣了，新竹市有嗎」只剩新竹市；兼職、假日班",
+  "turns": [
+   {
+    "say": "新竹的工作",
+    "slots": {
+     "location": "新竹"
+    }
+   },
+   {
+    "say": "餐飲",
+    "slots": {
+     "location": "新竹",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要新竹縣了，新竹市有嗎",
+    "slots": {
+     "location": "新竹市",
+     "category": "餐飲/服務"
+    },
+    "jobs": true
+   },
+   {
+    "say": "想兼差",
+    "slots": {
+     "location": "新竹市",
+     "category": "餐飲/服務",
+     "worktype": "兼職"
+    },
+    "jobs": true
+   },
+   {
+    "say": "只有週末能上",
+    "slots": {
+     "location": "新竹市",
+     "category": "餐飲/服務",
+     "worktype": "兼職",
+     "shift": "假日班"
+    },
+    "slots_not": {
+     "leave": [
+      "週休二日"
+     ]
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-月薪至少三萬週結",
+  "note": "「月薪至少三萬」不能變月領；「週結」＝週領；「薪水高一點」不改薪資條件",
+  "turns": [
+   {
+    "say": "台中 月薪至少三萬的工廠",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "salary": "月薪30000"
+    },
+    "slots_not": {
+     "pay": [
+      "月領"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "週結的有嗎",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "pay": "週領",
+     "salary": "月薪30000"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 美光(台中)_WH",
+    "reply_has_any": [
+     "美光(台中)_WH"
+    ],
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "pay": "週領",
+     "salary": "月薪30000"
+    }
+   },
+   {
+    "say": "早班就好 我晚上睡得早",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "pay": "週領",
+     "salary": "月薪30000"
+    },
+    "jobs": true
+   },
+   {
+    "say": "薪水高一點的",
+    "slots": {
+     "location": "台中",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "pay": "週領",
+     "salary": "月薪30000"
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-基隆門市再加台北",
+  "note": "基隆門市晚班；台北也可以＝兩個地區；兼職",
+  "turns": [
+   {
+    "say": "基隆有什麼工作",
+    "slots": {
+     "location": "基隆"
+    }
+   },
+   {
+    "say": "門市",
+    "slots": {
+     "location": "基隆",
+     "category": "門市"
+    },
+    "jobs": true
+   },
+   {
+    "say": "下班後晚上去做",
+    "slots": {
+     "location": "基隆",
+     "category": "門市",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 台灣大哥大(時薪)",
+    "reply_has_any": [
+     "台灣大哥大(時薪)"
+    ],
+    "slots": {
+     "location": "基隆",
+     "category": "門市",
+     "shift": "晚班"
+    }
+   },
+   {
+    "say": "台北也可以",
+    "slots": {
+     "location": [
+      "基隆",
+      "台北"
+     ],
+     "category": "門市",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "要兼職",
+    "slots": {
+     "location": [
+      "基隆",
+      "台北"
+     ],
+     "category": "門市",
+     "worktype": "兼職",
+     "shift": "晚班"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-回老家彰化雲林",
+  "note": "想回彰化或雲林老家：兩個縣市、工廠、輪班可以；問宿舍不改條件",
+  "turns": [
+   {
+    "say": "彰化或雲林有工作嗎",
+    "slots": {
+     "location": [
+      "彰化",
+      "雲林"
+     ]
+    }
+   },
+   {
+    "say": "工廠",
+    "slots": {
+     "location": [
+      "彰化",
+      "雲林"
+     ],
+     "category": "製造/作業員"
+    },
+    "jobs": true
+   },
+   {
+    "say": "輪班可以",
+    "slots": {
+     "location": [
+      "彰化",
+      "雲林"
+     ],
+     "category": "製造/作業員",
+     "shift": "輪班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 健和興",
+    "reply_has_any": [
+     "健和興"
+    ],
+    "slots": {
+     "location": [
+      "彰化",
+      "雲林"
+     ],
+     "category": "製造/作業員",
+     "shift": "輪班"
+    }
+   },
+   {
+    "say": "有宿舍嗎",
+    "slots": {
+     "location": [
+      "彰化",
+      "雲林"
+     ],
+     "category": "製造/作業員",
+     "shift": "輪班",
+     "benefit": ""
+    },
+    "jobs": false
+   }
+  ]
+ },
+ {
+  "id": "對話C-先問倉儲累不累",
+  "note": "「倉儲會很累嗎」「外送要自己準備機車嗎」是問問題（不能記類型、不能丟卡片），之後才找台北外送",
+  "turns": [
+   {
+    "say": "倉儲會很累嗎",
+    "slots": {
+     "category": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "外送要自己準備機車嗎",
+    "slots": {
+     "category": ""
+    },
+    "jobs": false
+   },
+   {
+    "say": "好 那我找台北的外送",
+    "slots": {
+     "location": "台北",
+     "category": "外送"
+    },
+    "jobs": true
+   },
+   {
+    "say": "錢想要一個禮拜拿一次",
+    "slots": {
+     "location": "台北",
+     "category": "外送",
+     "pay": "週領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "兼職",
+    "slots": {
+     "location": "台北",
+     "category": "外送",
+     "worktype": "兼職",
+     "pay": "週領"
+    },
+    "jobs": true
+   }
+  ]
+ },
+ {
+  "id": "對話C-排休也沒關係",
+  "note": "「排休也沒關係」是追加不是取代週休；早班；排除新店",
+  "turns": [
+   {
+    "say": "新北 作業員 週休二日",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "leave": "週休二日"
+    },
+    "jobs": true
+   },
+   {
+    "say": "排休也沒關係",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "leave": [
+      "週休二日",
+      "排休"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "白天的班",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": [
+      "週休二日",
+      "排休"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "不要新店",
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": [
+      "週休二日",
+      "排休"
+     ],
+     "exclude": [
+      "location:新店"
+     ]
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 金泰",
+    "reply_has_any": [
+     "金泰"
+    ],
+    "slots": {
+     "location": "新北",
+     "category": "製造/作業員",
+     "shift": "早班",
+     "leave": [
+      "週休二日",
+      "排休"
+     ],
+     "exclude": [
+      "location:新店"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "id": "對話C-不一定要日領",
+  "note": "「不一定要日領」只放寬發薪、其他條件保留；看更多",
+  "turns": [
+   {
+    "say": "桃園 理貨 日領",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "晚上的班",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班",
+     "pay": "日領"
+    },
+    "jobs": true
+   },
+   {
+    "say": "不一定要日領",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班",
+     "pay": ""
+    },
+    "jobs": true
+   },
+   {
+    "say": "看更多職缺",
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    },
+    "jobs": true
+   },
+   {
+    "say": "查看職缺詳情 coupang(代招)",
+    "reply_has_any": [
+     "coupang(代招)"
+    ],
+    "slots": {
+     "location": "桃園",
+     "category": "理貨/倉儲",
+     "shift": "晚班"
+    }
+   }
+  ]
+ }
 ]
