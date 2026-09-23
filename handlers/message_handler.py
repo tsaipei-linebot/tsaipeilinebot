@@ -10,7 +10,8 @@ from linebot.models import (
 )
 from config import (
     STAFFED_HOURS_START, STAFFED_HOURS_END, STAFFED_HOURS_GUARD_ENABLED, TAIPEI_TZ,
-    AI_DECISION_SYNC_TIMEOUT_SECONDS,
+    AI_DECISION_SYNC_TIMEOUT_SECONDS, AI_UNDERSTANDING_MODE, AI_UNDERSTANDING_TIMEOUT_SECONDS,
+    AI_UNDERSTANDING_THINKING_BUDGET,
 )
 from services.session_service import (
     get_user_history, append_user_history, get_user_slots, update_user_slots, clear_user_slots, CLEAR_SLOT
@@ -47,6 +48,9 @@ from services.matcher_service import (
 )
 from services.ai_service import query_gemini_ai, format_full_job_detail_with_ai
 from services.monitoring_service import log_ai_decision_event
+from services.understanding_service import (
+    understand_message, validate_form, render_canonical_text, is_precise_hit, log_understanding,
+)
 
 
 # 「蝦皮職缺類型反問」保底按鈕的確切回傳文字，完全由我們自己的按鈕控制、
@@ -426,6 +430,36 @@ def _short_label(text: str, limit: int = 20) -> str:
     return cut + "…"
 
 
+_SHOW_ALL_SHORT_WORDS = ("都給我看", "都要看", "全部", "看全部", "都看", "推薦一下", "有什麼工作", "有哪些工作", "有什麼職缺", "有哪些職缺")
+
+
+def _is_program_phrase(text: str) -> bool:
+    """按鈕送回來的固定句型、程式自己有專門處理的短句（不用問 AI）。"""
+    text = str(text or "").strip()
+    if not text:
+        return True
+    if text.startswith("查看職缺詳情") or text.startswith(INFO_INTENT_PREFIX):
+        return True
+    if text in (SHOPEE_CLARIFY_ALL_TEXT, KEEP_CONDITIONS_TEXT, CHANGE_LOCATION_TEXT, CHANGE_SHIFT_TEXT,
+                CHANGE_CATEGORY_TEXT, APPLY_TEXT, RESET_CONFIRM_TEXT, RESET_DECLINE_TEXT, RESET_DIRECT_TEXT,
+                MORE_JOBS_TEXT, "都給我看看", "清空條件", "其他條件都可以") or text.endswith(BRAND_CHOICE_SUFFIX):
+        return True
+    compact = clean_text_for_search(text)
+    if any(w in compact for words in _CHANGE_REQUEST_WORDS.values() for w in words) and len(compact) <= 10:
+        return True
+    return len(compact) <= 8 and any(w in compact for w in _SHOW_ALL_SHORT_WORDS)
+
+
+def _log_shadow_understanding(future, message: str, started: float, active_jobs: list):
+    """shadow 模式：AI 需求單只記 log、不影響回覆，用來上線前比對 AI 判斷得準不準。"""
+    try:
+        form = validate_form(future.result(), active_jobs, message)
+        canonical = render_canonical_text(form) if form and form["intent"] == "找工作" else ""
+        log_understanding(message, form, form["intent"] if form else "ai_failed", time.monotonic() - started, "shadow", canonical)
+    except Exception:
+        print(f"[AI需求單 shadow 失敗]: {traceback.format_exc()}")
+
+
 def _last_bot_text(history: list) -> str:
     for item in reversed(history or []):
         if item.get("role") == "招募顧問沛沛":
@@ -746,6 +780,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         _rewritten = _rewrite_reply_to_last_prompt(raw_msg, history)
         if _rewritten:
             raw_msg = _rewritten
+
         elif _is_bare_any_reply(raw_msg):
             # 沛沛問了一個問題，求職者只回「都可以」、又對不到那一題的選項：不知道是
             # 哪一項都可以，就問清楚，不能照一般規則清掉類型跟廠商（第八輪按鈕測試：
@@ -778,6 +813,39 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 raw_msg = RESET_CONFIRM_TEXT
             else:
                 raw_msg = "清空條件"
+
+        # AI 需求單（第 81 項）：開關是環境變數 AI_UNDERSTANDING_MODE（off／shadow／on）
+        _ai_mode = AI_UNDERSTANDING_MODE if AI_UNDERSTANDING_MODE in ("shadow", "on") else "off"
+        _ai_state = {}
+
+        def _needs_ai_understanding():
+            """程式沒有精準命中的句子才交給 AI；按鈕、固定句型、只由認得的詞組成的短句不用。"""
+            return not (_is_program_phrase(raw_msg) or is_precise_hit(raw_msg, active_jobs))
+
+        def _ai_form():
+            """同一句話只問 AI 一次（中間被改寫成別的句子就重問）；AI 失敗或逾時回傳 None，照原本的流程走。"""
+            if "form" in _ai_state and _ai_state.get("message") == raw_msg:
+                return _ai_state["form"]
+            _ai_state["form"], _ai_state["latency"], _ai_state["message"] = None, 0.0, raw_msg
+            if _ai_mode != "on" or not _needs_ai_understanding():
+                return None
+            _started = time.monotonic()
+            _future = _AI_DECISION_EXECUTOR.submit(
+                understand_message, raw_msg, get_user_slots(user_id), history, AI_UNDERSTANDING_THINKING_BUDGET)
+            try:
+                _ai_state["form"] = validate_form(_future.result(timeout=AI_UNDERSTANDING_TIMEOUT_SECONDS), active_jobs, raw_msg)
+            except concurrent.futures.TimeoutError:
+                print(f"[AI需求單] 超過 {AI_UNDERSTANDING_TIMEOUT_SECONDS} 秒沒有回應，照原本的流程處理")
+            except Exception:
+                print(f"[AI需求單] 失敗，照原本的流程處理: {traceback.format_exc()}")
+            _ai_state["latency"] = time.monotonic() - _started
+            if _ai_state["form"] is None:
+                log_understanding(raw_msg, None, "ai_failed", _ai_state["latency"], _ai_mode)
+            return _ai_state["form"]
+
+        def _log_form(route, canonical=""):
+            log_understanding(_ai_state.get("message", raw_msg), _ai_state.get("form"), route,
+                              _ai_state.get("latency", 0.0), _ai_mode, canonical)
 
         # ---------------- 步驟 0-0A：槽位主動重置攔截 ----------------
         # 「真的想全部重來」跟「只想換一個條件」拆成兩種情境分開處理：
@@ -920,9 +988,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 使用者 2026-09-23 第七輪決定：抱怨／要找真人／要刪個資／雇主想合作／在職
         # 員工請假離職薪資問題／問面試結果，程式直接回固定句，並記進「求職者提問
         # 追蹤」讓同仁回頭處理（原本交給 AI，沒有通知任何同仁）。
-        _handoff = "" if raw_msg.startswith("查看職缺詳情") else detect_handoff_reason(raw_msg)
-        if _handoff:
-            handoff_reply = _HANDOFF_REPLIES[_handoff]
+        def _reply_handoff(reason):
+            handoff_reply = _HANDOFF_REPLIES[reason]
             append_user_history(user_id, "求職者", raw_msg)
             append_user_history(user_id, "招募顧問沛沛", handoff_reply)
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=handoff_reply))
@@ -933,13 +1000,23 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 except Exception:
                     pass
                 append_unresolved_question_for_followup(
-                    f"【需要專員處理：{HANDOFF_REASON_NAMES[_handoff]}】{raw_msg}", user_id, display_name)
+                    f"【需要專員處理：{HANDOFF_REASON_NAMES[reason]}】{raw_msg}", user_id, display_name)
             except Exception:
                 print(f"[轉給真人的紀錄寫入失敗]: {traceback.format_exc()}")
             log_ai_decision_event(
-                path="direct_intercept", intercept_type=f"handoff_{_handoff}",
+                path="direct_intercept", intercept_type=f"handoff_{reason}",
                 latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
             )
+
+        _handoff = "" if raw_msg.startswith("查看職缺詳情") else detect_handoff_reason(raw_msg)
+        if _handoff and _ai_mode == "on" and _needs_ai_understanding():
+            # 關鍵字判斷會把求職者誤判成要轉專員（第八輪測試 34 次：「我們公司倒閉了，需要找新
+            # 工作」「薪水會扣勞健保嗎」）：開了 AI 需求單時，以 AI 的判斷為準
+            _handoff_form = _ai_form()
+            if _handoff_form is not None:
+                _handoff = (_handoff_form["handoff_reason"] or _handoff) if _handoff_form["intent"] == "轉專員" else ""
+        if _handoff:
+            _reply_handoff(_handoff)
             return
 
         # ---------------- 步驟 0-0C：「看更多」跟問剛才看到的職缺 ----------------
@@ -1260,6 +1337,152 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             ])
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=legal_reply, quick_reply=quick_reply))
             return
+
+        def _answer_with_ai_decision(current_location, history_text, current_slots, detected_category_from_text, detected_brand):
+            """步驟 2 的內容：交給 AI 決策回覆（限時同步等待，逾時改背景 push）。AI 需求單判斷是
+            「問問題／閒聊」時（步驟 0-2b）也直接走這裡，不經過條件判斷。"""
+            append_user_history(user_id, "求職者", raw_msg)
+
+            # log_ctx：讓 _compute_ai_decision_messages() 把「決策出的 action」「是否
+            # 觸發保底訊息」這兩個內部才知道的資訊，透過這個共用 dict 帶出來給下面的
+            # 結構化 log 使用，不用改變函式原本「回傳訊息內容」的回傳值型別（見
+            # services/monitoring_service.py、HANDOFF.md「監控與告警機制」）。
+            # 這個 dict 只會被背景執行緒寫入一次、主執行緒在 future 完成後才讀取，
+            # 順序上不會有競爭寫入的問題。
+            log_ctx = {}
+            future = _AI_DECISION_EXECUTOR.submit(
+                _compute_ai_decision_messages,
+                user_id, raw_msg, active_jobs, faq_list, current_location, history_text, log_ctx,
+                current_slots, target_line_bot_api,
+            )
+            try:
+                messages = future.result(timeout=AI_DECISION_SYNC_TIMEOUT_SECONDS)
+                try:
+                    target_line_bot_api.reply_message(reply_token, messages)
+                except Exception:
+                    # reply_token 這裡失敗，通常代表 token 已經過期（例如這次請求在
+                    # 進到這段程式碼之前，已經因為排隊等執行緒等原因耗掉不少時間，
+                    # 我們量不到那段延遲）。這條路徑原本沒有任何備援：answer 已經算
+                    # 好了卻沒送出去、也沒有排進背景補發，使用者會完全收不到回覆。
+                    # 改成失敗時直接改用不受 reply_token 時效限制的 push_message
+                    # 補發，答案已經算好了，沒有理由白白浪費掉。
+                    print(f"[同步回覆送出失敗 Traceback，改用 push_message 補發]: {traceback.format_exc()}")
+                    try:
+                        target_line_bot_api.push_message(user_id, messages)
+                    except Exception:
+                        print(f"[push_message 補發也失敗 Traceback]: {traceback.format_exc()}")
+                log_ai_decision_event(
+                    path="ai_decision", action=log_ctx.get("action", ""),
+                    fallback_triggered=log_ctx.get("fallback_triggered", False),
+                    ai_decision_empty=log_ctx.get("ai_decision_empty", False),
+                    matched_category=detected_category_from_text, matched_brand=detected_brand,
+                    latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                )
+            except concurrent.futures.TimeoutError:
+                ack_text = "收到您的訊息了！沛沛正在為您查詢最合適的資訊，請稍等一下下 🔍😊"
+                # 刻意不把 ack_text 寫入對話歷史：這只是系統層級的「稍等」提示，不是真正
+                # 的對話內容，寫進去會佔用歷史視窗（只留最後 10 則）、也會讓下一輪 AI
+                # 看到的對話紀錄被這句話打斷，變成「求職者提問」後面接的不是「沛沛的
+                # 正式答案」。
+                try:
+                    target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ack_text))
+                except Exception:
+                    # reply_token 這時可能已經過期（尤其高併發、或這個限時同步等待秒數
+                    # 設得比較接近 LINE 30 秒上限時更容易發生——從 LINE 送出訊息到這裡
+                    # 開始計時，中間可能已經有排隊延遲，我們量不到）。就算「查詢中」這句
+                    # 安慰訊息送失敗，也絕對不能放棄：下面 push_message 補發正式答案不
+                    # 受 reply_token 時效限制，一定要繼續排進去，不然使用者會完全收不到
+                    # 任何回覆（原本這裡沒有 try/except，安慰訊息送失敗會導致整個函式
+                    # 例外中斷、根本沒機會排進背景補發，見 HANDOFF.md 的說明）。
+                    print(f"[逾時 ack 訊息送出失敗 Traceback]: {traceback.format_exc()}")
+                future.add_done_callback(
+                    lambda fut: _push_ai_decision_messages(
+                        fut, user_id, target_line_bot_api, log_ctx,
+                        _request_start, detected_category_from_text, detected_brand,
+                    )
+                )
+
+        # ---------------- 步驟 0-2b：沒有精準命中的句子交給 AI 整理需求單（第 81 項）----------------
+        # 使用者 2026-09-23 決定：程式只處理精準命中的句子，其他交給 AI 判斷語意，但 AI
+        # 只能填固定格式的需求單（services/understanding_service.py），程式檢查過再轉成
+        # 程式一定看得懂的標準句子，照原本的流程找職缺。AI 失敗、逾時或開關沒開時，照原本
+        # 的流程走，不會比原本差。
+        if _ai_mode == "shadow" and _needs_ai_understanding():
+            _shadow_msg, _shadow_start = raw_msg, time.monotonic()
+            _shadow_future = _AI_DECISION_EXECUTOR.submit(
+                understand_message, raw_msg, get_user_slots(user_id), history, AI_UNDERSTANDING_THINKING_BUDGET)
+            _shadow_future.add_done_callback(lambda fut: _log_shadow_understanding(fut, _shadow_msg, _shadow_start, active_jobs))
+        _form = _ai_form() if _ai_mode == "on" else None
+        if _form:
+            _intent = _form["intent"]
+            _canonical = render_canonical_text(_form) if _intent == "找工作" else ""
+            if _intent == "轉專員":
+                _log_form("handoff")
+                _reply_handoff(_form["handoff_reason"] or "human")
+                return
+            if _intent == "不確定" and _form["clarify_question"] and _form["clarify_options"]:
+                _log_form("clarify")
+                append_user_history(user_id, "求職者", raw_msg)
+                append_user_history(user_id, "招募顧問沛沛", _form["clarify_question"])
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                    text=_form["clarify_question"],
+                    quick_reply=QuickReply(items=[
+                        QuickReplyButton(action=MessageAction(label=_short_label(option), text=option))
+                        for option in _form["clarify_options"]
+                    ]),
+                ))
+                log_ai_decision_event(
+                    path="direct_intercept", intercept_type="ai_understanding_clarify",
+                    latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                )
+                return
+            if _intent == "找工作" and _canonical:
+                _log_form("canonical", _canonical)
+                raw_msg = _canonical
+            elif _intent == "找工作" and _form["unsupported_roles"]:
+                _log_form("unsupported")
+                _roles = "、".join(_form["unsupported_roles"][:3])
+                _available = distinct_routable_categories_for_jobs(active_jobs)
+                unsupported_reply = (
+                    f"不好意思，沛沛這邊目前沒有「{_roles}」相關的職缺 🙏"
+                    + (f"\n\n目前有{'、'.join(_available)}這幾種類型，要不要看看呢？😊" if _available else "")
+                )
+                append_user_history(user_id, "求職者", raw_msg)
+                append_user_history(user_id, "招募顧問沛沛", unsupported_reply)
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                    text=unsupported_reply,
+                    quick_reply=QuickReply(items=[
+                        QuickReplyButton(action=MessageAction(label=_short_label(f"🧰 {c}"), text=f"{c}的工作"))
+                        for c in _available[:12]
+                    ]) if _available else None,
+                ))
+                return
+            elif _intent in ("問問題", "閒聊"):
+                _log_form("answer")
+                _question_slots = get_user_slots(user_id)
+                _question_faq = find_high_confidence_faq_match(faq_list, raw_msg) if _intent == "問問題" else None
+                _question_answer = str((_question_faq or {}).get("answer", "")).strip()
+                if _question_answer:
+                    append_user_history(user_id, "求職者", raw_msg)
+                    append_user_history(user_id, "招募顧問沛沛", _question_answer)
+                    _faq_buttons = [QuickReplyButton(action=MessageAction(label="👀 看看符合的職缺", text="都給我看看"))]
+                    if not _question_slots.get("location"):
+                        _faq_buttons.append(QuickReplyButton(action=MessageAction(label="📍 選擇地區", text=CHANGE_LOCATION_TEXT)))
+                    target_line_bot_api.reply_message(reply_token, TextSendMessage(
+                        text=_question_answer, quick_reply=QuickReply(items=_faq_buttons)))
+                    log_ai_decision_event(
+                        path="high_confidence_faq", action="ASK",
+                        latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                    )
+                    return
+                _answer_with_ai_decision(
+                    _question_slots.get("location", ""),
+                    "\n".join([f"{item['role']}: {item['text']}" for item in history[-6:]]),
+                    _question_slots, _question_slots.get("category", ""), _question_slots.get("brand", ""),
+                )
+                return
+            else:
+                _log_form("fallback")
 
         # ---------------- 步驟 0-3：Session 載入與多輪動態槽位覆蓋（含否定詞感知：能區分「不要 A」跟「想要 B」）[cite: 6] ----------------
         history_text = "\n".join([f"{item['role']}: {item['text']}" for item in history[-6:]])
@@ -2981,66 +3204,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # CPU 會被節流，背景執行緒可能因此卡住/變超慢。這個服務必須開啟「CPU 一律
         # 配置」（gcloud 的 --no-cpu-throttling，或 Console 編輯修訂版本頁「一律配置
         # CPU」），否則超過時限、真的走到背景 push 這條路的請求不保證能可靠跑完。
-        append_user_history(user_id, "求職者", raw_msg)
-
-        # log_ctx：讓 _compute_ai_decision_messages() 把「決策出的 action」「是否
-        # 觸發保底訊息」這兩個內部才知道的資訊，透過這個共用 dict 帶出來給下面的
-        # 結構化 log 使用，不用改變函式原本「回傳訊息內容」的回傳值型別（見
-        # services/monitoring_service.py、HANDOFF.md「監控與告警機制」）。
-        # 這個 dict 只會被背景執行緒寫入一次、主執行緒在 future 完成後才讀取，
-        # 順序上不會有競爭寫入的問題。
-        log_ctx = {}
-        future = _AI_DECISION_EXECUTOR.submit(
-            _compute_ai_decision_messages,
-            user_id, raw_msg, active_jobs, faq_list, current_location, history_text, log_ctx,
-            current_slots, target_line_bot_api,
-        )
-        try:
-            messages = future.result(timeout=AI_DECISION_SYNC_TIMEOUT_SECONDS)
-            try:
-                target_line_bot_api.reply_message(reply_token, messages)
-            except Exception:
-                # reply_token 這裡失敗，通常代表 token 已經過期（例如這次請求在
-                # 進到這段程式碼之前，已經因為排隊等執行緒等原因耗掉不少時間，
-                # 我們量不到那段延遲）。這條路徑原本沒有任何備援：answer 已經算
-                # 好了卻沒送出去、也沒有排進背景補發，使用者會完全收不到回覆。
-                # 改成失敗時直接改用不受 reply_token 時效限制的 push_message
-                # 補發，答案已經算好了，沒有理由白白浪費掉。
-                print(f"[同步回覆送出失敗 Traceback，改用 push_message 補發]: {traceback.format_exc()}")
-                try:
-                    target_line_bot_api.push_message(user_id, messages)
-                except Exception:
-                    print(f"[push_message 補發也失敗 Traceback]: {traceback.format_exc()}")
-            log_ai_decision_event(
-                path="ai_decision", action=log_ctx.get("action", ""),
-                fallback_triggered=log_ctx.get("fallback_triggered", False),
-                ai_decision_empty=log_ctx.get("ai_decision_empty", False),
-                matched_category=detected_category_from_text, matched_brand=detected_brand,
-                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
-            )
-        except concurrent.futures.TimeoutError:
-            ack_text = "收到您的訊息了！沛沛正在為您查詢最合適的資訊，請稍等一下下 🔍😊"
-            # 刻意不把 ack_text 寫入對話歷史：這只是系統層級的「稍等」提示，不是真正
-            # 的對話內容，寫進去會佔用歷史視窗（只留最後 10 則）、也會讓下一輪 AI
-            # 看到的對話紀錄被這句話打斷，變成「求職者提問」後面接的不是「沛沛的
-            # 正式答案」。
-            try:
-                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ack_text))
-            except Exception:
-                # reply_token 這時可能已經過期（尤其高併發、或這個限時同步等待秒數
-                # 設得比較接近 LINE 30 秒上限時更容易發生——從 LINE 送出訊息到這裡
-                # 開始計時，中間可能已經有排隊延遲，我們量不到）。就算「查詢中」這句
-                # 安慰訊息送失敗，也絕對不能放棄：下面 push_message 補發正式答案不
-                # 受 reply_token 時效限制，一定要繼續排進去，不然使用者會完全收不到
-                # 任何回覆（原本這裡沒有 try/except，安慰訊息送失敗會導致整個函式
-                # 例外中斷、根本沒機會排進背景補發，見 HANDOFF.md 的說明）。
-                print(f"[逾時 ack 訊息送出失敗 Traceback]: {traceback.format_exc()}")
-            future.add_done_callback(
-                lambda fut: _push_ai_decision_messages(
-                    fut, user_id, target_line_bot_api, log_ctx,
-                    _request_start, detected_category_from_text, detected_brand,
-                )
-            )
+        _answer_with_ai_decision(current_location, history_text, current_slots, detected_category_from_text, detected_brand)
         return
 
     except Exception as e:

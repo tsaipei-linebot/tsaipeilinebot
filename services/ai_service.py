@@ -42,7 +42,7 @@ def _is_resource_exhausted_error(e: Exception) -> bool:
     return "429" in text or "RESOURCE_EXHAUSTED" in text.upper()
 
 
-def _build_generation_config(response_schema: dict = None):
+def _build_generation_config(response_schema: dict = None, thinking_budget: int = None):
     """依是否有帶 response_schema 決定要不要開啟 Gemini 原生的結構化 JSON 輸出模式
     （response_mime_type="application/json" + response_schema）。開啟後 Gemini 回傳的
     內容保證是符合 schema 的合法 JSON，從 API 層級就杜絕「忘記換行」「欄位黏在同一行」
@@ -51,16 +51,23 @@ def _build_generation_config(response_schema: dict = None):
     美化排版這種純自然語言輸出）回傳 None，維持原本的自由文字輸出行為。"""
     if not response_schema:
         return None
+    # thinking_budget：Gemini 2.5 預設會先「想一想」再回答，比較準但比較慢。AI 需求單
+    # （services/understanding_service.py）每句話都要多等這一次，可以用環境變數
+    # AI_UNDERSTANDING_THINKING_BUDGET 調整（0＝不想、直接回答）。
+    extra = {}
+    if thinking_budget is not None:
+        extra["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
     return types.GenerateContentConfig(
         response_mime_type="application/json",
-        response_schema=response_schema
+        response_schema=response_schema,
+        **extra
     )
 
 
-def _generate_with_retry(model: str, prompt: str, response_schema: dict = None):
+def _generate_with_retry(model: str, prompt: str, response_schema: dict = None, thinking_budget: int = None):
     """對單一模型呼叫 Gemini。遇到 429 才短暫等待後重試；其他類型錯誤直接往上拋出，
     交由呼叫端換下一個 fallback 模型，避免浪費時間重試注定失敗的請求。"""
-    config = _build_generation_config(response_schema)
+    config = _build_generation_config(response_schema, thinking_budget)
     last_error = None
     for attempt in range(MAX_RETRIES_PER_MODEL + 1):
         try:
@@ -76,7 +83,7 @@ def _generate_with_retry(model: str, prompt: str, response_schema: dict = None):
     raise last_error
 
 
-def query_gemini_ai(prompt: str, response_schema: dict = None) -> str:
+def query_gemini_ai(prompt: str, response_schema: dict = None, thinking_budget: int = None) -> str:
     """呼叫 Vertex AI Gemini 進行招募問答與決策推理（含 429 重試 + 模型 fallback）。
     帶 response_schema 時會開啟結構化 JSON 輸出模式，回傳的字串保證是合法 JSON。"""
     if not ai_client:
@@ -84,7 +91,7 @@ def query_gemini_ai(prompt: str, response_schema: dict = None) -> str:
 
     for m in MODEL_FALLBACK_LIST:
         try:
-            res = _generate_with_retry(m, prompt, response_schema=response_schema)
+            res = _generate_with_retry(m, prompt, response_schema=response_schema, thinking_budget=thinking_budget)
             if res and hasattr(res, "text") and res.text:
                 return res.text.strip()
         except Exception as e:

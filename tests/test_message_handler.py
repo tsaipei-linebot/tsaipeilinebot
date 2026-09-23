@@ -4,6 +4,7 @@ import os
 import sys
 import unittest
 import services.matcher_service as m
+import services.understanding_service as us
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -4313,6 +4314,150 @@ class MultiTurnRoundEightDefiniteBugTests(_RoundFourSessionMixin, unittest.TestC
     def test_truncated_label_does_not_end_with_partial_number(self):
         self.assertEqual(h._short_label("1. 蝦皮內勤 知名企業設備人員月薪36K"), "1. 蝦皮內勤 知名企業設備人員月薪…")
         self.assertEqual(h._short_label("📖 短名稱"), "📖 短名稱")
+
+
+class AiUnderstandingTests(_RoundFourSessionMixin, unittest.TestCase):
+    """AI 需求單（使用者 2026-09-23 決定，第 81 項）：程式沒有精準命中的句子交給 AI
+    整理需求單，程式檢查過再轉成標準句子照原本的流程找職缺。測試不會真的呼叫 Gemini，
+    用假的需求單確認「轉成標準句子」「分流」「檢查」這些程式負責的部分。"""
+
+    def setUp(self):
+        super().setUp()
+        self.forms = []
+        self.understand_calls = []
+
+    def _form(self, **fields):
+        form = us.normalize_form({"intent": "找工作", **fields})
+        return form
+
+    def _say_ai(self, msg, form=None, mode="on"):
+        def _fake_understand(message, slots=None, history=None, thinking_budget=None):
+            self.understand_calls.append(message)
+            return form
+        with patch("handlers.message_handler.AI_UNDERSTANDING_MODE", mode), \
+             patch("handlers.message_handler.understand_message", side_effect=_fake_understand):
+            return self._say(msg)
+
+    # ---- 需求單轉成標準句子：原本的流程一定要解讀成一樣的條件 ----
+    def test_canonical_text_round_trips_through_existing_flow(self):
+        cases = [
+            (dict(locations=["桃園", "新竹"], categories=["理貨/倉儲"]), {"location": "桃園|新竹", "category": "理貨/倉儲"}),
+            (dict(locations=["中壢"], shifts=["早班", "大夜班"], pays=["日領"]), {"location": "中壢", "shift": "早班|大夜班", "pay": "日領"}),
+            (dict(locations=["桃園"], exclude_shifts=["大夜班"], exclude_pays=["月領"]), {"location": "桃園", "exclude": "shift:大夜班;pay:月領"}),
+            (dict(locations=["桃園"], leaves=["週休二日"], worktype="兼職"), {"location": "桃園", "leave": "週休二日", "worktype": "兼職"}),
+            (dict(locations=["桃園"], salary_kind="月薪", salary_min=30000), {"location": "桃園", "salary": "月薪30000"}),
+            (dict(locations=["桃園"], benefits=["交通車"]), {"location": "桃園", "benefit": "交通車"}),
+            (dict(locations=["桃園"], exclude_locations=["中壢"]), {"location": "桃園", "exclude": "location:中壢"}),
+            (dict(categories=["理貨/倉儲"], exclude_categories=["製造/作業員"]), {"category": "理貨/倉儲", "exclude": "category:製造/作業員"}),
+        ]
+        for fields, expected in cases:
+            with self.subTest(fields=fields):
+                self.setUp()
+                canonical = us.render_canonical_text(us.validate_form(self._form(**fields), self._jobs()))
+                self.assertTrue(us.is_precise_hit(canonical, self._jobs()), canonical)
+                self._say(canonical)
+                got = {k: v for k, v in self.session_slots.items() if v and k != "shown"}
+                self.assertEqual(got, expected, canonical)
+
+    def test_canonical_text_broaden_clears_only_that_dimension(self):
+        self._say("桃園 理貨 早班")
+        self._say(us.render_canonical_text(self._form(broaden=["班別"])))
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+
+    # ---- 分流 ----
+    def test_precise_sentence_does_not_call_ai(self):
+        self._say_ai("桃園 理貨", self._form(locations=["新竹"]))
+        self.assertEqual(self.understand_calls, [])
+        self.assertEqual(self.session_slots["location"], "桃園")
+
+    def test_mode_off_never_calls_ai(self):
+        self._say_ai("晚上有空，桃園有工作嗎", self._form(locations=["桃園"], shifts=["晚班"]), mode="off")
+        self.assertEqual(self.understand_calls, [])
+
+    def test_search_form_becomes_conditions(self):
+        result = self._say_ai("晚上有空，桃園有理貨的工作嗎", self._form(locations=["桃園"], categories=["理貨/倉儲"], shifts=["晚班"]))
+        self.assertEqual(self.understand_calls, ["晚上有空，桃園有理貨的工作嗎"])
+        self.assertEqual(self.session_slots["location"], "桃園")
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+        self.assertEqual(self.session_slots["shift"], "晚班")
+        self.assertFalse(result["ai"])
+
+    def test_question_form_keeps_conditions_and_asks_ai_to_answer(self):
+        self._say("桃園 作業員")
+        result = self._say_ai("那邊有冷氣設備嗎", us.normalize_form({"intent": "問問題"}))
+        self.assertTrue(result["ai"])
+        self.assertEqual(self.session_slots["category"], "製造/作業員")
+
+    def test_question_form_with_faq_answers_verbatim(self):
+        self.faqs = [{"question": "薪水會扣勞健保嗎？", "answer": "會依法代扣勞健保喔"}]
+        result = self._say_ai("薪水會扣勞健保嗎？", us.normalize_form({"intent": "問問題"}))
+        self.assertEqual(result["text"], "會依法代扣勞健保喔")
+        self.assertFalse(result["ai"])
+
+    def test_keyword_handoff_overruled_by_ai(self):
+        # 關鍵字會把「我們公司倒閉了」當成在職員工問題；AI 判斷是找工作就照找工作處理
+        with patch("handlers.message_handler.detect_handoff_reason", return_value="employee"):
+            result = self._say_ai("我們公司倒閉了，需要在桃園找新工作", self._form(locations=["桃園"]))
+        self.assertNotIn("專員", result["text"])
+        self.assertEqual(self.session_slots["location"], "桃園")
+
+    def test_handoff_form_replies_fixed_text(self):
+        with patch("handlers.message_handler.append_unresolved_question_for_followup") as record:
+            result = self._say_ai("可以請人打給我嗎", us.normalize_form({"intent": "轉專員", "handoff_reason": "human"}))
+        self.assertEqual(result["text"], h._HANDOFF_REPLIES["human"])
+        record.assert_called_once()
+
+    def test_clarify_form_shows_only_precise_options(self):
+        form = us.normalize_form({
+            "intent": "不確定", "clarify_question": "您是想找晚班，還是不要晚班呢？",
+            "clarify_options": ["晚班的工作", "不要晚班", "我也不知道要不要"],
+        })
+        result = self._say_ai("晚班我不確定耶", form)
+        self.assertEqual(result["text"], "您是想找晚班，還是不要晚班呢？")
+        self.assertEqual(result["buttons"], ["晚班的工作", "不要晚班"])
+
+    def test_unsupported_role_says_so_honestly(self):
+        result = self._say_ai("有保全的工作嗎", self._form(unsupported_roles=["保全"]))
+        self.assertIn("沒有「保全」", result["text"])
+        self.assertIn("理貨/倉儲的工作", result["buttons"])
+
+    def test_ai_failure_falls_back_to_rules(self):
+        result = self._say_ai("桃園有理貨的工作嗎，晚上有空", None)
+        self.assertEqual(self.session_slots["location"], "桃園")
+        self.assertIsNotNone(result["text"])
+
+    # ---- 檢查需求單 ----
+    def test_validate_drops_values_the_program_does_not_know(self):
+        form = us.validate_form(self._form(
+            locations=["桃園", "火星"], brand="不存在的公司", benefits=["飛機接送"],
+            shifts=["大夜班"], exclude_shifts=["大夜班", "早班"], salary_kind="月薪", salary_min=0,
+            clarify_options=["桃園的工作", "隨便聊聊"],
+        ), self._jobs())
+        self.assertEqual(form["locations"], ["桃園"])
+        self.assertEqual(form["brand"], "")
+        self.assertEqual(form["benefits"], [])
+        self.assertEqual(form["exclude_shifts"], ["早班"])
+        self.assertEqual(form["salary_kind"], "")
+        self.assertEqual(form["clarify_options"], ["桃園的工作"])
+
+    def test_county_right_before_district_keeps_only_district(self):
+        # 第一次準確率考試：「新竹竹北」AI 兩個都填，變成「新竹或竹北」
+        jobs = self._jobs()
+        form = us.validate_form(self._form(locations=["桃園", "中壢"]), jobs, "桃園中壢的工作")
+        self.assertEqual(form["locations"], ["中壢"])
+        form = us.validate_form(self._form(locations=["桃園", "中壢"]), jobs, "桃園或中壢都可以")
+        self.assertEqual(form["locations"], ["桃園", "中壢"])
+        # 職缺資料裡沒有的區也要認得（考試是在沒有職缺資料的情況下跑）
+        self.assertEqual(us.drop_county_before_district(["新竹", "竹北"], "新竹竹北的工作"), ["竹北"])
+
+    def test_precise_hit_boundaries(self):
+        jobs = self._jobs()
+        for text in ["桃園", "桃園 理貨", "中壢理貨的工作", "夜班", "日領", "不要大夜班", "班別都可以", "桃園或新竹", "有桃園的工作嗎？"]:
+            self.assertTrue(us.is_precise_hit(text, jobs), text)
+        for text in ["晚上有空", "假日想休息", "不要夜班 日領就好", "不用輪班", "有冷氣設備嗎", "大安區以外都可以",
+                     "我要離職了 桃園有理貨嗎", "謝謝", "夜班沒興趣", "不排斥夜班"]:
+            self.assertFalse(us.is_precise_hit(text, jobs), text)
 
 
 if __name__ == "__main__":
