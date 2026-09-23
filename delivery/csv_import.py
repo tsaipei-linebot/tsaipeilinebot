@@ -1,14 +1,18 @@
-"""批次匯入人員用的 CSV 解析。
+"""批次匯入人員用的檔案解析（Excel 與 CSV 都收）。
 
 刻意寫成不碰 Firestore 的純函式（parse_personnel_csv），方便直接寫單元測試。
 是否寫入資料庫、是否跳過重複身分證字號，交給呼叫端（routes/import_routes.py）
 決定，這裡只負責把上傳的檔案內容解析成結構化的每列結果。
+
+「把上傳的檔案讀成一列一列的字典」這一段共用 services/tabular_upload.py
+（2026-09-23 起兩種格式都收，為什麼要改成 Excel 見那支檔案開頭的說明）。
+函式名稱保留 `parse_personnel_csv` 沒改，是因為呼叫端與既有測試都在用，
+改名的效益不值得那個改動面。
 """
-import csv
-import io
 from datetime import datetime
 
 from delivery.config import VENDOR_LOOKUP
+from services import tabular_upload
 
 REQUIRED_HEADERS = {"廠商", "姓名"}
 
@@ -33,18 +37,6 @@ def _normalize_hire_date(raw: str):
     return "", True
 
 
-def _decode(content: bytes) -> str:
-    """Excel/記事本在台灣常見存成 Big5(cp950)，這裡先試 UTF-8（含 BOM），
-    解碼失敗（表示不是合法 UTF-8）再退回 cp950；兩者都失敗就用 UTF-8
-    容錯模式，至少不會整個匯入功能直接掛掉。"""
-    for encoding in ("utf-8-sig", "cp950"):
-        try:
-            return content.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return content.decode("utf-8", errors="replace")
-
-
 def parse_personnel_csv(content: bytes):
     """回傳 (rows, header_error)。
 
@@ -55,18 +47,16 @@ def parse_personnel_csv(content: bytes):
     完全空白的列（廠商、姓名都沒填）直接跳過，不算錯誤，方便匯出的檔案留有
     空行也不會被擋下來。
     """
-    text = _decode(content)
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        return [], "檔案是空的或無法辨識表頭"
+    raw_rows, read_error = tabular_upload.read_rows(content)
+    if read_error:
+        return [], read_error
 
-    headers = {h.strip() for h in reader.fieldnames if h}
-    missing = REQUIRED_HEADERS - headers
+    missing = REQUIRED_HEADERS - tabular_upload.header_names(raw_rows)
     if missing:
         return [], f"缺少必要欄位：{'、'.join(sorted(missing))}"
 
     rows = []
-    for i, raw in enumerate(reader, start=2):  # 第 1 列是表頭，資料從第 2 列開始
+    for i, raw in enumerate(raw_rows, start=2):  # 第 1 列是表頭，資料從第 2 列開始
         vendor_raw = (raw.get("廠商") or "").strip()
         name = (raw.get("姓名") or "").strip()
         id_number = (raw.get("身分證字號") or "").strip()

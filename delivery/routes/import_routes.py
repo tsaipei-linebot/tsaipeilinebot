@@ -1,18 +1,22 @@
 from fastapi import APIRouter, Depends, File, Request, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import Response
 
 from delivery import repository
 from delivery.auth import current_user, login_required
 from delivery.config import MAX_UPLOAD_BYTES, VENDOR_MAP
 from delivery.csv_import import parse_personnel_csv
 from delivery.templating import templates
+from services import tabular_upload
 
 router = APIRouter()
 
-TEMPLATE_CSV = (
-    "廠商,姓名,身分證字號,電話,到職日期\n"
-    "蝦皮三輪,王小明,A123456789,0912345678,2024-01-31\n"
-)
+# 範本 2026-09-23 從 CSV 改成 Excel：同仁用 Excel 另存成 CSV 時 Windows 會
+# 用 Big5 存檔，Big5 放不下的姓名用字（堃、喆、峯…）會被 Excel 直接換成
+# 「?」寫進檔案，救不回來。完整說明見 services/tabular_upload.py 開頭。
+TEMPLATE_HEADERS = ["廠商", "姓名", "身分證字號", "電話", "到職日期"]
+TEMPLATE_SAMPLE_ROW = ["蝦皮三輪", "王小明", "A123456789", "0912345678", "2024-01-31"]
+# 電話要設成文字格式，不然 Excel 會當成數字、開頭的 0 直接不見。
+TEMPLATE_TEXT_COLUMNS = ("身分證字號", "電話")
 
 
 @router.get("/import")
@@ -22,20 +26,14 @@ def import_form(request: Request, redirect=Depends(login_required)):
     return templates.TemplateResponse(request, "import_form.html", {"user": current_user(request), "result": None})
 
 
-@router.get("/import/template.csv")
+@router.get("/import/template.xlsx")
 def import_template(redirect=Depends(login_required)):
     if redirect:
         return redirect
-    # 存成 UTF-8 但不加 BOM 的話，Windows 版 Excel 直接雙擊開啟時會用系統的
-    # 中文編碼（Big5/cp950）去猜，猜錯就整個表頭跟範例資料變亂碼——所以這裡
-    # 要編碼成 utf-8-sig（開頭多幾個看不到的位元組，Excel 看到這個才會知道
-    # 這份檔案是 UTF-8）。上傳解析那邊（delivery/csv_import.py 的 _decode）
-    # 本來就有處理 utf-8-sig，所以這裡加了 BOM 不會影響「下載範本填完再
-    # 上傳」這個流程。
-    return PlainTextResponse(
-        TEMPLATE_CSV.encode("utf-8-sig"),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=personnel_template.csv"},
+    return Response(
+        tabular_upload.build_template_xlsx(TEMPLATE_HEADERS, TEMPLATE_SAMPLE_ROW, TEMPLATE_TEXT_COLUMNS),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=personnel_template.xlsx"},
     )
 
 

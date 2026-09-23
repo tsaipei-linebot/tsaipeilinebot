@@ -8,7 +8,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 
 import platform_accounts
 from config import TAIPEI_TZ
@@ -16,6 +16,7 @@ from dispatch_line import push_message
 from dispatch_sites import get_site
 from hr import insurance_repository as insurance_repo
 from platform_templating import templates
+from services import tabular_upload
 from services.dispatch_service import (
     QUALIFICATION_MAP,
     QUALIFICATIONS,
@@ -46,8 +47,16 @@ router = APIRouter()
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
-_PERSONNEL_TEMPLATE_CSV = "姓名,電話,人員資格\n王小明,0912345678,理貨、作業員\n"
-_LOCATION_TEMPLATE_CSV = "地點,緯度,經度\n桃園火車站,24.9880,121.3141\n"
+# 範本 2026-09-23 從 CSV 改成 Excel：同仁用 Excel 另存成 CSV 時 Windows 會
+# 用 Big5 存檔，Big5 放不下的姓名用字（堃、喆、峯…）會被 Excel 直接換成
+# 「?」寫進檔案，救不回來。完整說明見 services/tabular_upload.py 開頭。
+_PERSONNEL_TEMPLATE_HEADERS = ["姓名", "電話", "人員資格"]
+_PERSONNEL_TEMPLATE_SAMPLE_ROW = ["王小明", "0912345678", "理貨、作業員"]
+# 電話要設成文字格式，不然 Excel 會當成數字、開頭的 0 直接不見。
+_PERSONNEL_TEMPLATE_TEXT_COLUMNS = ("電話",)
+
+_LOCATION_TEMPLATE_HEADERS = ["地點", "緯度", "經度"]
+_LOCATION_TEMPLATE_SAMPLE_ROW = ["桃園火車站", "24.9880", "121.3141"]
 
 
 def _require_access(site: str, request: Request):
@@ -152,14 +161,16 @@ def update_dispatch_personnel_active(
     return RedirectResponse(url=f"/dispatch/{site}/personnel", status_code=303)
 
 
-@router.get("/dispatch/{site}/personnel/import/template.csv")
+@router.get("/dispatch/{site}/personnel/import/template.xlsx")
 def dispatch_personnel_import_template(site: str, redirect=Depends(_require_access)):
     if redirect:
         return redirect
-    return PlainTextResponse(
-        _PERSONNEL_TEMPLATE_CSV.encode("utf-8-sig"),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=dispatch_personnel_template.csv"},
+    return Response(
+        tabular_upload.build_template_xlsx(
+            _PERSONNEL_TEMPLATE_HEADERS, _PERSONNEL_TEMPLATE_SAMPLE_ROW, _PERSONNEL_TEMPLATE_TEXT_COLUMNS
+        ),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=dispatch_personnel_template.xlsx"},
     )
 
 
@@ -248,14 +259,14 @@ def update_dispatch_location_active(
     return RedirectResponse(url=f"/dispatch/{site}/locations", status_code=303)
 
 
-@router.get("/dispatch/{site}/locations/import/template.csv")
+@router.get("/dispatch/{site}/locations/import/template.xlsx")
 def dispatch_locations_import_template(site: str, redirect=Depends(_require_access)):
     if redirect:
         return redirect
-    return PlainTextResponse(
-        _LOCATION_TEMPLATE_CSV.encode("utf-8-sig"),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=dispatch_locations_template.csv"},
+    return Response(
+        tabular_upload.build_template_xlsx(_LOCATION_TEMPLATE_HEADERS, _LOCATION_TEMPLATE_SAMPLE_ROW),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=dispatch_locations_template.xlsx"},
     )
 
 

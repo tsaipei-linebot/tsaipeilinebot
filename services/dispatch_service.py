@@ -45,8 +45,6 @@ CSV 批次匯入。**LINE 官方帳號綁定**（人員傳送「綁定+姓名+�
 可能跨不同 Channel 重複，不能只靠 `line_user_id` 本身當文件 ID 保證不同
 所之間不會互相覆蓋。
 """
-import csv
-import io
 import time
 from datetime import datetime
 
@@ -55,6 +53,7 @@ from google.cloud import firestore
 import platform_accounts
 from config import TAIPEI_TZ
 from platform_db import get_db
+from services import tabular_upload
 
 PERSONNEL_COLLECTION = "dispatch_personnel"
 LOCATIONS_COLLECTION = "dispatch_locations"
@@ -283,20 +282,15 @@ def find_location_by_name(site: str, name: str):
 
 
 # ==========================================
-# CSV 批次匯入（純函式，不碰 Firestore、不需要知道所別，方便寫單元測試；
+# 批次匯入（純函式，不碰 Firestore、不需要知道所別，方便寫單元測試；
 # 是否真的寫入交給呼叫端 dispatch_routes.py 決定）
+#
+# 讀檔那一段共用 services/tabular_upload.py，Excel 與 CSV 兩種格式都收
+# （2026-09-23 起，為什麼要改成 Excel 見那支檔案開頭的說明）。函式名稱
+# 保留 parse_*_csv 沒改，呼叫端與既有測試都在用。
 # ==========================================
 _PERSONNEL_REQUIRED_HEADERS = {"姓名", "電話"}
 _LOCATION_REQUIRED_HEADERS = {"地點", "緯度", "經度"}
-
-
-def _decode(content: bytes) -> str:
-    for encoding in ("utf-8-sig", "cp950"):
-        try:
-            return content.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return content.decode("utf-8", errors="replace")
 
 
 def _parse_qualifications_cell(raw: str):
@@ -325,17 +319,15 @@ def _parse_qualifications_cell(raw: str):
 def parse_personnel_csv(content: bytes):
     """回傳 (rows, header_error)。欄位：姓名、電話（必填），人員資格
     （選填，逗號/頓號分隔，填中文名稱或代碼皆可）。"""
-    text = _decode(content)
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        return [], "檔案是空的或無法辨識表頭"
-    headers = {h.strip() for h in reader.fieldnames if h}
-    missing = _PERSONNEL_REQUIRED_HEADERS - headers
+    raw_rows, read_error = tabular_upload.read_rows(content)
+    if read_error:
+        return [], read_error
+    missing = _PERSONNEL_REQUIRED_HEADERS - tabular_upload.header_names(raw_rows)
     if missing:
         return [], f"缺少必要欄位：{'、'.join(sorted(missing))}"
 
     rows = []
-    for i, raw in enumerate(reader, start=2):
+    for i, raw in enumerate(raw_rows, start=2):
         name = (raw.get("姓名") or "").strip()
         phone = (raw.get("電話") or "").strip()
         if not name and not phone:
@@ -362,17 +354,15 @@ def parse_personnel_csv(content: bytes):
 
 def parse_location_csv(content: bytes):
     """回傳 (rows, header_error)。欄位：地點、緯度、經度（皆必填）。"""
-    text = _decode(content)
-    reader = csv.DictReader(io.StringIO(text))
-    if not reader.fieldnames:
-        return [], "檔案是空的或無法辨識表頭"
-    headers = {h.strip() for h in reader.fieldnames if h}
-    missing = _LOCATION_REQUIRED_HEADERS - headers
+    raw_rows, read_error = tabular_upload.read_rows(content)
+    if read_error:
+        return [], read_error
+    missing = _LOCATION_REQUIRED_HEADERS - tabular_upload.header_names(raw_rows)
     if missing:
         return [], f"缺少必要欄位：{'、'.join(sorted(missing))}"
 
     rows = []
-    for i, raw in enumerate(reader, start=2):
+    for i, raw in enumerate(raw_rows, start=2):
         name = (raw.get("地點") or "").strip()
         lat_raw = (raw.get("緯度") or "").strip()
         lng_raw = (raw.get("經度") or "").strip()

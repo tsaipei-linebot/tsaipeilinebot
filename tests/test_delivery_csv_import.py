@@ -11,6 +11,7 @@ _stub_gcp.install()
 
 from delivery.csv_import import parse_personnel_csv
 from delivery.routes import import_routes
+from services import tabular_upload
 
 
 class ParsePersonnelCsvTests(unittest.TestCase):
@@ -111,25 +112,27 @@ class ParsePersonnelCsvTests(unittest.TestCase):
 
 
 class ImportTemplateDownloadTests(unittest.TestCase):
-    """/import/template.csv：2026-09-12 使用者回報下載範本後欄位是亂碼，
-    原因是原本用純 UTF-8（無 BOM）輸出，Windows 版 Excel 雙擊開啟 CSV 時
-    會用系統的中文編碼（Big5/cp950）去猜、猜錯就整份亂碼。修正成
-    utf-8-sig（帶 BOM）後，這裡驗證：(1) 檔案開頭真的有 BOM，(2) 這份
-    範本檔案本身可以直接餵回 parse_personnel_csv() 正確解析（下載範本
-    填完再上傳的流程不會被 BOM 影響）。"""
+    """/import/template.xlsx。
 
-    def test_response_has_utf8_bom(self):
-        response = import_routes.import_template(redirect=None)
-        self.assertTrue(response.body.startswith(b"\xef\xbb\xbf"))
+    **這個類別原本斷言的是「CSV 範本要帶 UTF-8 BOM」**（2026-09-12 修
+    Windows 版 Excel 開 CSV 亂碼時加的）。2026-09-23 範本整個改成 .xlsx
+    之後那兩條斷言就失效了——BOM 是 CSV 才有的東西——所以直接改成驗證
+    Excel 範本。改成 Excel 的原因見 services/tabular_upload.py 開頭：
+    同仁另存成 CSV 時 Big5 放不下的姓名用字會被 Excel 換成 `?`，加 BOM
+    只解決「我們輸出的檔案」的編碼，解決不了「同仁存回去」那一步。"""
 
-    def test_response_decodes_correctly_as_utf8_sig(self):
+    def test_response_is_a_real_xlsx_file(self):
         response = import_routes.import_template(redirect=None)
-        text = response.body.decode("utf-8-sig")
-        self.assertIn("廠商", text)
-        self.assertIn("姓名", text)
-        self.assertIn("身分證字號", text)
-        self.assertIn("電話", text)
-        self.assertIn("到職日期", text)
+        self.assertTrue(tabular_upload.looks_like_xlsx(response.body))
+        self.assertIn("xlsx", response.headers["content-disposition"])
+
+    def test_template_headers_are_all_present(self):
+        response = import_routes.import_template(redirect=None)
+        rows, header_error = tabular_upload.read_rows(response.body)
+        self.assertIsNone(header_error)
+        self.assertEqual(
+            tabular_upload.header_names(rows), {"廠商", "姓名", "身分證字號", "電話", "到職日期"}
+        )
 
     def test_downloaded_template_round_trips_through_parser(self):
         response = import_routes.import_template(redirect=None)
@@ -194,3 +197,61 @@ class ImportSubmitHireDateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParsePersonnelFromExcelTests(unittest.TestCase):
+    """2026-09-23 起匯入也收 .xlsx（為什麼要改見 services/tabular_upload.py
+    開頭）。這裡走的是「產範本 → 當成同仁填好的檔案 → 解析」完整一圈，
+    不是只測解析。"""
+
+    def _filled_template(self, extra_rows):
+        import io
+
+        import openpyxl
+
+        from services import tabular_upload
+
+        content = tabular_upload.build_template_xlsx(
+            ["廠商", "姓名", "身分證字號", "電話", "到職日期"],
+            ["蝦皮三輪", "王小明", "A123456789", "0912345678", "2024-01-31"],
+            ("身分證字號", "電話"),
+        )
+        workbook = openpyxl.load_workbook(io.BytesIO(content))
+        for row in extra_rows:
+            workbook.active.append(row)
+        output = io.BytesIO()
+        workbook.save(output)
+        return output.getvalue()
+
+    def test_template_sample_row_parses_and_keeps_leading_zero_phone(self):
+        rows, header_error = parse_personnel_csv(self._filled_template([]))
+        self.assertIsNone(header_error)
+        self.assertTrue(rows[0]["ok"], rows[0])
+        self.assertEqual(rows[0]["row"], 2)
+        self.assertEqual(rows[0]["phone"], "0912345678")
+        self.assertEqual(rows[0]["hire_date"], "2024-01-31")
+
+    def test_name_with_characters_big5_cannot_hold_survives(self):
+        """「堃」「喆」不在 Big5 裡，存成 CSV 會被 Excel 換成 `?`；
+        走 .xlsx 要完好無缺——這就是這次改動要解決的問題本身。"""
+        content = self._filled_template([["蝦皮三輪", "陳堃喆", "B234567890", "0987654321", "2024-02-01"]])
+        rows, header_error = parse_personnel_csv(content)
+        self.assertIsNone(header_error)
+        self.assertEqual(rows[1]["name"], "陳堃喆")
+        self.assertEqual(rows[1]["row"], 3)
+
+    def test_real_date_cell_is_accepted(self):
+        # 同仁在 Excel 打日期，Excel 存的是日期型別而不是文字
+        import datetime
+
+        content = self._filled_template([["蝦皮三輪", "李四", "C345678901", "0911222333", datetime.datetime(2024, 3, 5)]])
+        rows, _ = parse_personnel_csv(content)
+        self.assertEqual(rows[1]["hire_date"], "2024-03-05")
+
+    def test_old_utf8_csv_still_works(self):
+        """舊的、已經填好的 CSV 不能因為改版就突然匯不進去。"""
+        csv_bytes = "廠商,姓名,身分證字號,電話,到職日期\n蝦皮三輪,陳堃喆,B234567890,0987654321,2024-02-01\n".encode("utf-8-sig")
+        rows, header_error = parse_personnel_csv(csv_bytes)
+        self.assertIsNone(header_error)
+        self.assertEqual(rows[0]["name"], "陳堃喆")
+        self.assertEqual(rows[0]["row"], 2)
