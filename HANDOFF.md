@@ -670,6 +670,14 @@
     - **新增測試**：`tests/test_message_handler.py::AiUnderstandingTests`（14 個，用假的需求單測程式負責的部分：標準句子一定解讀成一樣的條件、分流、檢查、精準命中的邊界）。開關預設關閉，原本 2430 個測試全部照舊通過。
     - **第一次準確率考試結果**（使用者 2026-09-23 在 Cloud Shell 跑，thinking=0）：通過 86／88 題（98%），每題中位數 1.0 秒、最慢的 5% 約 2 秒；有一題剛好碰到 Gemini 排隊等了 66 秒（正式上線時超過 6 秒就照原本的流程處理，不會讓求職者等）。沒通過的兩題已修：「有小夜班嗎」被當成問問題（prompt 補上「問有沒有這種條件的職缺也是找工作」）、「新竹竹北」填成新竹跟竹北兩個（prompt 補上規則，程式也會在句子裡縣市緊接著行政區時拿掉縣市，`drop_county_before_district()`）。
     - **上線步驟**：① 合併（開關是 off，不會有任何變化）→ ② Cloud Shell 跑準確率考試，把結果給 Claude 調整 → ③ 開 `shadow` 一兩天看 log → ④ 改 `on`。
+82. **沛沛整個回到 9/22 晚上（使用者傳每日／週報告給 Claude 之前）的版本**（使用者 2026-09-23 決定：「只把沛沛改回 9/22 的版本，其他功能不要改動」）。原因：9/22 晚上到 9/23 這段時間連續八輪測試、邊測邊改，使用者覺得整體結果沒有比較好，決定先回到改之前的版本。
+    - **回退的基準**：`main` 上的 `1a1571a`（PR #188 合併後、PR #189 之前，2026-09-22 23:15 台灣時間）。**上面第 58～81 項對沛沛的修改全部不在線上了**（那些段落保留當作紀錄，之後要重做哪一項可以照著看）。
+    - **換回舊版的檔案（只有沛沛用到的）**：`handlers/message_handler.py`、`services/matcher_service.py`、`services/flex_service.py`、`services/notion_service.py`、`services/session_service.py`、`services/ai_service.py`、`services/daily_report_service.py`，以及對應的測試 `tests/test_message_handler.py`、`tests/test_matcher_service.py`、`tests/test_notion_service.py`、`tests/test_daily_report_service.py`。這段時間這些檔案只有沛沛的 PR 改過，所以換回去不會動到其他部門。
+    - **刪掉的檔案**：`services/understanding_service.py`、`scripts/eval_understanding.py`、`scripts/understanding_eval_cases.json`（AI 需求單，第 81 項），以及誤放進 repo 的 `r8_after1.txt`、`r8_after2.txt`。`config.py` 只拿掉最後面 AI 需求單的三個設定，寄信（SMTP）等其他設定不動。
+    - **沒有動的（其他部門，9/22 之後的功能都保留）**：配送部系統（`delivery/`，UD 車輛同步、外送員媒合、Excel 匯入、車輛清單提示）、派遣（`dispatch_*`）、財務（`finance_routes.py`、PDF 轉圖）、保險、薪資補款、平台寄信（`services/email_service.py`、`job_portal_mail_routes.py`）等。
+    - **Cloud Run 環境變數**：`AI_UNDERSTANDING_MODE=shadow` 留著也沒關係（舊版程式不會讀它），想乾淨可以刪掉。
+    - **測試分支 `claude/eval-kit`**（AI 需求單＋Cloud Shell 考試工具，第 81 項後半）沒有合併、保留在 GitHub 上，之後要重新評估 AI 做法時可以接著用。
+    - 全部測試通過（2154 個），每支程式都能正常載入。
 
 ## 目前所有檔案的狀態
 

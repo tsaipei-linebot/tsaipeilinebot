@@ -102,17 +102,6 @@ class ComputeKeywordGapCandidatesTests(unittest.TestCase):
         events = [_event(path="direct_intercept", category="理貨") for _ in range(10)]
         self.assertEqual(dr.compute_keyword_gap_candidates(events, min_count=5), [])
 
-    def test_warehouse_manufacturing_and_shopee_now_direct_intercepted_and_excluded(self):
-        # 使用者實測回報（每日/週報告連續多週列出這幾個作為「建議新增的職缺
-        # 關鍵字」）：理貨/倉儲、製造/作業員、蝦皮補上直達攔截後，這三個
-        # 應該跟外送/門市/momo一樣，就算被問很多次也不該再被建議成缺口。
-        events = (
-            [_event(category="理貨/倉儲") for _ in range(10)]
-            + [_event(category="製造/作業員") for _ in range(10)]
-            + [_event(brand="蝦皮") for _ in range(10)]
-        )
-        self.assertEqual(dr.compute_keyword_gap_candidates(events, min_count=5), [])
-
     def test_brand_and_category_counted_separately_and_sorted_desc(self):
         events = (
             [_event(brand="Coupang") for _ in range(8)]
