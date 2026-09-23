@@ -3293,7 +3293,11 @@ class _RoundFourSessionMixin:
              patch("handlers.message_handler.append_user_history", side_effect=lambda uid, role, text: self.history.append({"role": role, "text": text})), \
              patch("handlers.message_handler.create_job_flex_card") as flex, \
              patch("handlers.message_handler._is_staffed_hours", return_value=False), \
-             patch("handlers.message_handler._compute_ai_decision_messages") as ai:
+             patch("handlers.message_handler._compute_ai_decision_messages") as ai, \
+             patch("handlers.message_handler.format_full_job_detail_with_ai",
+                   side_effect=lambda job, loc: f"📋【職缺名稱：{job.get('職缺名稱', '')}】"):
+            # 職缺沒有排版好的工作說明時會呼叫 Gemini 排版；測試不能真的打外部 API
+            # （沒有網路的環境會失敗，見 PR #216 的說明）
             h.process_user_message(event, api)
         reply = api.reply_message.call_args[0][1]
         messages = reply if isinstance(reply, list) else [reply]
