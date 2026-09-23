@@ -376,6 +376,23 @@ class AsyncAiDecisionArchitectureTests(unittest.TestCase):
         self.assertIn("板橋", job_line)
         self.assertNotIn("自選區域", job_line)
 
+    def test_ai_prompt_includes_fulltime_parttime_field(self):
+        # 使用者 2026-09-23 決定：Notion「全/兼職」欄位原本只印在卡片上，AI 看不到，
+        # 求職者問「兼職」時 AI 只能從職缺名稱猜；改成也列進給 AI 的職缺清單。
+        job = {"職缺名稱": "桃園倉儲兼職", "職務類別": "理貨/倉儲", "全/兼職": "兼職",
+               "縣市": "桃園市", "行政區": "桃園市桃園區"}
+        fake_decision = json.dumps({"action": "RECOMMEND", "reply": "推薦", "ids": [0], "buttons": []})
+        with patch("handlers.message_handler.get_user_slots", return_value={}), \
+             patch("handlers.message_handler.append_user_history"), \
+             patch("handlers.message_handler.query_gemini_ai", return_value=fake_decision) as mock_query, \
+             patch("handlers.message_handler.build_ai_job_candidates", return_value=[job]), \
+             patch("handlers.message_handler.build_ai_faq_candidates", return_value=[]), \
+             patch("handlers.message_handler.create_job_flex_card", return_value="FLEX_CARD"):
+            h._compute_ai_decision_messages("test-user", "桃園有兼職嗎", [job], [], "桃園", "")
+
+        job_line = next(line for line in mock_query.call_args[0][0].splitlines() if line.startswith("[ID:0]"))
+        self.assertIn("全兼職:兼職", job_line)
+
     def test_ai_prompt_explicitly_states_locked_category_and_brand(self):
         # 試營運實測發現：使用者先問「蝦皮門市有嗎」，接著只問「八德有缺人嗎」
         # （這句話本身沒再提到門市/蝦皮），AI 卻把八德所有類別的職缺都推薦

@@ -678,6 +678,7 @@
     - **Cloud Run 環境變數**：`AI_UNDERSTANDING_MODE=shadow` 留著也沒關係（舊版程式不會讀它），想乾淨可以刪掉。
     - **測試分支 `claude/eval-kit`**（AI 需求單＋Cloud Shell 考試工具，第 81 項後半）沒有合併、保留在 GitHub 上，之後要重新評估 AI 做法時可以接著用。
     - 全部測試通過（2154 個），每支程式都能正常載入。
+83. **「全/兼職」欄位列進給 AI 的職缺清單**（使用者 2026-09-23 決定）。回到 9/22 版本後盤點 Notion 欄位時發現：「全/兼職」原本只印在職缺卡片上，程式不拿來判斷、AI 也看不到，求職者問「兼職」時 AI 只能從職缺名稱或工作內容猜。改成 `_compute_ai_decision_messages()` 組給 Gemini 的每一筆職缺多一欄「全兼職:」（沒填顯示「未提供」）。只多給 AI 資料，沒有新增任何程式判斷規則。新增測試 `test_ai_prompt_includes_fulltime_parttime_field`。
 
 ## 目前所有檔案的狀態
 
