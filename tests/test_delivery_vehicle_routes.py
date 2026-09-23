@@ -783,3 +783,52 @@ class VehiclePersonnelLookupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VehicleListEmptyStateContextTests(unittest.TestCase):
+    """查詢不到時的提示（2026-09-23 新增）：使用者回報「車輛管理查詢不到
+    好像不會跳任何資訊」。畫面其實有訊息，但是淺灰小字、又沒講出剛才搜的
+    是什麼，等於沒有。路由要多給模板兩樣東西：這次套用的條件描述，以及
+    「系統裡到底有沒有車」（分得出第一次使用 vs 條件沒中）。"""
+
+    def _vehicle(self, vehicle_no="ERV-1"):
+        return {"vehicle_no": vehicle_no, "vendor": "shopee", "status": "available"}
+
+    def _run(self, list_vehicles_side_effect, **kwargs):
+        with mock.patch.object(
+            vehicle_routes.repository, "list_vehicles", side_effect=list_vehicles_side_effect
+        ) as mock_list:
+            with mock.patch.object(
+                vehicle_routes.repository, "resolve_vehicle_rider_info",
+                return_value={"cooperation_type": None, "phone": ""},
+            ):
+                with mock.patch.object(vehicle_routes.repository, "list_vehicle_service_areas", return_value=[]):
+                    with mock.patch.object(vehicle_routes.repository, "list_cooperation_types", return_value=[]):
+                        with mock.patch.object(vehicle_routes, "templates") as mock_templates:
+                            vehicle_routes.vehicle_list(_FakeRequest(_staff_account()), redirect=None, **kwargs)
+        return mock_templates.TemplateResponse.call_args[0][2], mock_list
+
+    def test_filter_descriptions_are_passed_to_the_template(self):
+        # 沒結果時路由會再查一次總數，所以要準備兩次回傳值
+        context, _ = self._run([[], []], vehicle_no="ABC-9999")
+        self.assertEqual(context["active_filter_descriptions"], ["車號包含「ABC-9999」"])
+
+    def test_no_filters_means_no_descriptions(self):
+        context, _ = self._run([[self._vehicle()]])
+        self.assertEqual(context["active_filter_descriptions"], [])
+
+    def test_has_any_vehicle_is_true_when_the_query_itself_found_something(self):
+        """有結果的情況不該為了算總數再查一次資料庫。"""
+        context, mock_list = self._run([[self._vehicle()]])
+        self.assertTrue(context["has_any_vehicle"])
+        self.assertEqual(mock_list.call_count, 1)
+
+    def test_no_results_but_other_vehicles_exist_counts_as_filters_not_matching(self):
+        # 第一次查（帶條件）沒中，第二次查（不帶條件）有車 → 是條件沒中
+        context, mock_list = self._run([[], [self._vehicle()]], vehicle_no="ABC-9999")
+        self.assertTrue(context["has_any_vehicle"])
+        self.assertEqual(mock_list.call_count, 2)
+
+    def test_no_vehicles_at_all_is_reported_separately(self):
+        context, _ = self._run([[], []], vehicle_no="ABC-9999")
+        self.assertFalse(context["has_any_vehicle"])
