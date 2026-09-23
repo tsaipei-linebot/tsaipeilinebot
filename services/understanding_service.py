@@ -22,6 +22,8 @@ from services.matcher_service import (
     HANDOFF_REASON_NAMES, NEGATION_TRIGGERS, LOCATION_CANDIDATES, _COUNTY_FULL_NAMES,
     build_district_county_full_index, build_benefit_keyword_index, detect_brand_label,
     detect_benefit_labels, extract_current_target_location, resolve_county_for_location,
+    detect_category_labels, detect_negated_location, extract_leave_labels, detect_pay_method_labels,
+    extract_worktype_labels, mask_salary_phrases, clean_text_for_search,
 )
 
 CATEGORIES = list(CATEGORY_KEYWORDS)
@@ -87,8 +89,10 @@ _PROMPT = """你是人力派遣公司「材霈」LINE 求職機器人「沛沛�
 A. 這句話講到的每一個條件都要填，想要的跟不要的都要：「不要新北要桃園」＝exclude_locations 新北＋locations 桃園；
    「不要產線想做倉庫」＝exclude_categories 製造/作業員＋categories 理貨/倉儲；「早班 不要假日班」＝shifts 早班＋exclude_shifts 假日班；
    「週結 不用輪班」＝pays 週領＋exclude_shifts 輪班；「全職早班」＝worktype 全職＋shifts 早班；「早班不要了 晚上的比較好」＝shifts 晚班。
+   有講廠商又講職務時兩個都要填：「美光的作業員」＝brand 美光＋categories 製造/作業員；「家樂福理貨」＝brand 家樂福＋categories 理貨/倉儲。
+   否定詞放在後面也是不要：「夜班 不要」「夜班，不行」「白天不行」＝exclude（不是要）。「白天要顧小孩／白天要上課」＝exclude_shifts 早班，不要填 shifts，也不要排除其他班別。
 B. 沒講的不要自己加、不要自己猜：「晚上」只是晚班，沒講夜班/大夜/半夜/通宵就不要加大夜班；「錢每天拿」只是日領，沒講現金就不要加現金；
-   「越快上班越好」沒有講全職兼職；以前的經歷（「我之前在美光做過作業員」「以前做餐廳外場」）不是現在的條件，不要填成廠商、類型，也不要排除。
+   「越快上班越好」沒有講全職兼職；只講廠商（「momo理貨」「uber外送」「7-11店員」）不要自己加班別、福利、薪資、全兼職；以前的經歷（「我之前在美光做過作業員」「以前做餐廳外場」）不是現在的條件，不要填成廠商、類型，也不要排除。
 C. 只填這句話有講到、要改變的維度，沒講到的維度留空。講到的維度填「改完之後的完整值」：
    記住桃園、說「新竹也可以」→ locations ["桃園","新竹"]；說「那新竹呢」→ ["新竹"]。
    「X也可以／X也行／X也沒關係／X也OK」＝在目前記住的值再加上 X：記住早班說「夜班也可以」→ shifts ["早班","大夜班"]；
@@ -96,11 +100,14 @@ C. 只填這句話有講到、要改變的維度，沒講到的維度留空。�
    記住週領說「月領也可以」→ pays ["週領","月領"]；記住兼職說「正職也行」→ broaden ["全職/兼職"]（全兼職只能填一個，兩個都可以就是放寬）。
    「X不要了／X可以不要／不一定要X」而 X 是目前記住的條件＝拿掉 X：記住桃園|新竹說「新竹不要了」→ locations ["桃園"]；
    記住日領說「日領可以不要」「不一定要日領」→ broaden ["發薪方式"]（這是放寬，不是排除）。
+   「沒有X的話Y也行」＝X跟Y都可以（「沒有日領的話週領也行」→ pays ["日領","週領"]）；「沒有X也沒關係」＝X不一定要（記住交通車時 → broaden ["福利"]），不是要X。
 
 欄位規則：
 - intent：
   找工作＝講了想要／不要的工作條件，或要看職缺。先講近況再找工作也算（「我們公司倒閉了，需要找新工作」「我要離職了，桃園有理貨嗎」）。
   「X有Y嗎」「有Y的嗎」問的是有沒有這種職缺也是找工作，要把條件填進去（「有小夜班嗎」「有日領的嗎」「盧洲有門市嗎」「新北板橋區有門市嗎」「台中西屯有門市嗎」「桃園有缺嗎」）。
+  「我們工廠缺人可以幫忙找嗎」「我們公司要找人」＝廠商徵才（轉專員 business）；「這個月薪水還沒入帳」＝在職員工（轉專員 employee）。
+  只說「我住X」「我人在X」沒有其他條件＝閒聊，不改地區。「倉庫在觀音還是大園」「從八德出發有交通車嗎」是問地點或交通＝問問題。
   問問題＝在問規定、福利、面試、薪資怎麼算、公司制度、工作本身的細節（冷氣、要不要站、要不要搬重物、離車站多遠、要不要輪班、交通車從哪裡出發），沒有要改條件（「有冷氣嗎」「薪水會扣勞健保嗎」「面試要穿什麼」「高雄餐飲假日要上班嗎」「門市要輪班嗎」）。問句裡出現的詞不能當成條件。
   轉專員＝廠商要徵人或談合作、在職員工的薪資／出勤／請假／離職手續問題、抱怨或罵人（包含罵機器人）、明確要求真人或專員聯絡、要刪除個資或停止聯繫。單純講近況（公司倒閉、要離職、不喜歡跟人說話）不算。
   閒聊＝打招呼、道謝、講自己或家人的事但沒有條件（「我媽住高雄」「我昨天上大夜班好累」）。
@@ -112,21 +119,23 @@ C. 只填這句話有講到、要改變的維度，沒講到的維度留空。�
   「…這幾種職缺，請問您想看哪一種？」→「第二個」＝列出來的第二種；「隨便」＝broaden ["類型"]；「不要」＝不確定。
   「您說的「都可以」是指哪一項條件都可以呢？」「想調整地區、班別還是類型？」→「班別啦」＝broaden ["班別"]。
   「想換到哪個地區呢？」→「隨便啦」＝broaden ["地區"]。
+  沛沛上一句只問某一項（地區、類型、班別）時，回「都可以／隨便／沒差／我都可以」就是放寬那一項，不要填不確定：
+  問「請問您想在哪個地區工作呢」→「我都可以」＝broaden ["地區"]；問「想看哪一種呢」→「隨便」＝broaden ["類型"]；問「要幫您找「晚班」的工作嗎？」→「好」＝shifts ["晚班"]。
 - locations：想去上班的地點，填縣市或行政區的中文名稱（例如「桃園」「中壢」「竹北」「后里」「台北」「新竹縣」）。住的地方、人在哪裡、交通車的起點、面試地點都不算。
   「新北或桃園」「台中 彰化」要填兩個；縣市跟行政區連在一起講（「新竹竹北」「台中西屯」「新竹東區」）是同一個地方，填連在一起的寫法（「台中西屯」）。
   記住台北、說「大安區可以嗎」＝縮小到大安區 → ["大安區"]，不要再填台北。
-  「新莊以外的新北都可以」＝locations ["新北"]＋exclude_locations ["新莊"]。英文、錯字、簡稱要轉成正式名稱（taoyuan→桃園、桃圓→桃園、盧洲→蘆洲、北市→台北、台北縣→新北）。
+  「新莊以外的新北都可以」＝locations ["新北"]＋exclude_locations ["新莊"]。英文、錯字、簡稱要轉成正式名稱（taoyuan→桃園、桃圓→桃園、盧洲→蘆洲、北市→台北、中市→台中、台北縣→新北、竹科→新竹、中科→台中）。
 - exclude_locations：不想去的地點（「大安區以外都可以」「不去中壢」「桃園除外」「不要新北」）。
 - categories：只能從選項選。每個類型包含的職務（程式認得的詞）：
 {category_words}
-  上面沒列到的職務照意思判斷（隨車助手→外送、品檢員→製造/作業員、撿貨出貨→理貨/倉儲、烘焙飯店→餐飲/服務、便利商店店員→門市）。
+  上面沒列到的職務照意思判斷（隨車助手→外送、品檢員→製造/作業員、撿貨出貨→理貨/倉儲、烘焙飯店→餐飲/服務、便利商店店員→門市、收銀員→門市）。
   行業詞＋職務詞只算職務（「物流業外送員」→外送、「電子廠倉管」→理貨/倉儲、「科技廠行政」→客服/行政），不要把行業也填成類型。
   真的沒有對應類型的職務（保全、警衛、清潔、會計、美髮、護理、老師、工程師…）才填 unsupported_roles，不要硬塞；「保全或倉管」＝unsupported_roles ["保全"]＋categories ["理貨/倉儲"]。
 - brand：講到的公司或品牌名稱（蝦皮、美光、全聯、全家、Uber、LADY M…）。「飯店」「科技業」「宅配」「代招」「物流業」「便利商店」這種通稱不是品牌，留空。「全家便利商店」＝brand 全家＋categories 門市。
-- shifts：「晚上有空／晚上的班／小夜／中班／打烊」→晚班；「白天上班／只能白天」→早班；「夜班、大夜、半夜、通宵」→大夜班；「假日也可以上班」→假日班；「早晚班都可以」→早班跟晚班。
+- shifts：「晚上有空／晚上的班／小夜／中班／打烊」→晚班；「白天上班／只能白天」→早班；「只有六日有空／只有假日可以」→假日班（不是週休二日）；「夜班、大夜、半夜、通宵」→大夜班；「假日也可以上班」→假日班；「早晚班都可以」→早班跟晚班。
   「不排斥／不介意／不怕／可以接受 X」＝可以 X，填在 shifts（不是排除）。「我老公晚上會在家顧小孩」＝晚上可以上班 → 晚班。
 - exclude_shifts：不要的班別（「不要夜班」「不用輪班」「可以不輪班嗎」「白天要顧小孩」→早班）。
-- leaves：「做五休二」「休六日」「假日想休息」「固定休假日」→週休二日；「週休一日」「一週休一天」「週休三日」沒有對應的選項，不要填週休二日。
+- leaves：「做五休二」「休六日」「假日想休息」「固定休假日」→週休二日（做五休二不是做四休二）；「週休一日」「一週休一天」「週休三日」沒有對應的選項，不要填週休二日。
   說「假日也可以上班」時，目前記住的週休二日要拿掉（broaden ["休假方式"]）。
 - exclude_leaves：不要的休假方式（「排休不要」→排休）。
 - pays：「週結」＝週領、「領現金」＝現金、「一個月領一次」＝月領、「做一天領一天」＝日領。exclude_pays：不要的發薪方式（「不要月領」）。
@@ -154,8 +163,13 @@ def _format_history(history: list) -> str:
     return "\n".join(lines) or "（沒有）"
 
 
+_INDUSTRY_WORDS = {"物流", "工廠", "科技廠", "電子廠", "製造業", "服務業", "服務類", "半導體", "餐飲", "製造"}
+
+
 def _category_words() -> str:
-    return "\n".join(f"  ・{label}：{'、'.join(words)}" for label, words in CATEGORY_KEYWORDS.items())
+    """類型包含的職務詞（行業詞拿掉，不然 AI 會把「物流公司的司機」「電子廠清潔」也填成理貨、作業員）。"""
+    return "\n".join(
+        f"  ・{label}：{'、'.join(w for w in words if w not in _INDUSTRY_WORDS)}" for label, words in CATEGORY_KEYWORDS.items())
 
 
 def build_prompt(message: str, slots: dict = None, history: list = None) -> str:
@@ -282,11 +296,194 @@ def _is_ambiguous_district(district: str) -> bool:
     return len(found) > 1
 
 
-def validate_form(form: dict, active_jobs: list, message: str = "") -> dict:
-    """回傳一份新的需求單：地名、廠商、福利都要資料庫認得，其他欄位只留選項內的值。"""
+# ---------------- 交叉檢查：AI 填的每個值都要有根據，程式認得的詞不能被漏掉 ----------------
+# 使用者 2026-09-23 定的原則「把邊界定義好」：AI 負責聽懂語意，但
+#   - AI 加的值，句子（或沛沛上一句、目前記住的條件）裡要看得到根據，不然丟掉
+#     （第二次考試：「momo理貨」AI 自己加了早班、員工餐、全職、月薪三萬；「之前做業務」加成不要外送）
+#   - 句子裡明明有程式認得的詞（作業員、理貨、桃園、週休二日），AI 漏填的由程式補上
+#     （「美光的作業員」只填了美光；「正職 週休二日 月薪32000以上」漏了週休二日）
+#   - 否定詞緊貼著的（「白天不行」「夜班 不要」「不要台北」）以程式判斷的方向為準
+
+_EXTRA_EVIDENCE = {
+    "早班": ["早", "白天", "上午", "日班", "白班", "day"],
+    "晚班": ["晚", "小夜", "中班", "打烊", "下午", "evening"],
+    "大夜班": ["夜班", "大夜", "半夜", "通宵", "night", "深夜"],
+    "假日班": ["假日", "六日", "週末", "周末", "星期六", "禮拜六", "weekend"],
+    "輪班": ["輪"],
+    "彈性排班": ["彈性", "自己排", "自由排"],
+    "週休二日": ["六日", "週末", "周末", "假日", "休二日", "五休二", "雙休", "見紅休", "固定休", "休假日"],
+    "日領": ["每天", "天天", "一天", "日結", "當天", "日領", "現領"],
+    "週領": ["週", "周", "禮拜", "星期", "week"],
+    "雙週領": ["雙週", "兩週", "兩周", "雙周"],
+    "月領": ["月領", "一個月", "每月", "月結", "個月領"],
+    "現金": ["現金", "現領"],
+    "匯款": ["匯款", "轉帳", "入帳"],
+    "全職": ["full"],
+    "兼職": ["打工", "工讀", "兼差", "part", "pt"],
+}
+_NEGATION_CUES = ("不要", "不想", "不能", "不做", "不去", "除了", "以外", "除外", "排除", "不考慮", "不接受", "不用",
+                  "不行", "不方便", "沒辦法", "沒興趣", "不喜歡", "太遠", "免", "ng", "no", "❌", "不可以", "拒絕", "討厭")
+_BROADEN_CUES = ("都可以", "都行", "都好", "都ok", "不限", "隨便", "沒差", "無所謂", "哪裡", "全台", "全省", "什麼",
+                 "其他", "也可以", "也行", "也沒關係", "不一定", "可以不要", "不需要", "拿掉", "都看", "any", "whatever",
+                 "皆可", "沒關係")
+_NEG_AFTER_RE = r"^[\s，,、的是]{0,2}(不要|不行|不可以|不能|不方便|沒空|沒辦法|要顧|要上課|要接送|要照顧|ng|NG|免|沒興趣|不考慮|不想|不做)"
+_NEG_BEFORE_RE = r"(不要|不想|不能|不做|不上|沒辦法|不方便|除了|排除|不接受|不用|免)\s?$"
+_PAST_CUES = ("以前", "之前", "做過", "現在在做", "目前在做", "原本", "曾經", "上一份")
+_ORIGIN_CUES = ("住", "人在", "從", "出發", "家在", "戶籍", "面試", "報到", "老家")
+_LOCATION_ALIASES = {"北市": "台北", "中市": "台中", "南市": "台南", "高市": "高雄", "北縣": "新北", "竹縣": "新竹縣",
+                     "竹市": "新竹市", "桃市": "桃園", "竹科": "新竹", "中科": "台中", "南科": "台南", "雙北": "台北"}
+
+
+def _label_words(label: str, mapping) -> list:
+    words = [label]
+    if isinstance(mapping, dict):
+        words += list(mapping.get(label) or [])
+    else:
+        words += next((w for name, w in mapping if name == label), [])
+    return [w.lower() for w in words + _EXTRA_EVIDENCE.get(label, []) if w]
+
+
+def _has_evidence(label: str, mapping, text: str) -> bool:
+    return any(w in text for w in _label_words(label, mapping))
+
+
+def _negated_labels(text: str, mapping) -> set:
+    """否定詞緊貼著的班別：「白天不行」「夜班，不行」「不要夜班」「白天要顧小孩」。"""
+    hits = set()
+    items = mapping.items() if isinstance(mapping, dict) else mapping
+    for label, words in items:
+        for w in sorted({label, *words}, key=len, reverse=True):
+            for m in re.finditer(re.escape(w.lower()), text):
+                after, before = text[m.end():m.end() + 6], text[max(0, m.start() - 4):m.start()]
+                if re.match(_NEG_AFTER_RE, after) or re.search(_NEG_BEFORE_RE, before):
+                    hits.add(label)
+    return hits
+
+
+def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict = None, active_jobs: list = None) -> dict:
+    """需求單交叉檢查（見上方說明）。不需要職缺資料也能跑（準確率考試會直接用這個）。"""
+    if not form:
+        return form
+    f = dict(form)
+    msg = str(message or "").lower()
+    slots = slots or {}
+    context = " ".join([msg, str(last_bot or "").lower(), " ".join(str(v).lower() for v in slots.values())])
+    short_reply = len(clean_text_for_search(msg)) <= 6 and bool(re.search(r"[?？]", str(last_bot or "")))
+
+    # 地區簡稱（中市、竹科）
+    for key in ("locations", "exclude_locations"):
+        f[key] = [_LOCATION_ALIASES.get(str(v).strip(), v) for v in f.get(key) or []]
+
+    # 1. 沒有根據的值丟掉
+    for key, mapping in (("shifts", SHIFT_SYNONYMS), ("exclude_shifts", SHIFT_SYNONYMS), ("leaves", LEAVE_BUCKETS),
+                         ("exclude_leaves", LEAVE_BUCKETS), ("pays", PAY_METHOD_SYNONYMS), ("exclude_pays", PAY_METHOD_SYNONYMS)):
+        where = context
+        if key.startswith("exclude_"):
+            # 排除的值要這句話自己講到；這句完全沒講到這一類的詞（只回「不要」）才看沛沛上一句
+            names = mapping if isinstance(mapping, dict) else dict(mapping)
+            if any(_has_evidence(label, mapping, msg) for label in names):
+                where = msg
+        f[key] = [v for v in f.get(key) or [] if _has_evidence(v, mapping, where)]
+    no_weekend = bool(re.search(r"週休[一1三3]日|周休[一1三3]日|休[一1]天|一週休一|休三天", msg))
+    for key in ("worktype", "exclude_worktype"):
+        if f.get(key) and not _has_evidence(f[key], WORKTYPE_SYNONYMS, context):
+            f[key] = ""
+    if not any(c in msg for c in _NEGATION_CUES):
+        for key in ("exclude_locations", "exclude_categories", "exclude_shifts", "exclude_leaves", "exclude_pays"):
+            f[key] = []
+        f["exclude_worktype"] = ""
+    if f.get("broaden") and not (any(c in msg for c in _BROADEN_CUES) or short_reply):
+        f["broaden"] = []
+    if f.get("salary_kind"):
+        has_amount = bool(re.search(r"\d|萬|千|[一二兩三四五六七八九十]萬", msg))
+        kind_ok = (f["salary_kind"] == "時薪" and re.search(r"時薪|時新|小時|hourly|/h", msg)) or \
+                  (f["salary_kind"] == "月薪" and re.search(r"月|萬|k\b|k以上|千", msg))
+        if not has_amount or not kind_ok or re.search(r"日薪|一天|每天", msg):
+            f["salary_kind"], f["salary_min"] = "", 0
+    dropped_benefits = [b for b in f.get("benefits") or []
+                        if re.search(r"(沒有|不用|不需要|不一定要|不必)\s*" + re.escape(str(b).lower()), msg)]
+    f["benefits"] = [b for b in f.get("benefits") or [] if b not in dropped_benefits and str(b).lower()[:2] in context]
+    if dropped_benefits and slots.get("benefit") and "福利" not in f.get("broaden", []):
+        f["broaden"] = list(f.get("broaden") or []) + ["福利"]
+
+    # 2. 否定詞緊貼著的班別以程式判斷為準
+    for label in _negated_labels(msg, SHIFT_SYNONYMS):
+        f["shifts"] = [v for v in f["shifts"] if v != label]
+        if label not in f["exclude_shifts"]:
+            f["exclude_shifts"] = f["exclude_shifts"] + [label]
+
+    # 3. 地區：否定方向跟漏填
+    negated_loc = detect_negated_location(message, active_jobs)
+    if negated_loc:
+        f["locations"] = [v for v in f["locations"] if not str(v).startswith(negated_loc) and not negated_loc.startswith(str(v))]
+        if not any(negated_loc in str(v) or str(v) in negated_loc for v in f["exclude_locations"]):
+            f["exclude_locations"] = f["exclude_locations"] + [negated_loc]
+    f["exclude_locations"] = [v for v in f["exclude_locations"] if (negated_loc and (negated_loc in str(v) or str(v) in negated_loc))
+                              or re.search(r"(不要|不去|除了|不考慮|排除)\s*" + re.escape(str(v)), message)
+                              or re.search(re.escape(str(v)) + r".{0,4}(以外|除外|不要|不去|太遠|不行|不考慮)", message)
+                              or str(v) not in message]
+    if not f["locations"] and f.get("intent") == "找工作" and not any(c in message for c in _ORIGIN_CUES):
+        found = extract_current_target_location(message, "", active_jobs)
+        if found:
+            f["locations"] = [p for p in found.split("|") if p]
+
+    # 4. 類型、休假、發薪、全兼職：句子裡有程式認得的詞、AI 卻沒填的補上
+    wanted_part = message
+    if any(c in message for c in _PAST_CUES):
+        # 「我以前在餐廳做外場，現在想找工廠」：只看「現在想…」後面那段
+        cut = max((message.rfind(w) for w in ("現在想", "現在要", "想找", "想做", "想轉", "想換")), default=-1)
+        wanted_part = message[cut:] if cut != -1 else ""
+    if wanted_part != message:
+        # 以前做過的類型（詞只出現在「以前…」那段）不是現在要的
+        def _cat_in(label, text):
+            return any(w in text for w in [label] + list(CATEGORY_KEYWORDS.get(label, [])))
+        f["categories"] = [c for c in f["categories"] if _cat_in(c, wanted_part) or not _cat_in(c, message)]
+        f["exclude_categories"] = [c for c in f["exclude_categories"] if _cat_in(c, wanted_part) or not _cat_in(c, message)]
+        if f.get("brand") and f["brand"] in message and f["brand"] not in wanted_part:
+            f["brand"] = ""
+    if f.get("intent") == "找工作" and wanted_part:
+        message = wanted_part
+        if not f["categories"]:
+            text = message
+            if f.get("brand"):
+                text = re.sub(re.escape(f["brand"]), " ", text, flags=re.IGNORECASE)
+            found = [c for c in detect_category_labels(clean_text_for_search(text)) if c not in f["exclude_categories"]]
+            if 1 <= len(found) <= 2:
+                f["categories"] = found
+        if not f["leaves"]:
+            f["leaves"] = [v for v in extract_leave_labels(message) if v not in f["exclude_leaves"]]
+        if not f["pays"]:
+            f["pays"] = [v for v in detect_pay_method_labels(mask_salary_phrases(message)) if v not in f["exclude_pays"]]
+        if not f["worktype"] and not f["exclude_worktype"]:
+            found = extract_worktype_labels(message)
+            if len(found) == 1:
+                f["worktype"] = found[0]
+
+    if no_weekend:
+        f["leaves"] = [v for v in f["leaves"] if v != "週休二日"]
+
+    # 5. 同一個維度又給了值又說放寬：以給的值為準
+    dim_of = {"地區": "locations", "類型": "categories", "班別": "shifts", "休假方式": "leaves", "發薪方式": "pays",
+              "全職/兼職": "worktype", "廠商": "brand", "福利": "benefits"}
+    f["broaden"] = [d for d in f.get("broaden") or [] if not f.get(dim_of.get(d, ""), None)]
+    return f
+
+
+
+def validate_form(form: dict, active_jobs: list, message: str = "", last_bot: str = "", slots: dict = None) -> dict:
+    """回傳一份新的需求單：地名、廠商、福利都要資料庫認得，其他欄位只留選項內的值，
+    再做交叉檢查（cross_check_form）。"""
     if not form:
         return None
     clean = dict(form)
+    for key, allowed in (
+        ("categories", CATEGORIES), ("exclude_categories", CATEGORIES), ("shifts", SHIFTS), ("exclude_shifts", SHIFTS),
+        ("leaves", LEAVES), ("exclude_leaves", LEAVES), ("pays", PAYS), ("exclude_pays", PAYS),
+    ):
+        clean[key] = list(dict.fromkeys(v for v in clean.get(key) or [] if v in allowed))
+    if message:
+        clean = cross_check_form(clean, message, last_bot, slots, active_jobs)
+    form = clean
     clean["locations"] = list(dict.fromkeys(
         v for v in (_valid_location(x, active_jobs) for x in drop_county_before_district(form["locations"], message, active_jobs)) if v))
     clean["exclude_locations"] = list(dict.fromkeys(

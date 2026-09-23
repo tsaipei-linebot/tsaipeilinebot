@@ -444,16 +444,20 @@ def _is_program_phrase(text: str) -> bool:
                 CHANGE_CATEGORY_TEXT, APPLY_TEXT, RESET_CONFIRM_TEXT, RESET_DECLINE_TEXT, RESET_DIRECT_TEXT,
                 MORE_JOBS_TEXT, "都給我看看", "清空條件", "其他條件都可以") or text.endswith(BRAND_CHOICE_SUFFIX):
         return True
+    if _is_bare_any_reply(text):
+        # 只回「都可以／隨便」：程式自己有處理（對應上一題的選項、問是哪一項、只清類型），
+        # 交給 AI 會把地區跟類型一起放寬（第二次多輪考試：列完職缺說「隨便」地區被清掉）
+        return True
     compact = clean_text_for_search(text)
     if any(w in compact for words in _CHANGE_REQUEST_WORDS.values() for w in words) and len(compact) <= 10:
         return True
     return len(compact) <= 8 and any(w in compact for w in _SHOW_ALL_SHORT_WORDS)
 
 
-def _log_shadow_understanding(future, message: str, started: float, active_jobs: list):
+def _log_shadow_understanding(future, message: str, started: float, active_jobs: list, last_bot: str = "", slots: dict = None):
     """shadow 模式：AI 需求單只記 log、不影響回覆，用來上線前比對 AI 判斷得準不準。"""
     try:
-        form = validate_form(future.result(), active_jobs, message)
+        form = validate_form(future.result(), active_jobs, message, last_bot, slots)
         canonical = render_canonical_text(form) if form and form["intent"] == "找工作" else ""
         log_understanding(message, form, form["intent"] if form else "ai_failed", time.monotonic() - started, "shadow", canonical)
     except Exception:
@@ -846,7 +850,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _future = _AI_DECISION_EXECUTOR.submit(
                 understand_message, raw_msg, get_user_slots(user_id), history, AI_UNDERSTANDING_THINKING_BUDGET)
             try:
-                _ai_state["form"] = validate_form(_future.result(timeout=AI_UNDERSTANDING_TIMEOUT_SECONDS), active_jobs, raw_msg)
+                _ai_state["form"] = validate_form(
+                    _future.result(timeout=AI_UNDERSTANDING_TIMEOUT_SECONDS), active_jobs, raw_msg,
+                    _last_bot_text(history), get_user_slots(user_id))
             except concurrent.futures.TimeoutError:
                 print(f"[AI需求單] 超過 {AI_UNDERSTANDING_TIMEOUT_SECONDS} 秒沒有回應，照原本的流程處理")
             except Exception:
@@ -1422,10 +1428,13 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # 的流程走，不會比原本差。
         if _ai_mode == "shadow" and _needs_ai_understanding():
             _shadow_msg, _shadow_start = raw_msg, time.monotonic()
+            _shadow_slots, _shadow_last = get_user_slots(user_id), _last_bot_text(history)
             _shadow_future = _AI_DECISION_EXECUTOR.submit(
-                understand_message, raw_msg, get_user_slots(user_id), history, AI_UNDERSTANDING_THINKING_BUDGET)
-            _shadow_future.add_done_callback(lambda fut: _log_shadow_understanding(fut, _shadow_msg, _shadow_start, active_jobs))
+                understand_message, raw_msg, _shadow_slots, history, AI_UNDERSTANDING_THINKING_BUDGET)
+            _shadow_future.add_done_callback(lambda fut: _log_shadow_understanding(
+                fut, _shadow_msg, _shadow_start, active_jobs, _shadow_last, _shadow_slots))
         _form = _ai_form() if _ai_mode == "on" else None
+        _from_ai_form = False
         if _form:
             _intent = _form["intent"]
             _canonical = render_canonical_text(_form) if _intent == "找工作" else ""
@@ -1478,6 +1487,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             if _intent == "找工作" and _canonical:
                 _log_form("canonical", _canonical)
                 raw_msg = _canonical
+                _from_ai_form = True
             elif _intent in ("問問題", "閒聊"):
                 _log_form("answer")
                 _question_slots = get_user_slots(user_id)
@@ -1691,6 +1701,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 (dim, label) for dim, label in detect_uncertain_negation(_label_source)
                 if label in this_turn_labels.get(dim, []) and label not in relaxed_labels.get(dim, set())
             ][:1]
+
+        if _from_ai_form:
+            # AI 需求單已經聽懂、轉成標準句子了：不要再對標準句子問「要還是不要」「是聊天還是要找」
+            # （第二次多輪考試：「桃園 蝦皮 理貨/倉儲 早班的工作，不要假日班」又被問要不要早班）
+            pending_intent_clarify, pending_statement_ask, pending_negation_ask = {}, [], []
 
         if is_info_request or pending_intent_clarify or pending_statement_ask or pending_negation_ask:
             # 還沒確定是在找工作：這句話講到的條件一律先不記（原本類型跟廠商

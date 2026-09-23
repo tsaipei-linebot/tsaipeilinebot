@@ -2261,7 +2261,7 @@
   "id": "A全兼職-不要兼職的",
   "text": "不要兼職的",
   "expect": {
-   "worktype": "全職"
+   "exclude_worktype": "兼職"
   }
  },
  {

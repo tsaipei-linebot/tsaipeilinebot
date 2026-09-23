@@ -38,7 +38,7 @@ if _TEST_KEY:
     firestore.Client = lambda *a, **kw: _RealClient(*a, credentials=AnonymousCredentials(), **kw)
 
 import services.ai_service as ai_service  # noqa: E402
-from services.understanding_service import understand_message, drop_county_before_district  # noqa: E402
+from services.understanding_service import understand_message, drop_county_before_district, cross_check_form  # noqa: E402
 
 # Claude 的雲端測試環境沒有 GCP 權限，改用 AI Studio 的 Gemini 鑰匙（環境變數
 # PEIPEI_TEST_GEMINI_API_KEY，只給測試用，線上的沛沛照樣用 Cloud Run 的 Vertex AI）。
@@ -228,6 +228,8 @@ def _run_case(case, thinking):
     if form:
         # 正式上線時程式會再檢查一次需求單，考試也照同樣的規則整理地區（例如「新竹竹北」只算竹北）
         form["locations"] = drop_county_before_district(form["locations"], case["text"])
+        # 正式上線時的交叉檢查（沒根據的丟掉、程式認得但 AI 漏掉的補上、否定方向以程式為準）
+        form = cross_check_form(form, case["text"], case.get("last_bot", ""), case.get("slots") or {}, None)
     return form, time.monotonic() - start
 
 

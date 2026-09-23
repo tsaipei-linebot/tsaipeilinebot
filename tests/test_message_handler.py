@@ -4492,6 +4492,30 @@ class AiUnderstandingTests(_RoundFourSessionMixin, unittest.TestCase):
         self.assertFalse(us.is_precise_hit("理貨要輪班嗎", jobs))
         self.assertTrue(us.is_precise_hit("有輪班的嗎", jobs))
 
+    def test_cross_check_drops_unfounded_and_fills_missing(self):
+        n = us.normalize_form
+        # AI 自己加的條件（句子裡沒根據）丟掉；句子裡有的類型補上
+        f = us.cross_check_form(n({"intent": "找工作", "brand": "momo", "shifts": ["早班"], "worktype": "全職",
+                                   "salary_kind": "月薪", "salary_min": 30000}), "momo理貨")
+        self.assertEqual((f["categories"], f["shifts"], f["worktype"], f["salary_kind"]), (["理貨/倉儲"], [], "", ""))
+        # 否定方向以程式為準
+        f = us.cross_check_form(n({"intent": "找工作", "exclude_locations": ["新北"]}), "不要台北，要新北")
+        self.assertEqual((f["locations"], f["exclude_locations"]), (["新北"], ["台北"]))
+        f = us.cross_check_form(n({"intent": "找工作", "shifts": ["晚班", "大夜班"], "exclude_shifts": ["早班"]}), "夜班 不要")
+        self.assertEqual((f["shifts"], f["exclude_shifts"]), ([], ["大夜班"]))
+        # 以前的經歷不是條件
+        f = us.cross_check_form(n({"intent": "找工作", "categories": ["外送", "門市"]}), "我現在在做外送但想換工作，想找台北的門市")
+        self.assertEqual(f["categories"], ["門市"])
+        # 沒有否定詞就不能排除；沒有放寬的字就不能放寬
+        f = us.cross_check_form(n({"intent": "找工作", "exclude_categories": ["外送"], "broaden": ["地區"]}), "之前做業務想轉工廠")
+        self.assertEqual((f["exclude_categories"], f["broaden"]), ([], []))
+        # 週休三日不是週休二日；日薪不是薪資條件
+        self.assertEqual(us.cross_check_form(n({"intent": "找工作", "leaves": ["週休二日"]}), "想要週休三日")["leaves"], [])
+        self.assertEqual(us.cross_check_form(n({"intent": "找工作", "salary_kind": "時薪", "salary_min": 1500}), "日薪1500可以嗎")["salary_kind"], "")
+        # 回答沛沛的問題：根據可以在沛沛上一句
+        f = us.cross_check_form(n({"intent": "找工作", "shifts": ["晚班", "大夜班"]}), "都可以啊", "要幫您找「晚班」或「大夜班」的工作嗎？")
+        self.assertEqual(f["shifts"], ["晚班", "大夜班"])
+
     def test_precise_hit_boundaries(self):
         jobs = self._jobs()
         for text in ["桃園", "桃園 理貨", "中壢理貨的工作", "夜班", "日領", "不要大夜班", "班別都可以", "桃園或新竹", "有桃園的工作嗎？"]:
