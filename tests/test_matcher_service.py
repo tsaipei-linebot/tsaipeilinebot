@@ -794,6 +794,41 @@ class FindLeaveMatchedJobsTests(unittest.TestCase):
         self.assertEqual(jobs, [job])
 
 
+class LocationGranularityTests(unittest.TestCase):
+    """全資料庫自動比對測到地區比對太粗：「台北市中山區」被當成整個台北、
+    「桃園區」被當成整個桃園市、「嘉義縣」混到嘉義市的職缺。"""
+
+    def setUp(self):
+        self.jobs = [
+            {"縣市": "台北市", "行政區": "台北市中山區"},
+            {"縣市": "基隆市", "行政區": "基隆市中山區"},
+            {"縣市": "台中市", "行政區": "台中市東區"},
+            {"縣市": "台南市", "行政區": "台南市東區"},
+            {"縣市": "桃園市", "行政區": "桃園市桃園區,桃園市八德區"},
+        ]
+
+    def test_ambiguous_district_is_qualified_by_mentioned_county(self):
+        self.assertEqual(m.extract_current_target_location("台北市中山區有內場的工作嗎", "", self.jobs), "台北市中山區")
+        self.assertEqual(m.extract_current_target_location("台中東區有工作嗎", "", self.jobs), "台中市東區")
+
+    def test_ambiguous_district_without_county_is_still_not_guessed(self):
+        self.assertEqual(m.extract_current_target_location("中山區有工作嗎", "", self.jobs), "")
+
+    def test_taoyuan_district_is_not_whole_taoyuan_city(self):
+        self.assertEqual(m.extract_current_target_location("桃園區有工作嗎", "", self.jobs), "桃園區")
+        self.assertEqual(m.extract_current_target_location("桃園有工作嗎", "", self.jobs), "桃園")
+        self.assertEqual(m.resolve_county_for_location("桃園區", self.jobs), "桃園市")
+
+    def test_county_and_city_with_same_core_name_are_separated(self):
+        self.assertEqual(m.extract_current_target_location("嘉義縣的工作"), "嘉義縣")
+        self.assertEqual(m.extract_current_target_location("新竹市的工作"), "新竹市")
+        self.assertEqual(m.extract_current_target_location("嘉義有工作嗎"), "嘉義")
+
+    def test_qualified_location_resolves_to_its_county(self):
+        self.assertEqual(m.resolve_county_for_location("台北市中山區", self.jobs), "台北市")
+        self.assertEqual(m.resolve_county_for_location("嘉義縣"), "嘉義縣")
+
+
 class MultiTurnRoundThreeMatcherFixTests(unittest.TestCase):
     """第三輪多輪對話背景測試（4 個 agent、145 筆真實職缺）找到的比對層問題。"""
 
