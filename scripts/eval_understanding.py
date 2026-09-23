@@ -27,16 +27,42 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+_TEST_KEY = os.getenv("PEIPEI_TEST_GEMINI_API_KEY", "").strip()
+if _TEST_KEY:
+    # 雲端環境沒有 GCP 登入，Firestore 一載入就要登入會直接當掉；考試完全不讀寫
+    # Firestore，給它一個「匿名」登入讓程式能載入就好。
+    from google.auth.credentials import AnonymousCredentials  # noqa: E402
+    from google.cloud import firestore  # noqa: E402
+    _RealClient = firestore.Client
+    firestore.Client = lambda *a, **kw: _RealClient(*a, credentials=AnonymousCredentials(), **kw)
+
 import services.ai_service as ai_service  # noqa: E402
 from services.understanding_service import understand_message, drop_county_before_district  # noqa: E402
 
 # Claude 的雲端測試環境沒有 GCP 權限，改用 AI Studio 的 Gemini 鑰匙（環境變數
 # PEIPEI_TEST_GEMINI_API_KEY，只給測試用，線上的沛沛照樣用 Cloud Run 的 Vertex AI）。
 # 兩邊是同一個 Gemini 模型；有設這個鑰匙就用鑰匙，沒設（Cloud Shell）照舊用 Vertex AI。
-_TEST_KEY = os.getenv("PEIPEI_TEST_GEMINI_API_KEY", "").strip()
 if _TEST_KEY:
     from google import genai  # noqa: E402
+    import services.understanding_service as understanding_service  # noqa: E402
     ai_service.ai_client = genai.Client(api_key=_TEST_KEY)
+    # AI Studio 不接受選項清單裡有「空字串」（Vertex AI 可以），考試時把空字串選項換成「無」，
+    # AI 回「無」再換回空字串；線上程式不動。
+    _BLANK = "無"
+    _schema = json.loads(json.dumps(understanding_service.UNDERSTANDING_SCHEMA))
+    for _prop in _schema["properties"].values():
+        if "" in _prop.get("enum", []):
+            _prop["enum"] = [_BLANK if v == "" else v for v in _prop["enum"]]
+    understanding_service.UNDERSTANDING_SCHEMA = _schema
+    _real_normalize = understanding_service.normalize_form
+
+    def _normalize_with_blank(data):
+        form = _real_normalize(data)
+        for key in ("worktype", "salary_kind", "handoff_reason"):
+            if form.get(key) == _BLANK:
+                form[key] = ""
+        return form
+    understanding_service.normalize_form = _normalize_with_blank
 
 CASES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "understanding_eval_cases.json")
 _KEEP_FULL = {"新竹縣", "新竹市", "嘉義縣", "嘉義市"}
