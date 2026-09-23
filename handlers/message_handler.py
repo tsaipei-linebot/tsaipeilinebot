@@ -1523,6 +1523,16 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         worktype_slot_update, effective_worktype = _label_slot("worktype")
         salary_slot_update, effective_salary = _label_slot("salary")
 
+        # 假日班（假日要上班）跟週休二日（假日休息）互相矛盾：這句話講了其中一個，
+        # 就拿掉記住的另一個，以新講的為準（使用者 2026-09-23 實測回報：「固定休假日」
+        # 被記成假日班之後講「固定休六日」，兩個條件同時生效，推的是假日班的職缺）
+        if "週休二日" in this_turn_labels["leave"] and "週休二日" in effective_leave.split("|") and "假日班" in effective_shift.split("|") and "假日班" not in this_turn_labels["shift"]:
+            effective_shift = "|".join(p for p in effective_shift.split("|") if p != "假日班")
+            shift_slot_update = effective_shift or CLEAR_SLOT
+        if "假日班" in this_turn_labels["shift"] and "假日班" in effective_shift.split("|") and "週休二日" in effective_leave.split("|") and "週休二日" not in this_turn_labels["leave"]:
+            effective_leave = "|".join(p for p in effective_leave.split("|") if p != "週休二日")
+            leave_slot_update = effective_leave or CLEAR_SLOT
+
         detected_category_from_text = detected_category_this_turn
         negated_category = detect_negated_category(clause_input)
         explicit_any_category = "category" in scoped_broaden_dims or is_generic_broaden or any(k in clean_input for k in [

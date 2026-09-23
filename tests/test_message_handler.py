@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import unittest
+import services.matcher_service as m
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -4210,6 +4211,34 @@ class MultiTurnRoundSevenDecisionTests(_RoundFourSessionMixin, unittest.TestCase
         self.assertNotIn("還是不要", r["text"])
         r = self._say("早班不錯")
         self.assertNotIn("還是不要", r["text"])
+
+
+
+class MultiTurnHolidayOffTests(_RoundFourSessionMixin, unittest.TestCase):
+    """使用者 2026-09-23 實測回報：「固定休假日」被當成假日班，之後講「固定休六日」
+    兩個矛盾的條件同時生效。"""
+
+    def test_fixed_holiday_off_is_weekend_off_not_holiday_shift(self):
+        self._say("固定休假日")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(self.session_slots["leave"], "週休二日")
+
+    def test_weekend_off_replaces_remembered_holiday_shift(self):
+        self._say("假日班的工作")
+        self.assertEqual(self.session_slots["shift"], "假日班")
+        self._say("固定休六日")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(self.session_slots["leave"], "週休二日")
+
+    def test_holiday_shift_replaces_remembered_weekend_off(self):
+        self._say("週休二日的工作")
+        self._say("那假日班呢")
+        self.assertEqual(self.session_slots["shift"], "假日班")
+        self.assertEqual(self.session_slots["leave"], "")
+
+    def test_willing_to_work_on_rest_days_is_holiday_shift(self):
+        self.assertEqual(m.extract_shift_labels("休假日也可以上班"), ["假日班"])
+        self.assertEqual(m.extract_shift_labels("固定休假日"), [])
 
 
 if __name__ == "__main__":
