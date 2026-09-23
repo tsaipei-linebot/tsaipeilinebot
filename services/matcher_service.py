@@ -1012,6 +1012,55 @@ def filter_jobs_by_shift_label(jobs: list, label: str) -> list:
     return [j for j in jobs if wanted & job_shift_labels(j)]
 
 
+_PAY_FREQUENCY_LABELS = {"日領", "週領", "雙週領", "月領"}
+
+
+def job_is_excluded(job: dict, exclusions: dict) -> bool:
+    """求職者要排除的條件（使用者 2026-09-23 第五輪決定真的幫忙排除）。
+    exclusions 是 {維度: 值集合}。職缺本身還有其他選項時不排除：
+    「不要夜班」不排掉「早班、夜班」都有的職缺，只排掉只有夜班的。"""
+    for dim, values in exclusions.items():
+        if not values:
+            continue
+        if dim == "shift":
+            labels = job_shift_labels(job)
+            if labels and labels <= values:
+                return True
+        elif dim == "leave":
+            labels = _classify_all_leave_labels(job.get("休假方式") or "")
+            if labels and labels <= values:
+                return True
+        elif dim == "pay":
+            # 發薪頻率（日領/週領/月領）跟發薪管道（匯款/現金）分開看：
+            # 「不要日領」只排掉發薪頻率只有日領的職缺。
+            tokens = set(_job_pay_method_tokens(job))
+            wanted = {clean_text_for_search(v) for v in values}
+            frequency = {t for t in tokens if t in _PAY_FREQUENCY_LABELS}
+            for group in (frequency, tokens - frequency):
+                if group & wanted and group <= wanted:
+                    return True
+        elif dim == "benefit":
+            if values & set(_job_benefit_tokens(job)):
+                return True
+        elif dim == "category":
+            if any(job_matches_category_filter(job, v, allow_relaxed=False) for v in values):
+                return True
+        elif dim == "brand":
+            if any(job_matches_brand(job, v) for v in values):
+                return True
+        elif dim == "location":
+            for v in values:
+                if not job_matches_location(job, v):
+                    continue
+                # 職缺還有其他地點時不排除：「不要中壢」不排掉中壢、八德都有的職缺
+                pairs = _job_district_pairs(job)
+                others = [p for p in pairs if not job_matches_location(
+                    {"縣市": p[0], "行政區": f"{p[0]}{p[1]}", "_location_search_text": clean_text_for_search(f"{p[0]}{p[1]}")}, v)]
+                if not others:
+                    return True
+    return False
+
+
 def detect_benefit_labels(raw_msg: str, active_jobs: list, negated: bool = False) -> list:
     """福利關鍵字清單從職缺資料動態長出來（見 build_benefit_keyword_index）。"""
     keywords = [(k, [k]) for k in build_benefit_keyword_index(active_jobs or []) if len(k) >= 2]
@@ -1030,6 +1079,7 @@ _SCOPED_BROADEN_DIMENSION_WORDS = {
     "leave": ["休假方式", "休假制度", "休假"],
     "pay": ["發薪方式", "領薪方式", "發薪", "領薪"],
     "benefit": ["福利"],
+    "exclude": ["排除的條件", "排除條件"],
     "secondary_all": ["其他條件", "條件"],
 }
 _BROADEN_SUFFIXES = ["都可以", "都行", "都好", "不限", "都不限", "隨便", "沒差", "都沒差", "無所謂", "都無所謂", "都ok"]
@@ -1044,7 +1094,7 @@ def detect_scoped_broaden_dimensions(clean_input: str) -> set:
                 break
     if "secondary_all" in dims:
         dims.discard("secondary_all")
-        dims.update({"leave", "pay", "benefit", "shift"})
+        dims.update({"leave", "pay", "benefit", "shift", "exclude"})
     return dims
 
 
@@ -1168,7 +1218,29 @@ CATEGORY_KEYWORDS = {
     # 刻意不收單獨的「服務」：「有交通車接送服務嗎」會被誤判成要找餐飲類，
     # 把原本鎖定的作業員/理貨類別換掉。
     "餐飲/服務": ["餐飲", "服務員", "服務生", "服務業", "服務類", "餐廳", "廚房", "內場", "外場", "洗碗", "助手"],
+    # 使用者 2026-09-23（第五輪）決定新增的兩個類型：職務類別填「文字客服」
+    # 「行政人員」「設備人員」的職缺原本不屬於任何類型，求職者問「客服的
+    # 工作」只能丟給 AI。
+    "客服/行政": ["客服", "文字客服", "電話客服", "行政", "文書", "助理", "內勤", "辦公室", "文員"],
+    "設備/技術": ["設備", "維修", "機電", "水電", "設施", "修繕", "保養"],
 }
+
+
+def detect_category_labels(clean_input: str) -> list:
+    """句子裡提到的所有類型（沒被否定的），依出現順序。原本只回傳
+    CATEGORY_KEYWORDS 字典順序的第一個：「蝦皮外送理貨」「理貨或門市都可以」
+    挑的都是字典裡排前面的，不是求職者先講的。"""
+    hits = []
+    for label, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            pos = clean_input.find(kw)
+            if pos != -1 and not _keyword_is_negated(clean_input, kw):
+                hits.append((pos, -len(kw), label))
+    labels = []
+    for _, _, label in sorted(hits):
+        if label not in labels:
+            labels.append(label)
+    return labels
 
 
 def detect_category_label(clean_input: str) -> str:
@@ -1206,7 +1278,9 @@ def category_search_keywords(category_label: str) -> list:
         "製造/作業員": ["製造", "作業員", "技術員", "產線", "組裝", "機台", "半導體", "工廠", "科技", "電子", "品檢", "品保", "品管", "檢驗"],
         "理貨/倉儲": ["理貨", "揀貨", "倉管", "包裝", "倉儲", "倉庫", "物流", "堆高機", "進貨", "出貨", "搬運"],
         # 不收單獨的「服務」：「行業別＝服務業」的門市職缺會被誤判成餐飲。
-        "餐飲/服務": ["餐飲", "服務員", "服務生", "服務人員", "廚房", "內場", "外場", "洗碗", "助手"]
+        "餐飲/服務": ["餐飲", "服務員", "服務生", "服務人員", "廚房", "內場", "外場", "洗碗", "助手"],
+        "客服/行政": ["客服", "行政", "文書", "助理", "文員"],
+        "設備/技術": ["設備", "維修", "機電", "水電", "設施", "修繕"],
     }
     return mapping.get(category_label, [])
 
@@ -1404,9 +1478,14 @@ def _job_extended_category_text(job: dict) -> str:
     # 是門市類別。職務類別的寬鬆比對只能信任真正結構化、對外一致的欄位
     # （職缺名稱(對外)／職務類別／行業別），跟地區比對只信任「行政區」欄位、
     # 不信任自由文字地址的原則一致。
+    # 「職務類別」有填時寬鬆比對一樣不看對外職缺名稱（跟嚴格比對同一個
+    # 原則，見 job_matches_category_filter）：晶旺、全家餐飲的對外名稱寫
+    # 「門市人員」，職務類別其實是內場/外場，問「雅萱廠有門市的工作嗎」
+    # 原本會推這兩筆（第五輪測試）。
+    category_field = job.get("職務類別", "") or job.get("_job_category", "")
     fields = [
-        job.get("職缺名稱(對外)", ""),
-        job.get("職務類別", ""),
+        "" if category_field else job.get("職缺名稱(對外)", ""),
+        category_field,
         job.get("行業別", ""),
     ]
     return clean_text_for_search(" ".join(str(x or "") for x in fields))
@@ -1462,6 +1541,12 @@ def _category_matches_text(text: str, category_label: str) -> bool:
 def job_matches_category_filter(job: dict, category_label: str, brand_label: str = "", allow_relaxed: bool = True) -> bool:
     if not category_label or category_label == "不限":
         return True
+    if "|" in category_label:
+        # 「理貨|門市」：求職者講「理貨或門市都可以」（使用者 2026-09-23 決定兩個都算）
+        return any(
+            job_matches_category_filter(job, part, brand_label, allow_relaxed)
+            for part in category_label.split("|") if part
+        )
 
     internal_title, public_title, category = _job_title_and_category_text(job)
     primary_text = " ".join([internal_title, public_title, category])
@@ -1513,6 +1598,13 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
 def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label: str = "") -> list:
     if not category_label or category_label == "不限":
         return list(jobs)
+    if "|" in category_label:
+        # 每個類型各自分嚴格/寬鬆，再合併（保留原本順序）
+        picked = set()
+        for part in category_label.split("|"):
+            if part:
+                picked.update(id(j) for j in filter_jobs_by_category_tiered(jobs, part, brand_label))
+        return [j for j in jobs if id(j) in picked]
 
     strict_matches = [
         j for j in jobs
@@ -1535,7 +1627,7 @@ def filter_jobs_by_category_tiered(jobs: list, category_label: str, brand_label:
 # 不能精準篩選。「餐飲/服務」原本也是這種情況，實測發現「類別+福利/發薪/
 # 休假方式」合併問時會混進不相關廠商的職缺，補上專屬候選池分支後，現在
 # 也適合列進來。
-DIRECT_INTERCEPT_ROUTABLE_CATEGORIES = ["外送", "門市", "理貨/倉儲", "製造/作業員", "餐飲/服務"]
+DIRECT_INTERCEPT_ROUTABLE_CATEGORIES = ["外送", "門市", "理貨/倉儲", "製造/作業員", "餐飲/服務", "客服/行政", "設備/技術"]
 
 
 def distinct_routable_categories_for_jobs(jobs: list) -> list:
