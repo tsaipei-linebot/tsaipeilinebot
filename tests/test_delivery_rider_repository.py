@@ -780,3 +780,99 @@ class RiderFeatureCategoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _fake_stream_snapshot(doc_id: str, data: dict):
+    snapshot = mock.Mock(id=doc_id)
+    snapshot.to_dict.return_value = data
+    return snapshot
+
+
+class BuildRiderCategoryMapTests(unittest.TestCase):
+    """騎士名單管理整頁的「合作身份」對照表（2026-09-23 新增）。
+
+    原本每位騎士各呼叫一次 rider_feature_category()，一位騎士 2 趟 Firestore、
+    N 位就是 2N 趟序列往返，使用者回報「這一頁點進來都要等很久」。改成整份
+    清單先建一次對照表，往返次數跟騎士人數無關——**判斷規則必須跟原本那支
+    完全一致**，所以這裡的測試重點是規則有沒有跑掉，不是只測有沒有跑完。
+    """
+
+    def _build(self, personnel_rows, cooperation_types):
+        personnel_collection = mock.Mock()
+        personnel_collection.stream.return_value = [
+            _fake_stream_snapshot(f"P{i}", row) for i, row in enumerate(personnel_rows)
+        ]
+        with mock.patch.object(rider_repository.repository, "personnel_ref", return_value=personnel_collection):
+            with mock.patch.object(
+                rider_repository.repository, "list_cooperation_types", return_value=cooperation_types
+            ) as mock_types:
+                result = rider_repository.build_rider_category_map()
+        return result, mock_types
+
+    def test_maps_employee_no_to_its_cooperation_category(self):
+        result, _ = self._build(
+            [{"employee_no": "大廷_A001", "cooperation_type": "two_wheel_contract"}],
+            [{"id": "two_wheel_contract", "category": "contract"}],
+        )
+        self.assertEqual(result, {"大廷_A001": "contract"})
+
+    def test_personnel_without_employee_no_are_skipped(self):
+        result, _ = self._build(
+            [{"employee_no": "", "cooperation_type": "two_wheel_contract"}, {"cooperation_type": "x"}],
+            [{"id": "two_wheel_contract", "category": "contract"}],
+        )
+        self.assertEqual(result, {})
+
+    def test_employee_no_is_stripped_so_stray_spaces_still_match(self):
+        result, _ = self._build(
+            [{"employee_no": "  大廷_A001  ", "cooperation_type": "two_wheel_contract"}],
+            [{"id": "two_wheel_contract", "category": "contract"}],
+        )
+        self.assertEqual(result, {"大廷_A001": "contract"})
+
+    def test_cooperation_type_without_a_category_maps_to_blank(self):
+        """合作方式有填、但還沒被歸到承攬/雇傭時，畫面上要顯示「未對應」，
+        不能誤判成可以用功能。"""
+        result, _ = self._build(
+            [{"employee_no": "大廷_A001", "cooperation_type": "two_wheel_contract"}],
+            [{"id": "two_wheel_contract", "category": ""}],
+        )
+        self.assertEqual(result, {"大廷_A001": ""})
+
+    def test_unknown_cooperation_type_maps_to_blank(self):
+        result, _ = self._build(
+            [{"employee_no": "大廷_A001", "cooperation_type": "已被刪掉的分類"}],
+            [{"id": "two_wheel_contract", "category": "contract"}],
+        )
+        self.assertEqual(result, {"大廷_A001": ""})
+
+    def test_inactive_cooperation_types_are_included(self):
+        """合作方式被停用不代表既有騎士的身份就消失了，名單上仍然要顯示得出來。"""
+        _, mock_types = self._build([], [])
+        self.assertTrue(mock_types.call_args.kwargs.get("include_inactive"))
+
+
+class RiderMatchesFiltersTests(unittest.TestCase):
+    def _rider(self, employee_id="大廷_A001", name="饒明書"):
+        return {"employee_id": employee_id, "name": name}
+
+    def test_no_filters_matches_everyone(self):
+        self.assertTrue(rider_repository.rider_matches_filters(self._rider()))
+
+    def test_employee_id_is_a_partial_case_insensitive_match(self):
+        # 同仁常常只記得工號後面幾碼
+        self.assertTrue(rider_repository.rider_matches_filters(self._rider(), employee_id_filter="a001"))
+
+    def test_name_partial_match(self):
+        self.assertTrue(rider_repository.rider_matches_filters(self._rider(), name_filter="明書"))
+
+    def test_both_filters_must_match(self):
+        self.assertFalse(
+            rider_repository.rider_matches_filters(self._rider(), employee_id_filter="A001", name_filter="江明哲")
+        )
+
+    def test_whitespace_only_filter_is_ignored(self):
+        self.assertTrue(rider_repository.rider_matches_filters(self._rider(), employee_id_filter="   "))
+
+    def test_missing_fields_do_not_raise(self):
+        self.assertFalse(rider_repository.rider_matches_filters({}, employee_id_filter="A001"))
