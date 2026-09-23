@@ -187,7 +187,8 @@ def create_job_flex_card(jobs: list, user_id: str, target_location: str = "", sa
     for job in jobs[:10]:
         public_job_title = str(job.get("職缺名稱(對外)") or job.get("職缺名稱") or job.get("職務類別") or "優質職缺").strip()
         # Notion 唯一識別鍵：職缺名稱 (內部名稱)
-        unique_internal_title = str(job.get("職缺名稱") or job.get("_internal_title") or public_job_title).strip()
+        # 同名的職缺第二筆起是「名稱（2）」（message_handler._assign_detail_keys）
+        unique_internal_title = str(job.get("_detail_key") or job.get("職缺名稱") or job.get("_internal_title") or public_job_title).strip()
         
         display_location = format_clean_location(job, target_location, same_county_scope)
         salary = str(job.get("薪資") or "依公司規定").strip()

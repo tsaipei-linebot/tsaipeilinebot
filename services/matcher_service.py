@@ -523,7 +523,16 @@ def extract_current_target_location(raw_msg: str, history_text: str = "", active
                 # 句子裡緊接在區名前面講了縣市（「台中市大安區」「台中市北區」）：
                 # 照求職者講的縣市組完整寫法。資料裡沒有這個縣市的這個區時，
                 # 找不到就老實說沒有，不能推別的縣市的職缺（第五、六輪測試）。
-                named_before = [full for s, e, full in county_spans if 0 <= pos - e <= 1]
+                # 中間只能隔空白：「新北或桃園」「台中、彰化」的或／、是在列兩個
+                # 地方，不是「新北市的桃園區」（第八輪測試）。只講「新竹」「嘉義」
+                # 時縣跟市都算，「新竹竹北」的竹北在新竹縣，不能組成新竹市竹北區。
+                named_before = []
+                for s, e, full in county_spans:
+                    if 0 <= pos - e <= 1 and not raw_msg[e:pos].strip():
+                        if raw_msg[s:e] in ("新竹", "嘉義"):
+                            named_before.extend(f"{raw_msg[s:e]}{suffix}" for suffix in ("市", "縣"))
+                        else:
+                            named_before.append(full)
                 if named_before:
                     county_full = next((c for c in reversed(named_before) if c in counties), named_before[-1])
                     if len(counties) == 1 and county_full in counties:
@@ -564,7 +573,11 @@ def extract_current_target_location(raw_msg: str, history_text: str = "", active
         if pos == -1:
             continue
         # 後面緊接著行政區的縣市名只是在修飾那個區（「台中市西屯區」）
-        if any(0 <= m[0] - (pos + len(loc)) <= 1 or pos <= m[0] < pos + len(loc) + 1 for m in matches):
+        loc_end = pos + len(loc)
+        if any(
+            (0 <= m[0] - loc_end <= 1 and not raw_msg[loc_end:m[0]].strip("縣市 ")) or pos <= m[0] < loc_end
+            for m in matches
+        ):
             continue
         value = loc.replace("臺", "台")
         # 新竹、嘉義的縣跟市是兩個不同的縣市，求職者有講清楚時要分開，
