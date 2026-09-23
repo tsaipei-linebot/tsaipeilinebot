@@ -16,3 +16,4 @@ openpyxl
 google-api-python-client
 google-auth
 docxtpl
+pillow
