@@ -8886,3 +8886,96 @@ discover -s tests -p "test_*.py"`）2073 個全數通過。
 `tests/test_dispatch_webhook_routes.py` 新增 `ReplyHandlerSilenceTests`
 （空字串時連 `get_line_bot_api()` 都不能呼叫）。全部測試（`python3 -m
 unittest discover -s tests -p "test_*.py"`）2120 個全數通過。
+
+## 薪資補款通知信改由平台用 SMTP 寄（2026-09-23，搬離 GAS 的第一階段）
+
+### 背景
+
+同一天先查出「補寄信按了沒動作」的真正原因是 Apps Script 的寄信額度
+（每個 Google 帳號每天 100 個收件人）用完（見上一節）。跟使用者討論後
+確認方向：**把薪資補款系統從「Google 試算表＋GAS」逐步搬到 GCP**，但
+不要一次全搬，分三階段：
+
+1. **階段 1（這次）：只把「寄信」搬到平台** — 解決額度問題，風險最低，
+   出事把 GAS 的指令碼屬性清掉就回到原狀。
+2. 階段 2：資料（Firestore）＋審核流程搬到平台。
+3. 階段 3：PDF 存查單、財務匯出跟著搬。
+
+使用者確認的前提：**財務只看試算表、不編輯**（所以之後搬 Firestore
+風險低）、**歷史資料不用搬**（舊資料留在試算表當唯讀存檔）、寄件者
+**改用公司信箱**。
+
+### 這次做了什麼
+
+```
+主管在 LINE 按核准
+  → GAS 照舊寫試算表、組信件 HTML、產 PDF 存查單   ← 完全沒動
+  → GAS 改成 POST /api/job-portal/send-mail        ← 新增
+  → 平台用 SMTP 寄出                                ← 新增
+```
+
+- **`services/email_service.py`（新檔）**：純 SMTP 寄信，支援附件與
+  **內嵌圖片**（補款佐證照片靠 `cid:` 顯示在信件內文，掛錯層會變破圖，
+  所以內嵌圖片一定要 `add_related()` 到 HTML 那一份底下，不能掛在信件
+  最外層——測試有守住這點）。587 走 STARTTLS、465 自動改用 SSL。
+  **刻意寫成純 SMTP 設定、不綁特定廠商**：公司信箱是 Google Workspace、
+  Microsoft 365 還是別家主機，都只要改環境變數；之後要換成 SendGrid／
+  SES 這類正規寄信服務，也只要改這一支，呼叫端完全不用動。
+  所有失敗都回傳 `(False, 白話訊息)`、不拋例外，額度用完、密碼錯誤這
+  幾種常見狀況都翻成同仁看得懂的說明。
+- **`job_portal_mail_routes.py`（新檔）**：`POST /api/job-portal/send-mail`，
+  靠 header `X-Job-Portal-Mail-Secret` ＋ `hmac.compare_digest` 驗證
+  （跟 main.py 其他內部端點同一種寫法），密鑰沒設定一律 403。附件跟
+  內嵌圖片都收 base64、在這裡解碼；**單筆解不開就跳過那一筆、信照樣寄**
+  （寧可少一個附件也不要整封信失敗），附件總量上限 20MB。
+- **`config.py`**：新增 `JOB_PORTAL_MAIL_WEBHOOK_SECRET` 跟一組 SMTP
+  設定（`SMTP_HOST`／`SMTP_PORT`／`SMTP_USERNAME`／`SMTP_PASSWORD`／
+  `MAIL_FROM_ADDRESS`／`MAIL_FROM_NAME`）。
+- GAS 那邊的對應改動見 `job-portal-gas-project` 的 HANDOFF.md
+  「薪資補款通知信改由材霈平台寄出」章節——**兩個指令碼屬性沒設齊就
+  自動退回原本的 `GmailApp.sendEmail`**，漏設定不會讓通知信斷掉。
+
+### 上線前使用者要手動做的事
+
+**1. 準備寄件信箱的 SMTP 密碼**（公司信箱是 Google Workspace 的話）：
+Google 帳號 → 安全性 → 先開「兩步驟驗證」→ 再產生「應用程式密碼」
+（16 碼），**這組密碼才是 `SMTP_PASSWORD`，不是平常登入的密碼**。
+
+**2. 設定 Cloud Run 環境變數**（一次設完，`密碼` 換成上一步拿到的）：
+
+```bash
+gcloud run services update recruitment-bot \
+  --region asia-east1 \
+  --update-env-vars \
+SMTP_HOST=smtp.gmail.com,\
+SMTP_PORT=587,\
+SMTP_USERNAME=finance@tsaipei.com.tw,\
+SMTP_PASSWORD=應用程式密碼,\
+MAIL_FROM_ADDRESS=finance@tsaipei.com.tw,\
+MAIL_FROM_NAME=材霈招募薪資系統,\
+JOB_PORTAL_MAIL_WEBHOOK_SECRET=自己想一組亂碼
+```
+
+⚠️ 公司信箱如果不是 Google Workspace（例如 Microsoft 365），
+`SMTP_HOST` 要改成該服務商的（Microsoft 365 是 `smtp.office365.com`），
+其餘照填。
+
+**3. 設定 Apps Script 指令碼屬性**（見 GAS repo 的 HANDOFF）：
+`PLATFORM_MAIL_URL` ＝ 平台的 `/api/job-portal/send-mail` 網址、
+`PLATFORM_MAIL_SECRET` ＝ 跟上面 `JOB_PORTAL_MAIL_WEBHOOK_SECRET` 同值。
+
+**怎麼確認做對了**：找一筆「已核准」的補款單，到 `/me` 按「補寄信」，
+畫面顯示「通知信已重新寄出」而且信箱真的收到（寄件者會變成公司信箱）
+就成功了。失敗訊息現在都是白話，Cloud Run 的 log 搜「薪資補款寄信」
+也看得到原因。
+
+### 測試
+
+`tests/test_email_service.py`（新檔）：SMTP 設定不齊/沒有收件人時不連線、
+587 走 STARTTLS、465 走 SSL、密碼錯誤與額度用完都翻成白話、任何例外都
+不往外拋；組信件的部分驗證內嵌圖片有拿到 `Content-ID` 而且**不會同時
+變成一般附件**。`tests/test_job_portal_mail_routes.py`（新檔）：密鑰沒
+設定/沒帶/帶錯一律 403 且不寄信、收件人可以收字串或陣列並去重、附件與
+內嵌圖片正確解碼、壞掉的 base64 跳過但信照寄、寄信失敗時把白話訊息
+原樣回給 GAS。全部測試（`python3 -m unittest discover -s tests -p
+"test_*.py"`）2252 個全數通過。

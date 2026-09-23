@@ -23,6 +23,7 @@ import dispatch_routes
 import dispatch_webhook_routes
 import finance_routes
 import job_listing_routes
+import job_portal_mail_routes
 import project_contract_routes
 import login_routes
 import me_routes
@@ -120,6 +121,11 @@ app.include_router(dispatch_webhook_routes.router)
 # 看到照「部門」判斷（見 services/salary_repayment_service.py 開頭
 # 說明），跟 /dispatch/{site} 一樣直接掛在根 app。
 app.include_router(finance_routes.router)
+
+# /api/job-portal/send-mail：職缺維護系統（GAS）核准薪資補款後委託平台
+# 寄通知信的端點（2026-09-23 新增，見 job_portal_mail_routes.py 開頭）。
+# 靠 header 上的共用密鑰驗證，不走登入 session。
+app.include_router(job_portal_mail_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，
