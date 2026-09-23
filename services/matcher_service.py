@@ -1180,6 +1180,12 @@ def job_matches_category_filter(job: dict, category_label: str, brand_label: str
     primary_category_text = category or public_title
     extended_text = _job_extended_search_text(job)
     extended_category_text = _job_extended_category_text(job)
+    if category_label == "餐飲/服務" and "餐飲" not in clean_text_for_search(job.get("行業別", "")):
+        # 「服務人員」是很泛的職務類別：服飾店（佐丹奴）、百貨服務台（微風）、
+        # 客服都會填。行業別不是餐飲業時不算餐飲/服務，不然問「內場」會推
+        # 服飾店門市（第四輪按鈕爬蟲測到）。
+        primary_category_text = primary_category_text.replace("服務人員", "")
+        extended_category_text = extended_category_text.replace("服務人員", "")
 
     if category_label == "門市":
         if _job_has_delivery_conflict(job):

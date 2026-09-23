@@ -1010,5 +1010,13 @@ class RoundFourLocationPrecisionTests(unittest.TestCase):
         self.assertTrue(m.job_matches_location(self._jobs()[2], "台南市南區"))
 
 
+    def test_generic_service_staff_is_food_service_only_in_food_industry(self):
+        clothing = {"職缺名稱(對外)": "佐丹奴兼職", "職務類別": "服務人員,門市人員", "_job_category": "服務人員,門市人員", "行業別": "服飾業"}
+        restaurant = {"職缺名稱(對外)": "上海鄉村-發傳單", "職務類別": "服務人員", "_job_category": "服務人員", "行業別": "餐飲業"}
+        self.assertFalse(m.job_matches_category_filter(clothing, "餐飲/服務"))
+        self.assertTrue(m.job_matches_category_filter(clothing, "門市"))
+        self.assertTrue(m.job_matches_category_filter(restaurant, "餐飲/服務"))
+
+
 if __name__ == "__main__":
     unittest.main()
