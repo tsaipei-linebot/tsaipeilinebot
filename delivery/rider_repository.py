@@ -138,6 +138,52 @@ def rider_feature_category(binding: dict) -> str:
     return coop.get("category") or ""
 
 
+def build_rider_category_map() -> dict:
+    """一次建好 {工號: 合作方式分類} 的對照表，給「騎士名單管理」整頁用。
+
+    **為什麼要有這支（效能）**：`rider_feature_category()` 是為了「查一位
+    騎士」設計的，它每次都會打兩趟 Firestore（找人員名冊、讀合作方式）。
+    名單頁一位騎士呼叫一次，N 位騎士就是 **2N 趟往返**，而且是一趟做完才
+    做下一趟——騎士越多頁面越慢，使用者回報「這一頁點進來都要等很久」就
+    是這個原因。
+
+    改成先把人員名冊與合作方式各撈一次（共 2 趟），在記憶體裡組成對照表，
+    整頁的往返次數就跟騎士人數無關了。
+
+    **判斷規則跟 `rider_feature_category()` 完全一致**（同樣是拿工號對人員
+    名冊、再看合作方式的分類），只是換一種取得方式，所以兩邊的結果一定
+    相同；單筆查詢（LINE 那側一次只處理一位騎士）仍然用原本那支，不需要
+    為了一個人把整份名冊撈回來。
+
+    包含已停用的合作方式（`include_inactive=True`）：合作方式被停用不代表
+    既有騎士的身份就消失了，名單上仍然要顯示得出來他是承攬還是雇傭。
+    """
+    category_by_type_id = {
+        coop["id"]: coop.get("category") or ""
+        for coop in repository.list_cooperation_types(include_inactive=True)
+    }
+    category_by_employee_no = {}
+    for snapshot in repository.personnel_ref().stream():
+        data = snapshot.to_dict() or {}
+        employee_no = (data.get("employee_no") or "").strip()
+        if not employee_no:
+            continue
+        category_by_employee_no[employee_no] = category_by_type_id.get(data.get("cooperation_type") or "", "")
+    return category_by_employee_no
+
+
+def rider_matches_filters(rider: dict, employee_id_filter: str = "", name_filter: str = "") -> bool:
+    """騎士名單的搜尋比對（純函式）。工號跟姓名都是「包含就算符合」、
+    不分大小寫——同仁常常只記得工號後面幾碼，要求打完整組不合實際。"""
+    employee_id_filter = (employee_id_filter or "").strip()
+    name_filter = (name_filter or "").strip()
+    if employee_id_filter and employee_id_filter.upper() not in (rider.get("employee_id") or "").upper():
+        return False
+    if name_filter and name_filter not in (rider.get("name") or ""):
+        return False
+    return True
+
+
 def get_rider_binding(user_id: str):
     snapshot = rider_bindings_ref().document(user_id).get()
     if not snapshot.exists:

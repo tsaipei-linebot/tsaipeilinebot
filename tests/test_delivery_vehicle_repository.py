@@ -188,3 +188,99 @@ class SyncUdVehicleSheetHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BuildVehicleRiderInfoLookupTests(unittest.TestCase):
+    """車輛清單整頁的騎手身份/電話反查（2026-09-23 新增）。
+
+    原本每台車各呼叫一次 resolve_vehicle_rider_info()，一台車 2 趟 Firestore、
+    N 台就是 2N 趟序列往返，使用者回報「車輛管理點進來也是偏慢」。改成整份
+    清單先建一次對照表——**比對規則必須跟 _find_vehicle_rider_personnel()
+    完全一致**，所以這裡測的是規則有沒有跑掉。
+    """
+
+    def _lookup(self, personnel_rows, cooperation_types=None):
+        personnel_collection = mock.Mock()
+        query = mock.Mock()
+        query.stream.return_value = [
+            _fake_doc_snapshot(True, row, doc_id=f"P{i}") for i, row in enumerate(personnel_rows)
+        ]
+        personnel_collection.where.return_value = query
+        with mock.patch.object(repository, "personnel_ref", return_value=personnel_collection):
+            with mock.patch.object(
+                repository, "list_cooperation_types",
+                return_value=cooperation_types if cooperation_types is not None else [
+                    {"id": "two_wheel_contract", "category": "contract", "name": "二輪承攬"}
+                ],
+            ):
+                resolve = repository.build_vehicle_rider_info_lookup()
+        return resolve, personnel_collection
+
+    def test_only_active_personnel_are_indexed(self):
+        """跟原本那兩支查詢一樣只看在職人員。"""
+        _, personnel_collection = self._lookup([])
+        personnel_collection.where.assert_called_once_with("status", "==", "active")
+
+    def test_name_and_phone_match_wins_when_vehicle_has_a_phone(self):
+        resolve, _ = self._lookup(
+            [{"name": "王小明", "phone": "0912345678", "vendor": "shopee", "cooperation_type": "two_wheel_contract"}]
+        )
+        info = resolve({"current_holder": "王小明", "current_holder_phone": "0912345678", "vendor": "other"})
+        self.assertEqual(info["phone"], "0912345678")
+        self.assertEqual(info["cooperation_type"]["id"], "two_wheel_contract")
+
+    def test_falls_back_to_vendor_and_name_when_vehicle_has_no_phone(self):
+        resolve, _ = self._lookup(
+            [{"name": "王小明", "phone": "0912345678", "vendor": "shopee", "cooperation_type": "two_wheel_contract"}]
+        )
+        info = resolve({"current_holder": "王小明", "current_holder_phone": "", "vendor": "shopee"})
+        self.assertEqual(info["phone"], "0912345678")
+
+    def test_wrong_phone_does_not_fall_back_to_vendor_match(self):
+        """車輛主檔有填電話就只用「姓名+電話」比對，電話對不上就是查無此人，
+        不會偷偷退回比較不精確的「姓名+廠商」——跟原本的行為一致。"""
+        resolve, _ = self._lookup(
+            [{"name": "王小明", "phone": "0912345678", "vendor": "shopee", "cooperation_type": "two_wheel_contract"}]
+        )
+        info = resolve({"current_holder": "王小明", "current_holder_phone": "0900000000", "vendor": "shopee"})
+        self.assertEqual(info, {"cooperation_type": None, "phone": ""})
+
+    def test_vehicle_with_no_holder_returns_blanks(self):
+        resolve, _ = self._lookup([{"name": "王小明", "phone": "0912345678", "vendor": "shopee"}])
+        self.assertEqual(resolve({"current_holder": "", "vendor": "shopee"}), {"cooperation_type": None, "phone": ""})
+
+    def test_unknown_cooperation_type_becomes_none(self):
+        resolve, _ = self._lookup(
+            [{"name": "王小明", "phone": "0912345678", "vendor": "shopee", "cooperation_type": "已刪掉的分類"}]
+        )
+        info = resolve({"current_holder": "王小明", "current_holder_phone": "0912345678", "vendor": "shopee"})
+        self.assertIsNone(info["cooperation_type"])
+        self.assertEqual(info["phone"], "0912345678")
+
+    def test_personnel_without_a_name_are_skipped(self):
+        resolve, _ = self._lookup([{"name": "", "phone": "0912345678", "vendor": "shopee"}])
+        self.assertEqual(
+            resolve({"current_holder": "王小明", "current_holder_phone": "0912345678", "vendor": "shopee"}),
+            {"cooperation_type": None, "phone": ""},
+        )
+
+    def test_inactive_cooperation_types_are_included(self):
+        """合作方式被停用不代表車上那位騎士的身份就消失了。"""
+        personnel_collection = mock.Mock()
+        query = mock.Mock()
+        query.stream.return_value = []
+        personnel_collection.where.return_value = query
+        with mock.patch.object(repository, "personnel_ref", return_value=personnel_collection):
+            with mock.patch.object(repository, "list_cooperation_types", return_value=[]) as mock_types:
+                repository.build_vehicle_rider_info_lookup()
+        self.assertTrue(mock_types.call_args.kwargs.get("include_inactive"))
+
+    def test_resolving_many_vehicles_does_not_touch_firestore_again(self):
+        """這就是這次修正的重點：建好對照表之後，每台車都是查記憶體。"""
+        resolve, personnel_collection = self._lookup(
+            [{"name": "王小明", "phone": "0912345678", "vendor": "shopee", "cooperation_type": "two_wheel_contract"}]
+        )
+        personnel_collection.reset_mock()
+        for _ in range(50):
+            resolve({"current_holder": "王小明", "current_holder_phone": "0912345678", "vendor": "shopee"})
+        personnel_collection.where.assert_not_called()

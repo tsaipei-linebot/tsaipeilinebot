@@ -68,14 +68,72 @@ class RiderRidersPageFeatureCategoryTests(unittest.TestCase):
     雇傭/未對應），方便管理員核對誰能用哪個功能。"""
 
     def test_attaches_feature_category_per_rider(self):
+        """2026-09-23 改成用整批對照表（build_rider_category_map）取代每位騎士
+        查一次的 rider_feature_category()——判斷結果一樣，但整頁只打 2 趟
+        Firestore 而不是 2N 趟，見那支函式開頭的說明。"""
         riders = [{"user_id": "U1", "employee_id": "E001", "name": "小明", "status": "active"}]
         with mock.patch.object(rider_routes.rider_repository, "list_riders", return_value=riders):
-            with mock.patch.object(rider_routes.rider_repository, "rider_feature_category", return_value="contract") as mock_cat:
+            with mock.patch.object(
+                rider_routes.rider_repository, "build_rider_category_map", return_value={"E001": "contract"}
+            ) as mock_map:
                 with mock.patch.object(rider_routes, "templates") as mock_templates:
                     rider_routes.rider_riders_page(_FakeRequest(_admin_account()), redirect=None)
-        mock_cat.assert_called_once_with(riders[0])
+        # 整份清單只建一次對照表，不是每位騎士建一次
+        mock_map.assert_called_once_with()
         context = mock_templates.TemplateResponse.call_args[0][2]
         self.assertEqual(context["riders"][0]["feature_category"], "contract")
+
+    def test_rider_without_a_matching_employee_no_is_left_blank(self):
+        riders = [{"user_id": "U1", "employee_id": "沒這個工號", "name": "小明", "status": "active"}]
+        with mock.patch.object(rider_routes.rider_repository, "list_riders", return_value=riders):
+            with mock.patch.object(
+                rider_routes.rider_repository, "build_rider_category_map", return_value={"E001": "contract"}
+            ):
+                with mock.patch.object(rider_routes, "templates") as mock_templates:
+                    rider_routes.rider_riders_page(_FakeRequest(_admin_account()), redirect=None)
+        context = mock_templates.TemplateResponse.call_args[0][2]
+        self.assertEqual(context["riders"][0]["feature_category"], "")
+
+
+class RiderRidersPageFilterTests(unittest.TestCase):
+    """2026-09-23 新增：工號/姓名篩選。使用者回報騎士多了之後找不到人，
+    而且工號欄位太窄看不到完整工號。"""
+
+    def _riders(self):
+        return [
+            {"user_id": "U1", "employee_id": "大廷_A001", "name": "饒明書", "status": "active"},
+            {"user_id": "U2", "employee_id": "大廷_B002", "name": "江明哲", "status": "active"},
+        ]
+
+    def _run(self, **kwargs):
+        with mock.patch.object(rider_routes.rider_repository, "list_riders", return_value=self._riders()):
+            with mock.patch.object(rider_routes.rider_repository, "build_rider_category_map", return_value={}):
+                with mock.patch.object(rider_routes, "templates") as mock_templates:
+                    rider_routes.rider_riders_page(_FakeRequest(_admin_account()), redirect=None, **kwargs)
+        return mock_templates.TemplateResponse.call_args[0][2]
+
+    def test_no_filter_shows_everyone(self):
+        context = self._run()
+        self.assertEqual(len(context["riders"]), 2)
+
+    def test_employee_id_partial_match(self):
+        # 同仁常常只記得工號後面幾碼，要求打完整組不合實際
+        context = self._run(employee_id="A001")
+        self.assertEqual([r["name"] for r in context["riders"]], ["饒明書"])
+
+    def test_name_partial_match(self):
+        context = self._run(name="明哲")
+        self.assertEqual([r["name"] for r in context["riders"]], ["江明哲"])
+
+    def test_both_filters_must_match_the_same_rider(self):
+        context = self._run(employee_id="A001", name="江明哲")
+        self.assertEqual(context["riders"], [])
+
+    def test_has_any_rider_reflects_the_unfiltered_list(self):
+        """篩選沒中跟「一個騎士都還沒綁定」要分得開，畫面上顯示的提示不一樣。"""
+        context = self._run(name="查無此人")
+        self.assertEqual(context["riders"], [])
+        self.assertTrue(context["has_any_rider"])
 
 
 class UpdateRiderInfoTests(unittest.TestCase):

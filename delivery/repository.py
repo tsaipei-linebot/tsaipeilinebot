@@ -1434,6 +1434,65 @@ def resolve_vehicle_rider_info(vehicle: dict) -> dict:
     }
 
 
+def build_vehicle_rider_info_lookup():
+    """回傳一個 `resolve(vehicle)` 函式，效果跟 `resolve_vehicle_rider_info()`
+    一模一樣，但整份清單只打 2 趟 Firestore（全部在職人員 + 全部合作方式），
+    之後每台車都是查記憶體裡的字典。
+
+    **為什麼要有這支（效能）**：`resolve_vehicle_rider_info()` 是為了「查
+    一台車」設計的，每台車要打 2 趟 Firestore（反查人員、讀合作方式）。
+    車輛清單頁對每一台車呼叫一次，N 台車就是 **2N 趟往返**，而且一趟做完
+    才做下一趟——車越多頁面越慢，使用者回報「車輛管理點進來也是偏慢」就是
+    這個原因。騎士名單管理頁有一模一樣的問題，那邊用
+    `rider_repository.build_rider_category_map()` 解。
+
+    **比對規則跟 `_find_vehicle_rider_personnel()` 完全一致**：車輛主檔有填
+    `current_holder_phone` 就用「姓名+電話」比對（唯一，不會同名同姓混淆），
+    沒填才退而用「姓名+廠商」。兩種都只看在職人員，跟原本那兩支查詢的
+    `status == "active"` 條件相同。同一組鍵對到多筆時保留先掃到的那一筆，
+    跟原本 Firestore 查詢「取第一筆」的行為一致（那個限制本來就存在，見
+    `find_personnel_by_name_vendor()` 的說明）。
+
+    單台車的情境（車輛詳細頁）仍然用原本的 `resolve_vehicle_rider_info()`，
+    不需要為了一台車把整份人員名冊撈回來。
+    """
+    cooperation_types_by_id = {coop["id"]: coop for coop in list_cooperation_types(include_inactive=True)}
+
+    personnel_by_name_phone = {}
+    personnel_by_vendor_name = {}
+    for snapshot in personnel_ref().where("status", "==", "active").stream():
+        data = snapshot.to_dict() or {}
+        data["id"] = snapshot.id
+        name = (data.get("name") or "").strip()
+        if not name:
+            continue
+        phone = (data.get("phone") or "").strip()
+        if phone:
+            personnel_by_name_phone.setdefault((name, phone), data)
+        vendor = data.get("vendor") or ""
+        if vendor:
+            personnel_by_vendor_name.setdefault((vendor, name), data)
+
+    def resolve(vehicle: dict) -> dict:
+        name = (vehicle.get("current_holder") or "").strip()
+        if not name:
+            return {"cooperation_type": None, "phone": ""}
+        phone = (vehicle.get("current_holder_phone") or "").strip()
+        if phone:
+            person = personnel_by_name_phone.get((name, phone))
+        else:
+            vendor = vehicle.get("vendor") or ""
+            person = personnel_by_vendor_name.get((vendor, name)) if vendor else None
+        if not person:
+            return {"cooperation_type": None, "phone": ""}
+        return {
+            "cooperation_type": cooperation_types_by_id.get(person.get("cooperation_type") or ""),
+            "phone": person.get("phone") or "",
+        }
+
+    return resolve
+
+
 def resolve_vehicle_rider_cooperation_type(vehicle: dict):
     """車輛管理清單頁／詳細頁「騎手身份」欄位用（2026-09-18 新增）：反查
     這台車目前使用人的合作方式，找不到對應的人員、或對應的人員沒有設定
