@@ -2285,6 +2285,8 @@ tests -p "test_*.py"`（目前 652 個測試），測試沒過 PR 上會顯示�
 
 ## 新增：少凱業務開發專區加上「勾選要反查的職缺」功能（2026-09-17）
 
+> **2026-09-24 起這節描述的做法已被取代**：畫面不再讀試算表、勾選改成以「地點組」為單位、存在 Firestore，見檔案最後「業務開發整併」那節。下面保留當歷史紀錄。
+
 背景：`tsaipei-linebot-recruitment-leads-scraper` 這個獨立 repo（每天自動
 搜尋 104/1111/小雞上工的派遣客戶開發職缺，寫進跟 `/salesdev` 讀的同一份
 Google Sheet 的「Leads」分頁）這次改版，把「反查要派公司/電話/email」這
@@ -9807,11 +9809,11 @@ PR 說明，常常很長。
    行為就是這樣）
 7. 共用同一支上傳頁＋人資多一個部門下拉，這個做法可以嗎？
 
-## 【待辦計畫】業務開發整併：兩支爬蟲合一、搬進平台、改存 Firestore（2026-09-23 決定，尚未動工）
+## 業務開發整併：兩支爬蟲合一、搬進平台、改存 Firestore（2026-09-23 決定；2026-09-24 階段 1 已完成，階段 2 待辦）
 
-**這一節是計畫，不是已完成的事。** 2026-09-23 使用者說「我們來開一下業務
-開發的功能」，盤點現況後決定把業務開發整個整併進材霈平台。實作還沒開始，
-等使用者說「請實作」再從階段 1 動工，下次接手從這裡讀起。
+2026-09-23 使用者說「我們來開一下業務開發的功能」，盤點現況後決定把業務
+開發整個整併進材霈平台。**階段 1 已經實作完成**（實作內容與上線步驟見
+本節最後「階段 1 實作紀錄」），階段 0 由使用者自己處理，階段 2、3 還沒做。
 
 ### 盤點當下的現況（2026-09-23）
 
@@ -9915,3 +9917,104 @@ PR 說明，常常很長。
 - 兩個舊 repo 在 GitHub 上封存（Archive，變唯讀、資料都還在）。
 - 試算表「ai業務開發」停止更新，留作封存。
 - 更新 `/salesdev/help`、這一節改成「已完成」。
+
+### 階段 1 實作紀錄（2026-09-24）
+
+使用者 2026-09-24 說「你先做 1，我等等處理 0」。
+
+**新增的檔案（全部在 `salesdev/` 套件）**
+
+| 檔案 | 內容 |
+|---|---|
+| `salesdev/normalize.py` | 亂碼修復 `repair_mojibake()`、地址拆解 `parse_address()`、歸併鍵 `group_key_for()`、文件 ID `job_doc_id()`／`job_id_from_url()`。全部純函式 |
+| `salesdev/classify.py` + `salesdev/keywords.json` | 派遣公司判斷（沿用外部 repo 的關鍵字）、**內部職缺判斷**（新）、排除自己公司「材霈」。關鍵字要增修只改 `keywords.json` |
+| `salesdev/scrapers/` | 104、1111、小雞上工三支爬蟲，從外部 repo 搬來 |
+| `salesdev/repository.py` | Firestore 讀寫：`salesdev_jobs`、`salesdev_groups`、`salesdev_factories`、`salesdev_runs` |
+| `salesdev/pipeline.py` | 每日抓取主流程，`POST /internal/salesdev/scrape/run` 呼叫 |
+| `salesdev/sheet_import.py` | 一次性匯入舊試算表（可以重複按） |
+| `salesdev/excel_export.py` | 「下載 Excel」（三個工作表） |
+| `templates/salesdev_group.html` | 一組的詳細頁（組內職缺、反查結果、備註、聯絡紀錄） |
+
+**改寫的檔案**：`salesdev_routes.py`（整個改讀 Firestore）、`templates/salesdev_home.html`
+（三個分頁＋最近一次抓取＋管理員匯入按鈕）、`templates/salesdev_help.html`、
+`services/factory_watch_service.py`（新登記工廠改寫 Firestore，不再寫試算表；
+LINE 摘要的連結改成 `/salesdev?tab=factories`，需要 `SERVICE_BASE_URL` 有設定
+才會附連結）、`main.py`（新增觸發端點）、`config.py`（三個新設定）。
+**刪除** `services/salesdev_sheet_service.py`（畫面不再讀試算表，匯入改用
+`salesdev/sheet_import.py` 自己的讀取）。
+
+**跟外部 repo 版本不一樣的地方**
+- 104 不再逐筆打詳情 API（一律 404，每筆白等 1.8 秒）；職缺編號改從網址取
+  （`/job/7kcx5` 的 `7kcx5`），跟舊試算表的連結對得起來，匯入的舊資料跟新抓
+  的才會是同一筆。
+- 小雞上工強制 UTF-8 解碼。**根因**：它的頁面沒宣告 charset，requests 照規格
+  用 latin-1 解碼；中文在 JSON-LD 裡是 `\uXXXX` 跳脫寫法所以沒事，表情符號
+  （4 個 byte）直接寫在裡面就被拆成「ð¥」。舊資料匯入時用 `repair_mojibake()` 修。
+- 小雞上工地址：街道欄位本身就含縣市時（刊登者把公司地址填進去）只用街道欄，
+  不再接成「彰化縣彰化市新北市三重區…」。
+- 不用 BeautifulSoup/lxml（這個 repo 沒裝），JSON-LD 改用正規表示式抓。
+- 整個抓取有時間上限 `SALESDEV_SCRAPE_TIME_BUDGET_SECONDS`（預設 240 秒），
+  避免超過 Cloud Run 預設 300 秒逾時；時間到就先存已抓到的，畫面標「時間到
+  提早結束」。
+
+**歸併規則**（`normalize.group_key_for()`）
+- 地址拆得出「縣市＋區＋路（含段）」→ 用地點歸併，不同派遣公司也歸在一起。
+  縣市用 22 縣市白名單（不然「新竹縣竹北市」的「竹北市」會被當縣市）；地址
+  出現兩個縣市取最後一個；區名重複去掉；村/里去掉；段數統一國字；路名本身
+  被打碼（「XX路」）視為沒有路名。
+- 拆不出來 → 「派遣公司＋整理過的標題」（去掉表情符號、標點、【】、「急徵」
+  「高薪」這類字）。
+- 組的文件 ID 是歸併鍵的 SHA-1 前 24 碼。
+- 審查狀態、反查結果、備註、聯絡紀錄都記在**組**上。組裡的職缺全部被移走時
+  組保留（不能讓備註跟著消失），只是 `job_count` 變 0、畫面不顯示。
+
+**內部職缺**：`internal_reason`（自動判斷的關鍵字）＋`internal_override`（人工
+改過以人工為準），內部職缺 `group_id` 是空字串，但 `home_group_id` 永遠記著
+本來該在哪一組，人工改回來時放回去。人工改過的，之後每天重抓都不會被蓋掉。
+
+**舊試算表匯入**：9/17 以前的列有外部程式自動反查的「推測要派公司/電話/Email」，
+品質很差（還有把材霈自己當要派公司的），放進職缺的 `legacy` 欄位、詳細頁標
+「舊版自動反查（僅供參考）」，不當成反查結果；9/17 以後的列的電話/Email 是
+刊登者（派遣公司）自己的，放 `poster_phone`/`poster_email`。試算表裡「已勾選
+待反查」的列，歸併後那一組也會標成已勾選。
+
+**畫面實測**：用 Playwright 實際開過 `/salesdev`、詳細頁（桌面 1280、手機 390
+寬）。手機版表格固定最小寬度 880px 改成左右滑動，不會被擠成一字一行。手機版
+頂端導覽列一字一行是既有問題（見前面待辦），這次沒動。
+
+**測試**：新增 `tests/_fake_firestore.py`（記憶體版 Firestore，只實作用到的
+API）＋ `test_salesdev_normalize.py`、`test_salesdev_classify.py`、
+`test_salesdev_scrapers.py`、`test_salesdev_repository.py`、
+`test_salesdev_pipeline_import_export.py`、`test_salesdev_pages.py`；改寫
+`test_salesdev_routes.py`；刪除 `test_salesdev_sheet_service.py`。全部測試
+2197 → 2261 個，全數通過。開發環境的網路擋掉了 104／1111／小雞上工，**爬蟲
+沒辦法在開發階段實際連線測試**，只能靠測試資料驗證解析邏輯——這也是要新舊
+並行一段時間的原因。
+
+**已知風險 / 待觀察**
+- Google Cloud 的主機會不會被 104、小雞上工擋，要第一次實際跑才知道（看畫面
+  上方「最近一次自動抓取」的筆數跟錯誤訊息）。
+- 地點歸併只到「路」，長路可能誤歸，畫面上已經提醒使用者點開確認。
+- 合併這個 PR 時首頁**會**自動發一則系統公告：自動公告只略過「檔名含
+  salesdev」的改動，這次也改到 `main.py`、`config.py`、`services/factory_watch_service.py`
+  等共用檔案。不想讓同仁看到的話，到「公告管理」刪掉那則。
+
+### 階段 1 上線步驟（使用者在 Cloud Shell 執行）
+
+1. **產生密鑰並設定到 Cloud Run**（兩行要在同一個 Cloud Shell 視窗接著跑，
+   第 2 步也要在同一個視窗，因為會用到 `$SECRET` 這個暫存變數）：
+   ```
+   SECRET=$(openssl rand -hex 24); echo "$SECRET"
+   gcloud run services update recruitment-bot --region=asia-east1 --project=tsaipei-505807 --update-env-vars=SALESDEV_SCRAPE_TRIGGER_SECRET=$SECRET
+   ```
+2. **建立每天 07:00 的排程**：
+   ```
+   gcloud scheduler jobs create http salesdev-daily-scrape --project=tsaipei-505807 --location=asia-east1 --schedule="0 7 * * *" --time-zone="Asia/Taipei" --uri="https://recruitment-bot-412901869672.asia-east1.run.app/internal/salesdev/scrape/run" --http-method=POST --headers="X-Salesdev-Scrape-Secret=$SECRET" --attempt-deadline=600s
+   ```
+3. **馬上手動跑一次**：`gcloud scheduler jobs run salesdev-daily-scrape --project=tsaipei-505807 --location=asia-east1`，
+   等 4～5 分鐘後開 `/salesdev`，最上方要出現「最近一次自動抓取」。
+4. **匯入舊試算表**：用管理員帳號開 `/salesdev`，按頁面最下方「匯入舊試算表資料」。
+5. （選擇性）每日摘要 LINE 推播：`SALESDEV_LINE_TARGET_ID` 設成要收通知的
+   LINE user ID／群組 ID，沒設就不推。
+6. 新舊並行約一週，外部 GitHub 版照跑；確認平台版筆數正常後進階段 3。
+

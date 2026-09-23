@@ -2,7 +2,7 @@
 
 資料來源是「職缺維護表單」（Netlify + Apps Script，跟這個 repo 完全獨立的
 系統，見 CLAUDE.md）背後的 Google Sheet，這裡只讀、不寫回，用跟
-services/factory_watch_service.py／services/salesdev_sheet_service.py 一樣的
+services/factory_watch_service.py／salesdev/sheet_import.py 一樣的
 Cloud Run 服務帳戶 ADC 連線。
 
 這份試算表有兩個相關分頁：

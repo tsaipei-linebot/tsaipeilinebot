@@ -1,32 +1,43 @@
-"""少凱業務開發專區（/salesdev）：把「派遣客戶開發名單、新登記工廠監控
-彙整」這份 Google Sheet 的內容，用網頁表格呈現。取代原本 /portal 首頁卡片
-直接連去 Google Sheet 編輯畫面的做法——這裡是唯讀網頁，不會有人不小心
-改到原始資料，畫面也比試算表好讀。
+"""少凱業務開發專區（/salesdev）。
 
-跟 delivery/management/hr 不同，這個模組資料量小、只是唯讀彙整，不需要
-獨立掛載一個子系統，直接掛在根 app 上、複用同一顆登入 session cookie
-（比照 portal_routes.py／accounts_routes.py 的做法）。是否看得到這張卡片、
-能不能進來這個頁面，跟其他部門模組一樣由 /accounts 的權限設定決定。
+2026-09-24 改版（見 HANDOFF.md「業務開發整併」）：資料來源從 Google 試算表
+改成 Firestore（`salesdev/repository.py`），職缺由平台自己每天抓
+（`salesdev/pipeline.py`），同地點的職缺歸成一組（`salesdev/normalize.py`）。
 
-2026-09-17 新增：「勾選要反查的職缺」功能。這份 Google Sheet 裡如果有分頁
-含「審查狀態」欄位（目前是 tsaipei-linebot-recruitment-leads-scraper 這個
-抓職缺程式寫入的「Leads」分頁），畫面上會讓使用者勾選「待審查」的職缺，
-送出後把這些列的狀態改成「已勾選待反查」，之後由另一個獨立的每日反查
-排程（不在這個 repo 裡）讀取「已勾選待反查」的列去執行實際的反查。這裡
-只負責「勾選、寫回狀態」，不執行任何反查邏輯。
+- `/salesdev`：三個分頁——開發名單（一組一列）、非客戶線索（派遣公司徵
+  自己內部員工的職缺）、新登記工廠；上方顯示最近一次自動抓取的結果
+- `/salesdev/groups/{id}`：一組的詳細頁，看組裡每一筆職缺、填反查結果、
+  備註、聯絡紀錄
+- `/salesdev/export.xlsx`：下載 Excel
+- `/salesdev/import-sheet`：一次性匯入舊試算表（模組管理員限定）
+
+跟 delivery/management/hr 不同，這個模組直接掛在根 app 上、複用同一顆
+登入 session cookie（比照 portal_routes.py／accounts_routes.py 的做法）。
+能不能進來由 /accounts 的權限設定決定。
 """
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 
 import platform_accounts
 from platform_templating import templates
-from services.salesdev_sheet_service import fetch_sheet_tabs, mark_rows_selected_for_reverse_lookup
+from salesdev import repository
+from salesdev.excel_export import SOURCE_LABELS, build_workbook
+from salesdev.sheet_import import import_from_sheet
 
 router = APIRouter()
 
 MODULE_CODE = "salesdev"
+TABS = ("leads", "internal", "factories")
+
+STATUS_BADGES = {
+    repository.STATUS_PENDING: "badge-pending",
+    repository.STATUS_SELECTED: "badge-selected",
+    repository.STATUS_DONE: "badge-ok",
+    repository.STATUS_NOT_FOUND: "badge-resigned",
+    repository.STATUS_SKIPPED: "badge-resigned",
+}
 
 
 def _require_access(request: Request):
@@ -38,34 +49,77 @@ def _require_access(request: Request):
     return None
 
 
+def _username(request: Request) -> str:
+    account = platform_accounts.current_account(request) or {}
+    return account.get("name") or account.get("username") or ""
+
+
+def _is_module_admin(request: Request) -> bool:
+    account = platform_accounts.current_account(request)
+    return platform_accounts.module_role(account, MODULE_CODE) == platform_accounts.ROLE_ADMIN
+
+
+def _redirect(url: str, msg: str = "", err: str = "") -> RedirectResponse:
+    sep = "&" if "?" in url else "?"
+    if msg:
+        url += f"{sep}msg={quote(msg)}"
+    elif err:
+        url += f"{sep}err={quote(err)}"
+    return RedirectResponse(url=url, status_code=303)
+
+
+def _common_context(request: Request) -> dict:
+    return {
+        "user": platform_accounts.current_account(request),
+        "msg": request.query_params.get("msg", ""),
+        "err": request.query_params.get("err", ""),
+        "status_badges": STATUS_BADGES,
+        "source_labels": SOURCE_LABELS,
+    }
+
+
 @router.get("/salesdev")
-def salesdev_home(
-    request: Request,
-    selected: str = "",
-    select_error: str = "",
-    redirect=Depends(_require_access),
-):
+def salesdev_home(request: Request, tab: str = "leads", status: str = "", redirect=Depends(_require_access)):
     if redirect:
         return redirect
-    tabs, error = fetch_sheet_tabs()
-    return templates.TemplateResponse(
-        request,
-        "salesdev_home.html",
+    tab = tab if tab in TABS else "leads"
+    context = _common_context(request)
+    context.update(
         {
-            "user": platform_accounts.current_account(request),
-            "tabs": tabs,
-            "error": error,
-            "selected_count": selected,
-            "select_error": select_error,
-        },
+            "tab": tab,
+            "status_filter": status if status in repository.REVIEW_STATUSES else "",
+            "review_statuses": repository.REVIEW_STATUSES,
+            "latest_run": None,
+            "status_counts": {},
+            "groups": [],
+            "internal_jobs": [],
+            "factories": [],
+            "load_error": "",
+            "is_module_admin": _is_module_admin(request),
+        }
     )
+    try:
+        context["latest_run"] = repository.latest_run()
+        if tab == "leads":
+            groups = repository.list_groups()
+            context["status_counts"] = {
+                s: sum(1 for g in groups if g.get("review_status") == s) for s in repository.REVIEW_STATUSES
+            }
+            if context["status_filter"]:
+                groups = [g for g in groups if g.get("review_status") == context["status_filter"]]
+            context["groups"] = groups
+        elif tab == "internal":
+            context["internal_jobs"] = repository.list_internal_jobs()
+        else:
+            context["factories"] = repository.list_factories()
+    except Exception as exc:
+        print(f"[業務開發] 讀取資料失敗：{exc}")
+        context["load_error"] = f"讀取資料時發生錯誤：{exc}"
+    return templates.TemplateResponse(request, "salesdev_home.html", context)
 
 
 @router.get("/salesdev/help")
 def salesdev_help(request: Request, redirect=Depends(_require_access)):
-    """少凱業務開發專區使用說明（2026-09-18 新增）。跟 salesdev_home() 一樣
-    用 _require_access，跟 /portal 卡片顯不顯示「使用說明」按鈕是同一組
-    權限判斷（見 portal_routes.py 的說明）。"""
     if redirect:
         return redirect
     return templates.TemplateResponse(request, "salesdev_help.html", {"user": platform_accounts.current_account(request)})
@@ -73,28 +127,116 @@ def salesdev_help(request: Request, redirect=Depends(_require_access)):
 
 @router.post("/salesdev/select")
 async def salesdev_select(request: Request, redirect=Depends(_require_access)):
-    """使用者在畫面上勾選職缺後送出：把這些列的「審查狀態」改成
-    「已勾選待反查」。用 request.form() 而不是宣告 Form(...) 參數，是因為
-    `row_numbers` 是數量不固定的勾選框（0 到多個），FastAPI 的 Form 語法
-    處理「同名多值」不如直接讀原始表單資料直觀。
-    """
+    """勾選「待審查」的組送出 →「已勾選待反查」。勾選框數量不固定，所以
+    直接讀 request.form() 的同名多值。"""
     if redirect:
         return redirect
     form = await request.form()
-    tab_title = form.get("tab_title", "")
-    row_numbers = []
-    for raw_value in form.getlist("row_numbers"):
-        try:
-            row_numbers.append(int(raw_value))
-        except (TypeError, ValueError):
-            continue
+    group_ids = [g for g in form.getlist("group_ids") if g]
+    if not group_ids:
+        return _redirect("/salesdev", err="請至少勾選一個地點再送出。")
+    count = repository.select_groups_for_lookup(group_ids, _username(request))
+    return _redirect("/salesdev", msg=f"已送出 {count} 個地點，狀態改成「已勾選待反查」。")
 
-    if not tab_title or not row_numbers:
-        return RedirectResponse(
-            url=f"/salesdev?select_error={quote('請至少勾選一筆職缺再送出。')}", status_code=303
-        )
 
-    updated_count, error = mark_rows_selected_for_reverse_lookup(tab_title, row_numbers)
-    if error:
-        return RedirectResponse(url=f"/salesdev?select_error={quote(error)}", status_code=303)
-    return RedirectResponse(url=f"/salesdev?selected={updated_count}", status_code=303)
+@router.get("/salesdev/groups/{group_id}")
+def salesdev_group_detail(request: Request, group_id: str, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    group = repository.get_group(group_id)
+    if not group:
+        return _redirect("/salesdev", err="找不到這個地點，可能已經被重新整理過，請回列表重新點選。")
+    context = _common_context(request)
+    context.update(
+        {
+            "group": group,
+            "jobs": repository.list_jobs_in_group(group_id),
+            "review_statuses": repository.REVIEW_STATUSES,
+        }
+    )
+    return templates.TemplateResponse(request, "salesdev_group.html", context)
+
+
+@router.post("/salesdev/groups/{group_id}/review")
+async def salesdev_group_review(request: Request, group_id: str, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    form = await request.form()
+    lookup = {field: str(form.get(field, "")) for field in repository.LOOKUP_FIELDS}
+    ok = repository.update_group_review(group_id, str(form.get("review_status", "")), lookup, _username(request))
+    url = f"/salesdev/groups/{group_id}"
+    return _redirect(url, msg="已儲存反查結果。") if ok else _redirect(url, err="儲存失敗：狀態不正確或找不到這個地點。")
+
+
+@router.post("/salesdev/groups/{group_id}/note")
+async def salesdev_group_note(request: Request, group_id: str, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    form = await request.form()
+    ok = repository.update_group_note(group_id, str(form.get("note", "")), _username(request))
+    url = f"/salesdev/groups/{group_id}"
+    return _redirect(url, msg="已儲存備註。") if ok else _redirect(url, err="儲存失敗：找不到這個地點。")
+
+
+@router.post("/salesdev/groups/{group_id}/contact-log")
+async def salesdev_group_contact_log(request: Request, group_id: str, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    form = await request.form()
+    ok = repository.add_contact_log(group_id, str(form.get("text", "")), _username(request))
+    url = f"/salesdev/groups/{group_id}"
+    return _redirect(url, msg="已新增聯絡紀錄。") if ok else _redirect(url, err="請先輸入聯絡內容再送出。")
+
+
+@router.post("/salesdev/jobs/{job_id}/internal")
+async def salesdev_job_internal(request: Request, job_id: str, redirect=Depends(_require_access)):
+    """人工修正「是不是派遣公司內部職缺」。value=1 移到非客戶線索、
+    value=0 放回開發名單。"""
+    if redirect:
+        return redirect
+    form = await request.form()
+    internal = str(form.get("value", "")) == "1"
+    back = str(form.get("back", ""))
+    job = repository.get_job(job_id)
+    if not job:
+        return _redirect("/salesdev?tab=internal", err="找不到這筆職缺。")
+    original_group = job.get("group_id", "")
+    new_group = repository.set_job_internal(job_id, internal, _username(request))
+    if internal:
+        url = f"/salesdev/groups/{original_group}" if back == "group" and original_group else "/salesdev?tab=internal"
+        return _redirect(url, msg="已移到「非客戶線索」。")
+    return _redirect(f"/salesdev/groups/{new_group}" if new_group else "/salesdev", msg="已放回開發名單。")
+
+
+@router.get("/salesdev/export.xlsx")
+def salesdev_export(request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    content = build_workbook(
+        repository.list_groups(), repository.list_all_jobs(), repository.list_factories()
+    )
+    filename = f"業務開發名單_{repository.today_str()}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.post("/salesdev/import-sheet")
+def salesdev_import_sheet(request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    if not _is_module_admin(request):
+        return _redirect("/salesdev", err="只有這個專區的管理員可以匯入舊試算表資料。")
+    stats = import_from_sheet(_username(request))
+    if stats["error"]:
+        return _redirect("/salesdev", err=stats["error"])
+    return _redirect(
+        "/salesdev",
+        msg=(
+            f"匯入完成：試算表職缺 {stats['jobs_read']} 筆（新增 {stats['new_jobs']}、已存在更新 {stats['updated_jobs']}），"
+            f"歸成新地點 {stats['new_groups']} 個、非客戶線索 {stats['internal_jobs']} 筆、沿用已勾選 {stats['selected_groups']} 個；"
+            f"新登記工廠 {stats['factories_read']} 筆（新增 {stats['new_factories']}）。"
+        ),
+    )

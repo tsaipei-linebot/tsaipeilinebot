@@ -166,7 +166,7 @@ class GetAllApprovedRepaymentRecordsTests(unittest.TestCase):
 
 class GetMyRepaymentRecordsTests(unittest.TestCase):
     """實際打 Google Sheets API 的路徑需要真的 ADC，留給有 GCP 憑證的環境做
-    整合測試（跟 factory_watch_service／salesdev_sheet_service 的既有分工
+    整合測試（跟 factory_watch_service／salesdev/sheet_import 的既有分工
     一致）。這裡只測試不需要網路連線就能確定行為的部分：試算表 ID 沒設定
     時要回傳清楚的中文錯誤，而不是讓例外炸出去變成 500 錯誤頁。"""
 

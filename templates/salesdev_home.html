@@ -3,84 +3,162 @@
 {% block content %}
 <div class="page-head">
     <h1 class="page-title">少凱業務開發專區</h1>
+    <div class="btn-list">
+        <a class="btn btn-small" href="/salesdev/export.xlsx">下載 Excel</a>
+        <a class="btn btn-small" href="/salesdev/help">使用說明</a>
+    </div>
 </div>
-<p class="hint">派遣客戶開發名單、新登記工廠監控彙整，資料直接讀取自後台維護的 Google 試算表（大部分是唯讀，不會改到原始資料；有「審查狀態」欄位的分頁可以勾選職缺送出反查）。</p>
 
-{% if selected_count %}
-<p class="success">已送出 {{ selected_count }} 筆職缺，狀態改成「已勾選待反查」，會排進每日反查排程處理。</p>
-{% endif %}
-{% if select_error %}
-<p class="warning">{{ select_error }}</p>
-{% endif %}
+{% if msg %}<p class="success">{{ msg }}</p>{% endif %}
+{% if err %}<p class="warning">{{ err }}</p>{% endif %}
+{% if load_error %}<p class="warning">{{ load_error }}</p>{% endif %}
 
-{% if error %}
-<p class="warning">{{ error }}</p>
-{% elif not tabs %}
-<p class="empty">目前沒有可顯示的資料。</p>
-{% else %}
-<div class="sheet-tabs" role="tablist">
-    {% for tab in tabs %}
-    <button type="button" class="sheet-tab-btn{{ ' active' if loop.first else '' }}" data-tab-target="sheet-tab-{{ loop.index }}">{{ tab.title }}</button>
+<div class="salesdev-run">
+    {% if latest_run %}
+    <strong>最近一次自動抓取：</strong>{{ latest_run.started_at }}
+    （{% for source, count in latest_run.source_counts.items() %}{{ source_labels.get(source, source) }} {{ count }} 筆{% if not loop.last %}、{% endif %}{% endfor %}）
+    ，新職缺 {{ latest_run.new_jobs }} 筆、新地點 {{ latest_run.new_groups }} 個
+    {% if latest_run.deadline_hit %}<span class="badge badge-pending">時間到提早結束</span>{% endif %}
+    {% if latest_run.errors %}
+    <ul class="salesdev-run-errors">
+        {% for e in latest_run.errors %}<li>{{ e }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% else %}
+    <strong>還沒有自動抓取紀錄。</strong>每日排程設定好之後，這裡會顯示每天早上的抓取結果。
+    {% endif %}
+</div>
+
+<div class="sheet-tabs">
+    <a class="sheet-tab-btn{{ ' active' if tab == 'leads' else '' }}" href="/salesdev">開發名單（依地點）</a>
+    <a class="sheet-tab-btn{{ ' active' if tab == 'internal' else '' }}" href="/salesdev?tab=internal">非客戶線索</a>
+    <a class="sheet-tab-btn{{ ' active' if tab == 'factories' else '' }}" href="/salesdev?tab=factories">新登記工廠</a>
+</div>
+
+{% if tab == 'leads' %}
+<p class="hint">同一個地點（縣市＋區＋路）的職缺歸成一列，不管是哪家派遣公司刊的、標題怎麼換。門牌常被打碼，所以只能判斷到「同一條路」，很長的路上可能是不同工廠，點「查看」可以看組裡每一筆。沒有地址的職缺，改用「同一家派遣公司＋同樣標題」判斷重複。</p>
+
+<div class="filter-bar">
+    <span>狀態：</span>
+    <a class="btn btn-small{{ ' btn-primary' if not status_filter else '' }}" href="/salesdev">全部</a>
+    {% for s in review_statuses %}
+    <a class="btn btn-small{{ ' btn-primary' if status_filter == s else '' }}" href="/salesdev?status={{ s|urlencode }}">{{ s }}（{{ status_counts.get(s, 0) if status_counts else 0 }}）</a>
     {% endfor %}
 </div>
 
-{% for tab in tabs %}
-<div class="sheet-tab-panel" id="sheet-tab-{{ loop.index }}"{{ '' if loop.first else ' hidden' }}>
-    {% if tab.truncated %}
-    <p class="hint">這個分頁資料筆數較多，這裡只顯示前 {{ tab.rows|length }} 筆，完整資料請洽負責同仁。</p>
-    {% endif %}
-    {% if not tab.rows %}
-    <p class="empty">這個分頁目前沒有資料。</p>
-    {% else %}
-    {% if tab.review_status_col_index is not none %}
-    <p class="hint">勾選想深入了解、要反查要派公司電話/email 的職缺，按下方「送出勾選」後，這些職缺會排進每日反查排程處理；只有「{{ tab.headers[tab.review_status_col_index] }}」欄位是「待審查」的職缺可以勾選。</p>
-    <form method="post" action="/salesdev/select">
-        <input type="hidden" name="tab_title" value="{{ tab.title }}">
-    {% endif %}
-    <input type="text" class="sheet-search" data-search-for="sheet-table-{{ loop.index }}" placeholder="搜尋「{{ tab.title }}」...">
+{% if not groups %}
+<div class="empty-state">
+    <p class="empty-state-title">{% if status_filter %}沒有狀態是「{{ status_filter }}」的地點{% else %}目前還沒有任何開發名單{% endif %}</p>
+    <p class="empty-state-text">{% if status_filter %}換一個狀態看看，或點「全部」。{% else %}每日自動抓取開始之後名單會出現在這裡；管理員也可以先把舊試算表的資料匯入（頁面最下方）。{% endif %}</p>
+</div>
+{% else %}
+<form method="post" action="/salesdev/select">
+    <input type="text" class="sheet-search" data-search-for="salesdev-groups" placeholder="搜尋地點、派遣公司、職缺標題...">
     <div class="table-scroll">
-        <table class="data-table sticky-head" id="sheet-table-{{ loop.index }}">
+        <table class="data-table sticky-head salesdev-table" id="salesdev-groups">
             <thead>
                 <tr>
-                    {% if tab.review_status_col_index is not none %}<th>勾選</th>{% endif %}
-                    {% for h in tab.headers %}<th>{{ h }}</th>{% endfor %}
+                    <th>勾選</th>
+                    <th>狀態</th>
+                    <th>地點／名稱</th>
+                    <th>職缺數</th>
+                    <th>派遣公司</th>
+                    <th>最新職缺標題</th>
+                    <th>最近出現</th>
+                    <th>要派公司</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
-                {% for row in tab.rows %}
+                {% for g in groups %}
                 <tr>
-                    {% if tab.review_status_col_index is not none %}
-                    <td>
-                        {% if row.cells[tab.review_status_col_index] == '待審查' %}
-                        <input type="checkbox" name="row_numbers" value="{{ row.row_number }}">
-                        {% else %}
-                        &mdash;
-                        {% endif %}
-                    </td>
-                    {% endif %}
-                    {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
+                    <td>{% if g.review_status == '待審查' %}<input type="checkbox" name="group_ids" value="{{ g.id }}">{% else %}&mdash;{% endif %}</td>
+                    <td><span class="badge {{ status_badges.get(g.review_status, '') }}">{{ g.review_status }}</span></td>
+                    <td>{{ g.label }}{% if g.kind == 'title' %}<div class="meta">沒有地址，依標題判斷</div>{% endif %}</td>
+                    <td>{{ g.job_count }}</td>
+                    <td>{{ g.agency_names|join('、') }}{% if g.agency_names|length > 1 %}<div class="meta">{{ g.agency_names|length }} 家同時在徵</div>{% endif %}</td>
+                    <td>{{ g.sample_title }}</td>
+                    <td>{{ g.last_seen }}</td>
+                    <td>{{ g.client_company }}</td>
+                    <td><a class="btn btn-small" href="/salesdev/groups/{{ g.id }}">查看</a></td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
-    {% if tab.review_status_col_index is not none %}
-        <p><button type="submit" class="btn btn-primary">送出勾選</button></p>
-    </form>
-    {% endif %}
-    {% endif %}
+    <p class="hint">勾選想深入了解的地點按「送出勾選」，狀態會改成「已勾選待反查」。只有「待審查」的可以勾選。</p>
+    <p><button type="submit" class="btn btn-primary">送出勾選</button></p>
+</form>
+{% endif %}
+
+{% elif tab == 'internal' %}
+<p class="hint">派遣公司在徵<strong>自己的內部員工</strong>（例如「人力仲介行政人員」「內部職缺－人資招募顧問」），背後沒有要派公司，所以不列入開發名單。這是依職缺標題的關鍵字自動判斷的，判斷錯的話按「這不是內部職缺」就會放回開發名單。</p>
+{% if not internal_jobs %}
+<div class="empty-state"><p class="empty-state-title">目前沒有被判斷成內部職缺的資料</p></div>
+{% else %}
+<input type="text" class="sheet-search" data-search-for="salesdev-internal" placeholder="搜尋派遣公司、職缺標題...">
+<div class="table-scroll">
+    <table class="data-table sticky-head salesdev-table" id="salesdev-internal">
+        <thead><tr><th>來源</th><th>派遣公司</th><th>職缺名稱</th><th>判斷原因</th><th>最近出現</th><th></th></tr></thead>
+        <tbody>
+            {% for j in internal_jobs %}
+            <tr>
+                <td>{{ source_labels.get(j.source, j.source) }}</td>
+                <td>{{ j.company_name }}</td>
+                <td>{% if j.job_url %}<a href="{{ j.job_url }}" target="_blank" rel="noopener">{{ j.job_title }}</a>{% else %}{{ j.job_title }}{% endif %}</td>
+                <td>{% if j.internal_override %}人工標記{% else %}標題含「{{ j.internal_reason }}」{% endif %}</td>
+                <td>{{ j.last_seen }}</td>
+                <td>
+                    <form method="post" action="/salesdev/jobs/{{ j.id }}/internal">
+                        <input type="hidden" name="value" value="0">
+                        <button type="submit" class="btn btn-small">這不是內部職缺</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
-{% endfor %}
+{% endif %}
+
+{% else %}
+<p class="hint">每週自動掃描政府資料開放平台《登記工廠名錄》，列出新登記的工廠。</p>
+{% if not factories %}
+<div class="empty-state"><p class="empty-state-title">目前沒有新登記工廠的資料</p></div>
+{% else %}
+<input type="text" class="sheet-search" data-search-for="salesdev-factories" placeholder="搜尋工廠名稱、地址、行業...">
+<div class="table-scroll">
+    <table class="data-table sticky-head salesdev-table" id="salesdev-factories">
+        <thead><tr><th>發現日期</th><th>工廠名稱</th><th>統一編號</th><th>工廠地址</th><th>行業別</th><th>主要產品</th><th>登記核准日期</th></tr></thead>
+        <tbody>
+            {% for f in factories %}
+            <tr>
+                <td>{{ f.found_date }}</td>
+                <td>{{ f.name }}</td>
+                <td>{{ f.tax_id }}</td>
+                <td>{{ f.address }}</td>
+                <td>{{ f.industry }}</td>
+                <td>{{ f.products }}</td>
+                <td>{{ f.approval_date_raw }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endif %}
+
+{% if is_module_admin %}
+<section class="salesdev-admin">
+    <h2 class="section-title">匯入舊試算表資料（管理員）</h2>
+    <p class="hint">把原本「ai業務開發」試算表的「Leads」「新登記工廠」兩個分頁搬進來，同樣套用歸併與內部職缺判斷。<strong>可以重複按</strong>，同一筆不會變兩筆；原試算表不會被修改或刪除。資料多的話要等一兩分鐘，按下去之後請不要重新整理。</p>
+    <form method="post" action="/salesdev/import-sheet" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = '匯入中，請稍候…';">
+        <button type="submit" class="btn">匯入舊試算表資料</button>
+    </form>
+</section>
+{% endif %}
 
 <script>
-document.querySelectorAll('.sheet-tab-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-        document.querySelectorAll('.sheet-tab-btn').forEach(function (b) { b.classList.remove('active'); });
-        document.querySelectorAll('.sheet-tab-panel').forEach(function (p) { p.hidden = true; });
-        btn.classList.add('active');
-        document.getElementById(btn.dataset.tabTarget).hidden = false;
-    });
-});
 document.querySelectorAll('.sheet-search').forEach(function (input) {
     input.addEventListener('input', function () {
         var table = document.getElementById(input.dataset.searchFor);
@@ -91,5 +169,4 @@ document.querySelectorAll('.sheet-search').forEach(function (input) {
     });
 });
 </script>
-{% endif %}
 {% endblock %}

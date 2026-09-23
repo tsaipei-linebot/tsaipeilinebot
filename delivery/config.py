@@ -414,7 +414,7 @@ DEFAULT_WHEEL_TYPE = "three_wheel"
 # ==========================================
 
 # 這份試算表需要分享「編輯者」權限給 Cloud Run 服務帳戶才寫得進去（跟
-# services/salesdev_sheet_service.py 是同一個服務帳戶，權限分開分享）。
+# salesdev/sheet_import.py 是同一個服務帳戶，權限分開分享）。
 UD_VEHICLE_SHEET_ID = os.getenv("UD_VEHICLE_SHEET_ID", "11bN718SeTpOmomDkNO6ht_DiAM9Nj2y_54irASY5Wmw")
 
 # 目標分頁的 gid（不是分頁名稱），從試算表網址 `...#gid=1971778587` 這段
