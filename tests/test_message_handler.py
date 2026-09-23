@@ -3265,7 +3265,7 @@ class _RoundFourSessionMixin:
         event.message.text = msg
         api = MagicMock()
         with patch("handlers.message_handler.fetch_jobs_data", return_value=self._jobs()), \
-             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=getattr(self, "faqs", [])), \
              patch("handlers.message_handler.get_user_history", side_effect=lambda uid: list(self.history)), \
              patch("handlers.message_handler.get_user_slots", side_effect=lambda uid: dict(slots)), \
              patch("handlers.message_handler.update_user_slots", side_effect=_merge), \
@@ -3507,6 +3507,103 @@ class MultiTurnRoundFourLocationTests(_RoundFourSessionMixin, unittest.TestCase)
         self.setUp()
         r = self._say("新興這家廠商的工作")
         self.assertEqual(r["titles"], ["新興(代招)"])
+
+
+class MultiTurnRoundFiveUnderstandingTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第五輪多輪對話測試第一批：聽懂求職者的意思。"""
+
+    def _jobs(self):
+        return [
+            self._job("桃園理貨日領早班", ["理貨人員"], "甲物流", ["桃園市"], ["桃園市中壢區"], "日領", "", "排休", "早班"),
+            self._job("桃園理貨月領夜班", ["理貨人員"], "乙物流", ["桃園市"], ["桃園市楊梅區"], "月領", "", "週休二日", "夜班"),
+            self._job("桃園蝦皮理貨", ["倉儲人員"], "蝦皮威獅", ["桃園市"], ["桃園市楊梅區"], "週領", "", "排休", "早班"),
+            self._job("台北外送", ["外送員"], "蝦皮外送", ["台北市"], ["台北市中山區"], "週領", "", "排休", "彈性排班"),
+            self._job("台北外送Uber", ["外送員"], "Uber", ["台北市"], ["台北市大安區"], "週領", "", "排休", "彈性排班"),
+        ]
+
+    def test_thanks_at_the_end_keeps_the_request(self):
+        r = self._say("想找桃園理貨的工作，謝謝")
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+        self.assertTrue(r["titles"])
+        r = self._say("謝謝")
+        self.assertIn("不客氣", r["text"])
+
+    def test_no_night_shift_removes_it(self):
+        self._say("桃園理貨的工作")
+        self._say("夜班的")
+        self.assertEqual(self.session_slots["shift"], "大夜班")
+        self._say("沒有夜班的工作")
+        self.assertEqual(self.session_slots["shift"], "")
+
+    def test_negation_without_punctuation_keeps_the_new_condition(self):
+        self._say("桃園理貨的工作")
+        self._say("夜班的")
+        r = self._say("不要夜班日領就好")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(self.session_slots["pay"], "日領")
+        self.assertEqual(r["titles"], ["桃園理貨日領早班"])
+
+    def test_clarify_does_not_clear_remembered_conditions(self):
+        self._say("桃園蝦皮理貨的工作")
+        r = self._say("週領是每週幾")
+        self.assertIn("想了解週領的規定", r["buttons"])
+        self.assertEqual(self.session_slots["brand"], "蝦皮")
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+
+    def test_question_about_a_category_asks_first(self):
+        self._say("桃園的工作")
+        r = self._say("倉儲會很累嗎")
+        self.assertEqual(r["titles"], [])
+        self.assertEqual(r["buttons"], ["想了解理貨/倉儲的工作內容", "有理貨/倉儲的工作嗎"])
+        self.assertEqual(self.session_slots["category"], "")
+
+    def test_saying_no_to_a_vendor_drops_it(self):
+        self._say("台北外送的工作")
+        self._say("蝦皮的")
+        self.assertEqual(self.session_slots["brand"], "蝦皮")
+        self._say("不要蝦皮")
+        self.assertEqual(self.session_slots["brand"], "")
+
+    def test_relaxing_one_value_keeps_the_replacement(self):
+        self._say("桃園理貨的工作")
+        self._say("日領的")
+        r = self._say("我不需要日領，月領就好")
+        self.assertEqual(self.session_slots["pay"], "月領")
+        self.assertEqual(r["titles"], ["桃園理貨月領夜班"])
+
+    def test_relaxing_part_of_a_multi_value_asks_only_about_that_value(self):
+        self._say("桃園理貨日領或週領都可以")
+        r = self._say("不一定要日領")
+        self.assertIn("「發薪方式：日領」", r["text"])
+        self.assertEqual(r["buttons"][0], "不要日領了")
+        self._say(r["buttons"][0])
+        self.assertEqual(self.session_slots["pay"], "週領")
+
+    def test_relaxing_something_not_remembered_just_relists(self):
+        self._say("桃園理貨的工作")
+        r = self._say("不一定要週休")
+        self.assertFalse(r["ai"])
+        self.assertTrue(r["titles"])
+
+    def test_also_ok_adds_instead_of_replacing(self):
+        self._say("桃園理貨週休二日的工作")
+        self._say("排休也沒關係")
+        self.assertEqual(self.session_slots["leave"], "週休二日|排休")
+
+    def test_what_shift_is_fine_clears_only_shift(self):
+        self._say("桃園理貨的工作")
+        self._say("早班的")
+        self._say("什麼班都可以")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+
+    def test_one_character_reply_does_not_trigger_faq(self):
+        self.faqs = [{"question": "面試要帶什麼", "answer": "面試請攜帶身分證"}]
+        self._say("桃園理貨的工作")
+        r = self._say("要")
+        self.assertTrue(r["ai"])
+        r = self._say("請問面試要帶什麼")
+        self.assertEqual(r["text"], "面試請攜帶身分證")
 
 
 if __name__ == "__main__":
