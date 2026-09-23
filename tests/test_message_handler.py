@@ -4441,6 +4441,14 @@ class AiUnderstandingTests(_RoundFourSessionMixin, unittest.TestCase):
         self.assertEqual(form["salary_kind"], "")
         self.assertEqual(form["clarify_options"], ["桃園的工作"])
 
+    def test_county_right_before_district_keeps_only_district(self):
+        # 第一次準確率考試：「新竹竹北」AI 兩個都填，變成「新竹或竹北」
+        jobs = self._jobs()
+        form = us.validate_form(self._form(locations=["桃園", "中壢"]), jobs, "桃園中壢的工作")
+        self.assertEqual(form["locations"], ["中壢"])
+        form = us.validate_form(self._form(locations=["桃園", "中壢"]), jobs, "桃園或中壢都可以")
+        self.assertEqual(form["locations"], ["桃園", "中壢"])
+
     def test_precise_hit_boundaries(self):
         jobs = self._jobs()
         for text in ["桃園", "桃園 理貨", "中壢理貨的工作", "夜班", "日領", "不要大夜班", "班別都可以", "桃園或新竹", "有桃園的工作嗎？"]:

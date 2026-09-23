@@ -453,7 +453,7 @@ def _is_program_phrase(text: str) -> bool:
 def _log_shadow_understanding(future, message: str, started: float, active_jobs: list):
     """shadow 模式：AI 需求單只記 log、不影響回覆，用來上線前比對 AI 判斷得準不準。"""
     try:
-        form = validate_form(future.result(), active_jobs)
+        form = validate_form(future.result(), active_jobs, message)
         canonical = render_canonical_text(form) if form and form["intent"] == "找工作" else ""
         log_understanding(message, form, form["intent"] if form else "ai_failed", time.monotonic() - started, "shadow", canonical)
     except Exception:
@@ -833,7 +833,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _future = _AI_DECISION_EXECUTOR.submit(
                 understand_message, raw_msg, get_user_slots(user_id), history, AI_UNDERSTANDING_THINKING_BUDGET)
             try:
-                _ai_state["form"] = validate_form(_future.result(timeout=AI_UNDERSTANDING_TIMEOUT_SECONDS), active_jobs)
+                _ai_state["form"] = validate_form(_future.result(timeout=AI_UNDERSTANDING_TIMEOUT_SECONDS), active_jobs, raw_msg)
             except concurrent.futures.TimeoutError:
                 print(f"[AI需求單] 超過 {AI_UNDERSTANDING_TIMEOUT_SECONDS} 秒沒有回應，照原本的流程處理")
             except Exception:

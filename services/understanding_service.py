@@ -21,7 +21,7 @@ from services.matcher_service import (
     CATEGORY_KEYWORDS, SHIFT_SYNONYMS, LEAVE_BUCKETS, PAY_METHOD_SYNONYMS, WORKTYPE_SYNONYMS,
     HANDOFF_REASON_NAMES, NEGATION_TRIGGERS, LOCATION_CANDIDATES, _COUNTY_FULL_NAMES,
     build_district_county_full_index, build_benefit_keyword_index, detect_brand_label,
-    detect_benefit_labels, extract_current_target_location,
+    detect_benefit_labels, extract_current_target_location, resolve_county_for_location,
 )
 
 CATEGORIES = list(CATEGORY_KEYWORDS)
@@ -85,13 +85,14 @@ _PROMPT = """你是人力派遣公司「材霈」LINE 求職機器人「沛沛�
 欄位規則：
 - intent：
   找工作＝講了想要／不要的工作條件，或要看職缺。先講近況再找工作也算（「我們公司倒閉了，需要找新工作」「我要離職了，桃園有理貨嗎」）。
-  問問題＝在問規定、福利、面試、薪資怎麼算、公司制度等資訊，沒有要改條件（「有冷氣嗎」「薪水會扣勞健保嗎」「面試要穿什麼」「高雄餐飲假日要上班嗎」）。問句裡出現的詞不能當成條件。
+  「有小夜班嗎」「有日領的嗎」「有兼職嗎」「桃園有缺嗎」這種問「有沒有這種條件的職缺」的也是找工作，要把那個條件填進去。
+  問問題＝在問規定、福利、面試、薪資怎麼算、公司制度、工作本身的細節等資訊，沒有要改條件（「有冷氣嗎」「薪水會扣勞健保嗎」「面試要穿什麼」「高雄餐飲假日要上班嗎」）。問句裡出現的詞不能當成條件。
   轉專員＝廠商要徵人或談合作、在職員工的薪資或出勤問題（「上個月薪水少了兩千」「薪水還沒匯」）、抱怨或投訴、明確要求真人或專員聯絡、要刪除個資或停止聯繫。單純講近況（公司倒閉、要離職、不喜歡跟人說話）不算。
   閒聊＝打招呼、道謝、跟找工作無關的話。
   不確定＝真的分不出是要還是不要、或分不出是指哪一項條件時才用；填 clarify_question（一句簡短的確認問題）跟 clarify_options（2～4 個選項，每個都要是這種固定句型：「晚班的工作」「不要晚班」「桃園的工作」「班別都可以」）。
 - 條件欄位只填「這句話有講到、要改變」的維度；沒講到的維度留空（沿用目前記住的條件）。有講到的維度要填「改完之後的完整值」：
   目前記住桃園、這句說「新竹也可以」→ locations 填 ["桃園","新竹"]；說「那新竹呢」→ ["新竹"]。目前記住早班、說「夜班也可以」→ shifts 填 ["早班","大夜班"]。
-- locations：想去上班的地點，填縣市或行政區的中文名稱（例如「桃園」「中壢」「竹北」「后里」「台北」「新竹縣」）。住的地方、交通車的起點、面試地點都不算。「新北或桃園」「台中 彰化」要填兩個。英文、錯字、簡稱要轉成正式名稱（taoyuan→桃園、桃圓→桃園、北市→台北、台北縣→新北）。
+- locations：想去上班的地點，填縣市或行政區的中文名稱（例如「桃園」「中壢」「竹北」「后里」「台北」「新竹縣」）。住的地方、交通車的起點、面試地點都不算。「新北或桃園」「台中 彰化」要填兩個；縣市跟行政區連在一起講（「新竹竹北」「台中西屯」「桃園中壢」）是同一個地方，只填行政區。英文、錯字、簡稱要轉成正式名稱（taoyuan→桃園、桃圓→桃園、北市→台北、台北縣→新北）。
 - exclude_locations：不想去的地點（「大安區以外都可以」「不去中壢」「桃園除外」「不要新北」）。
 - categories：只能從選項選。行業詞＋職務詞以職務為準（「物流業外送員」→外送）。「撿貨、出貨」→理貨/倉儲，「烘焙、飯店、餐廳內場」→餐飲/服務，「晶圓廠、電子廠」→製造/作業員。沒有對應類型的職務（保全、清潔、會計、美髮…）填到 unsupported_roles，不要硬塞到最像的類型。
 - brand：講到的公司或品牌名稱（蝦皮、美光、全聯、LADY M…）。「飯店」「科技業」「宅配」「代招」「物流業」這種通稱不是品牌，留空。
@@ -171,12 +172,34 @@ def _valid_location(name: str, active_jobs: list) -> str:
     return name if parsed and "|" not in parsed else ""
 
 
-def validate_form(form: dict, active_jobs: list) -> dict:
+def _drop_county_before_district(locations: list, message: str, active_jobs: list) -> list:
+    """「新竹竹北」是同一個地方：AI 偶爾兩個都填，變成「新竹或竹北」把新竹市也列進來
+    （第一次準確率考試）。句子裡縣市緊接著行政區時，拿掉那個縣市。"""
+    if len(locations) < 2 or not message:
+        return locations
+    compact = re.sub(r"\s+", "", str(message)).replace("臺", "台")
+    dropped = set()
+    for county in locations:
+        core = county[:2]
+        if core + "市" not in _COUNTY_FULL_NAMES and core + "縣" not in _COUNTY_FULL_NAMES:
+            continue
+        for district in locations:
+            if district == county:
+                continue
+            if (resolve_county_for_location(district, active_jobs) or "")[:2] != core:
+                continue
+            if re.search(re.escape(county) + r"[縣市]?" + re.escape(district), compact):
+                dropped.add(county)
+    return [loc for loc in locations if loc not in dropped]
+
+
+def validate_form(form: dict, active_jobs: list, message: str = "") -> dict:
     """回傳一份新的需求單：地名、廠商、福利都要資料庫認得，其他欄位只留選項內的值。"""
     if not form:
         return None
     clean = dict(form)
-    clean["locations"] = list(dict.fromkeys(v for v in (_valid_location(x, active_jobs) for x in form["locations"]) if v))
+    clean["locations"] = _drop_county_before_district(list(dict.fromkeys(
+        v for v in (_valid_location(x, active_jobs) for x in form["locations"]) if v)), message, active_jobs)
     clean["exclude_locations"] = list(dict.fromkeys(
         v for v in (_valid_location(x, active_jobs) for x in form["exclude_locations"]) if v and v not in clean["locations"]))
     for key, allowed in (

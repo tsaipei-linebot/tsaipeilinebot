@@ -668,6 +668,7 @@
     - **開關**（Cloud Run 環境變數，預設 `off`，合併上線後什麼都不會變）：`AI_UNDERSTANDING_MODE`＝`off`／`shadow`（照原本回覆，背景另外問 AI、把判斷寫進 log，Logs Explorer 搜「[AI需求單]」）／`on`（正式使用）。`AI_UNDERSTANDING_THINKING_BUDGET`：Gemini 先想一想的額度，預設 0（最快）。
     - **準確率考試**：`scripts/eval_understanding.py` 拿 `scripts/understanding_eval_cases.json`（第四～八輪整理出來的 88 句）問真正的 Gemini，印出通過率跟每句等幾秒。沙盒環境沒有 GCP 權限不能呼叫 Gemini，要在 Cloud Shell 跑（指令寫在腳本開頭）。之後每次改 prompt 都重跑一次。
     - **新增測試**：`tests/test_message_handler.py::AiUnderstandingTests`（14 個，用假的需求單測程式負責的部分：標準句子一定解讀成一樣的條件、分流、檢查、精準命中的邊界）。開關預設關閉，原本 2430 個測試全部照舊通過。
+    - **第一次準確率考試結果**（使用者 2026-09-23 在 Cloud Shell 跑，thinking=0）：通過 86／88 題（98%），每題中位數 1.0 秒、最慢的 5% 約 2 秒；有一題剛好碰到 Gemini 排隊等了 66 秒（正式上線時超過 6 秒就照原本的流程處理，不會讓求職者等）。沒通過的兩題已修：「有小夜班嗎」被當成問問題（prompt 補上「問有沒有這種條件的職缺也是找工作」）、「新竹竹北」填成新竹跟竹北兩個（prompt 補上規則，程式也會在句子裡縣市緊接著行政區時拿掉縣市，`_drop_county_before_district()`）。
     - **上線步驟**：① 合併（開關是 off，不會有任何變化）→ ② Cloud Shell 跑準確率考試，把結果給 Claude 調整 → ③ 開 `shadow` 一兩天看 log → ④ 改 `on`。
 
 ## 目前所有檔案的狀態
