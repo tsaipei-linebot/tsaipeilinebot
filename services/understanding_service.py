@@ -365,7 +365,8 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
     if not form:
         return form
     f = dict(form)
-    msg = str(message or "").lower()
+    message = str(message or "").replace("斑", "班")  # 「日斑」「夜斑」常見錯字
+    msg = message.lower()
     slots = slots or {}
     context = " ".join([msg, str(last_bot or "").lower(), " ".join(str(v).lower() for v in slots.values())])
     short_reply = len(clean_text_for_search(msg)) <= 6 and bool(re.search(r"[?？]", str(last_bot or "")))
@@ -412,20 +413,31 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
         if label not in f["exclude_shifts"]:
             f["exclude_shifts"] = f["exclude_shifts"] + [label]
 
-    # 3. 地區：否定方向跟漏填
+    # 3. 地區：否定方向跟漏填。否定要緊貼著地名才算（「不要新北要桃園」的桃園是要的；
+    #    程式原本的否定判斷會把整句都當成否定，這裡不用它當依據）
+    def _loc_negated(v):
+        v = re.escape(str(v))
+        return bool(re.search(r"(不要|不去|除了|不考慮|排除)\s*" + v, message)
+                    or re.search(v + r".{0,4}(以外|除外|不要|不去|太遠|不行|不考慮)", message))
+    candidates = [str(v) for v in f["locations"] + f["exclude_locations"]]
     negated_loc = detect_negated_location(message, active_jobs)
     if negated_loc:
-        f["locations"] = [v for v in f["locations"] if not str(v).startswith(negated_loc) and not negated_loc.startswith(str(v))]
-        if not any(negated_loc in str(v) or str(v) in negated_loc for v in f["exclude_locations"]):
-            f["exclude_locations"] = f["exclude_locations"] + [negated_loc]
-    f["exclude_locations"] = [v for v in f["exclude_locations"] if (negated_loc and (negated_loc in str(v) or str(v) in negated_loc))
-                              or re.search(r"(不要|不去|除了|不考慮|排除)\s*" + re.escape(str(v)), message)
-                              or re.search(re.escape(str(v)) + r".{0,4}(以外|除外|不要|不去|太遠|不行|不考慮)", message)
-                              or str(v) not in message]
-    if not f["locations"] and f.get("intent") == "找工作" and not any(c in message for c in _ORIGIN_CUES):
+        candidates.append(negated_loc)
+    negated = list(dict.fromkeys(v for v in candidates if _loc_negated(v)))
+    f["locations"] = [v for v in f["locations"] if str(v) not in negated]
+    f["exclude_locations"] = list(dict.fromkeys(
+        [v for v in f["exclude_locations"] if str(v) in negated or str(v) not in message] + negated))
+    if (not f["locations"] and f.get("intent") == "找工作" and "地區" not in f.get("broaden", [])
+            and not any(c in message for c in _ORIGIN_CUES)):
         found = extract_current_target_location(message, "", active_jobs)
-        if found:
-            f["locations"] = [p for p in found.split("|") if p]
+        # 被排除的地方不能又補成想去的（「不去中壢」「桃園除外」「林口太遠」）
+        excluded = [str(v) for v in f["exclude_locations"]]
+        found_parts = [p for p in (found or "").split("|")
+                       if p and not any(p in e or e in p for e in excluded)
+                       and not re.search(re.escape(p) + r".{0,4}(以外|除外|不要|不去|太遠|不行|不考慮)", message)
+                       and not re.search(r"(不要|不去|除了|不考慮|排除)\s*" + re.escape(p), message)]
+        if found_parts:
+            f["locations"] = found_parts
 
     # 4. 類型、休假、發薪、全兼職：句子裡有程式認得的詞、AI 卻沒填的補上
     wanted_part = message
@@ -465,7 +477,21 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
     # 5. 同一個維度又給了值又說放寬：以給的值為準
     dim_of = {"地區": "locations", "類型": "categories", "班別": "shifts", "休假方式": "leaves", "發薪方式": "pays",
               "全職/兼職": "worktype", "廠商": "brand", "福利": "benefits"}
-    f["broaden"] = [d for d in f.get("broaden") or [] if not f.get(dim_of.get(d, ""), None)]
+    slot_of = {"locations": "location", "categories": "category", "shifts": "shift", "leaves": "leave",
+               "pays": "pay", "worktype": "worktype", "brand": "brand", "benefits": "benefit"}
+    kept = []
+    for d in f.get("broaden") or []:
+        key = dim_of.get(d, "")
+        value = f.get(key)
+        remembered = set(str(slots.get(slot_of.get(key, ""), "") or "").split("|")) - {""}
+        given = set(value) if isinstance(value, list) else ({value} if value else set())
+        if given and given <= remembered:
+            # AI 只是把原本記住的值再寫一次，放寬才是這句話的意思（「班別都可以」）
+            f[key] = [] if isinstance(value, list) else ""
+            kept.append(d)
+        elif not given:
+            kept.append(d)
+    f["broaden"] = kept
     return f
 
 
