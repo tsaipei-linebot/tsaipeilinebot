@@ -38,6 +38,8 @@ from services.matcher_service import (
     detect_pay_method_labels, detect_benefit_labels, detect_relax_dimensions,
     classify_condition_utterance, build_benefit_keyword_index, INFO_INTENT_PREFIX,
     clause_clean_text, detect_relax_labels,
+    extract_worktype_labels, filter_jobs_by_worktype_label, detect_salary_labels, filter_jobs_by_salary_label,
+    format_salary_label, job_worktype_labels, mask_salary_phrases,
     job_shift_labels, SHIFT_SYNONYMS, job_matches_location, ambiguous_district_choices,
     location_is_negated, detect_category_labels, job_is_excluded,
     combine_pay_labels, detect_negated_subroles,
@@ -56,8 +58,17 @@ SHOPEE_CLARIFY_ALL_TEXT = "蝦皮全部類型都看看"
 # 符合的職缺（走步驟 0-4 全部瀏覽）。
 KEEP_CONDITIONS_TEXT = "保留目前條件"
 
-_LABEL_DIMENSION_ORDER = ["shift", "leave", "pay", "benefit"]
-_LABEL_DIMENSION_NAMES = {"shift": "班別", "leave": "休假方式", "pay": "發薪方式", "benefit": "福利"}
+_LABEL_DIMENSION_ORDER = ["worktype", "shift", "leave", "pay", "salary", "benefit"]
+_LABEL_DIMENSION_NAMES = {
+    "worktype": "全職/兼職", "shift": "班別", "leave": "休假方式", "pay": "發薪方式", "salary": "薪資", "benefit": "福利",
+}
+
+
+def _label_value_text(dim: str, value: str) -> str:
+    """給求職者看的條件值：「日領|週領」→「日領或週領」、「時薪200」→「時薪200元以上」"""
+    if dim == "salary":
+        return format_salary_label(value)
+    return value.replace("|", "或").replace("+", "＋")
 
 # 求職者講「哪裡都可以」時地區槽位存這個值：跟「還沒講過地區」分開，
 # 才知道要不要先問地區（使用者 2026-09-23 決定：不知道地區、職缺又分散在
@@ -83,6 +94,126 @@ _APPLY_URL_RE = re.compile(r"立即填寫線上履歷：\s*(\S+)")
 # 一次最多顯示幾張職缺卡片（步驟 1c）。結果比這個多、又分散在好幾個縣市
 # 時，先問地區，不然求職者看到的前幾張可能都不在他能去的地方。
 _CARD_LIMIT = 4
+
+# ---------------- 「看更多」跟「這個有交通車嗎」（使用者 2026-09-23 第六輪決定）----------------
+# 每次給求職者看職缺卡片時，把這次符合的全部職缺（依顯示順序）跟看到第幾筆
+# 記在槽位 shown：格式是第一行「開始,結束」、後面每行一個職缺名稱（Notion
+# 的唯一鍵）。按「看更多」從「結束」接著往下列；問「這個有交通車嗎」用
+# 「開始～結束」這一頁的職缺回答。
+MORE_JOBS_TEXT = "看更多職缺"
+_MORE_JOBS_RE = re.compile(
+    r"^(那|請|麻煩|可以|想)?(再|多)?(給我|幫我)?(看|列|找|推薦|顯示|介紹)?(看)?(一下)?"
+    r"(更多|多一點|其他|別的|剩下|下一頁|下一批|下一個|下幾個|後面|還有|還有其他|還有別的|還有沒有|有沒有其他|有沒有別的|其他還有)"
+    r"(的)?(職缺|工作|選擇)?(嗎|呢|吧|囉|了)?$"
+)
+# 「這個／那家／剛剛那個」「第二個」「這些」：在講剛才看到的職缺。後面接著
+# 地區、類型這些字時是在講條件（「這個地區有嗎」），不算。
+_JOB_REF_RE = re.compile(
+    r"(這|那|上面|剛剛|剛才|剛)(一)?(個|家|間|份|筆|支)(職缺|工作|公司|廠商)?(?!地區|地方|區|縣市|類型|條件|時段|班別|月|禮拜|星期)"
+)
+_JOB_ORDINAL_RE = re.compile(r"第\s*([一二三四1-4])\s*(個|家|間|份|筆|張|支)")
+_JOB_PLURAL_RE = re.compile(r"這些|那些|這幾(個|家|間|筆|份)|那幾(個|家|間|筆|份)|它們")
+# 「那個 我想問有交通車的工作嗎」是在找工作（「那個」只是發語詞），不是在問看過的職缺
+_JOB_SEARCH_PHRASE_RE = re.compile(r"的工作|的職缺|工作嗎|職缺嗎|有沒有.{0,6}(工作|職缺)")
+_ORDINAL_NUMBERS = {"一": 1, "二": 2, "三": 3, "四": 4, "1": 1, "2": 2, "3": 3, "4": 4}
+# (要回答的項目, 問句裡的關鍵字, 怎麼回答：職缺欄位名稱、"keyword" 查福利跟工作說明、"location")
+_JOB_TOPICS = [
+    ("交通車", ("交通車", "接駁", "通勤"), "keyword"),
+    ("宿舍", ("宿舍", "住宿", "包住"), "keyword"),
+    ("員工餐", ("員工餐", "供餐", "伙食", "包吃", "吃飯"), "keyword"),
+    ("停車位", ("停車",), "keyword"),
+    ("薪資", ("薪水", "薪資", "時薪", "月薪", "多少錢", "待遇", "賺多少", "錢多少"), "薪資"),
+    ("領薪方式", ("日領", "週領", "月領", "領薪", "發薪", "怎麼領", "現金"), "領薪方式"),
+    ("班別", ("班別", "幾點", "時段", "上班時間", "輪班", "夜班", "早班", "晚班", "大夜", "什麼班"), "班別"),
+    ("休假方式", ("休假", "放假", "排休", "週休", "休幾天", "休息"), "休假方式"),
+    ("全職/兼職", ("全職", "兼職"), "全/兼職"),
+    ("地點", ("在哪", "地址", "哪裡", "地點", "位置", "多遠"), "location"),
+    ("福利", ("福利", "保險", "勞健保", "獎金", "三節"), "福利"),
+    ("工作內容", ("做什麼", "工作內容", "要做", "內容是"), "工作內容(對外)"),
+]
+
+
+def _format_shown(titles: list, start: int, end: int) -> str:
+    return "\n".join([f"{start},{end}"] + list(titles))
+
+
+def _parse_shown(value: str) -> tuple:
+    lines = str(value or "").split("\n")
+    try:
+        start, end = (int(x) for x in lines[0].split(","))
+    except ValueError:
+        return [], 0, 0
+    return [t for t in lines[1:] if t], start, end
+
+
+def _job_key(job: dict) -> str:
+    return str(job.get("職缺名稱") or job.get("_internal_title") or "")
+
+
+def _remember_shown(user_id: str, titles: list, start: int, end: int):
+    """記住這次給求職者看了哪些職缺。記不起來時只是不能翻頁／問「這個」，不能讓整個回覆失敗。"""
+    try:
+        update_user_slots(user_id, shown=_format_shown(titles, start, end))
+    except Exception:
+        print(f"[記住看過的職缺失敗]: {traceback.format_exc()}")
+
+
+def _job_cards(user_id: str, jobs: list, target_location: str = "", same_county_scope: str = "", extra_buttons=None) -> tuple:
+    """給求職者看職缺卡片：先列 4 筆，超過時卡片上加「看更多」按鈕（LINE 的
+    快速回覆只會顯示在最後一則訊息上），並記住這次符合的全部職缺。
+    回傳 (卡片, 接在回覆文字後面的筆數說明)。"""
+    page = jobs[:_CARD_LIMIT]
+    if same_county_scope:
+        flex = create_job_flex_card(page, user_id, target_location, same_county_scope=same_county_scope)
+    else:
+        flex = create_job_flex_card(page, user_id, target_location)
+    buttons = []
+    if len(jobs) > len(page):
+        buttons.append(QuickReplyButton(action=MessageAction(
+            label=f"👀 看更多（還有 {len(jobs) - len(page)} 筆）"[:20], text=MORE_JOBS_TEXT)))
+    buttons += list(extra_buttons or [])
+    if buttons:
+        flex.quick_reply = QuickReply(items=buttons[:13])
+    _remember_shown(user_id, [_job_key(j) for j in jobs[:100]], 0, len(page))
+    note = (
+        f"\n\n符合的職缺共 {len(jobs)} 筆，先列出其中 {len(page)} 筆，想看其他的可以按「看更多」喔 👀"
+        if len(jobs) > len(page) else ""
+    )
+    return flex, note
+
+
+def _job_display_name(job: dict) -> str:
+    """「美光(桃園) 美商晶圓倉管人員」：對外名稱的【🔥桃園/林口】【✨高薪】這種標語拿掉。"""
+    vendor = str(job.get("_vendor_name") or job.get("系統廠商名稱") or "").strip()
+    raw_title = str(job.get("職缺名稱(對外)") or job.get("職缺名稱") or "").strip()
+    title = re.sub(r"【[^【】]*】", "", raw_title).strip() or re.sub(r"[【】🔥✨]", "", raw_title).strip()
+    return f"{vendor} {title}".strip() if vendor and vendor not in title else title
+
+
+def _job_topics_asked(text: str) -> list:
+    return [(name, source) for name, words, source in _JOB_TOPICS if any(w in text for w in words)]
+
+
+def _answer_job_topic(job: dict, topic: str, source: str) -> str:
+    """用這筆職缺自己的資料回答，沒寫的老實說沒寫，不猜。"""
+    if source == "location":
+        return f"地點：{format_clean_location(job, '')}"
+    if source == "keyword":
+        words = next(words for name, words, _ in _JOB_TOPICS if name == topic)
+        benefit = str(job.get("福利") or "")
+        if any(w in benefit for w in words):
+            return f"{topic}：有（福利寫「{benefit}」）"
+        for field in ("排版工作說明", "工作內容(對外)", "精華亮點"):
+            for line in str(job.get(field) or "").splitlines():
+                if any(w in line for w in words):
+                    return f"{topic}：工作說明寫「{line.strip()[:60]}」"
+        return f"{topic}：資料上沒有寫到，建議直接問招募專員確認喔"
+    value = str(job.get(source) or "").strip()
+    if not value:
+        return f"{topic}：資料上沒有寫到，建議直接問招募專員確認喔"
+    if source == "工作內容(對外)":
+        value = re.sub(r"\s+", " ", value)[:80] + ("…" if len(value) > 80 else "")
+    return f"{topic}：{value}"
 
 
 # ---------------- 簡短回覆對應到沛沛上一句的問題（第六輪測試）----------------
@@ -183,7 +314,7 @@ _CATEGORY_EMOJI = {
     "客服/行政": "💻", "設備/技術": "🔧",
 }
 
-_EXCLUSION_DIM_ORDER = ["location", "category", "role", "brand", "shift", "leave", "pay", "benefit"]
+_EXCLUSION_DIM_ORDER = ["location", "category", "role", "brand", "worktype", "shift", "leave", "pay", "benefit"]
 
 
 def _parse_exclusions(value: str) -> dict:
@@ -503,6 +634,125 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=polite_reply))
             return
 
+        # ---------------- 步驟 0-0C：「看更多」跟問剛才看到的職缺 ----------------
+        # 使用者 2026-09-23 第六輪決定：符合超過 4 筆時可以按「看更多」往下看；
+        # 問「這個有交通車嗎」「第二個薪水多少」用那筆職缺自己的資料回答，
+        # 分不出是哪一筆時給按鈕選。沒有看過職缺時照原本的流程。
+        _clean_for_more = clean_text_for_search(raw_msg)
+        _is_more_request = raw_msg.strip() == MORE_JOBS_TEXT or bool(_MORE_JOBS_RE.match(_clean_for_more))
+        _ordinal_match = _JOB_ORDINAL_RE.search(raw_msg)
+        _ref_match = _JOB_REF_RE.search(raw_msg)
+        _plural_match = _JOB_PLURAL_RE.search(raw_msg)
+        _topics_asked = _job_topics_asked(raw_msg)
+        _is_job_reference = bool(
+            (_ordinal_match or ((_ref_match or _plural_match) and _topics_asked))
+            and not _JOB_SEARCH_PHRASE_RE.search(raw_msg)
+        )
+        if _is_more_request or _is_job_reference:
+            _shown_titles, _shown_start, _shown_end = _parse_shown(get_user_slots(user_id).get("shown", ""))
+        else:
+            _shown_titles, _shown_start, _shown_end = [], 0, 0
+        _jobs_by_key = {_job_key(j): j for j in active_jobs}
+        _shown_active = [t for t in _shown_titles if t in _jobs_by_key]
+
+        if _is_more_request and _shown_titles:
+            _next_titles = [t for t in _shown_titles[_shown_end:] if t in _jobs_by_key][:_CARD_LIMIT]
+            append_user_history(user_id, "求職者", raw_msg)
+            if _next_titles:
+                _new_end = _shown_titles.index(_next_titles[-1]) + 1
+                _seen = len([t for t in _shown_titles[:_new_end] if t in _jobs_by_key])
+                _left = len(_shown_active) - _seen
+                more_reply = (
+                    f"好的！這是接下來的 {len(_next_titles)} 筆職缺（共 {len(_shown_active)} 筆，已經看了 {_seen} 筆）😊"
+                    + ("" if _left else "\n\n符合的職缺都列給您看囉！")
+                )
+                append_user_history(user_id, "招募顧問沛沛", more_reply)
+                _more_flex = create_job_flex_card([_jobs_by_key[t] for t in _next_titles], user_id, "")
+                if _left:
+                    _more_flex.quick_reply = QuickReply(items=[QuickReplyButton(
+                        action=MessageAction(label=f"👀 看更多（還有 {_left} 筆）"[:20], text=MORE_JOBS_TEXT))])
+                else:
+                    _more_flex.quick_reply = QuickReply(items=[
+                        QuickReplyButton(action=MessageAction(label="📍 換地區", text="我想換地區")),
+                        QuickReplyButton(action=MessageAction(label="🏭 換工作類型", text="我想換工作類型")),
+                        QuickReplyButton(action=MessageAction(label="🔄 清空條件重新找", text=RESET_DIRECT_TEXT)),
+                    ])
+                _remember_shown(user_id, _shown_titles, _shown_end, _new_end)
+                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=more_reply), _more_flex])
+            else:
+                more_reply = f"符合目前條件的 {len(_shown_active)} 筆職缺都已經列給您看囉 😊 要不要換個地區或工作類型再找找看呢？"
+                append_user_history(user_id, "招募顧問沛沛", more_reply)
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=more_reply, quick_reply=QuickReply(items=[
+                    QuickReplyButton(action=MessageAction(label="📍 換地區", text="我想換地區")),
+                    QuickReplyButton(action=MessageAction(label="🏭 換工作類型", text="我想換工作類型")),
+                    QuickReplyButton(action=MessageAction(label="🔄 清空條件重新找", text=RESET_DIRECT_TEXT)),
+                ])))
+            log_ai_decision_event(
+                path="direct_intercept", intercept_type="more_jobs",
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
+            return
+
+        _page_jobs = [_jobs_by_key[t] for t in _shown_titles[_shown_start:_shown_end] if t in _jobs_by_key]
+        if _is_job_reference and _page_jobs:
+            _referred = None
+            if _ordinal_match:
+                _n = _ORDINAL_NUMBERS[_ordinal_match.group(1)]
+                _referred = [_page_jobs[_n - 1]] if _n <= len(_page_jobs) else None
+            elif _plural_match and not _ref_match:
+                _referred = list(_page_jobs)
+            else:
+                # 上一句是看某一筆的詳細內容：「這個」就是那一筆
+                _last_user = next((m["text"] for m in reversed(history) if m.get("role") == "求職者"), "")
+                if _last_user.startswith("查看職缺詳情"):
+                    _last_key = _last_user.replace("查看職缺詳情", "").strip()
+                    if _last_key in _jobs_by_key:
+                        _referred = [_jobs_by_key[_last_key]]
+                if not _referred and len(_page_jobs) == 1:
+                    _referred = list(_page_jobs)
+                if not _referred:
+                    _brand_in_msg = detect_brand_label(raw_msg, _page_jobs)
+                    _by_brand = [j for j in _page_jobs if _brand_in_msg and job_matches_brand(j, _brand_in_msg)]
+                    if len(_by_brand) == 1:
+                        _referred = _by_brand
+            if _referred and not _topics_asked:
+                # 只講「第二個」：直接看那一筆的詳細內容
+                raw_msg = f"查看職缺詳情 {_job_key(_referred[0])}"
+            elif _referred:
+                append_user_history(user_id, "求職者", raw_msg)
+                _lines = []
+                for _job in _referred:
+                    _answers = "\n".join(f"・{_answer_job_topic(_job, name, source)}" for name, source in _topics_asked)
+                    _lines.append(f"【{_job_display_name(_job)}】\n{_answers}")
+                ref_reply = "\n\n".join(_lines) + "\n\n想看完整內容可以點卡片上的「了解詳細內容」喔 😊"
+                append_user_history(user_id, "招募顧問沛沛", ref_reply)
+                _ref_buttons = [
+                    QuickReplyButton(action=MessageAction(label=f"📖 {_job_display_name(_job)}"[:20], text=f"查看職缺詳情 {_job_key(_job)}"))
+                    for _job in _referred[:_CARD_LIMIT]
+                ]
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ref_reply, quick_reply=QuickReply(items=_ref_buttons)))
+                log_ai_decision_event(
+                    path="direct_intercept", intercept_type="shown_job_question",
+                    latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+                )
+                return
+            else:
+                # 分不出是哪一筆：列出剛才看到的職缺讓求職者選，按鈕送回來的是
+                # 「第2個有交通車嗎」，下一輪一定分得出來
+                _ref_span = (_ordinal_match or _ref_match or _plural_match)
+                ask_reply = "請問您問的是哪一筆職缺呢？😊"
+                append_user_history(user_id, "求職者", raw_msg)
+                append_user_history(user_id, "招募顧問沛沛", ask_reply)
+                _pick_buttons = []
+                for _i, _job in enumerate(_page_jobs, 1):
+                    _pick_text = (
+                        raw_msg[:_ref_span.start()] + f"第{_i}個" + raw_msg[_ref_span.end():]
+                        if _ref_span else f"第{_i}個{raw_msg}"
+                    )
+                    _pick_buttons.append(QuickReplyButton(action=MessageAction(label=f"{_i}. {_job_display_name(_job)}"[:20], text=_pick_text)))
+                target_line_bot_api.reply_message(reply_token, TextSendMessage(text=ask_reply, quick_reply=QuickReply(items=_pick_buttons)))
+                return
+
         # ---------------- 步驟 0-1：處理「查看職缺詳情」（Notion 唯一鍵精準定位）[cite: 6] ----------------
         if raw_msg.startswith("查看職缺詳情"):
             target_title = raw_msg.replace("查看職缺詳情", "").strip()
@@ -662,14 +912,18 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         this_turn_labels = {
             "shift": extract_shift_labels(_label_source),
             "leave": extract_leave_labels(_label_source),
-            "pay": detect_pay_method_labels(_label_source),
+            "pay": detect_pay_method_labels(mask_salary_phrases(_label_source)),
             "benefit": detect_benefit_labels(_label_source, active_jobs),
+            "worktype": extract_worktype_labels(_label_source),
+            "salary": detect_salary_labels(_label_source),
         }
         negated_labels = {
             "shift": extract_shift_labels(_label_source, negated=True),
             "leave": extract_leave_labels(_label_source, negated=True),
-            "pay": detect_pay_method_labels(_label_source, negated=True),
+            "pay": detect_pay_method_labels(mask_salary_phrases(_label_source), negated=True),
             "benefit": detect_benefit_labels(_label_source, active_jobs, negated=True),
+            "worktype": extract_worktype_labels(_label_source, negated=True),
+            "salary": [],
         }
         # 整句話的否定語氣原本會擋掉所有直達攔截。如果被否定的只是「上一輪
         # 記住的班別/休假/發薪/福利」（記住夜班之後講「不要夜班了，理貨的
@@ -771,6 +1025,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         this_turn_leave = "|".join(this_turn_labels["leave"])
         this_turn_pay = "|".join(this_turn_labels["pay"])
         this_turn_benefit = "|".join(this_turn_labels["benefit"])
+        this_turn_worktype = "|".join(this_turn_labels["worktype"])
+        this_turn_salary = "|".join(this_turn_labels["salary"])
 
         # 被否定的詞也算「這句話有講到條件」：「不要夜班」不能被當成單純的
         # 「都可以」清掉類型跟廠商。
@@ -860,6 +1116,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             locked = user_slots.get(dim, "")
             locked_parts = [p for p in locked.split("|") if p]
             now = this_turn_labels[dim]
+            if dim == "worktype" and set(now) >= {"全職", "兼職"}:
+                # 「全職兼職都可以」「全職或兼職都行」：等於不限，不是兩個都要記
+                now = []
+                if locked:
+                    return CLEAR_SLOT, ""
             if now and _is_additive and not locked_parts and set(now) <= _locked_exclusions.get(dim, set()):
                 # 「不要夜班」之後講「夜班也可以」：只是不排除夜班了，不是只要
                 # 夜班（第六輪測試：原本變成只列夜班的職缺）
@@ -880,6 +1141,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         leave_slot_update, effective_leave = _label_slot("leave")
         pay_slot_update, effective_pay = _label_slot("pay")
         benefit_slot_update, effective_benefit = _label_slot("benefit")
+        worktype_slot_update, effective_worktype = _label_slot("worktype")
+        salary_slot_update, effective_salary = _label_slot("salary")
 
         detected_category_from_text = detected_category_this_turn
         negated_category = detect_negated_category(clause_input)
@@ -1079,6 +1342,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             pay=pay_slot_update,
             benefit=benefit_slot_update,
             exclude=exclude_slot_update,
+            worktype=worktype_slot_update,
+            salary=salary_slot_update,
         )
 
         def _apply_label_filters(jobs, skip=None):
@@ -1093,6 +1358,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 jobs = filter_jobs_by_benefit_label(jobs, effective_benefit)
             if effective_pay and skip != "pay":
                 jobs = filter_jobs_by_pay_label(jobs, effective_pay)
+            if effective_worktype and skip != "worktype":
+                jobs = filter_jobs_by_worktype_label(jobs, effective_worktype)
+            if effective_salary and skip != "salary":
+                jobs = filter_jobs_by_salary_label(jobs, effective_salary)
             if effective_exclusions and skip != "exclude":
                 jobs = [j for j in jobs if not job_is_excluded(j, effective_exclusions)]
             return jobs
@@ -1100,9 +1369,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         def _label_condition_parts(skip=None):
             """目前生效的班別/休假/發薪/福利條件，寫成「發薪方式：日領或週領」
             這種給求職者看的文字，回覆時講清楚到底用了哪些條件。"""
-            values = {"shift": effective_shift, "leave": effective_leave, "pay": effective_pay, "benefit": effective_benefit}
+            values = {
+                "shift": effective_shift, "leave": effective_leave, "pay": effective_pay, "benefit": effective_benefit,
+                "worktype": effective_worktype, "salary": effective_salary,
+            }
             parts = [
-                f"{_LABEL_DIMENSION_NAMES[dim]}：{values[dim].replace('|', '或').replace('+', '＋')}"
+                f"{_LABEL_DIMENSION_NAMES[dim]}：{_label_value_text(dim, values[dim])}"
                 for dim in _LABEL_DIMENSION_ORDER if values[dim] and dim != skip
             ]
             if effective_exclusions and skip != "exclude":
@@ -1142,8 +1414,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             給「沒有完全符合」的回覆用，讓求職者自己選要拿掉哪一項。"""
             items = [
                 ("📍", "地區", current_location), ("🧰", "類型", _effective_category), ("🏢", "廠商", detected_brand),
+                ("🕘", "全職/兼職", effective_worktype),
                 ("⏰", "班別", effective_shift), ("🏖️", "休假方式", effective_leave),
-                ("💰", "發薪方式", effective_pay), ("🎁", "福利", effective_benefit),
+                ("💰", "發薪方式", effective_pay), ("💵", "薪資", effective_salary), ("🎁", "福利", effective_benefit),
                 ("🚫", "排除的條件", _format_exclusions(effective_exclusions)),
             ]
             buttons = [
@@ -1468,9 +1741,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
 
             append_user_history(user_id, "求職者", raw_msg)
             if matched_show_all:
-                reply_text = f"沒問題！沛沛馬上為您整理{_show_all_scope_text}目前招募中的熱門職缺，歡迎點擊查看詳細說明或線上應徵喔 😊"
+                _flex, _count_note = _job_cards(user_id, matched_show_all, current_location)
+                reply_text = f"沒問題！沛沛馬上為您整理{_show_all_scope_text}目前招募中的熱門職缺，歡迎點擊查看詳細說明或線上應徵喔 😊{_count_note}"
                 append_user_history(user_id, "招募顧問沛沛", reply_text)
-                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(matched_show_all[:5], user_id, current_location)])
+                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), _flex])
             elif active_jobs and _show_all_scope:
                 # 鎖定的範圍內真的沒有職缺：老實講出是哪些條件，讓求職者自己決定
                 # 要不要放寬，不再像原本一樣悄悄改推全台前 5 筆職缺。
@@ -1703,12 +1977,14 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         # FAQ 問題都會被攔下來改推職缺。
         # 「不要夜班」把記住的夜班拿掉時也算：條件變了，要用剩下的條件重新列。
         _shift_label, _leave_label, _benefit_label, _pay_label = effective_shift, effective_leave, effective_benefit, effective_pay
+        _worktype_label, _salary_label = effective_worktype, effective_salary
         _negation_changed_slot = any(
             set(negated_labels[dim]) & set(user_slots.get(dim, "").split("|")) for dim in _LABEL_DIMENSION_ORDER
         )
         _has_secondary_intent = bool(
             this_turn_shift or this_turn_leave or this_turn_benefit or this_turn_pay
-            or scoped_broaden_dims & {"shift", "leave", "benefit", "pay"}
+            or this_turn_worktype or this_turn_salary
+            or scoped_broaden_dims & {"shift", "leave", "benefit", "pay", "worktype", "salary"}
             or _negation_changed_slot
         )
         # 這句話在設定/調整找工作的條件：講了班別等條件、只講了地區、或明講
@@ -1905,10 +2181,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 # 講過日領，看到結果變少會以為是沒有職缺。
                 _applied = [b for b in [current_location_text, _pool_desc if _has_pool_intent else ""] if b] + _secondary_desc_parts()
                 _applied_text = f"符合「{'・'.join(_applied)}」的" if _applied else "符合條件的"
-                reply_text = f"有的！沛沛為您找到{_applied_text}推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
+                _flex, _count_note = _job_cards(user_id, _fully_filtered, current_location)
+                reply_text = f"有的！沛沛為您找到{_applied_text}推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊{_count_note}"
                 append_user_history(user_id, "求職者", raw_msg)
                 append_user_history(user_id, "招募顧問沛沛", reply_text)
-                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), create_job_flex_card(_fully_filtered[:4], user_id, current_location)])
+                target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=reply_text), _flex])
                 log_ai_decision_event(
                     path="direct_intercept", intercept_type=_resolve_intercept_type() if _has_pool_intent else "secondary_filter",
                     matched_brand=detected_brand,
@@ -1955,9 +2232,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                     # 附上每一項條件的「X都可以」按鈕：原本沒有按鈕，求職者回「好」
                     # 「不要」都會落到 AI，問「有沒有近一點的」又得到同一句（第五輪
                     # 測試）。LINE 的快速回覆只會顯示在最後一則訊息上，所以掛在卡片上。
-                    _county_flex = create_job_flex_card(county_alt_jobs[:4], user_id, "", same_county_scope=county_name)
-                    _county_flex.quick_reply = QuickReply(items=_drop_condition_buttons())
-                    target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text), _county_flex])
+                    _county_flex, _count_note = _job_cards(
+                        user_id, county_alt_jobs, "", same_county_scope=county_name, extra_buttons=_drop_condition_buttons())
+                    target_line_bot_api.reply_message(reply_token, [TextSendMessage(text=fallback_reply_text + _count_note), _county_flex])
                     log_ai_decision_event(
                         path="direct_intercept", intercept_type=f"{_resolve_intercept_type() if _has_pool_intent else 'secondary_filter'}_county_fallback",
                         matched_brand=detected_brand,
@@ -1977,10 +2254,12 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             # 地區、類型、廠商也可以放寬（原本只問班別/休假/發薪/福利，候選池
             # 本身是空的或地區沒有職缺時會落到 AI 或回固定的「新莊/桃園」按鈕）。
             _dimensions = [
+                ("worktype", "全職/兼職", _worktype_label),
                 ("shift", "班別", _shift_label),
                 ("leave", "休假方式", _leave_label),
                 ("benefit", "福利", _benefit_label),
                 ("pay", "發薪方式", _pay_label),
+                ("salary", "薪資", _salary_label),
                 ("exclude", "排除的條件", f"排除：{_exclusion_values_text(effective_exclusions)}" if effective_exclusions else ""),
             ]
             _scope_dimensions = [
@@ -2005,11 +2284,11 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
 
             def _condition_display(dim, name, value):
                 if dim in _LABEL_DIMENSION_NAMES:
-                    return f"{name}：{value.replace('|', '或').replace('+', '＋')}"
+                    return f"{name}：{_label_value_text(dim, value)}"
                 return value.replace("|", "或")
 
             _all_conditions_text = "・".join(_condition_display(*dim) for dim in _active_dimensions)
-            _relax_emoji = {"location": "📍", "category": "🧰", "brand": "🏢", "shift": "⏰", "leave": "🏖️", "benefit": "🎁", "pay": "💰", "exclude": "🚫"}
+            _relax_emoji = {"location": "📍", "category": "🧰", "brand": "🏢", "shift": "⏰", "leave": "🏖️", "benefit": "🎁", "pay": "💰", "exclude": "🚫", "worktype": "🕘", "salary": "💵"}
 
             # ---------------- 詢問求職者可以放寬哪個條件 ----------------
             # 使用者提出的設計：條件全部套用後篩到 0 筆時，不要自己猜該放寬
@@ -2319,7 +2598,7 @@ def _compute_ai_decision_messages(
         for _slot_key in _LABEL_DIMENSION_ORDER:
             if _current_slots_for_candidates.get(_slot_key):
                 _known_condition_parts.append(
-                    f"{_LABEL_DIMENSION_NAMES[_slot_key]}={_current_slots_for_candidates[_slot_key].replace('|', '或')}")
+                    f"{_LABEL_DIMENSION_NAMES[_slot_key]}={_label_value_text(_slot_key, _current_slots_for_candidates[_slot_key])}")
         _slot_exclusions = _parse_exclusions(_current_slots_for_candidates.get("exclude", ""))
         if _slot_exclusions:
             _known_condition_parts.append(f"不要={_exclusion_values_text(_slot_exclusions)}")
@@ -2443,6 +2722,8 @@ def _compute_ai_decision_messages(
                 return TextSendMessage(text=no_job_text)
 
             flex_card = create_job_flex_card(matched_jobs, user_id, current_location)
+            # AI 挑的職缺不翻頁，但一樣記住，問「這個有交通車嗎」才知道是哪幾筆
+            _remember_shown(user_id, [_job_key(j) for j in matched_jobs], 0, len(matched_jobs))
             return [TextSendMessage(text=reply_text), flex_card]
 
         elif action in ("ASK", "NO_MATCH"):
