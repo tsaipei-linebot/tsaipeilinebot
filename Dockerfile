@@ -11,9 +11,16 @@ WORKDIR /app
 # 有做失敗容錯（見 services/dispatch_contract_service.py 的
 # convert_docx_to_pdf()）：只是那一筆紀錄看不到預覽，Word 檔案下載完全
 # 不受影響。
+#
+# poppler-utils：財務部專區（/finance）的「一鍵下載」讓財務選擇下載
+# PDF 或圖片，選圖片時用這個套件裡的 `pdftoppm` 把存查單 PDF 轉成 PNG
+# （見 services/pdf_to_image.py）。跟上面的 LibreOffice 一樣是「呼叫系統
+# 工具、失敗有容錯」的模式：轉檔失敗那一筆會退回放原本的 PDF，下載本身
+# 不會失敗。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-writer \
     fonts-noto-cjk \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

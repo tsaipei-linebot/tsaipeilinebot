@@ -9173,3 +9173,83 @@ curl -s -w "\nHTTP %{http_code}\n" -X POST "<服務網址>/api/job-portal/send-m
 密鑰對的話會回 `HTTP 200` 加 `{"status":"error","message":"沒有任何收件
 人，這封信沒有寄出。"}`——那個 error 是故意不給收件人造成的，而且這樣
 測不會真的寄出任何信。密鑰不對就還是 403。
+
+## 財務部一鍵下載可以選 PDF 或圖片（2026-09-23）
+
+### 背景
+
+財務部專區（`/finance`）的「一鍵下載」原本只給 PDF 存查單。實際使用時
+財務同仁的動作是「把整批印出來留底」，而 **PDF 在 Windows 檔案總管裡
+沒辦法多選一起列印**，要一份一份打開再印；圖片可以全選、按右鍵直接印。
+所以下載時多給一個格式選項。
+
+**內容完全沒有改變**——一樣是那份存查單、一樣的排版，只是換一種檔案
+格式。GAS（`job-portal-gas-project`）那一側**一行都沒有改、不用重新
+部署**。
+
+### 這次做了什麼
+
+`services/pdf_to_image.py`（新檔）：
+
+- `convert_pdf_to_png()`：呼叫 `pdftoppm` 把一份 PDF 轉成 PNG。
+- `convert_pdf_zip_to_png_zip()`：把 GAS 回傳的「一包 PDF 的 ZIP」整包
+  轉成「一包 PNG 的 ZIP」，檔名沿用（副檔名換掉）、順序不變。
+
+`finance_routes.py`：`/finance/export-pdf` 多收一個 `export_format`
+表單欄位，值是 `image` 才轉檔，其他值（含沒帶這個欄位）一律照舊給 PDF；
+轉圖成功時檔名改成 `薪資補款存查單_圖片_{起}_{迄}.zip`。
+
+`Dockerfile`：多裝 `poppler-utils`（`pdftoppm` 來自這個套件）。
+`requirements.txt`：多一個 `pillow`（多頁接長圖用）。
+`templates/finance_home.html`／`finance_help.html`：格式選擇與說明。
+
+### 幾個刻意的選擇
+
+**用 `pdftoppm` 而不是 Python 的 PDF 套件**：跟這個專案既有的
+`services/docx_pdf_conversion.py`（呼叫 LibreOffice 把 Word 轉 PDF）
+同一種模式——呼叫容器裡裝好的系統工具、失敗回傳 `None` 讓呼叫端容錯。
+另一個常見選擇 PyMuPDF 裝起來更省事（純 pip、不用動 Dockerfile），
+但它是 **AGPL 授權**，公司內部服務要用得先過法務，不值得為了省一行
+設定去踩。
+
+**輸出 PNG 而不是 JPEG**：這份存查單裡**沒有照片**（佐證圖檔只在核准
+信的附件裡，存查單最後一行自己有寫），整張是白底黑字加幾塊純色表格。
+這種畫面 PNG 的壓縮效率比 JPEG 好——檔案更小，而且文字邊緣完全銳利
+（JPEG 會在文字邊緣產生毛邊，印出來看得出來）。哪天存查單裡包進了
+照片，再回來改成 JPEG 才划算。
+
+**200 dpi**：螢幕上看清楚、印出來也夠用，一張 A4 大約 200～400KB。
+要改的話動 `pdf_to_image.DEFAULT_DPI` 一個常數就好。
+
+**多頁接成一張直向長圖**：這份存查單的版面是固定的（基本資料 5 列、
+備註 1 列、金額小計 3 格、簽核紀錄 1 列），只有「備註」是自由填寫會
+撐長，所以**實務上一定是一頁**、走不到接圖那段。接圖邏輯純粹是備而
+不用，避免備註寫很長時只印到第一頁。只有一頁時直接回傳 `pdftoppm`
+的原始輸出、不重新編碼，沒有任何品質損失。
+
+**單筆轉檔失敗就原樣放回那份 PDF**，不讓整包下載失敗——財務寧可拿到
+29 張圖加 1 份 PDF，也不要整批都下載不到。只有 ZIP 本身壞掉才會顯示
+錯誤訊息並請使用者改用 PDF 格式。
+
+### 上線前使用者要手動做的事
+
+**沒有**。合併後自動部署就生效，不用設定任何環境變數。（`poppler-utils`
+是寫在 `Dockerfile` 裡、建置映像檔時自動安裝的。）
+
+### 測試
+
+`tests/test_pdf_to_image.py`（新檔）：空輸入不呼叫外部指令、容器裡沒裝
+`pdftoppm`／轉檔失敗／逾時／沒有產出檔案一律回 `None` 不拋例外、單頁
+原樣回傳不重新編碼、多頁接成長圖（高度相加、頁序不能顛倒、寬度不同時
+置中補白）、dpi 有傳進 `pdftoppm`；ZIP 層驗證副檔名換成 `.png` 且順序
+不變、單筆失敗保留原本的 PDF、非 PDF 的檔案原樣保留、ZIP 壞掉回 `None`。
+
+`tests/test_finance_routes.py`：新增 `FinanceExportFormatTests`——選圖片
+會轉檔且檔名帶「圖片」、選 PDF 完全不碰 ZIP、格式值認不得時退回 PDF
+（新功能不該因為請求少帶一個欄位就改變原本的行為）、轉檔失敗顯示白話
+訊息而不是給一個壞掉的檔案。
+
+另外一次性驗證過 FastAPI 真的會從 POST 表單解析出 `export_format`
+（直接呼叫函式的測試驗不到這一段），以及兩個模板 render 後確實有出現
+格式選項、預設勾在 PDF。全部測試（`python3 -m unittest discover -s
+tests -p "test_*.py"`）2324 個全數通過。
