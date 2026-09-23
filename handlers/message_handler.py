@@ -40,6 +40,7 @@ from services.matcher_service import (
     clause_clean_text, detect_relax_labels,
     extract_worktype_labels, filter_jobs_by_worktype_label, detect_salary_labels, filter_jobs_by_salary_label,
     format_salary_label, job_worktype_labels, mask_salary_phrases, SUBROLE_WORDS, detect_unparsed_salary_request,
+    detect_handoff_reason, HANDOFF_REASON_NAMES, detect_uncertain_negation,
     job_shift_labels, SHIFT_SYNONYMS, job_matches_location, ambiguous_district_choices,
     location_is_negated, detect_category_labels, job_is_excluded,
     combine_pay_labels, detect_negated_subroles,
@@ -265,6 +266,16 @@ def _normalize_user_text(text: str) -> str:
 
 
 _SALARY_SUGGESTIONS = ("時薪200以上", "時薪230以上", "月薪3萬5以上")
+# 轉給真人專員時的固定回覆（使用者 2026-09-23 第七輪決定）。沛沛只在同仁
+# 下班時段回覆，所以都寫「上班時間會盡快聯繫」。
+_HANDOFF_REPLIES = {
+    "business": "感謝您的洽詢！企業徵才、人力合作會由材霈的業務專員跟您聯繫 😊\n\n方便的話請留下公司名稱、聯絡人、電話，以及需求（地點、人數、工作內容），專員上班時間會盡快回覆您！",
+    "privacy": "收到，您的個資刪除／停止聯繫需求沛沛已經轉給專員處理，專員上班時間會盡快回覆您 🙏",
+    "complaint": "很抱歉讓您有不好的感受 🙏 沛沛已經把您的意見轉給專員，專員上班時間會盡快跟您聯繫處理。",
+    "employee": "了解，這部分需要由負責的專員幫您確認 🙏 沛沛已經幫您轉給專員，上班時間會盡快跟您聯繫；如果很急，也可以直接聯繫您的駐點專員喔。",
+    "interview": "沛沛已經幫您轉給招募專員確認面試／應徵進度 😊 專員上班時間會盡快跟您聯繫，請稍候喔！",
+    "human": "好的！沛沛已經幫您轉給真人專員，專員上班時間會盡快跟您聯繫 😊\n\n在這之前如果想先看看職缺，也可以告訴沛沛想找的地區或工作類型喔！",
+}
 _FIELD_FALLBACK_WORDS = {
     "福利": ("福利", "獎金", "禮券", "禮金", "保險", "勞健保", "員工餐", "補助", "津貼", "旅遊", "尾牙"),
     "薪資": ("薪資", "薪水", "時薪", "月薪", "待遇"),
@@ -802,6 +813,32 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             target_line_bot_api.reply_message(reply_token, TextSendMessage(text=polite_reply))
             return
 
+        # ---------------- 步驟 0-0B2：轉給真人專員 ----------------
+        # 使用者 2026-09-23 第七輪決定：抱怨／要找真人／要刪個資／雇主想合作／在職
+        # 員工請假離職薪資問題／問面試結果，程式直接回固定句，並記進「求職者提問
+        # 追蹤」讓同仁回頭處理（原本交給 AI，沒有通知任何同仁）。
+        _handoff = "" if raw_msg.startswith("查看職缺詳情") else detect_handoff_reason(raw_msg)
+        if _handoff:
+            handoff_reply = _HANDOFF_REPLIES[_handoff]
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", handoff_reply)
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=handoff_reply))
+            try:
+                display_name = ""
+                try:
+                    display_name = target_line_bot_api.get_profile(user_id).display_name
+                except Exception:
+                    pass
+                append_unresolved_question_for_followup(
+                    f"【需要專員處理：{HANDOFF_REASON_NAMES[_handoff]}】{raw_msg}", user_id, display_name)
+            except Exception:
+                print(f"[轉給真人的紀錄寫入失敗]: {traceback.format_exc()}")
+            log_ai_decision_event(
+                path="direct_intercept", intercept_type=f"handoff_{_handoff}",
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
+            return
+
         # ---------------- 步驟 0-0C：「看更多」跟問剛才看到的職缺 ----------------
         # 使用者 2026-09-23 第六輪決定：符合超過 4 筆時可以按「看更多」往下看；
         # 問「這個有交通車嗎」「第二個薪水多少」用那筆職缺自己的資料回答，
@@ -1295,7 +1332,16 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 if any(m in raw_msg for m in _URGENT_MARKERS) and "日領" not in pending_statement_ask:
                     pending_statement_ask.append("日領")
 
-        if is_info_request or pending_intent_clarify or pending_statement_ask:
+        # 這句話講到的條件附近有「不／沒／免／NO／❌」這種像否定的字、但認不出是
+        # 不是否定時先問（使用者 2026-09-23 第七輪決定）
+        pending_negation_ask = []
+        if not (is_info_request or pending_intent_clarify or pending_statement_ask):
+            pending_negation_ask = [
+                (dim, label) for dim, label in detect_uncertain_negation(_label_source)
+                if label in this_turn_labels.get(dim, []) and label not in relaxed_labels.get(dim, set())
+            ][:1]
+
+        if is_info_request or pending_intent_clarify or pending_statement_ask or pending_negation_ask:
             # 還沒確定是在找工作：這句話講到的條件一律先不記（原本類型跟廠商
             # 會被當成「都可以」偷偷清掉）。
             this_turn_labels = {dim: [] for dim in this_turn_labels}
@@ -1330,6 +1376,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             extracted_loc or detected_category_this_turn or detected_brand_this_turn
             or any(this_turn_labels.values()) or any(negated_labels.values()) or relax_dims
             or bool(relaxed_labels) or bool(pending_intent_clarify) or is_info_request or bool(pending_statement_ask)
+            or bool(pending_negation_ask)
         )
         is_generic_broaden = (
             any(k in clean_input for k in generic_broaden_keywords)
@@ -1414,6 +1461,8 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
 
         _locked_exclusions = _parse_exclusions(user_slots.get("exclude", ""))
 
+        _also_ok_pending = []
+
         def _label_slot(dim):
             locked = user_slots.get(dim, "")
             locked_parts = [p for p in locked.split("|") if p]
@@ -1423,8 +1472,13 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 now = []
                 if locked:
                     return CLEAR_SLOT, ""
-            if dim == "worktype" and now and _is_additive and not locked_parts:
-                # 第一次講「兼職也可以」是放寬，不是只要兼職（第七輪測試）
+            if (
+                len(now) == 1 and _is_additive and not locked_parts and dim != "salary"
+                and not set(now) <= _locked_exclusions.get(dim, set())
+            ):
+                # 還沒講過這一項就說「夜班也可以」：不知道是只要夜班、還是夜班也
+                # 可以接受，先問（使用者 2026-09-23 第七輪決定）
+                _also_ok_pending.append((dim, now[0]))
                 return "", ""
             if now and _is_additive and not locked_parts and set(now) <= _locked_exclusions.get(dim, set()):
                 # 「不要夜班」之後講「夜班也可以」：只是不排除夜班了，不是只要
@@ -1888,6 +1942,40 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _early_faq = _faq_for_this_message()
             if _early_faq and _reply_with_faq(_early_faq):
                 return
+
+        if pending_negation_ask:
+            _neg_label = pending_negation_ask[0][1]
+            negation_reply = f"想跟您確認一下 😊 您是想找「{_neg_label}」的工作，還是不要「{_neg_label}」呢？"
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", negation_reply)
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=negation_reply, quick_reply=QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label=f"✅ 要{_neg_label}"[:20], text=f"{_neg_label}的工作")),
+                QuickReplyButton(action=MessageAction(label=f"🚫 不要{_neg_label}"[:20], text=f"不要{_neg_label}")),
+            ])))
+            log_ai_decision_event(
+                path="direct_intercept", intercept_type="negation_confirm",
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
+            return
+
+        if _also_ok_pending:
+            _ok_dim, _ok_label = _also_ok_pending[0]
+            _ok_name = _LABEL_DIMENSION_NAMES[_ok_dim]
+            also_reply = (
+                f"想跟您確認一下 😊 是只要看「{_ok_label}」的工作，還是全職、兼職都可以呢？" if _ok_dim == "worktype"
+                else f"想跟您確認一下 😊 是只要看「{_ok_label}」的工作，還是「{_ok_label}」跟其他{_ok_name}都可以呢？"
+            )
+            append_user_history(user_id, "求職者", raw_msg)
+            append_user_history(user_id, "招募顧問沛沛", also_reply)
+            target_line_bot_api.reply_message(reply_token, TextSendMessage(text=also_reply, quick_reply=QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label=f"✅ 只要{_ok_label}"[:20], text=f"只要{_ok_label}的工作")),
+                QuickReplyButton(action=MessageAction(label=f"👌 {_ok_name}都可以"[:20], text=f"{_ok_name}都可以")),
+            ])))
+            log_ai_decision_event(
+                path="direct_intercept", intercept_type="also_ok_confirm",
+                latency_seconds=time.monotonic() - _request_start, delivery_mode="sync",
+            )
+            return
 
         if pending_statement_ask:
             _ask_text = "或".join(f"「{opt}」" for opt in pending_statement_ask)

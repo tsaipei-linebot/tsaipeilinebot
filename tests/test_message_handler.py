@@ -4115,9 +4115,11 @@ class MultiTurnRoundSevenTests(_RoundFourSessionMixin, unittest.TestCase):
         self.assertEqual(self.session_slots["category"], "不限")
         self.assertEqual(len(r["titles"]), 4)
 
-    def test_first_time_part_time_also_ok_is_not_only_part_time(self):
-        self._say("桃園兼職也可以")
+    def test_first_time_part_time_also_ok_asks_first(self):
+        # 使用者決定：還沒講過就說「兼職也可以」先問是只要兼職還是都可以
+        r = self._say("桃園兼職也可以")
         self.assertEqual(self.session_slots.get("worktype", ""), "")
+        self.assertIn("全職、兼職都可以", r["text"])
 
     def test_relaxed_category_does_not_pull_couriers_into_warehouse(self):
         r = self._say("台北理貨的工作")
@@ -4148,6 +4150,62 @@ class MultiTurnRoundSevenTests(_RoundFourSessionMixin, unittest.TestCase):
     def test_vague_salary_gets_suggestions(self):
         r = self._say("桃園理貨 薪水高一點的")
         self.assertIn("時薪230以上", r["card_buttons"])
+
+
+
+class MultiTurnRoundSevenDecisionTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第七輪使用者決定：轉給真人、第一次講「X也可以」先問、認不出否定時先問。"""
+
+    def test_handoff_replies_and_records_for_staff(self):
+        cases = {
+            "我是廠商想徵人 需要10個作業員在桃園": "業務專員",
+            "請刪除我的資料": "個資刪除",
+            "我要去勞工局檢舉你們": "不好的感受",
+            "我在蝦皮門市上班 想離職": "負責的專員",
+            "我昨天去面試 結果呢": "面試／應徵進度",
+            "我要找真人": "真人專員",
+        }
+        for msg, expected in cases.items():
+            self.setUp()
+            with patch("handlers.message_handler.append_unresolved_question_for_followup") as record:
+                r = self._say(msg)
+            self.assertIn(expected, r["text"], msg)
+            self.assertFalse(r["ai"], msg)
+            self.assertTrue(record.call_args[0][0].startswith("【需要專員處理："), msg)
+
+    def test_asking_salary_amount_is_not_a_pay_complaint(self):
+        with patch("handlers.message_handler.append_unresolved_question_for_followup") as record:
+            self._say("桃園理貨的工作")
+            self._say("第一個薪水多少")
+        record.assert_not_called()
+
+    def test_first_time_also_ok_asks_first(self):
+        self._say("桃園理貨的工作")
+        r = self._say("夜班也可以")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(r["buttons"], ["只要大夜班的工作", "班別都可以"])
+        self._say("只要大夜班的工作")
+        self.assertEqual(self.session_slots["shift"], "大夜班")
+
+    def test_two_values_with_also_ok_are_both_kept(self):
+        self._say("桃園理貨的工作")
+        self._say("日領沒有的話週領也行")
+        self.assertEqual(self.session_slots["pay"], "日領|週領")
+
+    def test_unrecognised_negation_asks_want_or_not(self):
+        self._say("桃園理貨的工作")
+        r = self._say("夜班沒興趣")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(r["buttons"], ["大夜班的工作", "不要大夜班"])
+        self._say("不要大夜班")
+        self.assertEqual(self.session_slots["exclude"], "shift:大夜班")
+
+    def test_recognised_negation_and_positive_words_do_not_ask(self):
+        self._say("桃園理貨的工作")
+        r = self._say("不要夜班日領就好")
+        self.assertNotIn("還是不要", r["text"])
+        r = self._say("早班不錯")
+        self.assertNotIn("還是不要", r["text"])
 
 
 if __name__ == "__main__":

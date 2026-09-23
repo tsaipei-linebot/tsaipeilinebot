@@ -53,7 +53,7 @@ NEGATION_TRIGGERS = [
     "不要", "不想要", "不想", "除了", "排除", "不考慮",
     "沒有", "不能", "不接受", "拒絕", "不做", "不上", "無法", "不可以", "不喜歡", "不用上", "不需要上",
     # 第七輪測試：「沒辦法上夜班」「不方便上夜班」「討厭夜班」「NO夜班」「❌夜班」原本都被當成要夜班
-    "沒辦法", "沒法", "不方便", "不太能", "不適合", "討厭", "受不了", "不愛", "不會做", "no", "❌", "🙅",
+    "沒辦法", "沒法", "不方便", "不太能", "不適合", "討厭", "受不了", "不愛", "不會做", "no", "❌", "🙅", "不太想", "不太要",
 ]
 
 # 長得像否定詞、其實不是的說法：「有沒有夜班」（在問）、「能不能日領」、
@@ -1493,6 +1493,77 @@ _NOT_SEEKER_RE = re.compile(
     r"|面試.{0,6}(結果|通知|怎麼樣|過了嗎)|什麼時候(會)?通知|應徵了.{0,10}(通知|結果|回覆)"
     r"|我是廠商|我們(公司|工廠|餐廳|店|廠).{0,12}(缺|徵|找人|請人|需要)|想徵人|幫忙找人|可以派人|想請.{0,4}人"
 )
+
+
+# 要轉給真人專員的情況（使用者 2026-09-23 第七輪決定：程式直接回固定句，
+# 並記進「求職者提問追蹤」讓同仁回頭處理）。順序有意義：先比對到的算。
+_HANDOFF_PATTERNS = [
+    ("business", re.compile(
+        r"我是廠商|我們(公司|工廠|餐廳|店|廠|門市).{0,12}(缺|徵|找人|請人|需要)|想徵人|幫忙找人|可以派人|派人來"
+        r"|人力需求|派遣合作|談合作|想合作|合作洽詢|業務洽詢")),
+    ("privacy", re.compile(r"刪除.{0,4}(個資|資料|紀錄)|個資.{0,4}刪|不要再(傳|發|打)|停止(傳送|發送|聯絡)|取消(訂閱|通知)")),
+    ("complaint", re.compile(
+        r"檢舉|投訴|申訴|客訴|勞工局|勞檢|提告|告你們|很爛|太爛|爛透|垃圾公司|封鎖你|騙子|詐騙集團|你們是詐騙(?!嗎)|就是詐騙")),
+    ("employee", re.compile(
+        r"(薪水|薪資|工資|加班費).{0,6}((?<!多)少(了|算|給|發|匯)|還沒|沒收到|沒轉|沒匯|沒算|欠|扣)|被欠薪|欠薪|扣薪|少算"
+        r"|想離職|要離職|想請假|要請假|請喪假|請病假|派到.{0,8}(的員工|上班)|我是你們派")),
+    ("interview", re.compile(r"面試.{0,6}(結果|通知|怎麼樣|過了嗎|有過)|什麼時候(會)?通知|應徵了.{0,10}(通知|結果|回覆)")),
+    ("human", re.compile(r"真人|找專員|請專員|轉接|人工客服|找人工|有人在嗎|打(電話)?給我|聯絡我|跟人講|跟人說")),
+]
+HANDOFF_REASON_NAMES = {
+    "business": "業務詢問", "privacy": "個資/停止聯繫", "complaint": "抱怨/客訴",
+    "employee": "在職員工", "interview": "面試/應徵進度", "human": "要找真人",
+}
+
+
+def detect_handoff_reason(raw_msg: str) -> str:
+    text = str(raw_msg or "")
+    for reason, pattern in _HANDOFF_PATTERNS:
+        if pattern.search(text):
+            return reason
+    return ""
+
+
+# 看起來像否定、但認不出是不是否定的字（使用者 2026-09-23 第七輪決定：這種時候
+# 先問「要還是不要」，不自己猜）。先拿掉意思是肯定的說法。
+_NEGATION_HINT_RE = re.compile(r"不|沒|没|免|no|ng|❌|✖|🙅")
+_NOT_NEGATION_PHRASES = (
+    "沒有的話", "不的話", "沒有也沒關係", "不錯", "不限", "不拘", "沒問題", "沒關係", "沒差", "免費", "不用太", "的話", "不一定", "不會累", "都不錯",
+    "沒有也", "有沒有", "能不能", "可不可以", "要不要", "是不是", "會不會", "不管",
+)
+
+
+def detect_uncertain_negation(text: str) -> list:
+    """[(維度, 標籤)]：這句話講到這個條件（被當成想要），附近卻有「不／沒／免／NO／❌」
+    這種像否定的字。已經認得是否定的不算。"""
+    clean = clause_clean_text(text)
+    for phrase in _NOT_NEGATION_PHRASES:
+        clean = clean.replace(phrase, "_" * len(phrase))
+    found = []
+    hits = _condition_word_hits(clean)
+    for dim, pairs in (
+        ("shift", list(SHIFT_SYNONYMS.items())), ("leave", LEAVE_BUCKETS),
+        ("pay", list(PAY_METHOD_SYNONYMS.items())), ("worktype", list(WORKTYPE_SYNONYMS.items())),
+    ):
+        wanted = set(_find_label_mentions(text, pairs))
+        for label, keywords in pairs:
+            if label not in wanted or (dim, label) in found:
+                continue
+            for kw in keywords:
+                k = clean_text_for_search(kw).lower()
+                i = clean.find(k) if k else -1
+                while i != -1:
+                    # 前面只看到上一個條件詞為止：「不要夜班日領就好」的「不」是夜班的
+                    start = max([0, i - 5] + [e for st, e, _ in hits if e <= i and not (st <= i < e)])
+                    after_end = min([i + len(k) + 3] + [st for st, e, _ in hits if st >= i + len(k)])
+                    window = clean[start:i] + "|" + clean[i + len(k):after_end]
+                    if _NEGATION_HINT_RE.search(window):
+                        found.append((dim, label))
+                        break
+                    i = clean.find(k, i + 1)
+                if (dim, label) in found:
+                    break
+    return found
 
 
 def classify_condition_utterance(raw_msg: str) -> str:
