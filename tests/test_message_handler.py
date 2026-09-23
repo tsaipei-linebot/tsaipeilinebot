@@ -4241,5 +4241,79 @@ class MultiTurnHolidayOffTests(_RoundFourSessionMixin, unittest.TestCase):
         self.assertEqual(m.extract_shift_labels("固定休假日"), [])
 
 
+class MultiTurnRoundEightDefiniteBugTests(_RoundFourSessionMixin, unittest.TestCase):
+    """第八輪測試找到、跟說法無關的程式錯誤（使用者 2026-09-23 決定先修）。"""
+
+    def _jobs(self):
+        jobs = super()._jobs() + [
+            self._job("戊新北門市", ["門市人員"], "戊百貨", ["新北市"], ["新北市板橋區"], "月領", "", "排休", "早班"),
+            self._job("己后里作業員", ["作業員"], "己科技", ["台中市"], ["台中市后里區"], "月領", "", "排休", "日班"),
+            self._job("庚竹北門市", ["門市人員"], "庚百貨", ["新竹縣"], ["新竹縣竹北市"], "月領", "", "排休", "早班"),
+            self._job("辛宅配", ["外送人員"], "辛宅配", ["高雄市"], ["高雄市前鎮區"], "月領"),
+            self._job("辛宅配", ["外送人員"], "辛宅配", ["高雄市"], ["高雄市前鎮區"], "週領"),
+        ]
+        jobs[-1]["_page_id"] = "page-second"
+        return jobs
+
+    def test_two_counties_joined_by_or_are_not_glued_into_a_district(self):
+        jobs = self._jobs()
+        self.assertEqual(m.extract_current_target_location("新北或桃園的工作", "", jobs), "新北|桃園")
+        self.assertEqual(m.extract_current_target_location("台中、彰化都可以", "", jobs), "台中|彰化")
+        self.assertEqual(m.extract_current_target_location("台中市后里區", "", jobs), "后里")
+
+    def test_hsinchu_core_name_before_zhubei_is_hsinchu_county(self):
+        self.assertEqual(m.extract_current_target_location("新竹竹北的工作", "", self._jobs()), "竹北")
+        result = self._say("新竹竹北 門市")
+        self.assertEqual(result["titles"], ["庚竹北門市"])
+
+    def test_houli_is_not_converted_to_traditional_hou(self):
+        self.assertEqual(h._normalize_user_text("后里的工作"), "后里的工作")
+        self.assertEqual(h._normalize_user_text("以后再说"), "以後再說")
+        result = self._say("后里 作業員")
+        self.assertEqual(result["titles"], ["己后里作業員"])
+
+    def test_second_job_with_same_title_can_be_opened(self):
+        self._say("辛宅配")
+        result = self._say("第二個有週領嗎")
+        self.assertIn("週領", result["text"])
+        self.assertEqual(result["buttons"], ["查看職缺詳情 辛宅配（2）"])
+        detail = self._say("查看職缺詳情 辛宅配（2）")
+        self.assertIn("辛宅配", detail["text"])
+
+    def test_any_reply_to_change_menu_broadens_that_dimension_only(self):
+        self._say("新北 門市")
+        menu = self._say("我想換地區")
+        self.assertIn("地區都可以", menu["buttons"])
+        self._say("都可以")
+        self.assertEqual(self.session_slots["category"], "門市")
+        self.assertEqual(self.session_slots["location"], "不限")
+
+    def test_unmatched_any_reply_after_question_asks_which_condition(self):
+        self._say("桃園 理貨 日領 夜班")
+        result = self._say("都可以")
+        self.assertEqual(result["text"], h._ANY_WHICH_PROMPT)
+        self.assertIn("類型都可以", result["buttons"])
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+
+    def test_yes_no_reply_to_negation_ask(self):
+        self._say("桃園 理貨")
+        self._say("夜班沒興趣")
+        self._say("不要")
+        self.assertIn("夜班", self.session_slots["exclude"])
+
+    def test_typed_clear_all_asks_then_clears(self):
+        self._say("桃園 理貨 夜班")
+        result = self._say("全部清空")
+        self.assertIn("請問您是想清空", result["text"])
+        self.assertEqual(self.session_slots["category"], "理貨/倉儲")
+        self._say("對 全部清空！")
+        self.assertEqual(self.session_slots["location"], "")
+        self.assertEqual(self.session_slots["category"], "")
+
+    def test_truncated_label_does_not_end_with_partial_number(self):
+        self.assertEqual(h._short_label("1. 蝦皮內勤 知名企業設備人員月薪36K"), "1. 蝦皮內勤 知名企業設備人員月薪…")
+        self.assertEqual(h._short_label("📖 短名稱"), "📖 短名稱")
+
+
 if __name__ == "__main__":
     unittest.main()
