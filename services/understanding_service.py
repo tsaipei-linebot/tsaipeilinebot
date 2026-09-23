@@ -354,7 +354,7 @@ def is_precise_hit(text: str, active_jobs: list) -> bool:
             continue
         negation_form = re.fullmatch(r"不要\s*(.+?)(的工作)?", clause)
         if negation_form:
-            body = negation_form.group(1).strip().lower()
+            body = re.sub(r"(的工作|的|喔|哦|啦|了|啊|呀|吧|耶)+$", "", negation_form.group(1).strip().lower()) or negation_form.group(1).strip().lower()
             if body not in known and not (active_jobs and detect_brand_label(body, active_jobs).lower() == body):
                 return False
             continue

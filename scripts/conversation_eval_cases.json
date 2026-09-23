@@ -1,0 +1,14 @@
+[
+  {"id": "範例-桃園理貨再加新竹", "note": "基本流程＋也可以", "turns": [
+    {"say": "桃園 理貨", "slots": {"location": "桃園", "category": "理貨/倉儲"}, "jobs": true},
+    {"say": "晚上有空的那種", "slots_has": {"shift": ["晚班"]}, "slots": {"location": "桃園", "category": "理貨/倉儲"}},
+    {"say": "不要外送喔", "slots_has": {"exclude": ["category:外送"]}, "slots": {"category": "理貨/倉儲"}}
+  ]},
+  {"id": "範例-問問題不改條件", "note": "問句裡的詞不能當條件", "turns": [
+    {"say": "桃園作業員", "slots": {"location": "桃園", "category": "製造/作業員"}},
+    {"say": "那邊有冷氣設備嗎", "slots": {"location": "桃園", "category": "製造/作業員"}}
+  ]},
+  {"id": "範例-新北或桃園", "note": "兩個縣市", "turns": [
+    {"say": "新北或桃園的工作", "slots": {"location": ["新北", "桃園"]}}
+  ]}
+]

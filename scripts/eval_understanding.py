@@ -126,10 +126,11 @@ def check(case: dict, form: dict) -> list:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--thinking", type=int, default=0, help="Gemini 先想一想的額度（0＝不想，預設）")
+    parser.add_argument("--cases", default=CASES_PATH, help="考題檔（預設是 scripts/ 裡那份）")
     parser.add_argument("--only", default="", help="只跑題目名稱包含這段字的題目")
     args = parser.parse_args()
 
-    cases = [c for c in json.load(open(CASES_PATH, encoding="utf-8")) if args.only in c["id"]]
+    cases = [c for c in json.load(open(args.cases, encoding="utf-8")) if args.only in c["id"]]
     latencies, failed = [], []
     for case in cases:
         history = [{"role": "招募顧問沛沛", "text": case["last_bot"]}] if case.get("last_bot") else []
