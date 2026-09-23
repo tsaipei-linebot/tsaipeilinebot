@@ -48,11 +48,20 @@ class ParseCommandTests(unittest.TestCase):
         for text in ("我的報名", "報名紀錄", "查詢報名", "查詢報名狀態"):
             self.assertEqual(bot.parse_command(text)["type"], bot.CMD_MY_REGISTRATIONS)
 
-    def test_unknown_text_falls_back_to_help(self):
-        self.assertEqual(bot.parse_command("哈囉"), {"type": bot.CMD_HELP})
+    def test_unknown_text_is_ignored(self):
+        self.assertEqual(bot.parse_command("哈囉"), {"type": bot.CMD_IGNORE})
 
-    def test_blank_text_falls_back_to_help(self):
-        self.assertEqual(bot.parse_command(""), {"type": bot.CMD_HELP})
+    def test_blank_text_is_ignored(self):
+        self.assertEqual(bot.parse_command(""), {"type": bot.CMD_IGNORE})
+
+    def test_bind_keyword_not_at_start_is_ignored(self):
+        # 求職者問「我要怎麼綁定啊」不該被當成在綁定——只有「綁定」開頭
+        # 才算觸發（見 dispatch_bot.py 開頭的說明）。
+        self.assertEqual(bot.parse_command("我要怎麼綁定啊"), {"type": bot.CMD_IGNORE})
+
+    def test_bare_register_keyword_without_code_is_ignored(self):
+        # 「報名」這兩個字求職者很可能用（想應徵工作），沒帶代碼一律安靜。
+        self.assertEqual(bot.parse_command("報名"), {"type": bot.CMD_IGNORE})
 
 
 class HandleMessageBindTests(unittest.TestCase):
@@ -88,10 +97,13 @@ class HandleMessageRequiresBindingTests(unittest.TestCase):
             reply = bot.handle_message(SITE, "U1", "需求列表")
         self.assertEqual(reply, bot._NOT_BOUND_TEXT)
 
-    def test_unbound_user_unknown_text_prompted_to_bind_not_help(self):
+    def test_unbound_user_unknown_text_gets_no_reply_at_all(self):
+        """2026-09-22 反轉的行為：這裡原本斷言「沒綁定+看不懂的文字 → 回
+        綁定提示」，但這幾個所的 LINE 官方帳號跟求職者共用，那個行為會
+        讓求職者傳「哈囉」也收到綁定提示。現在改成完全不回覆。"""
         with mock.patch.object(service, "get_bound_personnel", return_value=None):
             reply = bot.handle_message(SITE, "U1", "哈囉")
-        self.assertEqual(reply, bot._NOT_BOUND_TEXT)
+        self.assertEqual(reply, "")
 
 
 class HandleMessageListPostingsTests(unittest.TestCase):
@@ -170,16 +182,35 @@ class HandleMessageMyRegistrationsTests(unittest.TestCase):
         self.assertIn("已核准", reply)
 
 
-class HandleMessageHelpFallbackTests(unittest.TestCase):
-    def test_bound_user_unknown_text_gets_help_with_site_name(self):
+class HandleMessageSilenceTests(unittest.TestCase):
+    """2026-09-22 修正：這幾個所的 LINE 官方帳號跟求職者共用，沒有觸發
+    指令關鍵字的訊息一律回傳空字串（呼叫端不回覆），不分有沒有綁定——
+    原本會先查綁定狀態、沒綁定就回「請先完成身分綁定」，導致求職者傳
+    「哈囉」也收到綁定提示。"""
+
+    def test_unbound_user_unknown_text_gets_no_reply(self):
+        with mock.patch.object(service, "get_bound_personnel") as mock_bound:
+            reply = bot.handle_message(SITE, "U1", "哈囉")
+        self.assertEqual(reply, "")
+        # 連查都不用查綁定狀態，直接安靜退出。
+        mock_bound.assert_not_called()
+
+    def test_bound_user_unknown_text_also_gets_no_reply(self):
         with mock.patch.object(service, "get_bound_personnel", return_value={"id": "p1", "name": "王小明"}):
             reply = bot.handle_message(SITE, "U1", "哈囉")
-        self.assertIn("桃園所派遣小幫手", reply)
+        self.assertEqual(reply, "")
 
-    def test_help_text_uses_kaohsiung_name_for_that_site(self):
-        with mock.patch.object(service, "get_bound_personnel", return_value={"id": "p1", "name": "李小華"}):
-            reply = bot.handle_message("kaohsiung", "U2", "哈囉")
-        self.assertIn("高雄所派遣小幫手", reply)
+    def test_job_seeker_style_questions_get_no_reply(self):
+        for text in ("有工作嗎", "我要報名", "請問還有缺人嗎", "我要怎麼綁定啊", "報名"):
+            with mock.patch.object(service, "get_bound_personnel") as mock_bound:
+                self.assertEqual(bot.handle_message(SITE, "U1", text), "", text)
+                mock_bound.assert_not_called()
+
+    def test_real_commands_still_reply_when_not_bound(self):
+        # 真的在用這個功能的人（傳了關鍵字）沒綁定時，還是要提示他綁定。
+        with mock.patch.object(service, "get_bound_personnel", return_value=None):
+            for text in ("需求列表", "報名 A1B2C3", "我的報名"):
+                self.assertIn("請先完成身分綁定", bot.handle_message(SITE, "U1", text), text)
 
 
 if __name__ == "__main__":

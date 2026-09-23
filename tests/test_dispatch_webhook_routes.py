@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -9,6 +10,7 @@ from tests import _stub_gcp
 _stub_gcp.install()
 
 import dispatch_line
+import dispatch_webhook_routes
 import main
 from fastapi.testclient import TestClient
 
@@ -42,6 +44,36 @@ class DispatchLineWebhookTests(unittest.TestCase):
             self.assertEqual(resp.status_code, 400)
         finally:
             dispatch_line._handlers["taoyuan"] = original_handler
+
+
+class ReplyHandlerSilenceTests(unittest.TestCase):
+    """2026-09-22 修正：handle_message() 回傳空字串代表「這則訊息不是在跟
+    派遣功能互動」（這幾個所的 LINE 官方帳號跟求職者共用），這時候連
+    reply_message() 都不能呼叫——replyToken 自然過期，求職者那邊完全不會
+    收到系統訊息。"""
+
+    def _fake_event(self, text: str):
+        event = mock.Mock()
+        event.source.user_id = "U1"
+        event.message.text = text
+        event.reply_token = "token1"
+        return event
+
+    def test_empty_reply_does_not_call_line_api(self):
+        reply_handler = dispatch_webhook_routes._make_reply_handler("taoyuan")
+        with mock.patch.object(dispatch_webhook_routes.dispatch_bot, "handle_message", return_value=""):
+            with mock.patch.object(dispatch_webhook_routes, "get_line_bot_api") as mock_api:
+                reply_handler(self._fake_event("哈囉"))
+        mock_api.assert_not_called()
+
+    def test_non_empty_reply_is_sent(self):
+        reply_handler = dispatch_webhook_routes._make_reply_handler("taoyuan")
+        with mock.patch.object(dispatch_webhook_routes.dispatch_bot, "handle_message", return_value="綁定成功！"):
+            with mock.patch.object(dispatch_webhook_routes, "get_line_bot_api") as mock_api:
+                reply_handler(self._fake_event("綁定+王小明+0912345678"))
+        mock_api.return_value.reply_message.assert_called_once()
+        sent_message = mock_api.return_value.reply_message.call_args.args[1]
+        self.assertEqual(sent_message.text, "綁定成功！")
 
 
 if __name__ == "__main__":
