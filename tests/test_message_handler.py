@@ -3193,5 +3193,131 @@ class PayMethodKeywordDirectInterceptTests(unittest.TestCase):
         self.assertEqual(args[1], control_message)
 
 
+class MultiTurnRoundFourUnderstandingTests(unittest.TestCase):
+    """第四輪多輪對話測試：依使用者 2026-09-23 定的原則「只要不確定的就跳出
+    選項給求職者選擇」修正的對話流程——問規定還是找工作、放寬說法、否定詞
+    只管自己的子句、一句話講多個值、班別當篩選條件、回覆講出用了哪些條件。"""
+
+    def _job(self, 職缺名稱, 職務類別, 系統廠商名稱, 縣市, 行政區, 領薪方式="", 福利="", 休假方式="", 班別=""):
+        job = MultiTurnLockedCategoryPersistenceTests._job(
+            self, 職缺名稱, 職務類別, 系統廠商名稱, 縣市, 行政區, 領薪方式, 福利, 休假方式)
+        job["班別"] = 班別
+        return job
+
+    def _jobs(self):
+        return [
+            self._job("甲理貨日領早班", ["理貨人員"], "甲物流", ["桃園市"], ["桃園市中壢區"], "日領", "交通車", "排休", "早班"),
+            self._job("乙理貨週領夜班", ["理貨人員"], "乙物流", ["桃園市"], ["桃園市楊梅區"], "週領", "", "週休二日", "夜班"),
+            self._job("丙理貨月領假日", ["理貨人員"], "丙物流", ["桃園市"], ["桃園市八德區"], "月領", "", "週休二日", "假日班"),
+            self._job("丁作業員月領", ["作業員"], "丁科技", ["新竹縣"], ["新竹縣湖口鄉"], "月領", "交通車", "做四休二", "日班,夜班"),
+        ]
+
+    def setUp(self):
+        self.session_slots = dict(location="", category="", shift="", leave="", brand="", pay="", benefit="")
+        self.history = []
+
+    def _say(self, msg):
+        slots = self.session_slots
+
+        def _merge(user_id, **kwargs):
+            for key, value in kwargs.items():
+                if value == h.CLEAR_SLOT:
+                    slots[key] = ""
+                elif value:
+                    slots[key] = value
+            return dict(slots)
+
+        event = MagicMock()
+        event.reply_token = "valid-reply-token"
+        event.source.user_id = "test-round-four"
+        event.message.text = msg
+        api = MagicMock()
+        with patch("handlers.message_handler.fetch_jobs_data", return_value=self._jobs()), \
+             patch("handlers.message_handler.fetch_faqs_data", return_value=[]), \
+             patch("handlers.message_handler.get_user_history", side_effect=lambda uid: list(self.history)), \
+             patch("handlers.message_handler.get_user_slots", side_effect=lambda uid: dict(slots)), \
+             patch("handlers.message_handler.update_user_slots", side_effect=_merge), \
+             patch("handlers.message_handler.append_user_history", side_effect=lambda uid, role, text: self.history.append({"role": role, "text": text})), \
+             patch("handlers.message_handler.create_job_flex_card") as flex, \
+             patch("handlers.message_handler._is_staffed_hours", return_value=False), \
+             patch("handlers.message_handler._compute_ai_decision_messages") as ai:
+            h.process_user_message(event, api)
+        reply = api.reply_message.call_args[0][1]
+        messages = reply if isinstance(reply, list) else [reply]
+        text = messages[0].text
+        qr = messages[0].quick_reply
+        buttons = [item.action.text for item in qr.items] if qr else []
+        titles = [j["職缺名稱"] for j in flex.call_args[0][0]] if flex.called else []
+        return dict(text=text, buttons=buttons, titles=titles, ai=ai.called)
+
+    def test_question_about_condition_asks_before_filtering(self):
+        r = self._say("週領是禮拜幾發")
+        self.assertIn("了解", r["text"])
+        self.assertEqual(r["buttons"], ["想了解週領的規定", "有週領的工作嗎"])
+        self.assertEqual(self.session_slots["pay"], "")
+        r = self._say(r["buttons"][0])
+        self.assertTrue(r["ai"])
+        self.assertEqual(self.session_slots["pay"], "")
+
+    def test_demand_button_filters(self):
+        r = self._say("有週領的工作嗎")
+        self.assertEqual(r["titles"], ["乙理貨週領夜班"])
+        self.assertIn("發薪方式：週領", r["text"])
+
+    def test_negation_only_drops_its_own_condition(self):
+        self._say("桃園有夜班的理貨工作嗎")
+        self.assertEqual(self.session_slots["shift"], "大夜班")
+        r = self._say("不要夜班了，日領的就好")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(self.session_slots["pay"], "日領")
+        self.assertEqual(r["titles"], ["甲理貨日領早班"])
+
+    def test_multiple_values_and_additive_wording(self):
+        r = self._say("理貨日領或週領都可以")
+        self.assertEqual(self.session_slots["pay"], "日領|週領")
+        self.assertEqual(sorted(r["titles"]), ["乙理貨週領夜班", "甲理貨日領早班"])
+        self.assertIn("日領或週領", r["text"])
+        self._say("月領的呢")
+        self.assertEqual(self.session_slots["pay"], "月領")
+        self._say("日領也可以")
+        self.assertEqual(self.session_slots["pay"], "月領|日領")
+
+    def test_relax_wording_asks_instead_of_reapplying(self):
+        self._say("桃園理貨週休二日的")
+        r = self._say("不一定要週休")
+        self.assertIn("要把「休假方式：週休二日」這個條件拿掉嗎", r["text"])
+        self.assertEqual(r["buttons"], ["休假方式都可以", "保留目前條件"])
+        self.assertEqual(self.session_slots["leave"], "週休二日")
+        r = self._say("休假方式都可以")
+        self.assertEqual(self.session_slots["leave"], "")
+        self.assertEqual(len(r["titles"]), 3)
+
+    def test_keep_button_lists_current_scope(self):
+        self._say("桃園理貨週休二日的")
+        self._say("週休沒有就算了")
+        r = self._say("保留目前條件")
+        self.assertEqual(sorted(r["titles"]), ["丙理貨月領假日", "乙理貨週領夜班"])
+        self.assertEqual(self.session_slots["leave"], "週休二日")
+
+    def test_shift_is_a_filter_and_holiday_is_not_day_shift(self):
+        self._say("理貨的工作")
+        r = self._say("假日班的")
+        self.assertEqual(r["titles"], ["丙理貨月領假日"])
+        self.assertIn("班別：假日班", r["text"])
+        r = self._say("班別都可以")
+        self.assertEqual(self.session_slots["shift"], "")
+        self.assertEqual(len(r["titles"]), 3)
+
+    def test_shift_relax_button_when_no_match(self):
+        self._say("理貨的工作")
+        self._say("假日班的")
+        r = self._say("日領的")
+        self.assertIn("班別都可以", " ".join(r["buttons"]))
+
+    def test_first_time_exclusion_still_goes_to_ai(self):
+        r = self._say("理貨不要夜班的工作")
+        self.assertTrue(r["ai"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -894,5 +894,73 @@ class MultiTurnRoundThreeMatcherFixTests(unittest.TestCase):
         self.assertTrue(m.job_matches_brand(target, "新興"))
 
 
+class RoundFourUnderstandingMatcherTests(unittest.TestCase):
+    """第四輪多輪對話測試（使用者 2026-09-23 定的「不確定就讓求職者選」原則）
+    matcher 端的修正：否定詞只看自己的子句、一句話講多個值、放寬說法、
+    問問題還是提需求、班別篩選、類型關鍵字。"""
+
+    def test_negation_only_applies_to_its_own_clause(self):
+        self.assertEqual(m.detect_pay_method_labels("不要夜班，日領的就好"), ["日領"])
+        self.assertEqual(m.extract_shift_labels("不要夜班，日領的就好", negated=True), ["大夜班"])
+        self.assertEqual(m.extract_shift_labels("不要夜班，日領的就好"), [])
+        self.assertEqual(m.detect_pay_method_labels("不要日領"), [])
+        self.assertEqual(m.detect_pay_method_labels("不要日領", negated=True), ["日領"])
+
+    def test_multiple_values_in_one_sentence(self):
+        self.assertEqual(m.detect_pay_method_labels("日領或週領都可以"), ["日領", "週領"])
+        self.assertEqual(m.detect_pay_method_labels("雙週領"), ["雙週領"])
+
+    def test_holiday_shift_is_not_day_shift(self):
+        self.assertEqual(m.extract_shift_labels("假日班"), ["假日班"])
+        self.assertEqual(m.extract_leave_labels("四三輪休"), ["四三輪休"])
+
+    def test_new_leave_wordings(self):
+        self.assertEqual(m.extract_leave_preference("做兩休兩"), "做二休二")
+        self.assertEqual(m.extract_leave_preference("做三休三的工作"), "做三休三")
+        self.assertEqual(m.extract_leave_preference("你們休假日也要上班嗎"), "")
+
+    def test_multi_value_label_filters(self):
+        jobs = [
+            {"領薪方式": "日領", "班別": "早班", "休假方式": "排休"},
+            {"領薪方式": "週領", "班別": "假日班", "休假方式": "週休二日"},
+            {"領薪方式": "月領", "班別": "夜班(打烊班)", "休假方式": "做四休二"},
+        ]
+        self.assertEqual(len(m.filter_jobs_by_pay_label(jobs, "日領|週領")), 2)
+        self.assertEqual(m.filter_jobs_by_shift_label(jobs, "假日班"), [jobs[1]])
+        self.assertEqual(m.filter_jobs_by_shift_label(jobs, "晚班"), [jobs[2]])
+        self.assertEqual(m.filter_jobs_by_leave_label(jobs, "週休二日|做四休二"), jobs[1:])
+
+    def test_relax_wordings(self):
+        c = m.clean_text_for_search
+        self.assertEqual(m.detect_relax_dimensions(c("不一定要週休")), {"leave"})
+        self.assertEqual(m.detect_relax_dimensions(c("日領沒有就算了")), {"pay"})
+        self.assertEqual(m.detect_relax_dimensions(c("不需要交通車"), ["交通車"]), {"benefit"})
+        self.assertEqual(m.detect_relax_dimensions(c("日領的就好")), set())
+
+    def test_condition_words_broaden_all_secondary(self):
+        self.assertEqual(m.detect_scoped_broaden_dimensions(m.clean_text_for_search("條件都不限")), {"leave", "pay", "benefit", "shift"})
+
+    def test_question_or_demand(self):
+        self.assertEqual(m.classify_condition_utterance("可以預支薪水嗎"), "question")
+        self.assertEqual(m.classify_condition_utterance("週領是禮拜幾發"), "question")
+        self.assertEqual(m.classify_condition_utterance("交通車有哪些站點"), "question")
+        self.assertEqual(m.classify_condition_utterance("有交通車的嗎"), "demand")
+        self.assertEqual(m.classify_condition_utterance("有日領的工作嗎"), "demand")
+        self.assertEqual(m.classify_condition_utterance("日領的就好"), "demand")
+        self.assertEqual(m.classify_condition_utterance("想了解日領的規定"), "info")
+
+    def test_category_keywords(self):
+        self.assertEqual(m.detect_category_label(m.clean_text_for_search("倉庫的工作")), "理貨/倉儲")
+        self.assertEqual(m.detect_category_label(m.clean_text_for_search("服飾店有缺嗎")), "門市")
+        self.assertEqual(m.detect_category_label(m.clean_text_for_search("百貨專櫃")), "門市")
+
+    def test_category_field_wins_over_public_title(self):
+        job = {"職缺名稱(對外)": "電商物流理貨包裝", "職務類別": "作業員", "_job_category": "作業員"}
+        self.assertFalse(m.job_matches_category_filter(job, "理貨/倉儲", allow_relaxed=False))
+        self.assertTrue(m.job_matches_category_filter(job, "製造/作業員", allow_relaxed=False))
+        untagged = {"職缺名稱(對外)": "電商物流理貨包裝", "職務類別": ""}
+        self.assertTrue(m.job_matches_category_filter(untagged, "理貨/倉儲", allow_relaxed=False))
+
+
 if __name__ == "__main__":
     unittest.main()
