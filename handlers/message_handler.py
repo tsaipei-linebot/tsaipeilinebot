@@ -472,6 +472,18 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             brand=brand_slot_update
         )
 
+        # 一定要先問到地區才給職缺卡片（使用者 2026-09-23 決定，HANDOFF.md 第 85 項）：
+        # 還不知道地區時，要給卡片的地方一律改成先問地區。兩個保護避免卡住：
+        # 求職者說不限地區（都可以、全台…）算回答了；沛沛最近已經問過地區（例如
+        # 求職者回了程式認不出的地名），就不再重複問，照原本的流程走。
+        # 清空條件、年齡性別那兩句固定回覆雖然也提到地區，只是開場白，不算問過。
+        _location_already_asked = any(
+            item.get("role") == "招募顧問沛沛" and "哪個地區" in str(item.get("text", ""))
+            and not any(k in str(item.get("text", "")) for k in ("清空先前的搜尋條件", "就業服務法"))
+            for item in history[-6:]
+        )
+        need_location = not current_location and not explicit_any_location and not _location_already_asked
+
         # ---------------- 步驟 0-4：純泛意圖與全部瀏覽攔截[cite: 6] ----------------
         show_all_keywords = [
             "都給我看", "都要看", "都可以", "全部", "隨便", "推薦一下", "有什麼工作", "還有什麼", "看全部", "都看",
@@ -643,6 +655,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             _category_matched_jobs_for_fallback = momo_jobs
             _category_desc_for_fallback = "momo"
 
+        if direct_matches and need_location:
+            _reply_ask_location_first(user_id, raw_msg, reply_token, target_line_bot_api, _request_start)
+            return
+
         if direct_matches:
             reply_text = f"有的！沛沛為您找到符合條件的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
             append_user_history(user_id, "求職者", raw_msg)
@@ -674,6 +690,9 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             benefit_jobs = [j for j in benefit_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
 
         if matched_benefit_keyword and benefit_jobs and is_plain_shortcut_query(raw_msg, active_jobs, [matched_benefit_keyword]):
+            if need_location:
+                _reply_ask_location_first(user_id, raw_msg, reply_token, target_line_bot_api, _request_start)
+                return
             reply_text = f"有的！沛沛為您找到有「{matched_benefit_keyword}」的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
             append_user_history(user_id, "求職者", raw_msg)
             append_user_history(user_id, "招募顧問沛沛", reply_text)
@@ -699,6 +718,10 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
             if current_location:
                 loc_clean = current_location.replace("台", "臺")
                 pay_method_jobs = [j for j in pay_method_jobs if current_location in j.get("_location_search_text", "") or loc_clean in j.get("_location_search_text", "")]
+
+            if pay_method_jobs and need_location:
+                _reply_ask_location_first(user_id, raw_msg, reply_token, target_line_bot_api, _request_start)
+                return
 
             if pay_method_jobs:
                 reply_text = f"有的！沛沛為您找到「{matched_pay_method_label}」的推薦職缺囉，歡迎點擊下方「了解詳細內容」或填寫線上履歷應徵喔 😊"
@@ -822,7 +845,7 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
         future = _AI_DECISION_EXECUTOR.submit(
             _compute_ai_decision_messages,
             user_id, raw_msg, active_jobs, faq_list, current_location, history_text, log_ctx,
-            current_slots, target_line_bot_api,
+            current_slots, target_line_bot_api, need_location,
         )
         try:
             messages = future.result(timeout=AI_DECISION_SYNC_TIMEOUT_SECONDS)
@@ -898,6 +921,23 @@ def process_user_message(event, target_line_bot_api: LineBotApi, bypass_staffed_
                 print(f"[push_message 補發也失敗 Traceback]: {traceback.format_exc()}")
 
 
+def _reply_ask_location_first(user_id: str, raw_msg: str, reply_token: str, target_line_bot_api: LineBotApi,
+                              request_start: float):
+    """還不知道地區時，快速通道不直接給卡片，先問地區（HANDOFF.md 第 85 項）。
+    問法跟按鈕沿用 build_progressive_question() 的地區題，有記住類型會一起帶進按鈕。"""
+    ask_text, ask_buttons = build_progressive_question(user_id, "")
+    ask_text = ask_text or "請問您方便在【哪個地區】上班呢？（例如板橋、新莊、桃園等）"
+    append_user_history(user_id, "求職者", raw_msg)
+    append_user_history(user_id, "招募顧問沛沛", ask_text)
+    message = TextSendMessage(text=ask_text, quick_reply=QuickReply(items=ask_buttons)) if ask_buttons \
+        else TextSendMessage(text=ask_text)
+    target_line_bot_api.reply_message(reply_token, message)
+    log_ai_decision_event(
+        path="direct_intercept", intercept_type="ask_location_first",
+        latency_seconds=time.monotonic() - request_start, delivery_mode="sync",
+    )
+
+
 def _fallback_messages() -> TextSendMessage:
     """AI 決策流程內部發生未預期例外時的保底訊息，同時給同步（reply_message）跟
     逾時後背景（push_message）兩條路徑共用，確保無論走哪條路徑、保底文案都一致。"""
@@ -923,6 +963,7 @@ def _compute_ai_decision_messages(
     log_ctx: dict = None,
     known_slots: dict = None,
     target_line_bot_api: LineBotApi = None,
+    ask_location_if_missing: bool = False,
 ):
     """執行真正耗時的 AI 決策（候選集合建構 + Gemini 呼叫 + 解析），是
     process_user_message() 步驟 2 原本的內容搬過來的。這個函式故意只負責「算出
@@ -1005,6 +1046,15 @@ def _compute_ai_decision_messages(
             _known_condition_parts.append(f"廠商={_slot_brand}")
         known_conditions_text = "、".join(_known_condition_parts) if _known_condition_parts else "（目前尚未鎖定任何條件）"
 
+        # 還不知道地區、也還沒問過時，請 AI 先問地區，不要推薦職缺（HANDOFF.md 第 85 項）
+        location_rule_text = ""
+        if ask_location_if_missing and not current_location:
+            location_rule_text = (
+                "9. 【還不知道地區時先問地區】：求職者要找工作，但【求職者目前鎖定的條件】裡還沒有地區時，"
+                "action 用 \"ASK\"，親切詢問求職者想在哪個地區上班，不要推薦職缺（不要用 \"RECOMMEND\"）。"
+                "求職者只是在問問題（發薪、福利、面試等）時照常回答，不受這條影響。\n"
+            )
+
         ai_prompt = f"""你是一位「材霈有限公司」非常親切、高情商的線上招募顧問「沛沛」。
 你的任務是：結合對話歷史，優先從常見問題庫 (FAQ) 精確解答，並在求職者尋找工作時推薦合適職缺。
 
@@ -1032,7 +1082,7 @@ def _compute_ai_decision_messages(
    - 每筆候選職缺的「領薪方式:」欄位已經是同仁在系統裡實際勾選的正確發薪方式（例如週領、月領、現金、匯款），不是模糊描述。
    - 「特色:」「待遇:」欄位裡如果出現「當日結算」「薪資當天算」「多勞多得」之類行銷用語，那只是在描述薪資「計算」方式（例如時薪跟件酬取最高），絕對不代表這份工作是「日領」（當天真的撥款給員工），不能因為看到這類字眼就自行推論或宣稱這份職缺符合日領/週領等特定發薪方式。
    - 求職者問到特定發薪方式時，只能依「領薪方式:」欄位有沒有明確列出該方式來判斷，欄位沒有列出就是「此條件無完全相符職缺」，不能腦補。
-
+{location_rule_text}
 【求職者目前鎖定的條件】：
 {known_conditions_text}
 
@@ -1102,6 +1152,15 @@ def _compute_ai_decision_messages(
                 QuickReplyButton(action=MessageAction(label="👀 都給我看看", text="都給我看看"))
             ])
             return TextSendMessage(text=reply_text, quick_reply=QuickReply(items=buttons))
+
+        elif action == "RECOMMEND" and ask_location_if_missing and not current_location:
+            # 還不知道地區就不給卡片，改成先問地區（HANDOFF.md 第 85 項）
+            ask_text, ask_buttons = build_progressive_question(user_id, "")
+            ask_text = ask_text or "請問您方便在【哪個地區】上班呢？（例如板橋、新莊、桃園等）"
+            append_user_history(user_id, "招募顧問沛沛", ask_text)
+            if ask_buttons:
+                return TextSendMessage(text=ask_text, quick_reply=QuickReply(items=ask_buttons))
+            return TextSendMessage(text=ask_text)
 
         elif action == "RECOMMEND":
             reply_text = ai_reply_text or "太棒了！沛沛為您推薦以下符合需求的職缺："
