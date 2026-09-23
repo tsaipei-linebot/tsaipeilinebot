@@ -985,7 +985,8 @@ class RoundFourLocationPrecisionTests(unittest.TestCase):
     def test_earliest_district_wins(self):
         jobs = self._jobs()
         self.assertEqual(m.extract_current_target_location("台南市安南區的工作", "", jobs), "安南")
-        self.assertEqual(m.extract_current_target_location("中壢或八德", "", jobs), "中壢")
+        # 使用者 2026-09-23（第五輪）決定：用「或」連起來的兩個地區都算
+        self.assertEqual(m.extract_current_target_location("中壢或八德", "", jobs), "中壢|八德")
 
     def test_ambiguous_district_uses_context_county(self):
         jobs = self._jobs() + [{"縣市": "台北市", "行政區": "台北市中山區", "_location_search_text": "臺北市臺北市中山區"},
@@ -1109,6 +1110,63 @@ class RoundFiveUnderstandingMatcherTests(unittest.TestCase):
         self.assertIsNone(m.find_high_confidence_faq_match(faqs, "要"))
         self.assertIsNone(m.find_high_confidence_faq_match(faqs, "什麼"))
         self.assertIsNotNone(m.find_high_confidence_faq_match(faqs, "請問面試要帶什麼"))
+
+
+class RoundFiveLocationMatcherTests(unittest.TestCase):
+    """第五輪多輪對話測試第二批：地名。"""
+
+    def _jobs(self):
+        return [
+            {"縣市": "台北市", "行政區": "台北市大安區,台北市大同區,台北市中山區"},
+            {"縣市": "台中市", "行政區": "台中市西屯區,台中市西區,台中市北區"},
+            {"縣市": "台南市", "行政區": "台南市中西區,台南市北區"},
+            {"縣市": "新竹縣", "行政區": "新竹縣竹北市,新竹縣竹東鎮"},
+            {"縣市": "新竹市", "行政區": "新竹市北區,新竹市東區"},
+            {"縣市": "苗栗縣", "行政區": "苗栗縣苗栗市,苗栗縣頭份市"},
+            {"縣市": "宜蘭縣", "行政區": "宜蘭縣大同鄉,宜蘭縣礁溪鄉"},
+            {"縣市": "基隆市", "行政區": "基隆市中山區"},
+            {"縣市": "桃園市", "行政區": "桃園市中壢區,桃園市八德區,桃園市平鎮區"},
+        ]
+
+    def _loc(self, text):
+        return m.extract_current_target_location(text, "", self._jobs())
+
+    def test_named_county_is_not_ignored(self):
+        self.assertEqual(self._loc("台中市大安區有工作嗎"), "台中市大安區")
+        self.assertEqual(self._loc("台北市大安區"), "大安")
+
+    def test_district_does_not_straddle_county_name(self):
+        self.assertEqual(self._loc("台中西屯"), "西屯")
+        self.assertEqual(self._loc("台中西區"), "西區")  # 這組資料只有台中有西區
+        self.assertEqual(self._loc("新竹北區"), "新竹市北區")
+        self.assertEqual(self._loc("新竹東區"), "東區")
+
+    def test_county_seat_city_is_not_the_whole_county(self):
+        self.assertEqual(self._loc("苗栗市的工作"), "苗栗縣苗栗市")
+        self.assertEqual(self._loc("苗栗縣的工作"), "苗栗")
+        job = {"縣市": "苗栗縣", "行政區": "苗栗縣頭份市", "_location_search_text": "苗栗縣苗栗縣頭份市"}
+        self.assertFalse(m.job_matches_location(job, "苗栗縣苗栗市"))
+
+    def test_real_district_suffix_is_used(self):
+        self.assertEqual(self._loc("大同鄉有工作嗎"), "宜蘭縣大同鄉")
+        self.assertEqual(self._loc("大同區"), "台北市大同區")
+        self.assertEqual(m.ambiguous_district_choices("中山區有工作嗎", self._jobs()), ["台北市中山區", "基隆市中山區"])
+
+    def test_home_versus_work_place(self):
+        self.assertEqual(self._loc("我住在桃園想去新竹上班"), "新竹")
+        self.assertEqual(self._loc("我住中壢想去台北上班"), "台北")
+        self.assertEqual(self._loc("我住台北"), "台北")
+
+    def test_two_places_both_count(self):
+        self.assertEqual(self._loc("桃園或新竹都可以"), "桃園|新竹")
+        self.assertEqual(self._loc("中壢跟八德"), "中壢|八德")
+        job = {"_location_search_text": "新竹市東區"}
+        self.assertTrue(m.job_matches_location(job, "桃園|新竹"))
+
+    def test_negating_a_qualified_location(self):
+        self.assertTrue(m.location_is_negated("不要中山區", "台北市中山區", self._jobs()))
+        self.assertTrue(m.location_is_negated("不要台北市中山區", "台北市中山區", self._jobs()))
+        self.assertFalse(m.location_is_negated("中山區呢", "台北市中山區", self._jobs()))
 
 
 if __name__ == "__main__":
