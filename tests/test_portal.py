@@ -466,3 +466,70 @@ class AnnouncementAdminRoutesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PortalAnnouncementCarouselTests(unittest.TestCase):
+    """/portal 首頁公告改成固定高度的直向輪播（2026-09-23）。原本每則公告各畫
+    一張卡片往下疊，部署後又會自動發公告，更新一頻繁整個首頁就被推到下面去。
+
+    會動的部分（自動輪播、滑鼠移上去暫停、手動翻頁、內文捲動、固定高度）是用
+    真的瀏覽器驗的，那個腳本不在 CI 裡；這裡守的是模板本身的兩條底線——
+    **沒有 JavaScript 時只顯示第一則**（不能退化回 N 則全部疊出來），以及
+    **只有一則時不顯示翻頁按鈕**。"""
+
+    def _render(self, count):
+        from platform_templating import templates
+
+        class _Request:
+            url = type("U", (), {"path": "/portal", "__str__": lambda self: "/portal"})()
+            session = {}
+            scope = {"type": "http"}
+
+        announcements = [
+            {"title": f"公告{i + 1}", "content": f"內容{i + 1}", "created_at_display": "2026-09-23"}
+            for i in range(count)
+        ]
+        return templates.get_template("portal_home.html").render(
+            request=_Request(),
+            user={"username": "a", "name": "測試", "is_platform_admin": False},
+            announcements=announcements,
+        )
+
+    def test_no_announcements_renders_no_carousel(self):
+        self.assertNotIn("announcement-carousel", self._render(0))
+
+    def test_only_the_first_slide_is_visible_without_javascript(self):
+        html = self._render(5)
+        self.assertEqual(html.count('class="announcement-slide"'), 5)
+        # 5 則裡面只有第 1 則沒帶 hidden，其餘 4 則在 JavaScript 啟動前就是隱藏的
+        self.assertEqual(html.count('aria-label="第 1 則，共 5 則">'), 1)
+        self.assertEqual(html.count("則，共 5 則\" hidden>"), 4)
+
+    def test_single_announcement_has_no_nav_and_no_rotation_script(self):
+        html = self._render(1)
+        self.assertIn("公告1", html)
+        self.assertNotIn("announcement-nav", html)
+        self.assertNotIn("setInterval", html)
+
+    def test_multiple_announcements_show_nav_and_counter(self):
+        html = self._render(3)
+        self.assertEqual(html.count('class="announcement-nav"'), 2)
+        self.assertIn("/ 3", html)
+        self.assertIn("setInterval", html)
+
+    def test_announcement_text_is_escaped(self):
+        """公告內文會原樣顯示在首頁，要確定沒有被當成 HTML 執行。"""
+        from platform_templating import templates
+
+        class _Request:
+            url = type("U", (), {"path": "/portal", "__str__": lambda self: "/portal"})()
+            session = {}
+            scope = {"type": "http"}
+
+        html = templates.get_template("portal_home.html").render(
+            request=_Request(),
+            user={"username": "a", "name": "測試", "is_platform_admin": False},
+            announcements=[{"title": "<script>alert(1)</script>", "content": "<b>x</b>", "created_at_display": ""}],
+        )
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;", html)
