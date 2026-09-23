@@ -329,8 +329,30 @@ _NEGATION_CUES = ("不要", "不想", "不能", "不做", "不去", "除了", "�
 _BROADEN_CUES = ("都可以", "都行", "都好", "都ok", "不限", "隨便", "沒差", "無所謂", "哪裡", "全台", "全省", "什麼",
                  "其他", "也可以", "也行", "也沒關係", "不一定", "可以不要", "不需要", "拿掉", "都看", "any", "whatever",
                  "皆可", "沒關係")
-_NEG_AFTER_RE = r"^[\s，,、的是]{0,2}(不要|不行|不可以|不能|不方便|沒空|沒辦法|要顧|要上課|要接送|要照顧|ng|NG|免|沒興趣|不考慮|不想|不做|❌|x\b)"
-_NEG_BEFORE_RE = r"(不要|不想|不能|不做|不上|沒辦法|不方便|除了|排除|不接受|不用|免)\s?$"
+_NEG_AFTER_RE = r"^[\s，,、的是也都就我]{0,2}(不要|不行|不可以|不能|不方便|沒空|沒辦法|要顧|要上課|要接送|要照顧|以外|除外|ng|NG|免|沒興趣|不考慮|不想|不做|❌|x\b)"
+_NEG_BEFORE_RE = r"(不要|不想要?|不能|不做|不上|沒辦法|不方便|除了|排除|不接受|不用|不需要|不必|免|不)(上|做|去|值|排|要)?\s?$"
+_CLAUSE_SPLIT = r"[，,。、；;！!？?\s]+"
+
+
+def _neg_binds_back(rest: str) -> bool:
+    """「X 不要」後面接的東西決定「不要」在否定誰：後面沒話了、接標點（「大夜不要，晚班可以」）
+    是否定前面的 X；緊接著另一個詞（「作業員 不要輪班」「早班 不要假日班」）是否定後面那個。"""
+    rest = re.sub(r"^[了啦喔哦耶呢啊唷欸嗎的]+", "", rest)
+    if not rest or re.match(r"[，,。、；;！!？?~～]", rest):
+        return True
+    if rest[0].isspace():
+        nxt = re.split(_CLAUSE_SPLIT, rest.strip())[0] if rest.strip() else ""
+        # 「大夜不要 晚班可以」：空白後面是另一段「要／可以」的話
+        return not nxt or bool(re.search(r"可以|就好|也行|ok|OK|要|好", nxt))
+    return False
+
+
+def _in_clean_clause(words, text: str) -> bool:
+    """詞出現在「沒有否定詞」的那一段話裡（用標點、空白切段）。"""
+    for clause in re.split(_CLAUSE_SPLIT, text):
+        if any(w in clause for w in words) and not any(c in clause for c in _NEGATION_CUES):
+            return True
+    return False
 _PAST_CUES = ("以前", "之前", "做過", "現在在做", "目前在做", "原本", "曾經", "上一份")
 _ORIGIN_CUES = ("住", "人在", "從", "出發", "家在", "戶籍", "面試", "報到", "老家")
 _LOCATION_ALIASES = {"北市": "台北", "中市": "台中", "南市": "台南", "高市": "高雄", "北縣": "新北", "竹縣": "新竹縣",
@@ -359,12 +381,17 @@ def _negated_labels(text: str, mapping) -> set:
             for m in re.finditer(re.escape(w.lower()), text):
                 after, before = text[m.end():m.end() + 8], text[max(0, m.start() - 4):m.start()]
                 neg_after = re.match(_NEG_AFTER_RE, after)
-                if neg_after:
-                    # 「早班 不要假日班」：否定詞後面緊接著另一個詞，是在否定後面那個
-                    rest = after[neg_after.end():].lstrip(" ，,")
-                    if rest and any(rest.startswith(x.lower()) for words2 in _all_words(mapping) for x in words2):
-                        neg_after = None
-                if neg_after or re.search(_NEG_BEFORE_RE, before):
+                if (neg_after and not neg_after.group(1).startswith(("要", "以外", "除外"))
+                        and not _neg_binds_back(text[m.end() + neg_after.end():])):
+                    # 「早班 不要假日班」「作業員 不要輪班」：否定詞後面緊接著另一個詞，是在否定後面那個
+                    neg_after = None
+                neg_before = re.search(_NEG_BEFORE_RE, before)
+                if neg_before and before.endswith((" ", "　")):
+                    # 「大夜不要 晚班可以」：晚班那段自己是「可以」，前面的不要是在說大夜
+                    clause = re.split(_CLAUSE_SPLIT, text[m.start():])[0]
+                    if re.search(r"可以|就好|也行|ok|也好", clause):
+                        neg_before = None
+                if neg_after or neg_before:
                     hits.add(label)
     return hits
 
@@ -404,6 +431,8 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
             if any(_has_evidence(label, mapping, msg) for label in names):
                 where = msg
         f[key] = [v for v in f.get(key) or [] if _has_evidence(v, mapping, where)]
+    if re.search(r"(假日|六日|週末|周末).{0,3}(要|會|需要)(上班|排班|輪班)嗎", msg):
+        f["shifts"] = [v for v in f["shifts"] if v != "假日班"]  # 「假日要上班嗎」是在問，不是要假日班
     no_weekend = bool(re.search(r"週休[一1三3]日|周休[一1三3]日|休[一1]天|一週休一|休三天", msg))
     for key in ("worktype", "exclude_worktype"):
         if f.get(key) and not _has_evidence(f[key], WORKTYPE_SYNONYMS, context):
@@ -436,8 +465,13 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
     #    程式原本的否定判斷會把整句都當成否定，這裡不用它當依據）
     def _loc_negated(v):
         v = re.escape(str(v))
-        return bool(re.search(r"(不要|不去|除了|不考慮|排除)\s*" + v, message)
-                    or re.search(v + r".{0,4}(以外|除外|不要|不去|太遠|不行|不考慮)", message))
+        if re.search(r"(不要|不想|不去|不能|除了|不考慮|排除)\s*(去|到|在)?\s*" + v, message):
+            return True
+        if re.search(v + r"[\s的]{0,2}(以外|除外|太遠|有點遠|太遠了)", message):
+            return True
+        # 「新北不要」「中壢不去」；「桃園 理貨 不要月領」的不要是在說月領，不算
+        return any(_neg_binds_back(message[m.end():])
+                   for m in re.finditer(v + r"[\s的]{0,2}(不要|不去|不行|不考慮)", message))
     candidates = [str(v) for v in f["locations"] + f["exclude_locations"]]
     negated_loc = detect_negated_location(message, active_jobs)
     if negated_loc:
@@ -445,7 +479,9 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
     negated = list(dict.fromkeys(v for v in candidates if _loc_negated(v)))
     # AI 排除了、但句子裡其實是「要」的地方（「不要新北要桃園」的桃園）改回想去的
     rescued = [str(v) for v in f["exclude_locations"] if str(v) not in negated and str(v) in message
-               and not re.search(r"(住|家在|人在|從)\s*" + re.escape(str(v)), message)]
+               and not re.search(r"(住|家在|人在|從)\s*" + re.escape(str(v)), message)
+               and (_in_clean_clause([str(v)], message)
+                    or re.search(r"(?<!不)(要|想去|想在|改|換|找)\s*" + re.escape(str(v)), message))]
     f["locations"] = [v for v in f["locations"] if not re.fullmatch(r"全台灣?|全省|全國|台灣|不限|都可以", str(v))]
     f["locations"] = list(dict.fromkeys(f["locations"] + [v for v in rescued if v not in f["locations"]]))
     f["locations"] = [v for v in f["locations"] if str(v) not in negated]
@@ -457,9 +493,7 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
         # 被排除的地方不能又補成想去的（「不去中壢」「桃園除外」「林口太遠」）
         excluded = [str(v) for v in f["exclude_locations"]]
         found_parts = [p for p in (found or "").split("|")
-                       if p and not any(p in e or e in p for e in excluded)
-                       and not re.search(re.escape(p) + r".{0,4}(以外|除外|不要|不去|太遠|不行|不考慮)", message)
-                       and not re.search(r"(不要|不去|除了|不考慮|排除)\s*" + re.escape(p), message)]
+                       if p and not any(p in e or e in p for e in excluded) and not _loc_negated(p)]
         if found_parts:
             f["locations"] = found_parts
 
@@ -508,7 +542,10 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
                 f[drop] = f[drop] + [label]
         if want != "categories":
             for label in list(f[drop]):
-                if label not in negated and label in _mentioned_labels(msg, mapping):
+                # 只有講到這個詞的那段話完全沒有否定詞才放回（「早班 不要假日班」的早班）；
+                # 程式沒認出來的否定說法（「可以不輪班嗎」）以 AI 為準
+                if (label not in negated and label in _mentioned_labels(msg, mapping)
+                        and _in_clean_clause(_label_words(label, mapping), msg)):
                     f[drop] = [v for v in f[drop] if v != label]
                     if label not in f[want]:
                         f[want] = f[want] + [label]
@@ -546,7 +583,12 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
                                ("shifts", SHIFT_SYNONYMS, "班別")):
         for label in _mentioned_labels(msg, mapping):
             words = "|".join(re.escape(w.lower()) for w in [label] + list(dict(mapping if isinstance(mapping, dict) else mapping).get(label, [])))
-            if re.search(r"(不一定要|不用|不需要|不必)\s*(" + words + ")", msg) or re.search(r"(" + words + r")\s*(可以不要|不一定|不用了|沒有也沒關係|沒有就算了)", msg):
+            if key == "shifts":
+                # 班別：「不用輪班」「不需要值夜班」是不要，只有「不一定要早班」才是放寬
+                broaden_hit = re.search(r"不一定要\s*(" + words + ")", msg) or re.search(r"(" + words + r")\s*(不一定|沒有也沒關係)", msg)
+            else:
+                broaden_hit = re.search(r"(不一定要|不用|不需要|不必)\s*(" + words + ")", msg) or re.search(r"(" + words + r")\s*(可以不要|不一定|不用了|沒有也沒關係|沒有就算了)", msg)
+            if broaden_hit:
                 program_broaden.add(name)
                 f[key] = [v for v in f[key] if v != label]
                 drop = "exclude_" + key
@@ -569,7 +611,12 @@ def cross_check_form(form: dict, message: str, last_bot: str = "", slots: dict =
                 f[key] = new
 
     # 4f. 住的地方不是工作地點（「我住龜山，通勤到桃園區」）
-    f["locations"] = [v for v in f["locations"] if not re.search(r"(住|家在|人在|老家在?)\s*" + re.escape(str(v)), message)]
+    #     「我家在中壢，附近就好」「我住林口，上班地點林口或龜山」「現在住台北，想找台北的工作」照樣算
+    if not re.search(r"附近|離家近|近一點|近的|就近|周邊|上班地點|工作地點", message):
+        def _only_home(v):
+            v = re.escape(str(v))
+            return len(re.findall(v, message)) == len(re.findall(r"(住|家在|人在|老家在?)\s*(在)?\s*" + v, message)) > 0
+        f["locations"] = [v for v in f["locations"] if not _only_home(v)]
 
     # 4g. 沒有對應類型的職務，職務名稱裡的字不算類型（「美髮助理」不是客服/行政、「電子廠清潔」不是作業員）
     if f.get("unsupported_roles"):
