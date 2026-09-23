@@ -187,6 +187,33 @@ def submit_salary_repayment(payload: dict) -> dict:
     return data
 
 
+# GAS 回傳的失敗訊息有時候是 Apps Script 的原文例外（例如
+# 「Exception: 單日叫用下列服務的次數過多：email。」），直接顯示在畫面上
+# 同仁看不懂、也不知道下一步該怎麼辦，只會覺得「按了沒反應」——2026-09-23
+# 實際發生過這個狀況。這裡只翻譯「真的遇到過、而且同仁自己有辦法處理」的
+# 情況，對不到的訊息維持原文顯示，不吃掉任何資訊。
+#
+# 每個 tuple 是 (出現在 GAS 訊息裡就算命中的關鍵字, 要顯示給同仁看的白話
+# 說明)。Apps Script 的錯誤訊息語言會跟著執行帳號的語言設定跑，所以中英
+# 文兩種寫法都要比對。
+_GAS_ERROR_PLAIN_HINTS = (
+    (
+        ("次數過多", "too many times"),
+        "職缺維護系統今天的寄信額度已經用完（Google 對每個帳號每天寄信的數量有上限），"
+        "今天不管補寄幾次都會失敗。請明天再按一次補寄；如果每天都遇到，請聯絡系統管理員。",
+    ),
+)
+
+
+def _plain_gas_error(message: str) -> str:
+    """把 GAS 回傳的技術性錯誤訊息換成白話說明；對不到就原文照回。"""
+    lowered = (message or "").lower()
+    for keywords, hint in _GAS_ERROR_PLAIN_HINTS:
+        if any(keyword.lower() in lowered for keyword in keywords):
+            return hint
+    return message
+
+
 # 2026-09-22 新增：「補寄信」（核准後寄信失敗時，同仁可以在網頁上手動
 # 重新觸發，不用聯絡工程師）。跟 submit_salary_repayment() 不一樣，這裡
 # 不是「送出申請」這種有副作用、重送會造成重複資料的操作——頂多重寄
@@ -212,6 +239,11 @@ def resend_salary_repayment_email(salary_id: str) -> dict:
         return {"status": "error", "message": "職缺維護系統回應內容無法解析，請稍後再試一次。"}
     if not isinstance(data, dict) or "status" not in data:
         return {"status": "error", "message": "職缺維護系統回應內容無法解析，請稍後再試一次。"}
+    if data.get("status") != "success" and data.get("message"):
+        # 原文一併印進 Cloud Run log，畫面上顯示的是白話版（見
+        # _plain_gas_error()）——之後排查時還查得到 GAS 實際回了什麼。
+        print(f"[薪資補款補寄信] GAS 回報失敗（單號 {salary_id}）：{data['message']}")
+        data = dict(data, message=_plain_gas_error(data["message"]))
     return data
 
 
