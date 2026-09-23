@@ -1357,5 +1357,45 @@ class RoundSixNewFeatureMatcherTests(unittest.TestCase):
         self.assertFalse(m.job_is_excluded({"全/兼職": "全職,兼職"}, {"worktype": {"兼職"}}))
 
 
+
+class RoundSevenMatcherTests(unittest.TestCase):
+    """第七輪多輪對話測試（5 個 agent：新功能壓力測試、打字很亂、超長對話、敏感刁鑽情境、整個資料庫組合條件）。"""
+
+    def test_not_is_negation_only_right_before_the_keyword(self):
+        self.assertEqual(m.extract_worktype_labels("不是兼職的", negated=True), ["兼職"])
+        self.assertEqual(m.extract_worktype_labels("我不是學生想找全職"), ["全職"])
+
+    def test_more_negation_wordings(self):
+        for text in ("沒辦法上夜班", "不方便上夜班", "討厭夜班", "夜班不方便", "夜班免", "夜班NG", "夜班❌", "NO夜班"):
+            self.assertEqual(m.extract_shift_labels(text, negated=True), ["大夜班"], text)
+            self.assertEqual(m.extract_shift_labels(text), [], text)
+
+    def test_amounts_that_are_not_wanted_salary(self):
+        for text in ("我卡債50萬", "我欠了20萬", "我想存30萬", "我體重100多公斤", "工作200多人的公司", "日薪1500以上", "日領1500"):
+            self.assertEqual(m.detect_salary_labels(text), [], text)
+        self.assertEqual(m.detect_unparsed_salary_request("日薪1500以上"), "daily")
+        self.assertEqual(m.detect_unparsed_salary_request("薪水高一點的"), "vague")
+        self.assertEqual(m.detect_salary_labels("3萬也可以"), ["月薪30000"])
+
+    def test_salary_wording_is_not_pay_frequency(self):
+        for text in ("月薪至少三萬", "月薪要三萬以上", "月薪多少", "我上個月薪水少了兩千"):
+            self.assertEqual(m.detect_pay_method_labels(m.mask_salary_phrases(text)), [], text)
+        self.assertEqual(m.detect_pay_method_labels("週結的"), ["週領"])
+
+    def test_relaxed_category_respects_filled_role(self):
+        courier = {"職務類別": "外送員", "行業別": "物流業", "職缺名稱(對外)": "外送員"}
+        blank = {"職務類別": "", "行業別": "物流業", "職缺名稱(對外)": "小幫手"}
+        self.assertFalse(m.job_matches_category_filter(courier, "理貨/倉儲", allow_relaxed=True))
+        self.assertTrue(m.job_matches_category_filter(blank, "理貨/倉儲", allow_relaxed=True))
+
+    def test_note_only_vendor_name_is_not_a_brand(self):
+        self.assertEqual(m._vendor_core_name("(代招)"), "")
+        self.assertEqual(m._vendor_core_name("錢都(代招)"), "錢都")
+
+    def test_people_who_are_not_job_seekers(self):
+        for text in ("我是廠商想徵人 需要10個作業員在桃園", "我在蝦皮門市上班 想離職", "我上個月薪水少了兩千", "我昨天去面試 結果呢"):
+            self.assertEqual(m.classify_condition_utterance(text), "info", text)
+
+
 if __name__ == "__main__":
     unittest.main()
