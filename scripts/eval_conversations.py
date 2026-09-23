@@ -184,19 +184,9 @@ def _say(h, session, text):
 
 # ---------------- 檢查 ----------------
 
-_KEEP_FULL = {"新竹縣", "新竹市", "嘉義縣", "嘉義市"}
-
-
 def _norm_place(value):
-    v = str(value).replace("臺", "台").strip()
-    m = re.match(r"^(..[縣市])(.+[區鄉鎮市])$", v)
-    if m:
-        v = m.group(2)
-    if v in _KEEP_FULL:
-        return v[:2]
-    if len(v) > 2 and v[-1] in "縣市區鄉鎮":
-        v = v[:-1]
-    return v
+    from scripts.eval_understanding import _norm_place as norm  # 跟單句考試用同一套地名比對
+    return norm(value)
 
 
 def _slot_set(slot, value):
@@ -218,17 +208,25 @@ def _want_set(slot, values):
     return _slot_set(slot, joined)
 
 
+def _cmp(slot, got_set, want_set, how):
+    """location 用單句考試同一套地名比對（考題只寫「東區」時，程式存「台中市東區」也算對）。"""
+    from scripts.eval_understanding import places_equal, places_has, places_overlap
+    if slot == "location":
+        return {"eq": places_equal, "has": places_has, "overlap": places_overlap}[how](got_set, want_set)
+    return {"eq": lambda g, w: g == w, "has": lambda g, w: w <= g, "overlap": lambda g, w: g & w}[how](got_set, want_set)
+
+
 def check_turn(turn, got):
     problems = []
     for slot, expected in (turn.get("slots") or {}).items():
-        if _slot_set(slot, got["slots"].get(slot)) != _want_set(slot, expected):
+        if not _cmp(slot, _slot_set(slot, got["slots"].get(slot)), _want_set(slot, expected), "eq"):
             problems.append(f"{slot}＝「{got['slots'].get(slot, '')}」，應該是「{expected if isinstance(expected, str) else '|'.join(expected)}」")
     for slot, expected in (turn.get("slots_has") or {}).items():
         want = _want_set(slot, expected)
-        if not want <= _slot_set(slot, got["slots"].get(slot)):
+        if not _cmp(slot, _slot_set(slot, got["slots"].get(slot)), want, "has"):
             problems.append(f"{slot}＝「{got['slots'].get(slot, '')}」，應該包含 {sorted(want)}")
     for slot, expected in (turn.get("slots_not") or {}).items():
-        bad = _want_set(slot, expected) & _slot_set(slot, got["slots"].get(slot))
+        bad = _cmp(slot, _slot_set(slot, got["slots"].get(slot)), _want_set(slot, expected), "overlap")
         if bad:
             problems.append(f"{slot}＝「{got['slots'].get(slot, '')}」，不應該有 {sorted(bad)}")
     everything = "\n".join(got["texts"] + got["buttons"])

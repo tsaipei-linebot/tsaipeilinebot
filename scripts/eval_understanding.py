@@ -67,27 +67,85 @@ if _TEST_KEY:
 
 CASES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "understanding_eval_cases.json")
 _KEEP_FULL = {"新竹縣", "新竹市", "嘉義縣", "嘉義市"}
+_PLACE_FIELDS = ("locations", "exclude_locations")
+
+
+def _ambiguous_districts():
+    """好幾個縣市都有的區名（東區、中山區…）：比對時要連縣市一起比，不然台南東區跟新竹東區算成一樣。"""
+    from services.job_listing_submit_service import TAIWAN_CITY_DISTRICTS
+    seen = {}
+    for county, districts in TAIWAN_CITY_DISTRICTS.items():
+        for full in districts:
+            core = full[len(county):] if full.startswith(county) else full
+            seen.setdefault(core[:-1] if len(core) > 2 else core, set()).add(county)
+    return {k for k, v in seen.items() if len(v) > 1}
+
+
+_AMBIGUOUS = _ambiguous_districts()
 
 
 def _norm_place(value: str) -> str:
     v = str(value).replace("臺", "台").strip()
     m = re.match(r"^(..[縣市])(.+[區鄉鎮市])$", v)
+    county = ""
     if m:
-        v = m.group(2)
+        county, v = m.group(1), m.group(2)
+    else:
+        m2 = re.match(r"^(台北|新北|桃園|台中|台南|高雄|基隆|新竹|嘉義)(.+區)$", v)
+        if m2:
+            county, v = m2.group(1), m2.group(2)
     if v in _KEEP_FULL:
         return v[:2]
     if len(v) > 2 and v[-1] in "縣市區鄉鎮":
         v = v[:-1]
+    if county and v in _AMBIGUOUS:
+        return county[:2] + v
     return v
+
+
+def place_match(got: str, want: str) -> bool:
+    """地名比對：一樣就算對；考題只寫「東區」時，AI 寫得更精確（「新竹東區」）也算對；
+    考題寫了「新竹東區」，AI 只寫「東區」就不夠精確、算錯。"""
+    return got == want or (want in _AMBIGUOUS and got.endswith(want))
+
+
+def places_equal(got: set, want: set) -> bool:
+    return all(any(place_match(g, w) for g in got) for w in want) and all(any(place_match(g, w) for w in want) for g in got)
+
+
+def places_has(got: set, want: set) -> bool:
+    return all(any(place_match(g, w) for g in got) for w in want)
+
+
+def places_overlap(got: set, want: set) -> set:
+    return {w for w in want if any(place_match(g, w) for g in got)}
+
+
+def _norm_brand(value) -> str:
+    return re.sub(r"[\s　()（）]", "", str(value or "")).lower()
+
+
+def _brand_match(got, want) -> bool:
+    """廠商名稱：AI 常多寫後綴（「momo購物」「Uber Eats」），互相包含就算對。"""
+    g, w = _norm_brand(got), _norm_brand(want)
+    if not w:
+        return not g
+    return bool(g) and (w in g or g in w)
 
 
 def _values(form: dict, field: str):
     value = form.get(field)
-    if field in ("locations", "exclude_locations"):
+    if field in _PLACE_FIELDS:
         return {_norm_place(v) for v in value or []}
     if isinstance(value, list):
         return set(value)
     return value
+
+
+def _want(field, expected):
+    if field in _PLACE_FIELDS:
+        return {_norm_place(v) for v in expected}
+    return set(expected) if isinstance(expected, list) else expected
 
 
 def check(case: dict, form: dict) -> list:
@@ -100,22 +158,25 @@ def check(case: dict, form: dict) -> list:
     if case.get("intent_not") and form["intent"] in case["intent_not"]:
         problems.append(f"intent 不應該是 {form['intent']}")
     for field, expected in (case.get("expect") or {}).items():
-        got = _values(form, field)
-        want = {_norm_place(v) for v in expected} if field in ("locations", "exclude_locations") else (
-            set(expected) if isinstance(expected, list) else expected)
-        if got != want:
+        if field == "brand":
+            if not _brand_match(form.get("brand"), expected):
+                problems.append(f"brand={form.get('brand')!r}，應該是 {expected!r}")
+            continue
+        got, want = _values(form, field), _want(field, expected)
+        ok = places_equal(got, want) if field in _PLACE_FIELDS else got == want
+        if not ok:
             problems.append(f"{field}={sorted(got) if isinstance(got, set) else got!r}，應該是 {sorted(want) if isinstance(want, set) else want!r}")
     for field, expected in (case.get("has") or {}).items():
-        got = _values(form, field)
-        want = {_norm_place(v) for v in expected} if field in ("locations", "exclude_locations") else set(expected)
-        if not want <= got:
+        got, want = _values(form, field), _want(field, expected)
+        if not (places_has(got, want) if field in _PLACE_FIELDS else want <= got):
             problems.append(f"{field}={sorted(got)}，應該包含 {sorted(want)}")
     for field, expected in (case.get("any") or {}).items():
-        if not _values(form, field) & set(expected):
-            problems.append(f"{field}={sorted(_values(form, field))}，應該至少有 {'/'.join(expected)} 其中一個")
+        got, want = _values(form, field), _want(field, expected)
+        if not (places_overlap(got, want) if field in _PLACE_FIELDS else got & want):
+            problems.append(f"{field}={sorted(got)}，應該至少有 {'/'.join(expected)} 其中一個")
     for field, expected in (case.get("forbid") or {}).items():
-        want = {_norm_place(v) for v in expected} if field in ("locations", "exclude_locations") else set(expected)
-        bad = _values(form, field) & want
+        got, want = _values(form, field), _want(field, expected)
+        bad = places_overlap(got, want) if field in _PLACE_FIELDS else got & want
         if bad:
             problems.append(f"{field} 不應該有 {sorted(bad)}")
     for field in case.get("nonempty") or []:
