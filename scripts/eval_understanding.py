@@ -24,6 +24,7 @@ import re
 import statistics
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -123,28 +124,58 @@ def check(case: dict, form: dict) -> list:
     return problems
 
 
+def _run_case(case, thinking):
+    history = [{"role": "招募顧問沛沛", "text": case["last_bot"]}] if case.get("last_bot") else []
+    start = time.monotonic()
+    try:
+        form = understand_message(case["text"], case.get("slots") or {}, history, thinking_budget=thinking)
+    except Exception as e:  # 單題出錯不能讓整份考試停掉
+        print(f"[考試] {case['id']} 出錯：{e}", file=sys.stderr)
+        form = None
+    if form:
+        # 正式上線時程式會再檢查一次需求單，考試也照同樣的規則整理地區（例如「新竹竹北」只算竹北）
+        form["locations"] = drop_county_before_district(form["locations"], case["text"])
+    return form, time.monotonic() - start
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--thinking", type=int, default=0, help="Gemini 先想一想的額度（0＝不想，預設）")
     parser.add_argument("--cases", default=CASES_PATH, help="考題檔（預設是 scripts/ 裡那份）")
     parser.add_argument("--only", default="", help="只跑題目名稱包含這段字的題目")
+    parser.add_argument("--failures-only", action="store_true", help="只印沒通過的題目（題目多的時候用）")
+    parser.add_argument("--workers", type=int, default=8, help="同時問幾題（預設 8）")
     args = parser.parse_args()
 
     cases = [c for c in json.load(open(args.cases, encoding="utf-8")) if args.only in c["id"]]
-    latencies, failed = [], []
-    for case in cases:
-        history = [{"role": "招募顧問沛沛", "text": case["last_bot"]}] if case.get("last_bot") else []
-        start = time.monotonic()
-        form = understand_message(case["text"], case.get("slots") or {}, history, thinking_budget=args.thinking)
-        if form:
-            # 正式上線時程式會再檢查一次需求單，考試也照同樣的規則整理地區（例如「新竹竹北」只算竹北）
-            form["locations"] = drop_county_before_district(form["locations"], case["text"])
-        latencies.append(time.monotonic() - start)
+    done = [0]
+
+    def _job(case):
+        result = _run_case(case, args.thinking)
+        done[0] += 1
+        if done[0] % 50 == 0:
+            print(f"  已完成 {done[0]}/{len(cases)} 題", file=sys.stderr)
+        return result
+
+    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+        results = list(pool.map(_job, cases))
+
+    latencies, failed, by_prefix = [], [], {}
+    for case, (form, latency) in zip(cases, results):
+        latencies.append(latency)
         problems = check(case, form)
-        mark = "✅" if not problems else "❌"
-        print(f"{mark} {case['id']}：「{case['text']}」 {latencies[-1]:.1f} 秒")
+        prefix = case["id"].split("-")[0]
+        stat = by_prefix.setdefault(prefix, [0, 0])
+        stat[0] += 1
         if problems:
+            stat[1] += 1
             failed.append(case["id"])
+        if problems or not args.failures_only:
+            mark = "✅" if not problems else "❌"
+            print(f"{mark} {case['id']}：「{case['text']}」 {latency:.1f} 秒")
+        if problems:
+            if case.get("slots") or case.get("last_bot"):
+                print(f"      上下文：記住的條件 {json.dumps(case.get('slots') or {}, ensure_ascii=False)}｜沛沛上一句「{case.get('last_bot', '')[:60]}」")
             for p in problems:
                 print(f"      {p}")
             shown = {k: v for k, v in (form or {}).items() if v}
@@ -153,9 +184,11 @@ def main():
     passed = len(cases) - len(failed)
     print("\n==============================")
     print(f"通過 {passed} / {len(cases)} 題（{passed / max(1, len(cases)):.0%}），thinking={args.thinking}")
+    for prefix, (total, bad) in sorted(by_prefix.items()):
+        print(f"  {prefix}：{total - bad}/{total}")
     if latencies:
         ordered = sorted(latencies)
-        print(f"每題等待：中位數 {statistics.median(latencies):.1f} 秒，最慢的 5% 約 {ordered[int(len(ordered) * 0.95) - 1]:.1f} 秒")
+        print(f"每題等待：中位數 {statistics.median(latencies):.1f} 秒，最慢的 5% 約 {ordered[max(0, int(len(ordered) * 0.95) - 1)]:.1f} 秒")
     if failed:
         print("沒通過的題目：" + "、".join(failed))
 
