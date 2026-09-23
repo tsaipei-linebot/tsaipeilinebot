@@ -9006,3 +9006,64 @@ JOB_PORTAL_MAIL_WEBHOOK_SECRET=自己想一組亂碼
 內嵌圖片正確解碼、壞掉的 base64 跳過但信照寄、寄信失敗時把白話訊息
 原樣回給 GAS。全部測試（`python3 -m unittest discover -s tests -p
 "test_*.py"`）2252 個全數通過。
+
+### 上線紀錄（2026-09-23 當天完成，已實測寄出）
+
+正式環境設定完成、實測補寄信成功，寄件者顯示為公司信箱，代表信件確實
+是走平台的 SMTP 出去、不再經過 Apps Script 的 `GmailApp`。
+
+實際使用的設定（值本身不記在這裡，密碼與密鑰請看 Cloud Run 環境變數與
+GAS 指令碼屬性）：
+
+- Cloud Run 服務網址：`https://recruitment-bot-412901869672.asia-east1.run.app`
+- GAS 指令碼屬性 `PLATFORM_MAIL_URL`：上面的網址 + `/api/job-portal/send-mail`
+- `SMTP_HOST=smtp.gmail.com`、`SMTP_PORT=587`，寄件帳號是公司的 Google
+  帳號，`SMTP_PASSWORD` 用的是該帳號的「應用程式密碼」。
+
+### 踩到的雷：`--update-env-vars` 一次設多個變數時被換行切壞
+
+設定環境變數時踩到一個很難看出來的坑，之後再設多個變數要特別注意。
+
+`gcloud run services update --update-env-vars="A=1,B=2,C=3"` 是**用逗號**
+分隔各個變數。如果把這行指令貼到文字編輯器去替換值、過程中把逗號換成了
+換行（或為了看清楚而分行），再整段貼回終端機，因為整串包在引號裡面，
+**shell 會把那些換行當成「值」的一部分照單全收，指令還是會執行成功、
+不會報錯**。結果是：
+
+```
+SMTP_USERNAME = "gary@example.com\nSMTP_PASSWORD=xxxx\nMAIL_FROM_ADDRESS=...\nJOB_PORTAL_MAIL_WEBHOOK_SECRET=..."
+```
+
+也就是第一個變數以後的全部變數都被塞進同一個變數的值裡，後面那幾個變數
+**根本不存在**。當時的症狀是 GAS 回報「材霈平台拒絕這次寄信請求（密鑰
+不符）」。
+
+判斷方法——**只列變數名稱**，一個變數一行，少了什麼一眼就看得出來：
+
+```bash
+gcloud run services describe recruitment-bot --region=asia-east1 \
+  --project=tsaipei-505807 \
+  --format="value(spec.template.spec.containers[0].env[].name)" | tr ';' '\n'
+```
+
+避免方法：給使用者的指令**先把值填好、不要留「請改成…」的佔位字**，讓
+對方整行複製貼上、完全不用編輯；真的需要替換，就拆成一次設一個變數的
+短指令。
+
+### 另一個容易誤判的地方：沒帶密鑰的 403 不能證明環境變數設對了
+
+`POST /api/job-portal/send-mail` 在「密鑰沒設定」「沒帶密鑰」「密鑰不符」
+三種情況都回 403，所以**不帶密鑰去打拿到 403 只能證明這支端點存在**，
+不能證明 `JOB_PORTAL_MAIL_WEBHOOK_SECRET` 設對了。要驗證密鑰，要帶著
+密鑰、但故意不給收件人：
+
+```bash
+curl -s -w "\nHTTP %{http_code}\n" -X POST "<服務網址>/api/job-portal/send-mail" \
+  -H "Content-Type: application/json" \
+  -H "X-Job-Portal-Mail-Secret: <密鑰>" \
+  -d '{"to":"","subject":"x","html":"x"}'
+```
+
+密鑰對的話會回 `HTTP 200` 加 `{"status":"error","message":"沒有任何收件
+人，這封信沒有寄出。"}`——那個 error 是故意不給收件人造成的，而且這樣
+測不會真的寄出任何信。密鑰不對就還是 403。
