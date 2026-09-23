@@ -193,12 +193,19 @@ def _slot_set(slot, value):
     value = str(value or "")
     if not value:
         return set()
-    parts = value.split(";") if slot == "exclude" else value.split("|")
     if slot == "location":
-        return {_norm_place(p) for p in parts}
+        return {_norm_place(p) for p in value.split("|")}
     if slot == "exclude":
-        return {p.split(":", 1)[0] + ":" + _norm_place(p.split(":", 1)[1]) if p.startswith("location:") else p for p in parts}
-    return set(parts)
+        # 程式存成「shift:大夜班,晚班;category:外送」：同一類排除好幾個用逗號分開
+        out = set()
+        for part in value.split(";"):
+            kind, _, labels = part.partition(":")
+            for label in labels.split(","):
+                label = label.strip()
+                if label:
+                    out.add(f"{kind}:{_norm_place(label) if kind == 'location' else label}")
+        return out
+    return set(value.split("|"))
 
 
 def _want_set(slot, values):
