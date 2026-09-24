@@ -180,6 +180,34 @@ class IndexCsvTests(unittest.TestCase):
         self.assertEqual(rows[0]["工廠登記核准日期"], "0900615")
 
 
+class EncodingDetectionTests(unittest.TestCase):
+    """2026-09-24 正式環境踩到的雷：只看前 4096 bytes 判斷編碼，第 4096 byte
+    剛好切在中文字中間時，UTF-8 被誤判成 Big5，10 萬筆全部讀成亂碼。"""
+
+    def test_utf8_cut_in_the_middle_of_a_character_is_still_utf8(self):
+        head = "工廠名稱".encode("utf-8")[:-1]  # 最後一個字只剩 2 bytes
+        self.assertEqual(fw.guess_csv_encoding(head), "utf-8-sig")
+
+    def test_big5_is_detected(self):
+        self.assertEqual(fw.guess_csv_encoding("工廠名稱,地址".encode("cp950")), "cp950")
+
+    def test_real_sized_file_split_at_4096_reads_correct_headers(self):
+        import csv
+
+        rows = [_factory_row(f"測試工廠{i}", f"R{i}", f"{i}", "1150803") for i in range(60)]
+        for pad in range(60):
+            content = _real_csv([_factory_row("A" * pad + "測試工廠X", "R", "T", "1150803")] + rows)
+            try:
+                content[:4096].decode("utf-8-sig")
+            except UnicodeDecodeError:
+                break  # 找到第 4096 byte 切在中文字中間的情況
+        else:
+            self.fail("找不到切在中文字中間的測試資料")
+        first = next(csv.DictReader(fw._open_csv_text_from_zip(_zip_of(content))))
+        self.assertIn("工廠名稱", first)
+        self.assertEqual(first["工廠登記核准日期"], "1150803")
+
+
 class RunWeeklyScanTests(unittest.TestCase):
     """用真實的檔案結構（目錄 CSV → ZIP → 名錄 CSV）跑一次完整流程。"""
 
@@ -233,6 +261,26 @@ class RunWeeklyScanTests(unittest.TestCase):
         factories = repository.list_factories()
         self.assertEqual(sorted(f["name"] for f in factories), ["點鑫產業股份有限公司", "點鑫產業股份有限公司二廠"])
         self.assertEqual(factories[0]["industry"], "08食品製造業")
+
+    def test_unmatched_columns_are_reported_instead_of_silently_zero(self):
+        from unittest import mock
+
+        garbled = _zip_of("亂碼一,亂碼二\r\n1,2\r\n".encode("utf-8"))
+
+        class _Resp:
+            def __init__(self, content):
+                self.content = content
+
+            def raise_for_status(self):
+                pass
+
+        def fake_get(url, timeout=None):
+            return _Resp(_INDEX_CSV.encode("utf-8") if url.endswith(".csv") else garbled)
+
+        with mock.patch.object(fw.requests, "get", side_effect=fake_get):
+            summary = fw.run_weekly_scan(None)
+        self.assertEqual(len(summary["errors"]), 1)
+        self.assertIn("欄位對不上", summary["errors"][0])
 
     def test_second_run_does_not_repeat(self):
         fw.run_weekly_scan(None)

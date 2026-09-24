@@ -1,3 +1,4 @@
+import codecs
 import csv
 import hashlib
 import io
@@ -120,12 +121,24 @@ def _open_csv_text_from_zip(zip_bytes: bytes):
         raise RuntimeError("工廠名錄 ZIP 裡找不到 CSV 檔")
     with archive.open(members[0]) as probe:
         head = probe.read(4096)
-    encoding = "utf-8-sig"
+    return io.TextIOWrapper(archive.open(members[0]), encoding=guess_csv_encoding(head), errors="replace", newline="")
+
+
+def guess_csv_encoding(head: bytes) -> str:
+    """用檔案開頭一小段判斷是 UTF-8 還是 Big5（cp950）。
+
+    2026-09-24 踩過的雷：原本直接 `head.decode("utf-8-sig")`，失敗就當成
+    cp950——但只取前 4096 bytes 時，第 4096 byte 很可能**剛好切在一個中文字
+    中間**（UTF-8 中文一個字 3 bytes），明明是 UTF-8 也會解碼失敗，整份 10 萬
+    筆名錄就被當成 Big5 讀成亂碼，連「工廠名稱」欄都對不上，每一筆都被略過
+    （正式環境看到的是「名錄 101032 筆，近 60 天核准 0 筆」）。改用漸進式解碼
+    器並設 final=False：結尾被切斷的半個字不算錯，只有中間真的有不合法的
+    byte 才判斷成 cp950。"""
     try:
-        head.decode("utf-8-sig")
+        codecs.getincrementaldecoder("utf-8-sig")().decode(head, final=False)
+        return "utf-8-sig"
     except UnicodeDecodeError:
-        encoding = "cp950"
-    return io.TextIOWrapper(archive.open(members[0]), encoding=encoding, errors="replace", newline="")
+        return "cp950"
 
 
 def _iter_raw_rows():
@@ -331,6 +344,13 @@ def run_weekly_scan(line_bot_api) -> dict:
         for row in _iter_raw_rows():
             if columns is None:
                 columns = _resolve_columns(list(row.keys()))
+                # 欄位對不上（例如編碼讀錯變成亂碼、或政府改了欄位名稱）就直接
+                # 報錯，不要默默把每一筆都略過、顯示「沒有新工廠」
+                missing = [key for key in ("name", "approval_date") if key not in columns]
+                if missing:
+                    raise RuntimeError(
+                        f"名錄欄位對不上（找不到 {missing}），實際欄位開頭是 {list(row.keys())[:5]}"
+                    )
             summary["fetched"] += 1
             record = _normalize_record(row, columns)
             if not record.get("name"):
