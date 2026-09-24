@@ -9868,7 +9868,7 @@ PR 說明，常常很長。
 
 ### 分階段計畫
 
-**階段 0（使用者自己做，約 1 分鐘）**：停掉舊 dispatch-leadgen 的每日排程——
+**階段 0（使用者自己做，約 1 分鐘）——✅ 2026-09-24 使用者已完成**（畫面顯示「This workflow was disabled manually」）：停掉舊 dispatch-leadgen 的每日排程——
 瀏覽器開 https://github.com/tsaipei-linebot/dispatch-leadgen/actions → 左邊
 點 `daily.yml` 那個排程 → 右上「⋯」→ **Disable workflow**。確認：名稱旁邊
 出現「Disabled」，隔天 07:00 後沒有新執行紀錄。這只是暫停，隨時可以 Enable。
@@ -10017,6 +10017,29 @@ API）＋ `test_salesdev_normalize.py`、`test_salesdev_classify.py`、
 5. （選擇性）每日摘要 LINE 推播：`SALESDEV_LINE_TARGET_ID` 設成要收通知的
    LINE user ID／群組 ID，沒設就不推。
 6. 新舊並行約一週，外部 GitHub 版照跑；確認平台版筆數正常後進階段 3。
+
+## 配送部使用說明新增「從應徵到報到（完整流程）」（2026-09-24）
+
+使用者要求把配送系統「從應徵人員到人員報到」的流程整理成使用說明，確認後
+加進 `/delivery/help`（`delivery/templates/help.html`），放在「系統總覽」
+後面、頁首跳轉按鈕第二顆。內容是依程式碼實際行為整理的六個步驟：Google
+表單自動匯入（姓名＋電話相同覆蓋、狀態重設但保留試駕/備註，見
+`repository.upsert_applicant()`）→ 應徵名單面試記錄 → 錄取（要選廠商；UD、
+UC、合作方式「三輪雇傭」要試駕通過，見 `applicant_routes.accept_applicant()`）
+自動建立人員、狀態「待報到」→ 人員詳細頁補資料、上傳文件（應備項目依
+`DOC_TYPES` 的廠商＋合作方式規則）→ 手動改「在職」→ 報到後作業（每日加
+退保、工號＋LINE 綁定、裝備只借「在職」）。
+
+段落裡特別寫明三個容易漏掉的地方（都是**現況行為**，不是這次改的）：
+- 文件備齊後系統**不會**自動把「待報到」改成「在職」，反過來文件沒齊也
+  不會擋著不給改——狀態完全人工維護
+- 改成在職時**不會**自動帶入到職日期，但特休是依到職日期算的
+- 錄取只帶姓名、電話、廠商、合作方式，其他資料要到人員詳細頁補
+
+如果之後要改成「文件備齊才能改在職」或「改在職自動帶今天當到職日期」，
+這一段說明要跟著改。CSS 只加了 `.help-section h3`、巢狀清單間距、
+`.onboarding-steps` 流程框（目前只有這一頁用到 h3）。測試：
+`tests/test_delivery_home_routes.py` 加一條實際渲染模板的測試。
 
 ## 修正：每週新登記工廠掃描從來沒抓到資料（2026-09-24）
 

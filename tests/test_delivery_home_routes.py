@@ -67,6 +67,16 @@ class HelpPageTests(unittest.TestCase):
         self.assertEqual(args[1], "help.html")
         self.assertEqual(args[2]["user"]["username"], "bob")
 
+    def test_onboarding_flow_section_renders(self):
+        """「從應徵到報到（完整流程）」段落（2026-09-24 新增）：實際渲染一次
+        模板，確認段落跟頁首的跳轉按鈕都在。"""
+        account = _staff_account()
+        response = home_routes.help_page(_FakeRequest(account), redirect=None)
+        html = response.body.decode("utf-8")
+        self.assertIn('id="onboarding-flow"', html)
+        self.assertIn('href="#onboarding-flow"', html)
+        self.assertIn("改成「在職」＝完成報到", html)
+
 
 if __name__ == "__main__":
     unittest.main()

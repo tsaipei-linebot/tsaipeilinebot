@@ -10,6 +10,7 @@
 
 <div class="help-nav">
     <a class="btn btn-small" href="#overview">系統總覽</a>
+    <a class="btn btn-small" href="#onboarding-flow">從應徵到報到（完整流程）</a>
     <a class="btn btn-small" href="#access">登入與權限</a>
     <a class="btn btn-small" href="#personnel">人員管理</a>
     <a class="btn btn-small" href="#cooperation-types">合作方式管理</a>
@@ -38,6 +39,69 @@
         <li><strong>報班媒合</strong>：已登記合作的雇傭騎士在 LINE 私訊報名附近的報班時段，管理員人工審核</li>
         <li><strong>每日加退保</strong>：本部門（新北所(配送組)）每天上傳加退保 Excel 給人資彙整</li>
         <li><strong>查詢人員</strong>：依姓名或身分證字號快速查詢</li>
+    </ul>
+</section>
+
+<section id="onboarding-flow" class="help-section">
+    <h2>從應徵到報到（完整流程）</h2>
+    <p class="hint">一位新人從填應徵表單，到正式報到上工，在系統裡依序會經過下面六個步驟。各功能更細的說明，見下方「應徵名單」「人員管理」等段落。</p>
+    <p class="onboarding-steps">① 應徵者填 Google 表單 → ② 應徵名單面試、記錄 →（UD、UC、三輪雇傭要先試駕通過）→ ③ 按「錄取」自動建立人員（待報到）→ ④ 人員詳細頁補資料、上傳文件 → ⑤ 改成「在職」完成報到 → ⑥ 報到後的相關作業</p>
+
+    <h3>① 應徵者填寫 Google 表單</h3>
+    <ul>
+        <li>應徵者填完各廠商的應徵表單，資料會<strong>自動</strong>出現在「應徵名單」，不用手動輸入</li>
+        <li>依填的是哪一份表單，自動帶入<strong>廠商</strong>（例如蝦皮三輪、UD），有些表單也會帶入<strong>合作方式</strong></li>
+        <li>同一個人重複填表（姓名＋電話都一樣）：用新的回覆蓋掉舊的，不會多一筆；處理狀態會重設回「未面試」，但之前記錄的試駕結果跟備註會保留</li>
+    </ul>
+
+    <h3>② 應徵名單：面試與記錄</h3>
+    <p class="hint">入口：主頁 →「應徵名單」。</p>
+    <ul>
+        <li><strong>處理狀態</strong>：未面試 → 已面試；應徵者不來了就選「放棄」</li>
+        <li><strong>廠商／合作方式</strong>：系統自動帶入，帶錯可以直接改</li>
+        <li><strong>試駕</strong>：未試駕／通過／未通過</li>
+        <li><strong>備註</strong>：自由填寫，例如面試印象、約定的報到時間</li>
+        <li><strong>其他回覆</strong>：應徵者在表單填的內容（可配合天數、熟悉的行政區等），面試時參考用</li>
+        <li>改完一次按更新按鈕，可以同時更新好幾個人；「已錄取」「放棄」的人預設不顯示，用姓名搜尋或篩選狀態才會出現</li>
+    </ul>
+
+    <h3>③ 錄取並建立人員</h3>
+    <p class="hint">在該應徵者那一列按「錄取」。</p>
+    <ul>
+        <li><strong>要先選好廠商</strong>，沒選會被擋下來</li>
+        <li><strong>要先試駕通過才能錄取</strong>：廠商是 <strong>UD</strong> 或 <strong>UC</strong>，或合作方式是 <strong>三輪雇傭</strong>（不論哪個廠商）。試駕沒改成「通過」就按錄取會被擋下來，剛才選的廠商、打的備註都會保留，不用重填</li>
+        <li>錄取成功後，系統<strong>自動建立正式人員資料</strong>，人員狀態是「<strong>待報到</strong>」；只會帶入姓名、電話、廠商、合作方式，其他資料要在下一步補</li>
+    </ul>
+
+    <h3>④ 人員詳細頁：補資料、上傳報到文件</h3>
+    <p class="hint">入口：主頁點該廠商（例如「UD」）→ 人員清單 → 點姓名，或用「查詢人員」搜尋姓名。新錄取的人一定還缺文件，所以預設就會出現在該廠商的人員清單裡。</p>
+    <ul>
+        <li><strong>頁面上方</strong>：合作方式、負責客戶（UD 才有）、到職日期、工號（要用 LINE 接單／報班的人才需要）</li>
+        <li><strong>合作方式要先選對</strong>：下方要交哪些文件，是依「廠商＋合作方式」自動決定的，選錯就會列錯</li>
+        <li><strong>應備項目</strong>，每一項會標「缺件」或「已備齊」：
+            <ul>
+                <li>直接填寫：身分證字號、Email（UD／UC）——系統會檢查格式</li>
+                <li>勾選「有」：駕照、合約簽定、UBER 系統（UD／UC）、MOMO 測驗（UD 負責 MOMO 的人）</li>
+                <li>上傳照片：自拍照（UD）、拍照（UC）</li>
+                <li>上傳並記錄到期日：良民證（蝦皮系列以外）、強制險、營業用第三責任險、公會加保證明——上傳後系統會自動辨識到期日，辨識不到就手動填；快到期時系統會用 LINE 提醒</li>
+            </ul>
+        </li>
+        <li>全部填好按「<strong>一鍵全部更新</strong>」一次送出；檔案可以是 JPG、PNG、HEIC、PDF，單一檔案最大 10MB</li>
+    </ul>
+
+    <h3>⑤ 改成「在職」＝完成報到</h3>
+    <ul>
+        <li>同一頁上方的「人員狀態」從「待報到」改成「<strong>在職</strong>」，按「一鍵全部更新」</li>
+        <li>報到前才說不來了，改成「<strong>放棄報到</strong>」（之後預設不出現在清單，用姓名搜尋還找得到）</li>
+        <li><strong>「在職」要自己改</strong>：文件全部備齊後，系統<strong>不會</strong>自動改成在職；反過來，文件還沒齊系統也不會擋你改成在職。請先確認應備項目都是「已備齊」再改</li>
+        <li><strong>到職日期也要記得填</strong>：改成在職時系統不會自動帶入日期，但特休天數是依到職日期計算的</li>
+    </ul>
+
+    <h3>⑥ 報到後的相關作業</h3>
+    <ul>
+        <li><strong>每日加退保</strong>：當天有人報到，要在主頁「每日加退保」上傳加保 Excel 給人資（見下方「每日加退保」）</li>
+        <li><strong>LINE 接單／報班</strong>：要讓騎士用 LINE 自己接單（承攬）或報班（雇傭），要先在人員詳細頁填好<strong>工號</strong>，騎士再到 LINE 私訊「綁定＋工號＋姓名」（見下方「外送員接單媒合」「報班媒合」）</li>
+        <li><strong>裝備借用</strong>：籃子、橘衣等裝備只能借給狀態是「<strong>在職</strong>」的人，所以要先完成第 ⑤ 步</li>
     </ul>
 </section>
 
