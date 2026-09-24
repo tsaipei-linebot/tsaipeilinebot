@@ -23,7 +23,7 @@ router = APIRouter()
 _TRANSACTION_ERROR_MESSAGES = {
     "invalid_quantity": "數量請填大於 0 的整數。",
     "personnel_not_found": "請選擇一位騎士。",
-    "personnel_missing_documents": "這位騎士的缺件資料還沒補齊，系統擋下不能借用，請先到人員詳細頁補齊文件。",
+    "personnel_missing_documents": "這位騎士的證明還沒填到期日或已經過期（強制險、良民證等），系統擋下不能借用，請先到人員詳細頁更新到期日。",
     "insufficient_stock": "這個放置點的庫存不夠這次數量，如果確定要借，需要有管理員權限的人勾選「主管特批」再送出。",
     "insufficient_debt": "數量超過這位騎士目前實際尚欠的數量，請確認後再送出。",
     "item_required": "請選擇品項。",

@@ -4,7 +4,7 @@
 {% block content %}
 <h1 class="page-title">批次匯入人員</h1>
 <p class="hint">
-    上傳 CSV 檔案（UTF-8 或 Big5 皆可），欄位需包含「廠商」「姓名」（身分證字號、電話、到職日期為選填）。
+    上傳 Excel 範本（也接受舊的 CSV 檔），欄位需包含「廠商」「姓名」（電話、到職日期為選填）。姓名＋電話跟系統裡已有的人相同時會跳過，不會重複新增。匯入的人狀態是「待報到」。
     廠商欄位可以填代號（shopee/shopee_company_car/shopee_employed_own_car/shopee_contract/shopee_speed_warehouse/ud/uc/sf）
     或中文名稱（蝦皮三輪/蝦皮二輪公司車/蝦皮二輪雇傭自備車/蝦皮承攬/蝦皮三輪速配倉/UD/UC/順豐）。
     到職日期格式請用 2024-01-31 或 2024/01/31（不確定的話留空即可，之後再到人員詳細頁補）。

@@ -31,6 +31,7 @@ def applicants_list(
     status: str = "",
     vendor: str = "",
     error: str = "",
+    hired: str = "",
     redirect=Depends(login_required),
 ):
     if redirect:
@@ -68,6 +69,7 @@ def applicants_list(
             "filter_status": status,
             "filter_vendor": vendor,
             "error": error,
+            "hired": hired,
         },
     )
 
@@ -143,7 +145,7 @@ async def accept_applicant(applicant_id: str, request: Request, redirect=Depends
         applicant["name"], "", applicant.get("phone", ""), vendor, user["username"], **create_kwargs
     )
     repository.mark_applicant_hired(applicant_id, personnel_id)
-    return RedirectResponse(url="/delivery/applicants", status_code=303)
+    return RedirectResponse(url=f"/delivery/applicants?{urlencode({'hired': applicant['name']})}", status_code=303)
 
 
 @router.post("/applicants/{applicant_id}/delete")

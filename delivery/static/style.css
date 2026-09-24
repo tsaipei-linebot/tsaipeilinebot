@@ -997,3 +997,23 @@ a.sheet-tab-btn { display: inline-block; text-decoration: none; }
     font-size: 14px;
     line-height: 1.8;
 }
+
+/* 配送部「查詢人員」主要人員清單（2026-09-24 改版）：每列的報到／放棄報到／離職按鈕 */
+.personnel-table { min-width: 860px; }
+.personnel-table th,
+.personnel-table td:first-child { white-space: nowrap; }
+.personnel-table .badge { margin: 2px 4px 2px 0; white-space: nowrap; }
+.row-actions { white-space: nowrap; }
+.row-actions .btn,
+.inline-action { display: inline-block; margin: 2px 4px 2px 0; }
+.inline-action { margin: 0; }
+.onboard-dialog {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    max-width: 380px;
+    width: calc(100% - 32px);
+}
+.onboard-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+.onboard-dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.onboard-dialog input[type="date"] { padding: 8px; border: 1px solid var(--border); border-radius: 8px; font: inherit; }

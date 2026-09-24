@@ -1,3 +1,5 @@
+"""配送部人員「到期狀況」（2026-09-24 改版）：只追蹤 4 種證明、只看廠商、
+只填日期。規則見 delivery/config.py 的 DOC_TYPES。"""
 import os
 import sys
 import unittest
@@ -15,347 +17,141 @@ from delivery.repository import (
     doc_status,
     missing_documents,
     personnel_employment_status,
-    personnel_matches_filters,
+    personnel_matches_search,
 )
 
 
+def _names(vendor, cooperation_type=""):
+    return sorted((d["name"], d.get("required", True)) for d in applicable_doc_types(vendor, cooperation_type))
+
+
 class ApplicableDocTypesTests(unittest.TestCase):
-    def test_shopee_excludes_police_clearance(self):
-        codes = {d["code"] for d in applicable_doc_types("shopee", "two_wheel_contract")}
-        self.assertNotIn("police_clearance", codes)
+    """使用者 2026-09-24 逐項確認的對照表。"""
 
-    def test_other_vendor_includes_police_clearance(self):
-        codes = {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract")}
-        self.assertIn("police_clearance", codes)
+    def test_shopee_contract(self):
+        self.assertEqual(_names("shopee_contract"), [("公會加保證明", False), ("強制險", True)])
 
-    def test_two_wheel_contract_requires_insurance_and_guild_not_liability(self):
-        codes = {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract")}
-        self.assertIn("insurance", codes)
-        self.assertIn("guild_insurance", codes)
-        self.assertNotIn("liability_insurance", codes)
+    def test_sf_has_no_police_clearance(self):
+        self.assertEqual(_names("sf"), [("公會加保證明", False), ("強制險", True)])
 
-    def test_two_wheel_employed_requires_insurance_and_liability_not_guild(self):
-        codes = {d["code"] for d in applicable_doc_types("ud", "two_wheel_employed")}
-        self.assertIn("insurance", codes)
-        self.assertIn("liability_insurance", codes)
-        self.assertNotIn("guild_insurance", codes)
+    def test_ud_and_uc_only_police_clearance(self):
+        self.assertEqual(_names("ud"), [("良民證", True)])
+        self.assertEqual(_names("uc"), [("良民證", True)])
 
-    def test_three_wheel_employed_requires_none_of_the_three_insurances(self):
-        codes = {d["code"] for d in applicable_doc_types("ud", "three_wheel_employed")}
-        self.assertNotIn("insurance", codes)
-        self.assertNotIn("guild_insurance", codes)
-        self.assertNotIn("liability_insurance", codes)
+    def test_shopee_employed_own_car(self):
+        self.assertEqual(_names("shopee_employed_own_car"), [("強制險", True), ("營業用第三責任險", True)])
 
-    def test_unset_cooperation_type_excludes_all_conditional_insurances(self):
-        codes = {d["code"] for d in applicable_doc_types("ud", "")}
-        self.assertNotIn("insurance", codes)
-        self.assertNotIn("guild_insurance", codes)
-        self.assertNotIn("liability_insurance", codes)
-        # 身分證/駕照/合約簽定/良民證這些不看合作方式，一律都在
-        self.assertIn("id_card", codes)
-        self.assertIn("driver_license", codes)
-        self.assertIn("contract", codes)
-        self.assertIn("police_clearance", codes)
+    def test_other_shopee_vendors_track_nothing(self):
+        for vendor in ("shopee", "shopee_company_car", "shopee_speed_warehouse"):
+            self.assertEqual(applicable_doc_types(vendor), [], vendor)
 
-    def test_include_vendors_whitelist_only_applies_to_ud(self):
-        ud_codes = {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract")}
-        shopee_codes = {d["code"] for d in applicable_doc_types("shopee", "two_wheel_contract")}
-        uc_codes = {d["code"] for d in applicable_doc_types("uc", "two_wheel_contract")}
-        # selfie_photo 只有 UD 專屬
-        self.assertIn("selfie_photo", ud_codes)
-        self.assertNotIn("selfie_photo", shopee_codes)
-        self.assertNotIn("selfie_photo", uc_codes)
-        # uber_system 是 UD/UC 共用，蝦皮不會出現
-        self.assertIn("uber_system", ud_codes)
-        self.assertIn("uber_system", uc_codes)
-        self.assertNotIn("uber_system", shopee_codes)
+    def test_cooperation_type_no_longer_adds_items(self):
+        """原本合作方式選二輪承攬/二輪雇傭會另外加強制險等項目，使用者確認拿掉。"""
+        self.assertEqual(_names("ud", "two_wheel_employed"), [("良民證", True)])
+        self.assertEqual(_names("shopee", "two_wheel_contract"), [])
 
-    def test_uc_photo_and_email_only_for_ud_and_uc(self):
-        ud_codes = {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract")}
-        uc_codes = {d["code"] for d in applicable_doc_types("uc", "two_wheel_contract")}
-        shopee_codes = {d["code"] for d in applicable_doc_types("shopee", "two_wheel_contract")}
-        sf_codes = {d["code"] for d in applicable_doc_types("sf", "two_wheel_contract")}
-        self.assertIn("uc_photo", uc_codes)
-        self.assertNotIn("uc_photo", ud_codes)
-        self.assertNotIn("uc_photo", shopee_codes)
-        self.assertIn("email", ud_codes)
-        self.assertIn("email", uc_codes)
-        self.assertNotIn("email", shopee_codes)
-        self.assertNotIn("email", sf_codes)
+    def test_old_document_codes_are_kept_so_existing_dates_carry_over(self):
+        codes = {d["code"] for d in applicable_doc_types("sf")} | {d["code"] for d in applicable_doc_types("ud")}
+        self.assertEqual(codes, {"sf_insurance", "sf_guild_insurance", "police_clearance"})
 
-    def test_sf_insurance_and_guild_insurance_only_for_sf_and_not_gated_by_cooperation_type(self):
-        # 順豐目前還沒有設定任何合作方式選項（合作方式是動態清單，見
-        # repository.list_cooperation_types()），所以人員的 cooperation_type
-        # 一律是空字串，這裡就用空字串驗證這兩項還是會出現。
-        sf_codes = {d["code"] for d in applicable_doc_types("sf", "")}
-        ud_codes = {d["code"] for d in applicable_doc_types("ud", "")}
-        self.assertIn("sf_insurance", sf_codes)
-        self.assertIn("sf_guild_insurance", sf_codes)
-        self.assertNotIn("sf_insurance", ud_codes)
-        self.assertNotIn("sf_guild_insurance", ud_codes)
 
-    def test_shopee_split_vendors_still_exclude_police_clearance(self):
-        # 蝦皮廠商拆分（2026-09-13）後的三個新代碼跟改名後的「蝦皮三輪」
-        # (代碼還是 "shopee") 一樣都不用交良民證。
-        for vendor in ("shopee", "shopee_company_car", "shopee_employed_own_car", "shopee_contract"):
-            codes = {d["code"] for d in applicable_doc_types(vendor, "")}
-            self.assertNotIn("police_clearance", codes, vendor)
+def _doc(required=True):
+    return {"code": "sf_insurance", "name": "強制險", "required": required}
 
-    def test_shopee_speed_warehouse_has_identical_rules_to_shopee(self):
-        # 「蝦皮三輪速配倉」（2026-09-14 新增）使用者確認要跟「蝦皮三輪」
-        # (shopee) 完全一樣的應備文件規則，不是像其他三個新代碼那樣另外
-        # 訂一套——這裡逐一比對兩個代碼在每種合作方式下算出來的項目完全
-        # 相同，確保沒有漏掉任何一處只把 "shopee" 加進規則、忘了同步加
-        # "shopee_speed_warehouse" 的地方。
-        for cooperation_type in ("", "two_wheel_contract", "two_wheel_employed", "three_wheel_employed"):
-            shopee_codes = {d["code"] for d in applicable_doc_types("shopee", cooperation_type)}
-            warehouse_codes = {d["code"] for d in applicable_doc_types("shopee_speed_warehouse", cooperation_type)}
-            self.assertEqual(shopee_codes, warehouse_codes, cooperation_type)
 
-    def test_shopee_contract_requires_insurance_and_guild_without_cooperation_type(self):
-        # 蝦皮承攬（shopee_contract）沒有「合作方式」欄位，cooperation_type
-        # 一律是空字串，保險規則要直接綁代碼本身，不能靠 cooperation_type 判斷。
-        codes = {d["code"] for d in applicable_doc_types("shopee_contract", "")}
-        self.assertIn("shopee_contract_insurance", codes)
-        self.assertIn("shopee_contract_guild_insurance", codes)
-        self.assertNotIn("shopee_employed_own_car_insurance", codes)
-        self.assertNotIn("shopee_employed_own_car_liability_insurance", codes)
-        # 舊的、綁「合作方式」的 insurance/guild_insurance/liability_insurance
-        # 不會被這個新代碼觸發（cooperation_type 是空字串）。
-        self.assertNotIn("insurance", codes)
-        self.assertNotIn("guild_insurance", codes)
-        self.assertNotIn("liability_insurance", codes)
-
-    def test_shopee_employed_own_car_requires_insurance_and_liability_without_cooperation_type(self):
-        codes = {d["code"] for d in applicable_doc_types("shopee_employed_own_car", "")}
-        self.assertIn("shopee_employed_own_car_insurance", codes)
-        self.assertIn("shopee_employed_own_car_liability_insurance", codes)
-        self.assertNotIn("shopee_contract_insurance", codes)
-        self.assertNotIn("shopee_contract_guild_insurance", codes)
-
-    def test_shopee_company_car_requires_no_insurance_documents(self):
-        # 使用者確認：公司車由公司統一投保，不需要同仁個人上傳任何保險文件。
-        codes = {d["code"] for d in applicable_doc_types("shopee_company_car", "")}
-        for insurance_code in (
-            "insurance", "guild_insurance", "liability_insurance",
-            "shopee_contract_insurance", "shopee_contract_guild_insurance",
-            "shopee_employed_own_car_insurance", "shopee_employed_own_car_liability_insurance",
-        ):
-            self.assertNotIn(insurance_code, codes)
-        # 基本項目照樣要有。
-        self.assertIn("id_card", codes)
-        self.assertIn("driver_license", codes)
-        self.assertIn("contract", codes)
-
-    def test_momo_test_requires_ud_and_momo_client(self):
-        self.assertIn("momo_test", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "momo")})
-        self.assertNotIn("momo_test", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "pchome")})
-        self.assertNotIn("momo_test", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "")})
-        # UD 以外的廠商就算 client=momo 也不會出現（clients 限定要先過 include_vendors 那關）
-        self.assertNotIn("momo_test", {d["code"] for d in applicable_doc_types("shopee", "two_wheel_contract", "momo")})
-
-    def test_uber_system_not_gated_by_client(self):
-        self.assertIn("uber_system", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "pchome")})
-        self.assertIn("uber_system", {d["code"] for d in applicable_doc_types("ud", "two_wheel_contract", "")})
+def _person(expiry):
+    return {"documents": {"sf_insurance": {"expiry_date": expiry}} if expiry is not None else {}}
 
 
 class DocStatusTests(unittest.TestCase):
-    def test_id_number_kind_missing_when_blank(self):
-        status = doc_status({"code": "id_card", "name": "身分證", "kind": "id_number"}, {"id_number": ""})
+    today = date(2026, 9, 24)
+
+    def _status(self, expiry, required=True):
+        return doc_status(_doc(required), _person(expiry), today=self.today)
+
+    def test_unfilled_required_is_a_problem(self):
+        status = self._status(None)
+        self.assertEqual(status["state"], "unfilled")
         self.assertTrue(status["missing"])
 
-    def test_id_number_kind_missing_when_invalid_checksum(self):
-        status = doc_status({"code": "id_card", "name": "身分證", "kind": "id_number"}, {"id_number": "A123456780"})
-        self.assertTrue(status["missing"])
-
-    def test_id_number_kind_not_missing_when_valid(self):
-        status = doc_status({"code": "id_card", "name": "身分證", "kind": "id_number"}, {"id_number": "A123456789"})
+    def test_unfilled_optional_is_not_a_problem(self):
+        status = self._status(None, required=False)
+        self.assertEqual(status["state"], "unfilled")
         self.assertFalse(status["missing"])
 
-    def test_checkbox_kind_missing_when_unchecked(self):
-        status = doc_status({"code": "driver_license", "name": "駕照", "kind": "checkbox"}, {"documents": {}})
-        self.assertTrue(status["missing"])
-
-    def test_checkbox_kind_not_missing_when_checked(self):
-        personnel = {"documents": {"driver_license": {"checked": True}}}
-        status = doc_status({"code": "driver_license", "name": "駕照", "kind": "checkbox"}, personnel)
+    def test_ok_when_more_than_30_days_left(self):
+        status = self._status((self.today + timedelta(days=31)).isoformat())
+        self.assertEqual(status["state"], "ok")
         self.assertFalse(status["missing"])
 
-    def test_file_expiry_kind_missing_when_no_file(self):
-        status = doc_status({"code": "insurance", "name": "強制險", "kind": "file_expiry"}, {"documents": {}})
-        self.assertTrue(status["missing"])
-
-    def test_file_expiry_kind_missing_when_expired(self):
-        past = (date.today() - timedelta(days=1)).isoformat()
-        personnel = {"documents": {"insurance": {"file_path": "x.jpg", "expiry_date": past}}}
-        status = doc_status({"code": "insurance", "name": "強制險", "kind": "file_expiry"}, personnel)
-        self.assertTrue(status["missing"])
-        self.assertTrue(status["expired"])
-
-    def test_file_expiry_kind_not_missing_when_valid(self):
-        future = (date.today() + timedelta(days=30)).isoformat()
-        personnel = {"documents": {"insurance": {"file_path": "x.jpg", "expiry_date": future}}}
-        status = doc_status({"code": "insurance", "name": "強制險", "kind": "file_expiry"}, personnel)
+    def test_expiring_within_30_days_is_not_yet_a_problem(self):
+        status = self._status((self.today + timedelta(days=30)).isoformat())
+        self.assertEqual(status["state"], "expiring")
         self.assertFalse(status["missing"])
 
-    def test_file_kind_missing_when_no_file(self):
-        status = doc_status({"code": "selfie_photo", "name": "自拍照", "kind": "file"}, {"documents": {}})
+    def test_expired_is_a_problem_even_when_optional(self):
+        status = self._status((self.today - timedelta(days=1)).isoformat(), required=False)
+        self.assertEqual(status["state"], "expired")
         self.assertTrue(status["missing"])
 
-    def test_file_kind_not_missing_when_uploaded(self):
-        personnel = {"documents": {"selfie_photo": {"file_path": "x.jpg"}}}
-        status = doc_status({"code": "selfie_photo", "name": "自拍照", "kind": "file"}, personnel)
-        self.assertFalse(status["missing"])
-        # kind="file" 沒有到期日這個概念，不應該出現在回傳結果裡
-        self.assertNotIn("expiry_date", status)
-        self.assertNotIn("expired", status)
+    def test_expires_today_is_still_valid(self):
+        self.assertEqual(self._status(self.today.isoformat())["state"], "expiring")
 
-    def test_email_kind_missing_when_blank(self):
-        status = doc_status({"code": "email", "name": "EMAIL", "kind": "email"}, {"email": ""})
-        self.assertTrue(status["missing"])
+    def test_garbage_date_counts_as_unfilled(self):
+        status = self._status("not-a-date")
+        self.assertEqual(status["state"], "unfilled")
+        self.assertEqual(status["expiry_date"], "")
 
-    def test_email_kind_missing_when_invalid_format(self):
-        status = doc_status({"code": "email", "name": "EMAIL", "kind": "email"}, {"email": "not-an-email"})
-        self.assertTrue(status["missing"])
-
-    def test_email_kind_not_missing_when_valid(self):
-        status = doc_status({"code": "email", "name": "EMAIL", "kind": "email"}, {"email": "a@example.com"})
-        self.assertFalse(status["missing"])
-
-    def test_file_expiry_kind_optional_not_missing_when_never_uploaded(self):
-        status = doc_status(
-            {"code": "guild_insurance", "name": "公會加保證明", "kind": "file_expiry", "required": False},
-            {"documents": {}},
-        )
-        self.assertFalse(status["missing"])
-        self.assertFalse(status["required"])
-
-    def test_file_expiry_kind_optional_still_missing_when_expired(self):
-        past = (date.today() - timedelta(days=1)).isoformat()
-        personnel = {"documents": {"guild_insurance": {"file_path": "x.jpg", "expiry_date": past}}}
-        status = doc_status(
-            {"code": "guild_insurance", "name": "公會加保證明", "kind": "file_expiry", "required": False},
-            personnel,
-        )
-        self.assertTrue(status["missing"])
-        self.assertTrue(status["expired"])
-
-    def test_file_expiry_kind_optional_not_missing_when_uploaded_and_valid(self):
-        future = (date.today() + timedelta(days=30)).isoformat()
-        personnel = {"documents": {"guild_insurance": {"file_path": "x.jpg", "expiry_date": future}}}
-        status = doc_status(
-            {"code": "guild_insurance", "name": "公會加保證明", "kind": "file_expiry", "required": False},
-            personnel,
-        )
-        self.assertFalse(status["missing"])
-
-    def test_file_expiry_kind_required_defaults_true(self):
-        status = doc_status({"code": "insurance", "name": "強制險", "kind": "file_expiry"}, {"documents": {}})
-        self.assertTrue(status["required"])
+    def test_old_uploaded_file_alone_no_longer_counts(self):
+        """以前只上傳照片、沒填日期的，改版後算「未填」（不再上傳照片）。"""
+        person = {"documents": {"sf_insurance": {"file_path": "personnel-docs/x/a.jpg"}}}
+        self.assertEqual(doc_status(_doc(), person, today=self.today)["state"], "unfilled")
 
 
-class MissingDocumentsIntegrationTests(unittest.TestCase):
-    def test_shopee_two_wheel_contract_missing_list_excludes_police_clearance_and_liability(self):
-        personnel = {
-            "vendor": "shopee",
-            "cooperation_type": "two_wheel_contract",
-            "id_number": "",
-            "documents": {},
-        }
-        missing_codes = {m["code"] for m in missing_documents(personnel)}
-        self.assertNotIn("police_clearance", missing_codes)
-        self.assertNotIn("liability_insurance", missing_codes)
-        self.assertIn("insurance", missing_codes)
-        # guild_insurance 現在是非必填，沒交不算缺件
-        self.assertNotIn("guild_insurance", missing_codes)
+class MissingDocumentsTests(unittest.TestCase):
+    def test_sf_with_insurance_filled_has_no_problem_even_without_optional_guild(self):
+        person = {"vendor": "sf", "documents": {"sf_insurance": {"expiry_date": "2099-01-01"}}}
+        self.assertEqual(missing_documents(person), [])
+        self.assertEqual(len(all_document_statuses(person)), 2)
 
-    def test_fully_complete_two_wheel_contract_at_shopee_has_no_missing(self):
-        future = (date.today() + timedelta(days=30)).isoformat()
-        personnel = {
-            "vendor": "shopee",
-            "cooperation_type": "two_wheel_contract",
-            "id_number": "A123456789",
-            "documents": {
-                "driver_license": {"checked": True},
-                "contract": {"checked": True},
-                "insurance": {"file_path": "a.jpg", "expiry_date": future},
-                "guild_insurance": {"file_path": "b.jpg", "expiry_date": future},
-            },
-        }
-        self.assertEqual(missing_documents(personnel), [])
+    def test_ud_without_police_clearance_is_missing(self):
+        self.assertEqual([m["code"] for m in missing_documents({"vendor": "ud"})], ["police_clearance"])
 
-    def test_all_document_statuses_length_matches_applicable_doc_types(self):
-        personnel = {"vendor": "ud", "cooperation_type": "two_wheel_employed", "id_number": "", "documents": {}}
-        statuses = all_document_statuses(personnel)
-        expected = applicable_doc_types("ud", "two_wheel_employed")
-        self.assertEqual(len(statuses), len(expected))
+    def test_vendor_without_tracked_items_never_missing(self):
+        self.assertEqual(missing_documents({"vendor": "shopee"}), [])
 
 
-class PersonnelMatchesFiltersTests(unittest.TestCase):
-    def test_complete_personnel_hidden_by_default(self):
-        self.assertFalse(personnel_matches_filters({"name": "王小明", "phone": "0912345678"}, missing=[]))
+class PersonnelMatchesSearchTests(unittest.TestCase):
+    def _p(self, status, name="王小明", phone="0912345678", vendor="ud"):
+        return {"name": name, "phone": phone, "vendor": vendor, "employment_status": status}
 
-    def test_complete_personnel_shown_when_name_searched(self):
-        self.assertTrue(
-            personnel_matches_filters({"name": "王小明", "phone": "0912345678"}, missing=[], name_keyword="王小明")
-        )
+    def test_pending_and_employed_shown_by_default(self):
+        self.assertTrue(personnel_matches_search(self._p("pending_onboard")))
+        self.assertTrue(personnel_matches_search(self._p("employed")))
 
-    def test_incomplete_personnel_shown_by_default(self):
-        self.assertTrue(personnel_matches_filters({"name": "王小明", "phone": "0912345678"}, missing=[{"code": "x"}]))
+    def test_withdrawn_and_resigned_hidden_by_default(self):
+        self.assertFalse(personnel_matches_search(self._p("onboard_withdrawn")))
+        self.assertFalse(personnel_matches_search(self._p("resigned")))
 
-    def test_name_keyword_excludes_non_matching(self):
-        self.assertFalse(
-            personnel_matches_filters({"name": "王小明", "phone": "0912345678"}, missing=[{"code": "x"}], name_keyword="李小華")
-        )
+    def test_hidden_statuses_shown_when_searching_name_or_phone(self):
+        self.assertTrue(personnel_matches_search(self._p("resigned"), name="小明"))
+        self.assertTrue(personnel_matches_search(self._p("onboard_withdrawn"), phone="0912"))
 
-    def test_phone_keyword_excludes_non_matching(self):
-        self.assertFalse(
-            personnel_matches_filters({"name": "王小明", "phone": "0912345678"}, missing=[{"code": "x"}], phone_keyword="0900000000")
-        )
+    def test_status_filter_is_exact(self):
+        self.assertTrue(personnel_matches_search(self._p("resigned"), employment_status="resigned"))
+        self.assertFalse(personnel_matches_search(self._p("employed"), employment_status="resigned"))
 
-    def test_resigned_hidden_by_default(self):
-        person = {"name": "王小明", "phone": "0912345678", "employment_status": "resigned"}
-        self.assertFalse(personnel_matches_filters(person, missing=[{"code": "x"}]))
+    def test_name_phone_vendor_filters(self):
+        person = self._p("employed")
+        self.assertFalse(personnel_matches_search(person, name="陳"))
+        self.assertFalse(personnel_matches_search(person, phone="0988"))
+        self.assertFalse(personnel_matches_search(person, vendor="sf"))
+        self.assertTrue(personnel_matches_search(person, name="王", phone="0912", vendor="ud"))
 
-    def test_onboard_withdrawn_hidden_by_default(self):
-        person = {"name": "王小明", "phone": "0912345678", "employment_status": "onboard_withdrawn"}
-        self.assertFalse(personnel_matches_filters(person, missing=[{"code": "x"}]))
-
-    def test_resigned_shown_when_name_searched(self):
-        person = {"name": "王小明", "phone": "0912345678", "employment_status": "resigned"}
-        self.assertTrue(personnel_matches_filters(person, missing=[{"code": "x"}], name_keyword="王小明"))
-
-    def test_resigned_shown_when_status_filter_matches(self):
-        # 狀態篩選命中時會蓋掉「離職/放棄報到預設隱藏」的規則，但缺件狀態這個
-        # 獨立的隱藏規則不受影響，所以這裡要傳有缺件的資料才會顯示。
-        person = {"name": "王小明", "phone": "0912345678", "employment_status": "resigned"}
-        self.assertTrue(personnel_matches_filters(person, missing=[{"code": "x"}], status_filter="resigned"))
-
-    def test_status_filter_excludes_non_matching_status(self):
-        person = {"name": "王小明", "phone": "0912345678", "employment_status": "employed"}
-        self.assertFalse(personnel_matches_filters(person, missing=[{"code": "x"}], status_filter="pending_onboard"))
-
-    def test_legacy_personnel_without_employment_status_treated_as_employed(self):
-        # 上線前既有的舊資料沒有 employment_status 欄位，不該被當成「待報到」而
-        # 被隱藏規則影響（待報到不在隱藏清單裡，但語意上舊資料本來就已經在職）。
-        person = {"name": "王小明", "phone": "0912345678"}
+    def test_legacy_personnel_without_status_is_employed(self):
+        person = {"name": "老員工", "vendor": "ud"}
         self.assertEqual(personnel_employment_status(person), "employed")
-
-    def test_missing_filter_missing_forces_hide_complete_even_with_name_search(self):
-        person = {"name": "王小明", "phone": "0912345678", "employment_status": "employed"}
-        self.assertFalse(
-            personnel_matches_filters(person, missing=[], name_keyword="王小明", missing_filter="missing")
-        )
-
-    def test_missing_filter_complete_shows_complete_without_name_search(self):
-        person = {"name": "王小明", "phone": "0912345678", "employment_status": "employed"}
-        self.assertTrue(personnel_matches_filters(person, missing=[], missing_filter="complete"))
-
-    def test_missing_filter_complete_hides_incomplete(self):
-        person = {"name": "王小明", "phone": "0912345678", "employment_status": "employed"}
-        self.assertFalse(
-            personnel_matches_filters(person, missing=[{"code": "x"}], missing_filter="complete")
-        )
+        self.assertTrue(personnel_matches_search(person))
 
 
 if __name__ == "__main__":

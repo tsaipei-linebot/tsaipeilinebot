@@ -75,7 +75,7 @@ class HelpPageTests(unittest.TestCase):
         html = response.body.decode("utf-8")
         self.assertIn('id="onboarding-flow"', html)
         self.assertIn('href="#onboarding-flow"', html)
-        self.assertIn("改成「在職」＝完成報到", html)
+        self.assertIn("按「報到」＝完成報到", html)
 
 
 if __name__ == "__main__":

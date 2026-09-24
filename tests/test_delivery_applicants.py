@@ -77,6 +77,16 @@ class ApplicantMatchesFiltersTests(unittest.TestCase):
         applicant = self._applicant(status="hired")
         self.assertTrue(applicant_matches_filters(applicant, status_filter="hired"))
 
+    def test_not_hired_hidden_by_default_but_findable(self):
+        """「未錄取」2026-09-24 新增，跟「放棄」「已錄取」一樣預設隱藏。"""
+        applicant = self._applicant(status="not_hired")
+        self.assertFalse(applicant_matches_filters(applicant))
+        self.assertTrue(applicant_matches_filters(applicant, name_keyword="王小明"))
+        self.assertTrue(applicant_matches_filters(applicant, status_filter="not_hired"))
+
+    def test_interviewed_still_shows_by_default(self):
+        self.assertTrue(applicant_matches_filters(self._applicant(status="interviewed")))
+
     def test_name_keyword_excludes_non_matching(self):
         applicant = self._applicant()
         self.assertFalse(applicant_matches_filters(applicant, name_keyword="李小華"))

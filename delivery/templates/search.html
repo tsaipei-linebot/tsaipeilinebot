@@ -2,13 +2,23 @@
 {% block title %}查詢人員 - 材霈有限公司-新北所(配送組)系統{% endblock %}
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
-<h1 class="page-title">查詢人員</h1>
-<p class="hint">
-    輸入姓名或身分證字號查詢，或直接選擇廠商列出該廠商全部人員（不像「人員狀況」頁面只顯示缺件的人）；
-    也可以搭配狀態篩選。姓名/身分證字號、廠商都沒填的話不會查詢，避免一次列出全公司所有人。
-</p>
+<div class="page-head">
+    <h1 class="page-title">查詢人員</h1>
+    <div class="btn-list" style="flex-direction: row;">
+        <a class="btn" href="/delivery/import">批次匯入</a>
+        {% if user.role == "admin" %}
+        <a class="btn" href="/delivery/cooperation-types">合作方式管理</a>
+        {% endif %}
+        <a class="btn btn-primary" href="/delivery/personnel/new">新增人員</a>
+    </div>
+</div>
+
+{% if msg %}<p class="success">{{ msg }}</p>{% endif %}
+{% if err %}<p class="error">{{ err }}</p>{% endif %}
+
 <form method="get" action="/delivery/search" class="filter-bar">
-    <input type="text" name="keyword" value="{{ keyword }}" placeholder="輸入姓名或身分證字號" autofocus>
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
+    <input type="text" name="phone" value="{{ filter_phone }}" placeholder="搜尋電話">
     <select name="vendor">
         <option value="">全部廠商</option>
         {% for v in vendors %}
@@ -16,50 +26,143 @@
         {% endfor %}
     </select>
     <select name="status">
-        <option value="">全部狀態</option>
+        <option value="">待報到＋在職</option>
         {% for s in personnel_statuses %}
         <option value="{{ s.code }}" {% if filter_status == s.code %}selected{% endif %}>{{ s.name }}</option>
         {% endfor %}
     </select>
     <button type="submit" class="btn">查詢</button>
-</form>
-
-{% if keyword or filter_vendor %}
-    {% if results %}
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>姓名</th>
-                <th>廠商</th>
-                <th>狀態</th>
-                <th>缺件狀況</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for row in results %}
-            <tr>
-                <td>{{ row.person.name }}</td>
-                <td>{{ row.vendor_name }}</td>
-                <td><span class="badge {{ row.employment_status_badge_class }}">{{ row.employment_status_name }}</span></td>
-                <td>
-                    {% if row.missing %}
-                        {% for m in row.missing %}
-                        <span class="badge badge-missing">{{ m.name }}{% if m.expired %}（已過期）{% endif %}</span>
-                        {% endfor %}
-                    {% else %}
-                        <span class="badge badge-ok">齊全</span>
-                    {% endif %}
-                </td>
-                <td><a href="/delivery/personnel/{{ row.person.id }}">查看詳細</a></td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="empty">查無符合條件的人員。</p>
+    {% if has_filters %}
+    <a class="btn" href="/delivery/search">清除篩選</a>
     {% endif %}
+</form>
+<p class="hint">
+    預設顯示「待報到」和「在職」的人，待報到排在最上面。「放棄報到」「離職」的人要用狀態篩選，
+    或輸入姓名／電話搜尋才會出現。應徵名單按「錄取」的人會以「待報到」出現在這裡。
+</p>
+
+{% if results %}
+<div class="table-scroll">
+<table class="data-table sticky-head personnel-table">
+    <thead>
+        <tr>
+            <th>姓名</th>
+            <th>電話</th>
+            <th>廠商</th>
+            <th>狀態</th>
+            <th>到期狀況</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in results %}
+        <tr>
+            <td><a href="/delivery/personnel/{{ row.person.id }}">{{ row.person.name }}</a></td>
+            <td>{{ row.person.phone or "-" }}</td>
+            <td>{{ row.vendor_name }}</td>
+            <td>
+                <span class="badge {{ row.employment_status_badge_class }}">{{ row.employment_status_name }}</span>
+                {% if row.employment_status == "employed" and row.person.hire_date %}<div class="meta">到職 {{ row.person.hire_date }}</div>{% endif %}
+            </td>
+            <td>
+                {% if row.doc_statuses %}
+                    {% for d in row.doc_statuses %}
+                    {% include "_expiry_badge.html" %}
+                    {% endfor %}
+                {% else %}
+                    <span class="meta">不需追蹤</span>
+                {% endif %}
+            </td>
+            <td class="row-actions">
+                {% if row.employment_status == "pending_onboard" %}
+                <button type="button" class="btn btn-small btn-primary js-onboard"
+                        data-id="{{ row.person.id }}" data-name="{{ row.person.name }}">報到</button>
+                <form method="post" action="/delivery/personnel/{{ row.person.id }}/withdraw" class="inline-action js-withdraw"
+                      data-name="{{ row.person.name }}">
+                    <input type="hidden" name="back" value="{{ back_url }}">
+                    <button type="submit" class="btn btn-small">放棄報到</button>
+                </form>
+                {% elif row.employment_status == "employed" %}
+                <form method="post" action="/delivery/personnel/{{ row.person.id }}/resign" class="inline-action js-resign"
+                      data-name="{{ row.person.name }}" data-owed="{{ row.equipment_owed }}">
+                    <input type="hidden" name="back" value="{{ back_url }}">
+                    <button type="submit" class="btn btn-small btn-danger">離職</button>
+                </form>
+                {% endif %}
+                <a class="btn btn-small" href="/delivery/personnel/{{ row.person.id }}">詳細</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-state">
+    <p class="empty-state-title">{% if has_filters %}找不到符合條件的人員{% else %}目前沒有待報到或在職的人員{% endif %}</p>
+    <p class="empty-state-text">{% if has_filters %}換個條件試試看，或按「清除篩選」。{% else %}應徵名單按「錄取」後，人員會出現在這裡；也可以按右上角「新增人員」手動建立。{% endif %}</p>
+</div>
 {% endif %}
 
+<dialog id="onboard-dialog" class="onboard-dialog">
+    <form method="post" id="onboard-form">
+        <h2 class="section-title">報到</h2>
+        <p id="onboard-text"></p>
+        <label>報到日期
+            <input type="date" name="hire_date" id="onboard-date" required>
+        </label>
+        <input type="hidden" name="back" value="{{ back_url }}">
+        <div class="btn-list" style="flex-direction: row; margin-top: 12px;">
+            <button type="submit" class="btn btn-primary">確定報到</button>
+            <button type="button" class="btn" id="onboard-cancel">取消</button>
+        </div>
+    </form>
+</dialog>
+
 <p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
+
+<script>
+(function () {
+    var dialog = document.getElementById('onboard-dialog');
+    var form = document.getElementById('onboard-form');
+    var dateInput = document.getElementById('onboard-date');
+    function today() {
+        var d = new Date();
+        var m = String(d.getMonth() + 1).padStart(2, '0');
+        var day = String(d.getDate()).padStart(2, '0');
+        return d.getFullYear() + '-' + m + '-' + day;
+    }
+    document.querySelectorAll('.js-onboard').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            form.action = '/delivery/personnel/' + btn.dataset.id + '/onboard';
+            document.getElementById('onboard-text').textContent = '請選擇「' + btn.dataset.name + '」的報到日期，確定後狀態會改成「在職」，到職日期也會填入這一天。';
+            dateInput.value = today();
+            dialog.showModal();
+        });
+    });
+    document.getElementById('onboard-cancel').addEventListener('click', function () { dialog.close(); });
+
+    // 名字用 data-name 帶給 JS，不直接寫進 onsubmit 字串（名字裡有引號會壞掉）
+    document.querySelectorAll('.js-withdraw').forEach(function (f) {
+        f.addEventListener('submit', function (event) {
+            if (!window.confirm('確定要把「' + f.dataset.name + '」改成「放棄報到」嗎？')) {
+                event.preventDefault();
+            }
+        });
+    });
+
+    // 離職確認：名下還有裝備沒還的話，一併提醒要先追回（純提醒，不擋送出）
+    document.querySelectorAll('.js-resign').forEach(function (f) {
+        f.addEventListener('submit', function (event) {
+            var owed = parseInt(f.dataset.owed || '0', 10);
+            var text = '確定要把「' + f.dataset.name + '」改成「離職」嗎？';
+            if (owed > 0) {
+                text += '\n\n⚠️ 名下還有 ' + owed + ' 件裝備沒有歸還，需先追回，再辦理退保。';
+            }
+            if (!window.confirm(text)) {
+                event.preventDefault();
+            }
+        });
+    });
+})();
+</script>
 {% endblock %}

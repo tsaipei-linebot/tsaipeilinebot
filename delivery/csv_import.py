@@ -1,7 +1,7 @@
 """批次匯入人員用的檔案解析（Excel 與 CSV 都收）。
 
 刻意寫成不碰 Firestore 的純函式（parse_personnel_csv），方便直接寫單元測試。
-是否寫入資料庫、是否跳過重複身分證字號，交給呼叫端（routes/import_routes.py）
+是否寫入資料庫、是否跳過重複（姓名＋電話相同），交給呼叫端（routes/import_routes.py）
 決定，這裡只負責把上傳的檔案內容解析成結構化的每列結果。
 
 「把上傳的檔案讀成一列一列的字典」這一段共用 services/tabular_upload.py
@@ -42,7 +42,7 @@ def parse_personnel_csv(content: bytes):
 
     header_error 不是 None 時代表整份檔案的表頭有問題（例如缺欄位），rows
     一定是空 list；否則 rows 是每一列的解析結果，每個元素是：
-    - 成功：{"row": 列號, "ok": True, "vendor": 廠商代號, "name": ..., "id_number": ..., "phone": ..., "hire_date": "" 或 "YYYY-MM-DD"}
+    - 成功：{"row": 列號, "ok": True, "vendor": 廠商代號, "name": ..., "phone": ..., "hire_date": "" 或 "YYYY-MM-DD"}
     - 失敗：{"row": 列號, "ok": False, "error": 錯誤訊息, "name": ...}
     完全空白的列（廠商、姓名都沒填）直接跳過，不算錯誤，方便匯出的檔案留有
     空行也不會被擋下來。
@@ -59,7 +59,6 @@ def parse_personnel_csv(content: bytes):
     for i, raw in enumerate(raw_rows, start=2):  # 第 1 列是表頭，資料從第 2 列開始
         vendor_raw = (raw.get("廠商") or "").strip()
         name = (raw.get("姓名") or "").strip()
-        id_number = (raw.get("身分證字號") or "").strip()
         phone = (raw.get("電話") or "").strip()
         hire_date_raw = raw.get("到職日期") or ""
 
@@ -87,7 +86,6 @@ def parse_personnel_csv(content: bytes):
                 "ok": True,
                 "vendor": vendor_code,
                 "name": name,
-                "id_number": id_number,
                 "phone": phone,
                 "hire_date": hire_date,
             }

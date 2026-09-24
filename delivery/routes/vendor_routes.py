@@ -1,113 +1,94 @@
+"""配送部人員：新增、詳細頁、報到/放棄報到/離職、合作方式管理。
+
+2026-09-24 改版（見 HANDOFF.md「配送部人員流程改版」）：
+- 主頁拿掉「選擇廠商」卡片，原本的廠商人員清單頁（/vendor/{廠商}）改成
+  轉到「查詢人員」頁（routes/search_routes.py），那邊變成主要的人員清單
+- 新增人員改成 /personnel/new（在表單裡選廠商），不再綁在廠商清單底下
+- 詳細頁只剩 4 種證明的到期日（不再上傳照片、不再有身分證字號/Email/勾選項）
+- 查詢人員每一列的「報到」「放棄報到」「離職」按鈕打這裡的三個路由
+"""
+from datetime import date
+from urllib.parse import quote, urlencode
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 
 from delivery import repository
 from delivery.auth import admin_required, current_user, login_required
 from delivery.config import (
-    ALLOWED_UPLOAD_CONTENT_TYPES,
     CLIENT_MAP,
     CLIENT_VENDORS,
     CLIENTS,
     COOPERATION_CATEGORIES,
     COOPERATION_CATEGORY_MAP,
-    MAX_UPLOAD_BYTES,
-    PERSONNEL_STATUS_BADGE_CLASS,
     PERSONNEL_STATUS_MAP,
     PERSONNEL_STATUSES,
     VENDOR_MAP,
     VENDORS,
 )
-from delivery.ocr import extract_expiry_date
-from delivery.storage import StorageNotConfigured, delete_entity_files, is_configured, upload_file
+from delivery.storage import delete_entity_files
 from delivery.templating import templates
-from delivery.validators import is_valid_taiwan_id
-from file_type_sniff import is_allowed_upload
 
 router = APIRouter()
 
+SEARCH_URL = "/delivery/search"
+
+
+def _safe_back(back: str) -> str:
+    """按鈕送出後回到原本的查詢人員頁（保留篩選條件）；只接受查詢人員頁
+    自己的網址，避免被塞外部網址轉走。"""
+    back = (back or "").strip()
+    return back if back.startswith(SEARCH_URL) else SEARCH_URL
+
+
+def _with_message(url: str, key: str, value: str) -> str:
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{key}={quote(value)}"
+
 
 @router.get("/vendor/{vendor_code}")
-def vendor_list(
-    vendor_code: str,
-    request: Request,
-    name: str = "",
-    phone: str = "",
-    status: str = "",
-    missing_status: str = "",
-    redirect=Depends(login_required),
-):
+def vendor_list(vendor_code: str, redirect=Depends(login_required)):
+    """舊的廠商人員清單頁：2026-09-24 起改成直接轉到查詢人員頁並帶入廠商篩選，
+    同仁存過的舊書籤/連結還能用。"""
     if redirect:
         return redirect
     if vendor_code not in VENDOR_MAP:
-        return RedirectResponse(url="/delivery/", status_code=303)
-
-    name_keyword = (name or "").strip()
-    phone_keyword = (phone or "").strip()
-    status_filter = (status or "").strip()
-    missing_filter = (missing_status or "").strip()
-
-    rows = []
-    for p in repository.list_personnel_by_vendor(vendor_code):
-        missing = repository.missing_documents(p)
-        if repository.personnel_matches_filters(
-            p, missing, name_keyword, phone_keyword, status_filter, missing_filter
-        ):
-            employment_status = repository.personnel_employment_status(p)
-            rows.append(
-                {
-                    "person": p,
-                    "missing": missing,
-                    "employment_status": employment_status,
-                    "employment_status_name": PERSONNEL_STATUS_MAP.get(employment_status, employment_status),
-                    "employment_status_badge_class": PERSONNEL_STATUS_BADGE_CLASS.get(
-                        employment_status, "badge-pending"
-                    ),
-                }
-            )
-
-    return templates.TemplateResponse(
-        request,
-        "vendor_list.html",
-        {
-            "user": current_user(request),
-            "vendor_code": vendor_code,
-            "vendor_name": VENDOR_MAP[vendor_code],
-            "rows": rows,
-            "filter_name": name,
-            "filter_phone": phone,
-            "filter_status": status,
-            "filter_missing_status": missing_status,
-            "personnel_statuses": PERSONNEL_STATUSES,
-        },
-    )
+        return RedirectResponse(url=SEARCH_URL, status_code=303)
+    return RedirectResponse(url=f"{SEARCH_URL}?{urlencode({'vendor': vendor_code})}", status_code=303)
 
 
 @router.get("/vendor/{vendor_code}/new")
-def new_personnel_form(vendor_code: str, request: Request, redirect=Depends(login_required)):
+def legacy_new_personnel_form(vendor_code: str, redirect=Depends(login_required)):
     if redirect:
         return redirect
-    if vendor_code not in VENDOR_MAP:
-        return RedirectResponse(url="/delivery/", status_code=303)
+    query = f"?{urlencode({'vendor': vendor_code})}" if vendor_code in VENDOR_MAP else ""
+    return RedirectResponse(url=f"/delivery/personnel/new{query}", status_code=303)
+
+
+@router.get("/personnel/new")
+def new_personnel_form(request: Request, vendor: str = "", redirect=Depends(login_required)):
+    if redirect:
+        return redirect
     return templates.TemplateResponse(
         request,
         "personnel_form.html",
         {
             "user": current_user(request),
-            "vendor_code": vendor_code,
-            "vendor_name": VENDOR_MAP[vendor_code],
-            "cooperation_types": repository.list_cooperation_types(vendor=vendor_code),
+            "vendors": VENDORS,
+            "selected_vendor": vendor if vendor in VENDOR_MAP else "",
+            "cooperation_types_by_vendor": repository.cooperation_types_by_vendor(),
             "clients": CLIENTS,
-            "show_client": vendor_code in CLIENT_VENDORS,
+            "client_vendors": CLIENT_VENDORS,
+            "error": "",
         },
     )
 
 
-@router.post("/vendor/{vendor_code}/new")
+@router.post("/personnel/new")
 def create_personnel_submit(
-    vendor_code: str,
     request: Request,
+    vendor: str = Form(""),
     name: str = Form(...),
-    id_number: str = Form(""),
     phone: str = Form(""),
     cooperation_type: str = Form(""),
     client: str = Form(""),
@@ -116,19 +97,19 @@ def create_personnel_submit(
 ):
     if redirect:
         return redirect
-    if vendor_code not in VENDOR_MAP:
-        return RedirectResponse(url="/delivery/", status_code=303)
+    if vendor not in VENDOR_MAP or not name.strip():
+        return RedirectResponse(url="/delivery/personnel/new", status_code=303)
     coop = repository.get_cooperation_type(cooperation_type)
-    if not coop or vendor_code not in coop.get("vendors", []):
+    if not coop or vendor not in coop.get("vendors", []):
         cooperation_type = ""
-    if client not in CLIENT_MAP:
+    if client not in CLIENT_MAP or vendor not in CLIENT_VENDORS:
         client = ""
     user = current_user(request)
     personnel_id = repository.create_personnel(
-        name,
-        id_number,
-        phone,
-        vendor_code,
+        name.strip(),
+        "",
+        phone.strip(),
+        vendor,
         user["username"],
         cooperation_type=cooperation_type,
         client=client,
@@ -138,21 +119,16 @@ def create_personnel_submit(
 
 
 @router.get("/personnel/{personnel_id}")
-def personnel_detail(personnel_id: str, request: Request, error: str = "", redirect=Depends(login_required)):
+def personnel_detail(personnel_id: str, request: Request, redirect=Depends(login_required)):
     if redirect:
         return redirect
     person = repository.get_personnel(personnel_id)
     if not person:
-        return RedirectResponse(url="/delivery/", status_code=303)
+        return RedirectResponse(url=SEARCH_URL, status_code=303)
     vendor_code = person.get("vendor")
 
-    # 裝備尚欠提醒（2026-09-17 新增）：這個人名下如果還有借用未歸還的裝備，
-    # 不管目前是不是已經離職，都在這頁列出來——「離職但裝備還沒追回」是
-    # 明確要提醒的問題狀態；「在職中借用未歸還」則是正常狀態，不需要顯示
-    # 成警告，樣板端只會在「已離職」時把這個清單畫成警告色。真正在「改成
-    # 離職」那個瞬間跳出提醒視窗，是樣板裡的 JS 在偵測到下拉選單改選
-    # 「離職」時觸發，不是這裡的伺服器端邏輯（那時候使用者根本還沒送出
-    # 表單，伺服器端還看不到「將要改成離職」這件事）。
+    # 裝備尚欠：名下還有借用未歸還的裝備時列出來，改成「離職」時會跳提醒
+    # （見 personnel_detail.html 的 JS，以及查詢人員頁「離職」按鈕的確認視窗）。
     debt_rows = repository.list_equipment_debt(personnel_id=personnel_id)
     if debt_rows:
         item_map = {i["id"]: i["name"] for i in repository.list_equipment_items(include_inactive=True)}
@@ -174,42 +150,42 @@ def personnel_detail(personnel_id: str, request: Request, error: str = "", redir
             "current_employment_status": repository.personnel_employment_status(person),
             "show_client": vendor_code in CLIENT_VENDORS,
             "doc_statuses": repository.all_document_statuses(person),
-            "storage_configured": is_configured(),
             "equipment_debt": debt_rows,
-            "error": error,
         },
     )
 
 
 @router.post("/personnel/{personnel_id}/delete")
 def delete_personnel_submit(personnel_id: str, request: Request, redirect=Depends(admin_required)):
-    """整筆刪除人員紀錄（2026-09-13 新增），只有主管能刪——跟這個模組裡
-    其他有實質後果、不可逆的動作（核准補款/病假、結案事故）一樣走
-    admin_required，不是任何有配送部權限的帳號都能刪。真的整筆刪掉
-    Firestore 紀錄跟上傳過的所有檔案（身分證、良民證、強制險等），沒有
-    回收機制，前端要先跳確認對話框。"""
+    """整筆刪除人員紀錄（2026-09-13 新增），只有主管能刪。真的整筆刪掉
+    Firestore 紀錄跟以前上傳過的所有檔案，沒有回收機制，前端要先跳確認對話框。"""
     if redirect:
         return redirect
-    person = repository.get_personnel(personnel_id)
-    if not person:
-        return RedirectResponse(url="/delivery/", status_code=303)
-    vendor_code = person.get("vendor")
-    delete_entity_files("personnel-docs", personnel_id)
-    repository.delete_personnel(personnel_id)
-    redirect_url = f"/delivery/vendor/{vendor_code}" if vendor_code in VENDOR_MAP else "/delivery/"
-    return RedirectResponse(url=redirect_url, status_code=303)
+    if repository.get_personnel(personnel_id):
+        delete_entity_files("personnel-docs", personnel_id)
+        repository.delete_personnel(personnel_id)
+    return RedirectResponse(url=SEARCH_URL, status_code=303)
+
+
+def _valid_date(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError:
+        return ""
 
 
 @router.post("/personnel/{personnel_id}/bulk-update")
 async def bulk_update_personnel(personnel_id: str, request: Request, redirect=Depends(login_required)):
-    """人員詳細頁改成一個大表單，所有應備項目（合作方式/負責客戶、身分證、
-    email、勾選類、上傳類）一次送出、一鍵更新，取代原本每一列各自一個小
-    表單、要分開送出很多次的做法。"""
+    """人員詳細頁的一鍵全部更新：廠商、狀態、合作方式、負責客戶、到職日期、
+    工號、各項證明的到期日。到期日欄位留空＝清掉那一項的日期。"""
     if redirect:
         return redirect
     person = repository.get_personnel(personnel_id)
     if not person:
-        return RedirectResponse(url="/delivery/", status_code=303)
+        return RedirectResponse(url=SEARCH_URL, status_code=303)
 
     form = await request.form()
 
@@ -221,11 +197,7 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
             effective_vendor = vendor
 
     if "cooperation_type" in form:
-        # 2026-09-21 修正：原本只檢查這個合作方式 ID 存不存在，沒有檢查
-        # 是否真的適用「這次要存的廠商」——這個表單廠商/合作方式是同一次
-        # 送出，畫面上改了廠商的話瀏覽器端會即時把合作方式選單換成新廠商
-        # 的選項，但表單真的被竄改、或 JS 沒執行的情況下，伺服器端還是要
-        # 自己擋掉「廠商 A 配上廠商 B 的合作方式」這種不合理組合。
+        # 伺服器端也要擋「廠商 A 配上廠商 B 的合作方式」（表單被竄改或 JS 沒跑時）
         cooperation_type = form.get("cooperation_type", "")
         coop = repository.get_cooperation_type(cooperation_type)
         if not coop or effective_vendor not in coop.get("vendors", []):
@@ -241,71 +213,64 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
         if employment_status in PERSONNEL_STATUS_MAP:
             repository.update_personnel_employment_status(personnel_id, employment_status)
 
-    id_number_error = False
-    if "id_number" in form:
-        id_number = (form.get("id_number") or "").strip().upper()
-        if id_number and not is_valid_taiwan_id(id_number):
-            id_number_error = True
-        else:
-            repository.update_personnel_id_number(personnel_id, id_number)
-
-    if "email" in form:
-        repository.update_personnel_email(personnel_id, (form.get("email") or "").strip())
-
     if "hire_date" in form:
-        repository.update_personnel_hire_date(personnel_id, (form.get("hire_date") or "").strip())
+        repository.update_personnel_hire_date(personnel_id, _valid_date(form.get("hire_date")))
 
     if "employee_no" in form:
         repository.update_personnel_employee_no(personnel_id, (form.get("employee_no") or "").strip())
 
-    doc_types = repository.applicable_doc_types(
-        person.get("vendor"), person.get("cooperation_type"), person.get("client")
-    )
-    for doc_type in doc_types:
-        code = doc_type["code"]
-        kind = doc_type["kind"]
+    # 用畫面上顯示的那幾項（送出前的廠商）存：同仁看到什麼就存什麼
+    for doc_type in repository.applicable_doc_types(person.get("vendor")):
+        field = f"expiry_date_{doc_type['code']}"
+        if field in form:
+            repository.update_personnel_document(personnel_id, doc_type["code"], expiry_date=_valid_date(form.get(field)))
 
-        if kind == "checkbox":
-            repository.update_personnel_checkbox(personnel_id, code, checked=form.get(f"checked_{code}") is not None)
-            continue
+    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}?saved=1", status_code=303)
 
-        if kind not in ("file", "file_expiry"):
-            continue
 
-        file = form.get(f"file_{code}")
-        file_path = None
-        resolved_expiry_date = None
-        if kind == "file_expiry":
-            resolved_expiry_date = (form.get(f"expiry_date_{code}") or "").strip() or None
+@router.post("/personnel/{personnel_id}/onboard")
+def onboard_personnel(personnel_id: str, hire_date: str = Form(""), back: str = Form(""), redirect=Depends(login_required)):
+    """查詢人員頁的「報到」：狀態改在職，到職日期填入同仁選的日期。只有
+    「待報到」的人可以按（畫面上也只有待報到才顯示這顆按鈕）。"""
+    if redirect:
+        return redirect
+    back_url = _safe_back(back)
+    person = repository.get_personnel(personnel_id)
+    hire_date = _valid_date(hire_date)
+    if not person or repository.personnel_employment_status(person) != "pending_onboard":
+        return RedirectResponse(url=_with_message(back_url, "err", "這個人目前不是「待報到」，無法報到。"), status_code=303)
+    if not hire_date:
+        return RedirectResponse(url=_with_message(back_url, "err", "請選擇報到日期。"), status_code=303)
+    repository.update_personnel_employment_status(personnel_id, "employed")
+    repository.update_personnel_hire_date(personnel_id, hire_date)
+    return RedirectResponse(url=_with_message(back_url, "msg", f"{person.get('name')} 已報到（{hire_date}）。"), status_code=303)
 
-        if file is not None and getattr(file, "filename", None):
-            content = await file.read()
-            content_type = file.content_type or "application/octet-stream"
-            if len(content) <= MAX_UPLOAD_BYTES and is_allowed_upload(content, content_type, ALLOWED_UPLOAD_CONTENT_TYPES):
-                try:
-                    file_path = upload_file("personnel-docs", personnel_id, file.filename, content, content_type)
-                except StorageNotConfigured:
-                    file_path = None
-                # 沒手動填到期日時交給 OCR 辨識；辨識不出來就維持空白，之後同仁
-                # 還是可以再送一次表單手動補到期日。
-                if kind == "file_expiry" and file_path and not resolved_expiry_date:
-                    resolved_expiry_date = extract_expiry_date(content, content_type) or None
 
-        if file_path is not None or resolved_expiry_date is not None:
-            repository.update_personnel_document(personnel_id, code, file_path=file_path, expiry_date=resolved_expiry_date)
+@router.post("/personnel/{personnel_id}/withdraw")
+def withdraw_personnel(personnel_id: str, back: str = Form(""), redirect=Depends(login_required)):
+    """「放棄報到」：只有待報到的人可以按。"""
+    if redirect:
+        return redirect
+    back_url = _safe_back(back)
+    person = repository.get_personnel(personnel_id)
+    if not person or repository.personnel_employment_status(person) != "pending_onboard":
+        return RedirectResponse(url=_with_message(back_url, "err", "這個人目前不是「待報到」。"), status_code=303)
+    repository.update_personnel_employment_status(personnel_id, "onboard_withdrawn")
+    return RedirectResponse(url=_with_message(back_url, "msg", f"{person.get('name')} 已改成放棄報到。"), status_code=303)
 
-    if id_number_error:
-        return RedirectResponse(url=f"/delivery/personnel/{personnel_id}?error=id_number", status_code=303)
 
-    # 送出成功後跳回原本的「人員狀況」清單頁（2026-09-13 使用者要求），
-    # 不是留在詳細頁——用 person（送出前查到的舊資料）裡的廠商，不是
-    # 更新後的新廠商：同仁通常是從這個廠商的清單點進來改一筆人員，
-    # 改完理所當然是要回到「原本待處理的清單」，就算這次同時把所屬廠商
-    # 改到別的廠商去了，也是回到原本這個清單。
-    old_vendor_code = person.get("vendor")
-    if old_vendor_code in VENDOR_MAP:
-        return RedirectResponse(url=f"/delivery/vendor/{old_vendor_code}", status_code=303)
-    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}", status_code=303)
+@router.post("/personnel/{personnel_id}/resign")
+def resign_personnel(personnel_id: str, back: str = Form(""), redirect=Depends(login_required)):
+    """「離職」：只有在職的人可以按。名下還有裝備沒還的提醒在按鈕的確認視窗
+    裡（查詢人員頁），這裡不擋。"""
+    if redirect:
+        return redirect
+    back_url = _safe_back(back)
+    person = repository.get_personnel(personnel_id)
+    if not person or repository.personnel_employment_status(person) != "employed":
+        return RedirectResponse(url=_with_message(back_url, "err", "這個人目前不是「在職」。"), status_code=303)
+    repository.update_personnel_employment_status(personnel_id, "resigned")
+    return RedirectResponse(url=_with_message(back_url, "msg", f"{person.get('name')} 已改成離職。"), status_code=303)
 
 
 @router.get("/cooperation-types")
@@ -313,9 +278,9 @@ def cooperation_types_page(request: Request, redirect=Depends(admin_required)):
     """合作方式管理，限管理員（2026-09-18 新增）——比照車輛服務區域管理
     （vehicle_routes.py 的 service_areas_page），差別在於一筆合作方式可以
     同時套用到多個廠商：蝦皮／蝦皮三輪速配倉需要繼續共用同一組合作方式
-    （見 repository.py「合作方式管理」段落的說明），因為 DOC_TYPES 的保險
-    文件規則、以及應徵名單的試駕規則，都是照 cooperation_type 這個字串值
-    本身判斷，不是照「廠商 + 合作方式」的組合。"""
+    （見 repository.py「合作方式管理」段落的說明），因為應徵名單的試駕規則
+    是照 cooperation_type 這個字串值本身判斷，不是照「廠商 + 合作方式」的組合
+    （2026-09-24 起到期證明只看廠商，不再看合作方式）。"""
     if redirect:
         return redirect
     types = repository.list_cooperation_types(include_inactive=True)

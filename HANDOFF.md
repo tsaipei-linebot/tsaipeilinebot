@@ -10104,9 +10104,10 @@ bytes，沒測到這個情況。
 第一次成功跑時預期會列出約 500～700 家（全台近 60 天核准的工廠）。
 
 
-## 【待辦，已確認規格、等使用者說「請實作」】配送部人員流程改版：到期狀況、報到按鈕、拿掉選擇廠商（2026-09-24 討論定案）
+## 配送部人員流程改版：到期狀況、報到按鈕、拿掉選擇廠商（2026-09-24 定案並實作完成）
 
-**這一節是還沒做的需求**，規格已經跟使用者逐項確認完畢，等使用者說「請實作」再動工。
+規格跟使用者逐項確認後，使用者說「請實作」，同一天完成。下面先是確認過的規格，
+最後是「實作紀錄」。
 
 ### 1. 「缺件狀況」改成「到期狀況」，只追蹤 4 種證明
 
@@ -10165,3 +10166,48 @@ bytes，沒測到這個情況。
   日期）、「放棄報到」按鈕（確認視窗 → 狀態改放棄報到）。
 - **在職**那一列：「離職」按鈕（沿用原本改離職時「名下還有裝備沒還」的提醒）。
 - 在職的人不顯示報到/放棄報到按鈕。
+
+### 實作紀錄（2026-09-24）
+
+- `delivery/config.py`：`DOC_TYPES` 換成 7 筆（4 種證明 × 廠商），全部只有
+  `include_vendors`＋`required`，沒有 `kind`（只剩「填日期」一種）；新增
+  `EXPIRING_SOON_DAYS=30`、`REMINDER_WEEKDAY=0`、`HIDDEN_APPLICANT_STATUSES`；
+  拿掉 `REMINDER_RESEND_INTERVAL_DAYS`；應徵狀態多 `not_hired`（未錄取）。
+- `delivery/repository.py`：`applicable_doc_types()` 只看廠商；`doc_status()` 回傳
+  `state`（unfilled/ok/expiring/expired）＋`missing`（必填沒填或已過期——裝備借用
+  仍用這個擋）；新增 `personnel_matches_search()`、`search_personnel(name, phone,
+  vendor, employment_status)`（排序待報到→在職→放棄報到→離職）；
+  `list_expiring_documents()` 拿掉重送間隔、排除放棄報到/離職；刪掉
+  `list_personnel_by_vendor`、`personnel_matches_filters`、`mark_documents_reminded`、
+  `update_personnel_checkbox/id_number/email`。
+- `delivery/routes/reminder_routes.py`：用台灣時間判斷，不是週一直接回
+  `skipped: not_reminder_day`。**Cloud Scheduler `delivery-expiry-reminder` 不用改**。
+- `delivery/routes/vendor_routes.py`：`/vendor/{廠商}` 改成 303 轉到
+  `/delivery/search?vendor=…`（舊書籤還能用）；新增人員改成 `/personnel/new`（表單裡
+  選廠商，`/vendor/{廠商}/new` 轉過去）；詳細頁只剩到期日欄位（不再上傳、不再 OCR、
+  沒有身分證字號），存完留在詳細頁顯示「已儲存」；新增 `/personnel/{id}/onboard`
+  （必填日期，只限待報到，同時寫到職日期）、`/withdraw`（只限待報到）、`/resign`
+  （只限在職）；按鈕送出後回到 `back`（只接受 `/delivery/search` 開頭的網址）。
+  刪除人員的按鈕從廠商清單搬到詳細頁最下方（主管）。
+- `delivery/routes/search_routes.py`＋`templates/search.html`：主要人員清單，每列按鈕
+  ＋報到日期對話框（`<dialog>`，預設今天）＋離職確認視窗（名下有裝備沒還會提醒）；
+  頁首搬來「新增人員」「批次匯入」「合作方式管理」。到期狀況標籤共用
+  `templates/_expiry_badge.html`。
+- 主頁拿掉「選擇廠商」卡片，「應徵名單」「查詢人員」移到最前面；`vendor_list.html`
+  刪除。
+- 批次匯入：範本拿掉「身分證字號」，舊檔多這一欄照樣收（忽略）。**更正**：討論時
+  我跟使用者說匯入原本是用身分證字號判斷重複，實際上 `import_routes.py` 本來就是用
+  「姓名＋電話」（`find_active_personnel_by_name_and_phone`），所以這部分行為不用改。
+- 應徵名單錄取後顯示「已錄取○○，人員已經加到查詢人員（待報到）」。
+- 使用說明 `/delivery/help`：「從應徵到報到」改寫成新流程（五步），「人員管理」段
+  改成「查詢人員／到期狀況」（含對照表與提醒規則），「應徵名單」「新增人員／批次匯入」
+  一併更新。
+- **資料面要知道的**：改版前「依合作方式」才有的項目（例如 UD 選二輪雇傭時的強制險，
+  文件代碼 `insurance`/`guild_insurance`/`liability_insurance`）、順豐的良民證、
+  以前上傳的照片，資料都還在 Firestore，只是畫面跟提醒不再使用。
+- 測試：`test_delivery_doc_types.py` 整份改寫；新增 `test_delivery_expiry_reminder.py`
+  （週一判斷、排除狀態、記憶體版 Firestore）、`test_delivery_personnel_pages.py`
+  （實際渲染查詢人員/詳細頁/新增頁/主頁）；按鈕路由測試加在
+  `test_delivery_personnel_vendor_change.py`。全部 2263 個通過。用 Playwright 看過
+  查詢人員（含報到對話框）、詳細頁、主頁、手機寬度。
+
