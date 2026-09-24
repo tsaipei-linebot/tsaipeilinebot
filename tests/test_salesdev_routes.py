@@ -14,10 +14,8 @@ from fastapi.testclient import TestClient
 
 
 class SalesdevRoutingSmokeTests(unittest.TestCase):
-    """/salesdev 是唯讀彙整頁面，跟 test_accounts_routes.py 的既有分工一致，
-    只涵蓋不需要真的打 Firestore／Google Sheets API 的部分：未登入時的導向。
-    需要模擬「已登入且有 salesdev 模組權限」才能測到的頁面內容，留給有 GCP
-    憑證的環境做整合測試。"""
+    """未登入時的導向。已登入的頁面內容見 test_salesdev_pages.py（用記憶體版
+    Firestore）。"""
 
     def setUp(self):
         self.client = TestClient(main.app)
@@ -37,14 +35,33 @@ class SalesdevRoutingSmokeTests(unittest.TestCase):
     def test_select_post_redirects_to_login_when_not_authenticated(self):
         """/salesdev/select（2026-09-17 新增的「勾選送出」路由）跟 /salesdev
         共用同一個 _require_access，未登入時一樣要導去登入頁，不能繞過
-        權限檢查直接寫入 Google Sheet。"""
+        權限檢查直接寫入資料。"""
         resp = self.client.post(
             "/salesdev/select",
-            data={"tab_title": "Leads", "row_numbers": ["2"]},
+            data={"group_ids": ["g1"]},
             follow_redirects=False,
         )
         self.assertEqual(resp.status_code, 303)
         self.assertEqual(resp.headers["location"], "/login?next=/salesdev")
+
+    def test_other_new_routes_require_login(self):
+        """2026-09-24 改版新增的路由都要擋未登入。"""
+        for method, path in (
+            ("get", "/salesdev/groups/g1"),
+            ("post", "/salesdev/groups/g1/review"),
+            ("post", "/salesdev/groups/g1/note"),
+            ("post", "/salesdev/groups/g1/contact-log"),
+            ("post", "/salesdev/jobs/j1/internal"),
+            ("get", "/salesdev/export.xlsx"),
+            ("post", "/salesdev/import-sheet"),
+        ):
+            resp = getattr(self.client, method)(path, follow_redirects=False)
+            self.assertEqual(resp.status_code, 303, path)
+            self.assertEqual(resp.headers["location"], "/login?next=/salesdev", path)
+
+    def test_scrape_trigger_requires_secret(self):
+        resp = self.client.post("/internal/salesdev/scrape/run", headers={"X-Salesdev-Scrape-Secret": "wrong"})
+        self.assertEqual(resp.status_code, 403)
 
 
 class RequireAccessDependencyTests(unittest.TestCase):

@@ -34,6 +34,7 @@ from config import (
     LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET,
     TEST_LINE_CHANNEL_ACCESS_TOKEN, TEST_LINE_CHANNEL_SECRET,
     LOAD_TEST_SECRET, FACTORY_WATCH_TRIGGER_SECRET, DAILY_REPORT_TRIGGER_SECRET, DAILY_REPORT_ENABLED,
+    SALESDEV_SCRAPE_TRIGGER_SECRET,
     DEFAULT_RESUME_URLS
 )
 from delivery.config import SESSION_SECRET_KEY
@@ -42,6 +43,7 @@ from delivery.app import delivery_app
 from management.app import management_app
 from hr.app import hr_app
 from services.factory_watch_service import run_weekly_scan
+from salesdev.pipeline import run_daily_scrape as run_salesdev_daily_scrape
 from services.daily_report_service import run_daily_report
 from services.session_service import db as _firestore_db, SESSIONS_COLLECTION as _SESSIONS_COLLECTION
 from services.notion_service import fetch_jobs_data, fetch_faqs_data, sanitize_uri, record_resume_click
@@ -426,6 +428,22 @@ async def trigger_factory_watch(x_factory_watch_secret: str = Header(None)):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     summary = await run_in_threadpool(run_weekly_scan, line_bot_api)
+    return summary
+
+
+# ==========================================
+# 業務開發每日抓職缺（2026-09-24 從外部 GitHub repo 整併進來，見
+# salesdev/pipeline.py）：由 Cloud Scheduler 每天 07:00 呼叫，不對外公開，
+# 用共用密鑰驗證避免被任意觸發。
+# ==========================================
+@app.post("/internal/salesdev/scrape/run")
+async def trigger_salesdev_scrape(x_salesdev_scrape_secret: str = Header(None)):
+    if not SALESDEV_SCRAPE_TRIGGER_SECRET or not x_salesdev_scrape_secret or not hmac.compare_digest(
+        x_salesdev_scrape_secret, SALESDEV_SCRAPE_TRIGGER_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    summary = await run_in_threadpool(run_salesdev_daily_scrape, line_bot_api)
     return summary
 
 

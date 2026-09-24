@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ group.label }} - 少凱業務開發專區{% endblock %}
+{% block content %}
+<p class="back-link"><a href="/salesdev">&larr; 回開發名單</a></p>
+<div class="page-head">
+    <h1 class="page-title">{{ group.label }}</h1>
+    <span class="badge {{ status_badges.get(group.review_status, '') }}">{{ group.review_status }}</span>
+</div>
+
+{% if msg %}<p class="success">{{ msg }}</p>{% endif %}
+{% if err %}<p class="warning">{{ err }}</p>{% endif %}
+
+<p class="meta">
+    {{ group.job_count }} 筆職缺・{{ group.agency_names|length }} 家派遣公司（{{ group.agency_names|join('、') }}）・
+    第一次出現 {{ group.first_seen }}・最近出現 {{ group.last_seen }}
+    {% if group.kind == 'title' %}・沒有地址，依「同一家派遣公司＋同樣標題」歸在一起{% endif %}
+</p>
+
+<h2 class="section-title">這一組的職缺</h2>
+{% if group.kind == 'address' %}
+<p class="hint">門牌常被打碼，只能判斷到「同一條路」。如果看起來明顯是不同工廠，在備註記下來即可；某一筆是派遣公司徵自己內部員工的，按「內部職缺」移出去。</p>
+{% endif %}
+<div class="table-scroll">
+    <table class="data-table salesdev-table">
+        <thead><tr><th>來源</th><th>派遣公司</th><th>職缺名稱</th><th>工作地址</th><th>刊登者電話</th><th>最近出現</th><th></th></tr></thead>
+        <tbody>
+            {% for j in jobs %}
+            <tr>
+                <td>{{ source_labels.get(j.source, j.source) }}</td>
+                <td>{{ j.company_name }}</td>
+                <td>
+                    {% if j.job_url %}<a href="{{ j.job_url }}" target="_blank" rel="noopener">{{ j.job_title }}</a>{% else %}{{ j.job_title }}{% endif %}
+                    {% if j.legacy and j.legacy.candidate_client_company %}
+                    <div class="meta">舊版自動反查（僅供參考，準確度不穩）：{{ j.legacy.candidate_client_company }}{% if j.legacy.phone %}・{{ j.legacy.phone }}{% endif %}</div>
+                    {% endif %}
+                </td>
+                <td>{{ j.work_address }}</td>
+                <td>{{ j.poster_phone }}{% if j.poster_phone_ext %} 分機{{ j.poster_phone_ext }}{% endif %}</td>
+                <td>{{ j.last_seen }}</td>
+                <td>
+                    <form method="post" action="/salesdev/jobs/{{ j.id }}/internal">
+                        <input type="hidden" name="value" value="1">
+                        <input type="hidden" name="back" value="group">
+                        <button type="submit" class="btn btn-small" title="派遣公司在徵自己的員工，不是客戶線索">內部職缺</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="hint">「刊登者電話」是職缺內文裡派遣公司自己的聯絡方式，不是要派公司的。</p>
+
+<h2 class="section-title">反查結果</h2>
+<form method="post" action="/salesdev/groups/{{ group.id }}/review" class="form-stack form-narrow">
+    <label>狀態
+        <select name="review_status">
+            {% for s in review_statuses %}<option value="{{ s }}"{{ ' selected' if s == group.review_status else '' }}>{{ s }}</option>{% endfor %}
+        </select>
+    </label>
+    <label>要派公司（背後實際缺人的公司）<input type="text" name="client_company" value="{{ group.client_company or '' }}"></label>
+    <label>電話<input type="text" name="client_phone" value="{{ group.client_phone or '' }}"></label>
+    <label>分機<input type="text" name="client_phone_ext" value="{{ group.client_phone_ext or '' }}"></label>
+    <label>Email<input type="text" name="client_email" value="{{ group.client_email or '' }}"></label>
+    <label>查到的來源網址<input type="text" name="client_source_url" value="{{ group.client_source_url or '' }}"></label>
+    <label>反查備註<textarea name="lookup_note" rows="3">{{ group.lookup_note or '' }}</textarea></label>
+    {% if group.reviewed_by %}<p class="meta">上次修改：{{ group.reviewed_by }}（{{ group.reviewed_at }}）</p>{% endif %}
+    <button type="submit" class="btn btn-primary">儲存反查結果</button>
+</form>
+
+<h2 class="section-title">備註</h2>
+<form method="post" action="/salesdev/groups/{{ group.id }}/note" class="form-stack form-narrow">
+    <textarea name="note" rows="4" placeholder="例如：這條路上其實有兩家工廠、已經有其他同事在聯絡…">{{ group.note or '' }}</textarea>
+    {% if group.note_updated_by %}<p class="meta">上次修改：{{ group.note_updated_by }}（{{ group.note_updated_at }}）</p>{% endif %}
+    <button type="submit" class="btn">儲存備註</button>
+</form>
+
+<h2 class="section-title">聯絡紀錄</h2>
+{% if group.contact_logs %}
+<ul class="salesdev-logs">
+    {% for log in group.contact_logs|reverse %}
+    <li><span class="meta">{{ log.at }}・{{ log.by }}</span><div>{{ log.text }}</div></li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="hint">還沒有聯絡紀錄。</p>
+{% endif %}
+<form method="post" action="/salesdev/groups/{{ group.id }}/contact-log" class="form-stack form-narrow">
+    <textarea name="text" rows="3" placeholder="例如：打給對方人資王小姐，下週三再回電" required></textarea>
+    <button type="submit" class="btn">新增一筆聯絡紀錄</button>
+</form>
+{% endblock %}

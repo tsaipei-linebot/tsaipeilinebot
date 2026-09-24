@@ -11,7 +11,7 @@ from linebot.models import TextSendMessage
 
 from config import (
     GCP_PROJECT_ID, FACTORY_OPENDATA_DATASET_ID, FACTORY_WATCH_LOOKBACK_DAYS,
-    FACTORY_WATCH_SHEET_ID, FACTORY_WATCH_SHEET_NAME, FACTORY_WATCH_LINE_TARGET_ID,
+    FACTORY_WATCH_LINE_TARGET_ID, SERVICE_BASE_URL,
 )
 
 # ==========================================
@@ -182,43 +182,29 @@ def _mark_seen(records: list):
 
 
 # ==========================================
-# 明細輸出：寫入 Google Sheet（用 Cloud Run 服務帳戶 ADC，Sheet 需先分享給該服務帳戶）
+# 明細輸出：寫入 Firestore（2026-09-24 起取代原本的 Google Sheet「新登記工廠」
+# 分頁，改在平台 /salesdev 的「新登記工廠」分頁顯示，原因見 salesdev/repository.py
+# 開頭；舊試算表的資料用 /salesdev 的「匯入舊試算表資料」搬過來）
 # ==========================================
-def _get_sheets_service():
-    from google.auth import default as google_auth_default
-    from googleapiclient.discovery import build
-
-    credentials, _ = google_auth_default(scopes=["https://www.googleapis.com/auth/spreadsheets"])
-    return build("sheets", "v4", credentials=credentials, cache_discovery=False)
-
-
-def _record_to_sheet_row(record: dict, found_date: str) -> list:
-    return [
-        found_date,
-        record.get("name", ""),
-        record.get("tax_id", ""),
-        record.get("address", ""),
-        record.get("industry", ""),
-        record.get("products", ""),
-        record.get("approval_date_raw", ""),
-        record.get("reg_no", ""),
-    ]
+def _record_to_document(record: dict, found_date: str) -> dict:
+    return {
+        "dedup_key": _dedup_key(record),
+        "found_date": found_date,
+        "name": record.get("name", ""),
+        "tax_id": record.get("tax_id", ""),
+        "address": record.get("address", ""),
+        "industry": record.get("industry", ""),
+        "products": record.get("products", ""),
+        "approval_date_raw": record.get("approval_date_raw", ""),
+        "reg_no": record.get("reg_no", ""),
+    }
 
 
-def write_new_records_to_sheet(records: list):
-    if not FACTORY_WATCH_SHEET_ID:
-        raise RuntimeError("尚未設定 FACTORY_WATCH_SHEET_ID，無法寫入明細")
+def write_new_records(records: list):
+    from salesdev import repository
 
-    service = _get_sheets_service()
     found_date = date.today().isoformat()
-    body = {"values": [_record_to_sheet_row(r, found_date) for r in records]}
-    service.spreadsheets().values().append(
-        spreadsheetId=FACTORY_WATCH_SHEET_ID,
-        range=f"{FACTORY_WATCH_SHEET_NAME}!A:H",
-        valueInputOption="USER_ENTERED",
-        insertDataOption="INSERT_ROWS",
-        body=body,
-    ).execute()
+    repository.upsert_factories([_record_to_document(r, found_date) for r in records], found_date)
 
 
 # ==========================================
@@ -243,8 +229,8 @@ def build_line_summary_message(records: list, preview_limit: int = 5) -> str:
     if len(records) > preview_limit:
         lines.append(f"...等共 {len(records)} 家")
     lines.append("")
-    if FACTORY_WATCH_SHEET_ID:
-        lines.append(f"完整名單請看 👉 https://docs.google.com/spreadsheets/d/{FACTORY_WATCH_SHEET_ID}/edit")
+    if SERVICE_BASE_URL:
+        lines.append(f"完整名單請看 👉 {SERVICE_BASE_URL.rstrip('/')}/salesdev?tab=factories")
     return "\n".join(lines)
 
 
@@ -252,7 +238,7 @@ def build_line_summary_message(records: list, preview_limit: int = 5) -> str:
 # 主流程：由 Cloud Scheduler 觸發的端點呼叫
 # ==========================================
 def run_weekly_scan(line_bot_api) -> dict:
-    summary = {"fetched": 0, "candidates": 0, "new_count": 0, "sheet_updated": False, "line_pushed": False, "errors": []}
+    summary = {"fetched": 0, "candidates": 0, "new_count": 0, "saved": False, "line_pushed": False, "errors": []}
 
     try:
         raw_rows = _fetch_raw_rows()
@@ -283,12 +269,12 @@ def run_weekly_scan(line_bot_api) -> dict:
         return summary
 
     try:
-        write_new_records_to_sheet(new_records)
-        summary["sheet_updated"] = True
+        write_new_records(new_records)
+        summary["saved"] = True
     except Exception as e:
-        # Sheet 沒寫成功就不要標記已通知，也不要推播，讓下次執行可以重試同一批資料
-        print(f"[工廠登記監控] 寫入 Google Sheet 失敗，暫緩標記已通知: {e}")
-        summary["errors"].append(f"sheet_write_failed: {e}")
+        # 沒存成功就不要標記已通知，也不要推播，讓下次執行可以重試同一批資料
+        print(f"[工廠登記監控] 寫入 Firestore 失敗，暫緩標記已通知: {e}")
+        summary["errors"].append(f"save_failed: {e}")
         return summary
 
     try:
@@ -298,7 +284,7 @@ def run_weekly_scan(line_bot_api) -> dict:
         summary["errors"].append(f"mark_seen_failed: {e}")
 
     if not FACTORY_WATCH_LINE_TARGET_ID:
-        print("[工廠登記監控] 尚未設定 FACTORY_WATCH_LINE_TARGET_ID，略過 LINE 推播（Sheet 已更新）")
+        print("[工廠登記監控] 尚未設定 FACTORY_WATCH_LINE_TARGET_ID，略過 LINE 推播（資料已存進平台）")
         return summary
 
     if not line_bot_api:

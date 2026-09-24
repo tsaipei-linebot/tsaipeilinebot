@@ -959,3 +959,29 @@ tr[draggable="true"].dragging { opacity: 0.4; background: var(--brand-bg); }
     font: inherit;
 }
 .clause-field { margin-bottom: 16px; }
+
+/* ==========================================
+   少凱業務開發專區（2026-09-24 改版：資料改存 Firestore、同地點歸併）
+   ========================================== */
+a.sheet-tab-btn { display: inline-block; text-decoration: none; }
+.badge-selected { background: #e6effc; color: var(--brand); }
+.salesdev-run {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    line-height: 1.7;
+}
+.salesdev-run-errors { margin: 6px 0 0; padding-left: 20px; color: var(--warn); }
+.salesdev-logs { list-style: none; padding: 0; margin: 0 0 12px; }
+.salesdev-logs li { border-left: 3px solid var(--border); padding: 4px 10px; margin-bottom: 8px; }
+.salesdev-logs li .meta { margin: 0; }
+.salesdev-admin { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); }
+/* 窄欄位（勾選、狀態、職缺數、按鈕）不要被擠成一字一行；手機上整張表
+   維持最小寬度、改成左右滑動，不要把每一格壓成一欄一個字 */
+.salesdev-table { min-width: 880px; }
+.salesdev-table th,
+.salesdev-table .badge,
+.salesdev-table .btn { white-space: nowrap; }
