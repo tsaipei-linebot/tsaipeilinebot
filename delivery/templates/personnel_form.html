@@ -1,14 +1,20 @@
 {% extends "base.html" %}
-{% block title %}新增人員 - {{ vendor_name }}{% endblock %}
+{% block title %}新增人員 - 材霈有限公司-新北所(配送組)系統{% endblock %}
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
-<h1 class="page-title">新增人員 - {{ vendor_name }}</h1>
-<form method="post" action="/delivery/vendor/{{ vendor_code }}/new" class="form-stack form-narrow">
+<h1 class="page-title">新增人員</h1>
+<p class="hint">一般從應徵名單按「錄取」就會自動建立人員；這裡是給不經過應徵名單、要手動建立的情況用。建立後狀態是「待報到」。</p>
+<form method="post" action="/delivery/personnel/new" class="form-stack form-narrow">
+    <label>廠商
+        <select name="vendor" id="vendor" required>
+            <option value="" {% if not selected_vendor %}selected{% endif %} disabled>請選擇廠商</option>
+            {% for v in vendors %}
+            <option value="{{ v.code }}" {% if selected_vendor == v.code %}selected{% endif %}>{{ v.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
     <label>姓名
         <input type="text" name="name" required>
-    </label>
-    <label>身分證字號
-        <input type="text" name="id_number">
     </label>
     <label>聯絡電話
         <input type="text" name="phone">
@@ -17,15 +23,11 @@
         <input type="text" name="employee_no">
     </label>
     <label>合作方式（可之後在人員詳細頁再設定）
-        <select name="cooperation_type">
-            <option value="" {% if cooperation_types|length != 1 %}selected{% endif %}>尚未決定</option>
-            {% for c in cooperation_types %}
-            <option value="{{ c.id }}" {% if cooperation_types|length == 1 %}selected{% endif %}>{{ c.name }}</option>
-            {% endfor %}
+        <select name="cooperation_type" id="cooperation_type">
+            <option value="">尚未決定</option>
         </select>
     </label>
-    {% if show_client %}
-    <label>負責客戶（可之後在人員詳細頁再設定）
+    <label id="client-field" hidden>負責客戶（可之後在人員詳細頁再設定）
         <select name="client">
             <option value="">尚未決定</option>
             {% for c in clients %}
@@ -33,8 +35,37 @@
             {% endfor %}
         </select>
     </label>
-    {% endif %}
     <button type="submit" class="btn btn-primary">建立人員資料</button>
 </form>
-<p class="back-link"><a href="/delivery/vendor/{{ vendor_code }}">&larr; 回 {{ vendor_name }} 人員清單</a></p>
+<p class="back-link"><a href="/delivery/search">&larr; 回查詢人員</a></p>
+
+<script>
+(function () {
+    // 選了廠商之後，合作方式只列那個廠商適用的選項（只有一個就直接帶入），
+    // 負責客戶只有 UD 才顯示——跟人員詳細頁同一套做法。
+    var COOPERATION_TYPES_BY_VENDOR = {{ cooperation_types_by_vendor | tojson }};
+    var CLIENT_VENDORS = {{ client_vendors | tojson }};
+    var vendorSelect = document.getElementById('vendor');
+    var coopSelect = document.getElementById('cooperation_type');
+    var clientField = document.getElementById('client-field');
+    function refresh() {
+        var options = COOPERATION_TYPES_BY_VENDOR[vendorSelect.value] || [];
+        coopSelect.innerHTML = '';
+        var blank = document.createElement('option');
+        blank.value = '';
+        blank.textContent = '尚未決定';
+        coopSelect.appendChild(blank);
+        options.forEach(function (c) {
+            var opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name;
+            coopSelect.appendChild(opt);
+        });
+        coopSelect.value = options.length === 1 ? options[0].id : '';
+        clientField.hidden = CLIENT_VENDORS.indexOf(vendorSelect.value) === -1;
+    }
+    vendorSelect.addEventListener('change', refresh);
+    refresh();
+})();
+</script>
 {% endblock %}

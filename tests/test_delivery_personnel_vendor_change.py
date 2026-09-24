@@ -142,44 +142,93 @@ class BulkUpdatePersonnelCooperationTypeVendorMatchTests(unittest.TestCase):
 
 
 class BulkUpdatePersonnelRedirectTests(unittest.TestCase):
-    """一鍵全部更新送出成功後，2026-09-13 改成跳回原本的「人員狀況」清單頁
-    （不是留在詳細頁）——但驗證失敗（身分證字號格式錯誤）時還是要留在
-    詳細頁顯示錯誤訊息，不能跳走讓同仁看不到哪裡沒填對。"""
+    """一鍵全部更新：2026-09-24 起存完留在詳細頁並顯示「已儲存」（廠商人員
+    清單頁拿掉了），到期日欄位留空＝清掉日期，亂填的日期不存。"""
 
-    PERSON = {"id": "p1", "vendor": "shopee", "cooperation_type": "", "client": ""}
+    PERSON = {"id": "p1", "vendor": "sf", "cooperation_type": "", "client": ""}
 
-    def test_successful_update_redirects_to_vendor_list(self):
+    def _submit(self, form):
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
-            with mock.patch.object(vendor_routes.repository, "applicable_doc_types", return_value=[]):
-                result = asyncio.run(
-                    vendor_routes.bulk_update_personnel("p1", _FakeRequest({}), redirect=None)
-                )
-        self.assertEqual(result.status_code, 303)
-        self.assertTrue(result.headers["location"].endswith("/delivery/vendor/shopee"))
-
-    def test_redirect_uses_vendor_from_before_this_submission(self):
-        # 就算這次同時把所屬廠商改到別的廠商，也是跳回「送出前」那個
-        # 廠商的清單——同仁是從那個清單點進來的，改完理所當然回到那裡。
-        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
-            with mock.patch.object(vendor_routes.repository, "applicable_doc_types", return_value=[]):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_document") as mock_doc:
                 with mock.patch.object(vendor_routes.repository, "update_personnel_vendor"):
-                    result = asyncio.run(
-                        vendor_routes.bulk_update_personnel(
-                            "p1", _FakeRequest({"vendor": "shopee_contract"}), redirect=None
-                        )
-                    )
-        self.assertTrue(result.headers["location"].endswith("/delivery/vendor/shopee"))
+                    result = asyncio.run(vendor_routes.bulk_update_personnel("p1", _FakeRequest(form), redirect=None))
+        return result, mock_doc
 
-    def test_id_number_error_stays_on_detail_page(self):
-        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=dict(self.PERSON)):
-            with mock.patch.object(vendor_routes.repository, "applicable_doc_types", return_value=[]):
-                result = asyncio.run(
-                    vendor_routes.bulk_update_personnel(
-                        "p1", _FakeRequest({"id_number": "not-a-valid-id"}), redirect=None
-                    )
-                )
+    def test_successful_update_stays_on_detail_page(self):
+        result, _ = self._submit({})
         self.assertEqual(result.status_code, 303)
-        self.assertTrue(result.headers["location"].endswith("/delivery/personnel/p1?error=id_number"))
+        self.assertEqual(result.headers["location"], "/delivery/personnel/p1?saved=1")
+
+    def test_expiry_dates_saved_for_the_vendors_items(self):
+        result, mock_doc = self._submit(
+            {"expiry_date_sf_insurance": "2026-12-31", "expiry_date_sf_guild_insurance": "", "expiry_date_police_clearance": "2027-01-01"}
+        )
+        calls = {c.args[1]: c.kwargs["expiry_date"] for c in mock_doc.call_args_list}
+        # 順豐不追蹤良民證，送上來也不存
+        self.assertEqual(calls, {"sf_insurance": "2026-12-31", "sf_guild_insurance": ""})
+
+    def test_garbage_date_is_saved_as_blank(self):
+        _, mock_doc = self._submit({"expiry_date_sf_insurance": "明天"})
+        self.assertEqual(mock_doc.call_args.kwargs["expiry_date"], "")
+
+
+class StatusButtonTests(unittest.TestCase):
+    """查詢人員頁每一列的「報到」「放棄報到」「離職」按鈕（2026-09-24 新增）。"""
+
+    def _person(self, status):
+        return {"id": "p1", "name": "王小明", "vendor": "ud", "employment_status": status}
+
+    def test_onboard_sets_employed_and_hire_date(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("pending_onboard")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
+                with mock.patch.object(vendor_routes.repository, "update_personnel_hire_date") as mock_hire:
+                    result = vendor_routes.onboard_personnel("p1", hire_date="2026-09-25", back="/delivery/search?vendor=ud", redirect=None)
+        mock_status.assert_called_once_with("p1", "employed")
+        mock_hire.assert_called_once_with("p1", "2026-09-25")
+        self.assertTrue(result.headers["location"].startswith("/delivery/search?vendor=ud&msg="))
+
+    def test_onboard_requires_a_date(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("pending_onboard")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
+                result = vendor_routes.onboard_personnel("p1", hire_date="", back="", redirect=None)
+        mock_status.assert_not_called()
+        self.assertIn("err=", result.headers["location"])
+
+    def test_onboard_only_for_pending(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
+                vendor_routes.onboard_personnel("p1", hire_date="2026-09-25", back="", redirect=None)
+        mock_status.assert_not_called()
+
+    def test_withdraw_only_for_pending(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("pending_onboard")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
+                vendor_routes.withdraw_personnel("p1", back="", redirect=None)
+        mock_status.assert_called_once_with("p1", "onboard_withdrawn")
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
+                vendor_routes.withdraw_personnel("p1", back="", redirect=None)
+        mock_status.assert_not_called()
+
+    def test_resign_only_for_employed(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
+                vendor_routes.resign_personnel("p1", back="", redirect=None)
+        mock_status.assert_called_once_with("p1", "resigned")
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("pending_onboard")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
+                vendor_routes.resign_personnel("p1", back="", redirect=None)
+        mock_status.assert_not_called()
+
+    def test_back_url_only_accepts_the_search_page(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status"):
+                result = vendor_routes.resign_personnel("p1", back="https://evil.example.com/", redirect=None)
+        self.assertTrue(result.headers["location"].startswith("/delivery/search?msg="))
+
+    def test_old_vendor_page_redirects_to_search_with_vendor(self):
+        result = vendor_routes.vendor_list("sf", redirect=None)
+        self.assertEqual(result.headers["location"], "/delivery/search?vendor=sf")
 
 
 if __name__ == "__main__":

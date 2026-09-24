@@ -24,7 +24,8 @@ class ParsePersonnelCsvTests(unittest.TestCase):
         rows, header_error = parse_personnel_csv(content)
         self.assertIsNone(header_error)
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0], {"row": 2, "ok": True, "vendor": "shopee", "name": "王小明", "id_number": "A123456789", "phone": "0912345678", "hire_date": ""})
+        # 舊檔案多了「身分證字號」欄也照樣收，只是那一欄被忽略（2026-09-24 起不再使用身分證字號）
+        self.assertEqual(rows[0], {"row": 2, "ok": True, "vendor": "shopee", "name": "王小明", "phone": "0912345678", "hire_date": ""})
         self.assertEqual(rows[1]["vendor"], "ud")
         self.assertTrue(rows[1]["ok"])
 
@@ -131,7 +132,7 @@ class ImportTemplateDownloadTests(unittest.TestCase):
         rows, header_error = tabular_upload.read_rows(response.body)
         self.assertIsNone(header_error)
         self.assertEqual(
-            tabular_upload.header_names(rows), {"廠商", "姓名", "身分證字號", "電話", "到職日期"}
+            tabular_upload.header_names(rows), {"廠商", "姓名", "電話", "到職日期"}
         )
 
     def test_downloaded_template_round_trips_through_parser(self):

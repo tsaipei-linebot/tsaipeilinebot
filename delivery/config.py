@@ -126,8 +126,9 @@ SHOPEE_VENDOR_CODES = [
 # 管理」頁面新增的其他選項，會拿到 Firestore 自動產生的新 ID，不會跟這
 # 三個固定判斷邏輯衝突（因為那些邏輯只認得這三個舊代碼字串本身）。
 
-# 負責客戶：目前只有 UD 的人員會用到（決定要不要多備 MOMO 測驗），但欄位本身
-# 不綁死在特定廠商上，之後其他廠商如果也分客戶，不用改架構。
+# 負責客戶：目前只有 UD 的人員會用到。原本用來決定要不要多備 MOMO 測驗，
+# 2026-09-24 應備文件改版拿掉 MOMO 測驗之後，只剩「記錄這個人負責哪個客戶」
+# 的參考用途，不再影響到期狀況。
 CLIENTS = [
     {"code": "pchome", "name": "PCHOME"},
     {"code": "momo", "name": "MOMO"},
@@ -141,112 +142,46 @@ CLIENT_MAP = {c["code"]: c["name"] for c in CLIENTS}
 # 決定，不再需要另外一份固定的廠商清單（見上面的說明）。
 CLIENT_VENDORS = ["ud"]
 
-# 報到前應備文件（人員缺件狀況即依此清單逐項檢查）。每一項的 kind 決定要怎麼
-# 判斷「缺不缺」、頁面上要顯示什麼樣的輸入元件：
-#   - "id_number"：不是文件，是檢查 personnel.id_number 這個欄位本身格式合不合法
-#     （身分證字號檢查碼），同仁直接填字號、不用上傳檔案。
-#   - "email"：不是文件，同仁直接填 email，簡單檢查格式。
-#   - "checkbox"：同仁勾選「有」就算備齊，不用上傳檔案、沒有到期日。
-#   - "file"：要上傳檔案，但不用記錄到期日（例如自拍照，純粹「有沒有交」）。
-#   - "file_expiry"：要上傳檔案，並且（透過 OCR 或人工）記錄到期日，過期也算缺件。
-#     多一個 required（預設 True）：False 代表這項不是必填，沒交不算缺件，但只要
-#     有交、有到期日，一樣會被到期提醒掃到。
-# 篩選條件（都不設代表不限）：
-#   - exclude_vendors：這幾個廠商的人員不會被要求這一項。
-#   - include_vendors：只有這幾個廠商的人員才會被要求這一項（白名單，跟
-#     exclude_vendors 是相反方向，依項目本身比較像哪一種寫法決定用哪個）。
-#   - cooperation_types：只有合作方式在清單裡的人才會被要求。
-#   - clients：只有負責客戶在清單裡的人才會被要求。
+# 到期狀況要追蹤的證明（2026-09-24 改版，使用者逐項確認過）。
+#
+# 原本這裡是「報到前應備文件」，有身分證、駕照、合約、UBER系統、MOMO測驗、
+# 自拍照、Email 等十幾項，保險類還要上傳照片、用 OCR 辨識到期日，並且依
+# 「合作方式」（二輪承攬/二輪雇傭）另外加項目。使用者要求簡化成：
+#   - 只追蹤 4 種有到期日的證明，**只看廠商、不再看合作方式**
+#   - **不上傳照片，同仁直接選到期日**（以前上傳過的照片畫面上不再顯示，
+#     檔案本身沒刪）
+#   - 其他項目全部拿掉
+#
+# 對照表（使用者 2026-09-24 確認）：
+#   蝦皮承攬            強制險（必填）、公會加保證明（選填）
+#   順豐                強制險（必填）、公會加保證明（選填）——不要良民證
+#   UD、UC              良民證（必填）
+#   蝦皮二輪雇傭自備車  強制險（必填）、營業用第三責任險（必填）
+#   其他廠商            沒有
+#
+# **文件代碼刻意沿用改版前的代碼**（shopee_contract_insurance、sf_insurance、
+# police_clearance…），人員資料裡已經填過的到期日才會自動接上，同仁不用重填。
+# required=False 的項目沒填不算問題，但填了、過期了一樣會被提醒。
 DOC_TYPES = [
-    {"code": "id_card", "name": "身分證", "kind": "id_number"},
-    {"code": "driver_license", "name": "駕照", "kind": "checkbox"},
-    {"code": "contract", "name": "合約簽定", "kind": "checkbox"},
-    {
-        "code": "police_clearance",
-        "name": "良民證",
-        "kind": "file_expiry",
-        "exclude_vendors": [
-            "shopee",
-            "shopee_company_car",
-            "shopee_employed_own_car",
-            "shopee_contract",
-            "shopee_speed_warehouse",
-        ],
-    },
-    {
-        "code": "insurance",
-        "name": "強制險",
-        "kind": "file_expiry",
-        "cooperation_types": ["two_wheel_contract", "two_wheel_employed"],
-    },
-    {
-        "code": "guild_insurance",
-        "name": "公會加保證明",
-        "kind": "file_expiry",
-        "cooperation_types": ["two_wheel_contract"],
-        "required": False,
-    },
-    {
-        "code": "liability_insurance",
-        "name": "營業用第三責任險",
-        "kind": "file_expiry",
-        "cooperation_types": ["two_wheel_employed"],
-    },
-    # 蝦皮承攬／蝦皮二輪雇傭自備車專屬（2026-09-13 蝦皮廠商拆分後新增）：
-    # 這兩個代碼本身已經講清楚雇用/承攬關係，保險規則直接綁廠商代碼本身
-    # （不看合作方式），跟下面順豐的 sf_insurance／sf_guild_insurance 是
-    # 同一種寫法——即使 2026-09-18 起合作方式選單開放給全部廠商設定，這
-    # 兩個代碼的保險判斷邏輯還是不看合作方式欄位，維持原本的行為。「蝦皮
-    # 二輪公司車」依使用者確認，強制險等保險文件由公司統一投保，不需要
-    # 同仁個人上傳，所以沒有對應的項目。
-    {
-        "code": "shopee_contract_insurance",
-        "name": "強制險",
-        "kind": "file_expiry",
-        "include_vendors": ["shopee_contract"],
-    },
+    {"code": "shopee_contract_insurance", "name": "強制險", "include_vendors": ["shopee_contract"]},
     {
         "code": "shopee_contract_guild_insurance",
         "name": "公會加保證明",
-        "kind": "file_expiry",
         "include_vendors": ["shopee_contract"],
         "required": False,
     },
-    {
-        "code": "shopee_employed_own_car_insurance",
-        "name": "強制險",
-        "kind": "file_expiry",
-        "include_vendors": ["shopee_employed_own_car"],
-    },
+    {"code": "sf_insurance", "name": "強制險", "include_vendors": ["sf"]},
+    {"code": "sf_guild_insurance", "name": "公會加保證明", "include_vendors": ["sf"], "required": False},
+    {"code": "police_clearance", "name": "良民證", "include_vendors": ["ud", "uc"]},
+    {"code": "shopee_employed_own_car_insurance", "name": "強制險", "include_vendors": ["shopee_employed_own_car"]},
     {
         "code": "shopee_employed_own_car_liability_insurance",
         "name": "營業用第三責任險",
-        "kind": "file_expiry",
         "include_vendors": ["shopee_employed_own_car"],
     },
-    # UD/UC 專屬（不用合作方式判斷，直接綁廠商）
-    {"code": "uber_system", "name": "UBER系統", "kind": "checkbox", "include_vendors": ["ud", "uc"]},
-    {
-        "code": "momo_test",
-        "name": "MOMO測驗",
-        "kind": "checkbox",
-        "include_vendors": ["ud"],
-        "clients": ["momo"],
-    },
-    {"code": "selfie_photo", "name": "自拍照", "kind": "file", "include_vendors": ["ud"]},
-    {"code": "uc_photo", "name": "拍照", "kind": "file", "include_vendors": ["uc"]},
-    {"code": "email", "name": "EMAIL", "kind": "email", "include_vendors": ["ud", "uc"]},
-    # 順豐專屬：強制險/公會加保證明不看合作方式，直接綁廠商、無條件要求
-    # （公會加保證明比照蝦皮設為非必填，但一樣有到期提醒）。
-    {"code": "sf_insurance", "name": "強制險", "kind": "file_expiry", "include_vendors": ["sf"]},
-    {
-        "code": "sf_guild_insurance",
-        "name": "公會加保證明",
-        "kind": "file_expiry",
-        "include_vendors": ["sf"],
-        "required": False,
-    },
 ]
+# 到期日在幾天內算「即將到期」（畫面顯示黃色、提醒也從這時候開始發）
+EXPIRING_SOON_DAYS = 30
 DOC_TYPE_MAP = {d["code"]: d for d in DOC_TYPES}
 
 # 人員狀態（報到/在職狀態）。跟 create_personnel 內部寫死的 status="active" 是
@@ -280,22 +215,30 @@ ALLOWED_UPLOAD_CONTENT_TYPES = {"image/jpeg", "image/png", "image/heic", "applic
 
 # ==========================================
 # 文件到期提醒（強制險/公會加保證明/營業用第三責任險/良民證）
-# 用公司現有的 LINE 官方帳號主動推播，Cloud Scheduler 每天呼叫
-# /delivery/api/expiry-reminder-check 觸發檢查（見 routes/reminder_routes.py）。
+# 用公司現有的 LINE 官方帳號推播到群組。Cloud Scheduler 每天早上 9 點呼叫
+# /delivery/api/expiry-reminder-check（見 routes/reminder_routes.py），
+# 2026-09-24 起程式自己判斷**只有週一才真的推播**（使用者要求「每週一提醒，
+# 直到更新日期」，並決定排程時間不改、維持每天 9 點）。
 # ==========================================
 REMINDER_TRIGGER_SECRET = os.getenv("DELIVERY_REMINDER_SECRET", "")
 LINE_REMINDER_TARGET_ID = os.getenv("DELIVERY_LINE_REMINDER_TARGET", "")
-REMINDER_DAYS_AHEAD = int(os.getenv("DELIVERY_REMINDER_DAYS_AHEAD", "30"))
-REMINDER_RESEND_INTERVAL_DAYS = 7  # 同一份文件最多幾天才重新提醒一次，避免每天洗版
+REMINDER_DAYS_AHEAD = int(os.getenv("DELIVERY_REMINDER_DAYS_AHEAD", str(EXPIRING_SOON_DAYS)))
+REMINDER_WEEKDAY = 0  # 週一（Python 的 weekday()：週一是 0）
 
 # 應徵名單處理狀態。「已錄取」不開放在應徵名單頁面手動勾選，只能透過
 # 「錄取並建立人員」那個流程設定（因為需要同時指派廠商、建立正式人員資料）。
 APPLICANT_STATUSES = [
     {"code": "not_interviewed", "name": "未面試"},
     {"code": "interviewed", "name": "已面試"},
+    # 2026-09-24 新增：面試過但沒錄取。跟「放棄」（應徵者自己不來了）分開，
+    # 事後回頭查的時候看得出是誰的決定。
+    {"code": "not_hired", "name": "未錄取"},
     {"code": "withdrawn", "name": "放棄"},
     {"code": "hired", "name": "已錄取"},
 ]
+# 應徵名單預設不顯示的狀態（流程已經走完的）。主動搜尋姓名、或篩選狀態
+# 還是會列出來。「未面試」刻意不在裡面——新進應徵者預設就是未面試。
+HIDDEN_APPLICANT_STATUSES = {"not_hired", "withdrawn", "hired"}
 APPLICANT_STATUS_MAP = {s["code"]: s["name"] for s in APPLICANT_STATUSES}
 SELECTABLE_APPLICANT_STATUSES = [s for s in APPLICANT_STATUSES if s["code"] != "hired"]
 

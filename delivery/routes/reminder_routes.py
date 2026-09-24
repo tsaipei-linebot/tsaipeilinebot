@@ -1,22 +1,31 @@
-"""每天由 Cloud Scheduler 呼叫，檢查即將到期/已過期的文件，透過公司現有的
-LINE 官方帳號推播提醒。跟 webhook_routes.py 的表單 webhook 一樣，用共用密鑰
+"""每天由 Cloud Scheduler 呼叫，檢查即將到期/已過期的證明，透過公司現有的
+LINE 官方帳號推播提醒（2026-09-24 起只有週一會真的推播）。跟 webhook_routes.py 的表單 webhook 一樣，用共用密鑰
 驗證（X-Delivery-Reminder-Secret header）、不經過同仁登入 session——呼叫端是
 Cloud Scheduler，不是瀏覽器。
 """
 import hmac
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException
 
 from delivery import repository
 from delivery.config import (
     REMINDER_DAYS_AHEAD,
-    REMINDER_RESEND_INTERVAL_DAYS,
     REMINDER_TRIGGER_SECRET,
+    REMINDER_WEEKDAY,
     VENDOR_MAP,
 )
 from delivery.line_notify import push_reminder_message
 
 router = APIRouter()
+
+# Cloud Run 的主機是 UTC 時區，「今天星期幾」要用台灣時間算
+_TAIPEI = timezone(timedelta(hours=8))
+
+
+def _taipei_today():
+    return datetime.now(_TAIPEI).date()
+
 
 _MAX_ITEMS_IN_MESSAGE = 20
 
@@ -42,14 +51,18 @@ def expiry_reminder_check(x_delivery_reminder_secret: str = Header(None)):
     ):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    items = repository.list_expiring_documents(REMINDER_DAYS_AHEAD, REMINDER_RESEND_INTERVAL_DAYS)
+    # 2026-09-24：排程維持每天早上 9 點打過來（使用者決定不改 Cloud
+    # Scheduler），但只有週一才真的推播——使用者要的是「到期前一個月開始，
+    # 每週一提醒一次，直到更新日期」。
+    today = _taipei_today()
+    if today.weekday() != REMINDER_WEEKDAY:
+        return {"status": "ok", "reminded": 0, "skipped": "not_reminder_day"}
+
+    items = repository.list_expiring_documents(REMINDER_DAYS_AHEAD, today=today)
     if not items:
         return {"status": "ok", "reminded": 0}
 
     sent = push_reminder_message(_format_message(items))
-    if sent:
-        repository.mark_documents_reminded(items)
-
     return {"status": "ok", "reminded": len(items) if sent else 0, "sent": sent}
 
 

@@ -1,9 +1,9 @@
-"""人員 / 補款 / 病假登記的資料存取與「缺件狀況」計算邏輯。
+"""人員 / 補款 / 病假登記的資料存取與「到期狀況」計算邏輯。
 
-缺件判斷刻意寫成不依賴 Firestore 的純函式（missing_documents / doc_status），
-方便直接寫單元測試，不需要真的連線 GCP。
+到期狀況判斷刻意寫成不依賴 Firestore 的純函式（missing_documents / doc_status），
+方便直接寫單元測試，不需要真的連線 GCP。（2026-09-24 以前叫「缺件狀況」，
+追蹤的是十幾項報到文件，改版後只剩 4 種有到期日的證明，見 config.DOC_TYPES。）
 """
-import re
 import time
 from datetime import date, datetime, timedelta
 
@@ -15,10 +15,12 @@ from delivery.config import (
     DEFAULT_VEHICLE_STATUS,
     DEFAULT_WHEEL_TYPE,
     DOC_TYPES,
+    EXPIRING_SOON_DAYS,
     EQUIPMENT_ADMIN_ONLY_TRANSACTION_TYPES,
     EQUIPMENT_TRANSACTION_TYPE_MAP,
     EQUIPMENT_TRANSACTION_TYPES_REQUIRING_PERSONNEL,
     EQUIPMENT_TRANSACTION_TYPES_REQUIRING_TWO_LOCATIONS,
+    HIDDEN_APPLICANT_STATUSES,
     HIDDEN_PERSONNEL_STATUSES,
     LEAVE_QUOTA_ALERT_RATIO,
     LEAVE_TYPE_LOOKUP,
@@ -52,10 +54,6 @@ from delivery.db import (
     vehicle_service_areas_ref,
     vehicles_ref,
 )
-from delivery.validators import is_valid_taiwan_id
-
-_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
 TODAY_ISO = lambda: date.today().isoformat()  # noqa: E731
 
 
@@ -68,112 +66,50 @@ def _parse_date(value):
         return None
 
 
-def applicable_doc_types(vendor: str, cooperation_type: str, client: str = "") -> list:
-    """依廠商 + 合作方式 + 負責客戶，篩出這個人實際需要檢查的應備項目清單。
-    exclude_vendors 命中就整個排除；include_vendors 存在但對不上就排除（白名單，
-    給只有特定廠商才有的項目用，例如 UD 專屬的 UBER系統/MOMO測驗/自拍照）；
-    cooperation_types、clients 同理——存在但對不上（含這個維度根本還沒設定的
-    情況）也排除，所以沒設合作方式/負責客戶的人，對應的項目不會出現在缺件清單裡，
-    等設定好才開始追蹤。"""
-    result = []
-    for doc_type in DOC_TYPES:
-        if vendor in (doc_type.get("exclude_vendors") or []):
-            continue
-        include_vendors = doc_type.get("include_vendors")
-        if include_vendors is not None and vendor not in include_vendors:
-            continue
-        required_coop = doc_type.get("cooperation_types")
-        if required_coop is not None and cooperation_type not in required_coop:
-            continue
-        required_clients = doc_type.get("clients")
-        if required_clients is not None and client not in required_clients:
-            continue
-        result.append(doc_type)
-    return result
+def applicable_doc_types(vendor: str, cooperation_type: str = "", client: str = "") -> list:
+    """這個人要追蹤哪些證明。2026-09-24 起**只看廠商**（`include_vendors`），
+    不再看合作方式/負責客戶——使用者確認「依合作方式另外加項目」的規則不要了。
+    參數保留 cooperation_type/client 只是為了不用改動所有呼叫端。"""
+    return [d for d in DOC_TYPES if vendor in (d.get("include_vendors") or [])]
 
 
-def doc_status(doc_type: dict, personnel: dict) -> dict:
-    """回傳單一應備項目的狀態。personnel 要是完整的人員資料（不只是 documents
-    子物件），因為「身分證」這一項改成直接檢查 id_number 欄位格式合不合法，
-    不是看有沒有上傳檔案。"""
-    code = doc_type["code"]
-    kind = doc_type["kind"]
-    documents = personnel.get("documents") or {}
-    entry = documents.get(code) or {}
-
-    if kind == "id_number":
-        id_number = (personnel.get("id_number") or "").strip()
-        return {
-            "code": code,
-            "name": doc_type["name"],
-            "kind": kind,
-            "value": id_number,
-            "missing": not is_valid_taiwan_id(id_number),
-        }
-
-    if kind == "email":
-        email = (personnel.get("email") or "").strip()
-        return {
-            "code": code,
-            "name": doc_type["name"],
-            "kind": kind,
-            "value": email,
-            "missing": not bool(_EMAIL_PATTERN.match(email)),
-        }
-
-    if kind == "checkbox":
-        checked = bool(entry.get("checked"))
-        return {
-            "code": code,
-            "name": doc_type["name"],
-            "kind": kind,
-            "checked": checked,
-            "missing": not checked,
-        }
-
-    if kind == "file":
-        has_file = bool(entry.get("file_path"))
-        return {
-            "code": code,
-            "name": doc_type["name"],
-            "kind": kind,
-            "has_file": has_file,
-            "missing": not has_file,
-            "file_path": entry.get("file_path") or "",
-        }
-
-    # kind == "file_expiry"
-    has_file = bool(entry.get("file_path"))
-    expired = False
-    expiry = _parse_date(entry.get("expiry_date"))
-    if expiry is not None and expiry < date.today():
-        expired = True
+def doc_status(doc_type: dict, personnel: dict, today: date = None) -> dict:
+    """單一證明的到期狀況：
+    - `state`：unfilled（沒填日期）／ok（正常）／expiring（30 天內到期）／expired（已過期）
+    - `missing`：這一項「有問題」——必填卻沒填、或已過期。選填（公會加保證明）
+      沒填不算問題，但填了而且過期一樣算。
+    """
+    today = today or date.today()
+    entry = (personnel.get("documents") or {}).get(doc_type["code"]) or {}
     required = doc_type.get("required", True)
+    expiry = _parse_date(entry.get("expiry_date"))
+    if expiry is None:
+        state = "unfilled"
+    elif expiry < today:
+        state = "expired"
+    elif expiry <= today + timedelta(days=EXPIRING_SOON_DAYS):
+        state = "expiring"
+    else:
+        state = "ok"
     return {
-        "code": code,
+        "code": doc_type["code"],
         "name": doc_type["name"],
-        "kind": kind,
-        "has_file": has_file,
-        "expiry_date": entry.get("expiry_date") or "",
-        "expired": expired,
         "required": required,
-        # 非必填的項目沒交不算缺件，但只要交了、過期了一樣算缺件要處理。
-        "missing": expired or (required and not has_file),
-        "file_path": entry.get("file_path") or "",
+        "expiry_date": expiry.isoformat() if expiry else "",
+        "state": state,
+        "expired": state == "expired",
+        "missing": state == "expired" or (required and state == "unfilled"),
     }
 
 
-def missing_documents(personnel: dict) -> list:
-    """回傳缺件（依廠商+合作方式+負責客戶篩選過的應備項目裡，沒填/沒勾/沒上傳
-    或已過期的）清單，供列表頁的「缺件狀況」顯示。"""
-    doc_types = applicable_doc_types(personnel.get("vendor"), personnel.get("cooperation_type"), personnel.get("client"))
-    statuses = [doc_status(dt, personnel) for dt in doc_types]
-    return [s for s in statuses if s["missing"]]
-
-
 def all_document_statuses(personnel: dict) -> list:
-    doc_types = applicable_doc_types(personnel.get("vendor"), personnel.get("cooperation_type"), personnel.get("client"))
+    doc_types = applicable_doc_types(personnel.get("vendor"))
     return [doc_status(dt, personnel) for dt in doc_types]
+
+
+def missing_documents(personnel: dict) -> list:
+    """有問題的證明（必填沒填、或已過期）。裝備借用也用這個判斷能不能借。"""
+    return [s for s in all_document_statuses(personnel) if s["missing"]]
 
 
 # ==========================================
@@ -366,83 +302,47 @@ def delete_personnel(personnel_id: str):
     personnel_ref().document(personnel_id).delete()
 
 
-def list_personnel_by_vendor(vendor: str) -> list:
-    query = personnel_ref().where("vendor", "==", vendor).where("status", "==", "active")
-    result = []
-    for snapshot in query.stream():
-        data = snapshot.to_dict() or {}
-        data["id"] = snapshot.id
-        result.append(data)
-    result.sort(key=lambda p: p.get("name", ""))
-    return result
+# 查詢人員頁的排序：待報到排最上面（要處理報到），再來在職，其他在後面
+_EMPLOYMENT_STATUS_SORT_ORDER = {"pending_onboard": 0, "employed": 1, "onboard_withdrawn": 2, "resigned": 3}
 
 
-def personnel_matches_filters(
-    personnel: dict,
-    missing: list,
-    name_keyword: str = "",
-    phone_keyword: str = "",
-    status_filter: str = "",
-    missing_filter: str = "",
+def personnel_matches_search(
+    personnel: dict, name: str = "", phone: str = "", vendor: str = "", employment_status: str = ""
 ) -> bool:
-    """判斷這個人要不要出現在廠商人員清單裡（純函式，missing 需已經算好傳入）。
+    """查詢人員頁要不要列出這個人（純函式）。
 
-    人員狀態：預設（沒有明確篩選狀態）不顯示「離職」「放棄報到」的人，跟應徵
-    名單「放棄」預設隱藏一樣；主動搜尋姓名、或直接篩選狀態為這兩項才會顯示。
-    缺件狀態：預設（沒有明確篩選、也沒搜尋姓名）不顯示缺件狀況「齊全」的人，
-    避免洗版；主動搜尋姓名，或直接篩選「缺件」「無缺件」都可以覆蓋這個預設。
+    2026-09-24 改版：拿掉主頁「選擇廠商」之後，查詢人員頁就是主要的人員清單，
+    一打開就要列出人。預設（沒選狀態）不列「放棄報到」「離職」；有打姓名或
+    電話在找特定的人時，這兩種也會列出來（找得到以前的人）。
     """
-    if name_keyword and name_keyword not in (personnel.get("name") or ""):
+    name = (name or "").strip()
+    phone = (phone or "").strip()
+    if name and name not in (personnel.get("name") or ""):
         return False
-    if phone_keyword and phone_keyword not in (personnel.get("phone") or ""):
+    if phone and phone not in (personnel.get("phone") or ""):
         return False
-
-    employment_status = personnel_employment_status(personnel)
-    if status_filter:
-        if employment_status != status_filter:
-            return False
-    elif employment_status in HIDDEN_PERSONNEL_STATUSES and not name_keyword:
+    if vendor and personnel.get("vendor") != vendor:
         return False
-
-    if missing_filter == "missing":
-        if not missing:
-            return False
-    elif missing_filter == "complete":
-        if missing:
-            return False
-    elif not missing and not name_keyword:
+    status = personnel_employment_status(personnel)
+    if employment_status:
+        return status == employment_status
+    if status in HIDDEN_PERSONNEL_STATUSES and not (name or phone):
         return False
-
     return True
 
 
-def search_personnel(keyword: str = "", vendor: str = "", employment_status: str = "") -> list:
-    """簡易查詢：抓全部在職人員後在應用程式端比對姓名/身分證字號/廠商/報到
-    狀態（人數規模小，不需要為此另外接全文檢索服務）。
-
-    2026-09-13 新增 vendor／employment_status 兩個篩選條件：「人員狀況」
-    （/delivery/vendor/{廠商}）預設會隱藏「缺件齊全」跟「離職／放棄報到」
-    的人，如果一個廠商底下的人都已經備齊文件，畫面上就會整個空白，沒有
-    地方能單純看「這個廠商目前有哪些人」。這裡刻意**不**套用那些預設
-    隱藏規則——呼叫端（search_routes.py）就是要讓同仁能看到完整名單，
-    包不包含離職/放棄報到的人，交給 employment_status 這個篩選條件決定，
-    不是內建的預設行為。三個條件都是「有給值才篩」，同時給多個條件是
-    AND 的關係（例如選了廠商又打了關鍵字，就是在那個廠商裡搜姓名）。"""
-    keyword = (keyword or "").strip()
-    vendor = (vendor or "").strip()
-    employment_status = (employment_status or "").strip()
+def search_personnel(name: str = "", phone: str = "", vendor: str = "", employment_status: str = "") -> list:
+    """查詢人員頁用：全部人員撈出來在程式端篩選（人數規模小，不需要另外接
+    全文檢索）。排序：待報到 → 在職 → 放棄報到 → 離職，同狀態依姓名。"""
     result = []
     for snapshot in personnel_ref().where("status", "==", "active").stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
-        if keyword and keyword not in data.get("name", "") and keyword not in data.get("id_number", ""):
-            continue
-        if vendor and data.get("vendor") != vendor:
-            continue
-        if employment_status and personnel_employment_status(data) != employment_status:
-            continue
-        result.append(data)
-    result.sort(key=lambda p: p.get("name", ""))
+        if personnel_matches_search(data, name, phone, vendor, employment_status):
+            result.append(data)
+    result.sort(
+        key=lambda p: (_EMPLOYMENT_STATUS_SORT_ORDER.get(personnel_employment_status(p), 9), p.get("name", ""))
+    )
     return result
 
 
@@ -467,10 +367,9 @@ def find_active_personnel_by_name_and_phone(name: str, phone: str):
 
 
 def update_personnel_document(personnel_id: str, doc_type_code: str, file_path: str = None, expiry_date: str = None):
-    """用於 kind="file_expiry" 的項目（強制險/公會加保證明/營業用第三責任險/
-    良民證）。expiry_date 有變動時順便清掉 last_reminded_at，讓到期提醒的
-    「最近提醒過」判斷用新的到期日重新算，不會因為舊到期日剛提醒過就把新到期日
-    的提醒也跳過。"""
+    """更新某一項證明的到期日（強制險/公會加保證明/營業用第三責任險/良民證）。
+    expiry_date 給空字串代表清空（同仁填錯日期要拿掉）。2026-09-24 起不再上傳
+    檔案，file_path 參數保留給舊呼叫端相容。"""
     ref = personnel_ref().document(personnel_id)
     snapshot = ref.get()
     if not snapshot.exists:
@@ -482,34 +381,15 @@ def update_personnel_document(personnel_id: str, doc_type_code: str, file_path: 
         entry["file_path"] = file_path
     if expiry_date is not None:
         entry["expiry_date"] = expiry_date
-        entry.pop("last_reminded_at", None)
+        entry.pop("last_reminded_at", None)  # 舊版重送間隔留下的欄位，順手清掉
     documents[doc_type_code] = entry
     ref.update({"documents": documents, "updated_at": time.time()})
 
 
-def update_personnel_checkbox(personnel_id: str, doc_type_code: str, checked: bool):
-    """用於 kind="checkbox" 的項目（駕照、合約簽定）。"""
-    ref = personnel_ref().document(personnel_id)
-    snapshot = ref.get()
-    if not snapshot.exists:
-        return
-    data = snapshot.to_dict() or {}
-    documents = data.get("documents") or {}
-    entry = dict(documents.get(doc_type_code) or {})
-    entry["checked"] = checked
-    documents[doc_type_code] = entry
-    ref.update({"documents": documents, "updated_at": time.time()})
 
 
-def update_personnel_id_number(personnel_id: str, id_number: str):
-    """用於 kind="id_number" 的項目（身分證）。格式驗證交給呼叫端
-    （validators.is_valid_taiwan_id）先擋一次，這裡單純負責寫入。"""
-    personnel_ref().document(personnel_id).update({"id_number": id_number, "updated_at": time.time()})
 
 
-def update_personnel_email(personnel_id: str, email: str):
-    """用於 kind="email" 的項目。格式檢查交給呼叫端／doc_status，這裡單純負責寫入。"""
-    personnel_ref().document(personnel_id).update({"email": email, "updated_at": time.time()})
 
 
 def update_personnel_cooperation_type(personnel_id: str, cooperation_type: str):
@@ -591,29 +471,23 @@ def update_personnel_client(personnel_id: str, client: str):
     personnel_ref().document(personnel_id).update({"client": client, "updated_at": time.time()})
 
 
-def list_expiring_documents(days_ahead: int, resend_interval_days: int) -> list:
-    """掃過全部在職人員，回傳需要發到期提醒的 (人員, 文件) 配對：到期日在
-    「今天~今天+days_ahead 天」之間、或已經過期，而且沒有在最近
-    resend_interval_days 天內提醒過。只掃 kind="file_expiry" 的項目（強制險/
-    公會加保證明/營業用第三責任險/良民證），身分證、駕照、合約簽定沒有到期日
-    不適用。"""
-    today = date.today()
+def list_expiring_documents(days_ahead: int = EXPIRING_SOON_DAYS, today: date = None) -> list:
+    """到期提醒要推的 (人員, 證明) 配對：到期日在今天～今天+days_ahead 天之間、
+    或已經過期。2026-09-24 起一週只推一次（週一，見 routes/reminder_routes.py），
+    同仁更新日期後自然就不會再出現，所以拿掉原本「7 天內提醒過就跳過」的
+    重送間隔。「放棄報到」「離職」的人不提醒。"""
+    today = today or date.today()
     cutoff = today + timedelta(days=days_ahead)
     result = []
     for snapshot in personnel_ref().where("status", "==", "active").stream():
         data = snapshot.to_dict() or {}
         data["id"] = snapshot.id
+        if personnel_employment_status(data) in HIDDEN_PERSONNEL_STATUSES:
+            continue
         documents = data.get("documents") or {}
-        doc_types = applicable_doc_types(data.get("vendor"), data.get("cooperation_type"), data.get("client"))
-        for doc_type in doc_types:
-            if doc_type["kind"] != "file_expiry":
-                continue
-            entry = documents.get(doc_type["code"]) or {}
-            expiry = _parse_date(entry.get("expiry_date"))
+        for doc_type in applicable_doc_types(data.get("vendor")):
+            expiry = _parse_date((documents.get(doc_type["code"]) or {}).get("expiry_date"))
             if expiry is None or expiry > cutoff:
-                continue
-            last_reminded = _parse_date(entry.get("last_reminded_at"))
-            if last_reminded is not None and (today - last_reminded).days < resend_interval_days:
                 continue
             result.append(
                 {
@@ -622,34 +496,12 @@ def list_expiring_documents(days_ahead: int, resend_interval_days: int) -> list:
                     "vendor": data.get("vendor"),
                     "doc_code": doc_type["code"],
                     "doc_name": doc_type["name"],
-                    "expiry_date": entry.get("expiry_date"),
+                    "expiry_date": expiry.isoformat(),
                     "expired": expiry < today,
                 }
             )
+    result.sort(key=lambda item: item["expiry_date"])
     return result
-
-
-def mark_documents_reminded(items: list):
-    """items 是 list_expiring_documents() 回傳的那種 dict，LINE 推播成功後呼叫，
-    記錄提醒時間，避免同一份文件短時間內被重複提醒。"""
-    today_iso = date.today().isoformat()
-    by_personnel = {}
-    for item in items:
-        by_personnel.setdefault(item["personnel_id"], []).append(item["doc_code"])
-
-    batch = get_db().batch()
-    for personnel_id, doc_codes in by_personnel.items():
-        snapshot = personnel_ref().document(personnel_id).get()
-        if not snapshot.exists:
-            continue
-        data = snapshot.to_dict() or {}
-        documents = data.get("documents") or {}
-        for doc_code in doc_codes:
-            entry = dict(documents.get(doc_code) or {})
-            entry["last_reminded_at"] = today_iso
-            documents[doc_code] = entry
-        batch.update(personnel_ref().document(personnel_id), {"documents": documents})
-    batch.commit()
 
 
 # ==========================================
@@ -1113,11 +965,11 @@ def applicant_matches_filters(
 ) -> bool:
     """判斷這筆應徵資料要不要出現在清單裡（純函式，data 需已經算好 status）。
 
-    預設（沒指定狀態篩選、也沒搜尋姓名）不顯示「已錄取」「放棄」的紀錄，
-    避免洗版——這兩種狀態都已經走完流程，平常盤點應徵名單時不需要一直
-    看到；只要主動搜尋姓名、或直接篩選狀態為「已錄取」／「放棄」，就會
-    顯示，方便事後回頭查（2026-09-15 使用者要求把「已錄取」也比照「放棄」
-    預設隱藏）。廠商正常顯示，不特別隱藏「未指定廠商」的紀錄。
+    預設（沒指定狀態篩選、也沒搜尋姓名）不顯示 HIDDEN_APPLICANT_STATUSES
+    （「已錄取」「未錄取」「放棄」）的紀錄，避免洗版——這幾種都已經走完流程；
+    只要主動搜尋姓名、或直接篩選狀態，就會顯示，方便事後回頭查（2026-09-15
+    「已錄取」比照「放棄」預設隱藏，2026-09-24 新增「未錄取」一樣隱藏）。
+    廠商正常顯示，不特別隱藏「未指定廠商」的紀錄。
     """
     if name_keyword and name_keyword not in (data.get("name") or ""):
         return False
@@ -1129,7 +981,7 @@ def applicant_matches_filters(
     status = data.get("status") or normalize_applicant_status(data)
     if status_filter:
         return status == status_filter
-    if status in ("withdrawn", "hired") and not name_keyword:
+    if status in HIDDEN_APPLICANT_STATUSES and not name_keyword:
         return False
     return True
 

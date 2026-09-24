@@ -1,0 +1,12 @@
+{# 單一證明的到期狀況標籤（查詢人員列表、人員詳細頁共用）。變數：d = repository.doc_status() 的結果 #}
+{% if d.state == "ok" %}
+<span class="badge badge-ok">{{ d.name }}　正常（{{ d.expiry_date }}）</span>
+{% elif d.state == "expiring" %}
+<span class="badge badge-pending">{{ d.name }}　即將到期（{{ d.expiry_date }}）</span>
+{% elif d.state == "expired" %}
+<span class="badge badge-missing">{{ d.name }}　已過期（{{ d.expiry_date }}）</span>
+{% elif d.required %}
+<span class="badge badge-missing">{{ d.name }}　未填</span>
+{% else %}
+<span class="badge badge-resigned">{{ d.name }}　未填（選填）</span>
+{% endif %}

@@ -13,10 +13,13 @@ router = APIRouter()
 # 範本 2026-09-23 從 CSV 改成 Excel：同仁用 Excel 另存成 CSV 時 Windows 會
 # 用 Big5 存檔，Big5 放不下的姓名用字（堃、喆、峯…）會被 Excel 直接換成
 # 「?」寫進檔案，救不回來。完整說明見 services/tabular_upload.py 開頭。
-TEMPLATE_HEADERS = ["廠商", "姓名", "身分證字號", "電話", "到職日期"]
-TEMPLATE_SAMPLE_ROW = ["蝦皮三輪", "王小明", "A123456789", "0912345678", "2024-01-31"]
+# 2026-09-24 拿掉「身分證字號」欄：配送部改成以姓名、電話為主，不再使用身分證
+# 字號（見 HANDOFF.md「配送部人員流程改版」）。舊範本多了這一欄也照樣收，
+# 只是那一欄會被忽略。重複判斷本來就是「姓名＋電話」相同就跳過、不覆蓋。
+TEMPLATE_HEADERS = ["廠商", "姓名", "電話", "到職日期"]
+TEMPLATE_SAMPLE_ROW = ["蝦皮三輪", "王小明", "0912345678", "2024-01-31"]
 # 電話要設成文字格式，不然 Excel 會當成數字、開頭的 0 直接不見。
-TEMPLATE_TEXT_COLUMNS = ("身分證字號", "電話")
+TEMPLATE_TEXT_COLUMNS = ("電話",)
 
 
 @router.get("/import")
@@ -66,7 +69,7 @@ async def import_submit(request: Request, file: UploadFile = File(...), redirect
                 continue
 
             repository.create_personnel(
-                row["name"], row["id_number"], row["phone"], row["vendor"], user["username"],
+                row["name"], "", row["phone"], row["vendor"], user["username"],
                 hire_date=row.get("hire_date", ""),
             )
             result["created"].append({**row, "vendor_name": VENDOR_MAP.get(row["vendor"], row["vendor"])})
