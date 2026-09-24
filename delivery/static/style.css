@@ -985,3 +985,15 @@ a.sheet-tab-btn { display: inline-block; text-decoration: none; }
 .salesdev-table th,
 .salesdev-table .badge,
 .salesdev-table .btn { white-space: nowrap; }
+
+/* 配送部使用說明「從應徵到報到」流程段落（2026-09-24 新增） */
+.help-section h3 { margin: 18px 0 6px; font-size: 15px; color: var(--ink); }
+.help-section ul ul { margin-top: 6px; }
+.help-section .onboarding-steps {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    line-height: 1.8;
+}
