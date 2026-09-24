@@ -83,11 +83,8 @@
                     <button type="submit" class="btn btn-small">放棄報到</button>
                 </form>
                 {% elif row.employment_status == "employed" %}
-                <form method="post" action="/delivery/personnel/{{ row.person.id }}/resign" class="inline-action js-resign"
-                      data-name="{{ row.person.name }}" data-owed="{{ row.equipment_owed }}">
-                    <input type="hidden" name="back" value="{{ back_url }}">
-                    <button type="submit" class="btn btn-small btn-danger">離職</button>
-                </form>
+                <button type="button" class="btn btn-small btn-danger js-resign"
+                        data-id="{{ row.person.id }}" data-name="{{ row.person.name }}" data-owed="{{ row.equipment_owed }}">離職</button>
                 {% endif %}
                 <a class="btn btn-small" href="/delivery/personnel/{{ row.person.id }}">詳細</a>
             </td>
@@ -118,6 +115,22 @@
     </form>
 </dialog>
 
+<dialog id="resign-dialog" class="onboard-dialog">
+    <form method="post" id="resign-form">
+        <h2 class="section-title">離職</h2>
+        <p id="resign-text"></p>
+        <p class="warning" id="resign-owed" hidden></p>
+        <label>離職日期（退保日期）
+            <input type="date" name="resign_date" id="resign-date" required>
+        </label>
+        <input type="hidden" name="back" value="{{ back_url }}">
+        <div class="btn-list" style="flex-direction: row; margin-top: 12px;">
+            <button type="submit" class="btn btn-danger">確定離職</button>
+            <button type="button" class="btn" id="resign-cancel">取消</button>
+        </div>
+    </form>
+</dialog>
+
 <p class="back-link"><a href="/delivery/">&larr; 回主頁</a></p>
 
 <script>
@@ -134,7 +147,7 @@
     document.querySelectorAll('.js-onboard').forEach(function (btn) {
         btn.addEventListener('click', function () {
             form.action = '/delivery/personnel/' + btn.dataset.id + '/onboard';
-            document.getElementById('onboard-text').textContent = '請選擇「' + btn.dataset.name + '」的報到日期，確定後狀態會改成「在職」，到職日期也會填入這一天。';
+            document.getElementById('onboard-text').textContent = '請選擇「' + btn.dataset.name + '」的報到日期，確定後狀態會改成「在職」，到職日期也會填入這一天，並自動放一筆加保到每日加退保的待送出清單。';
             dateInput.value = today();
             dialog.showModal();
         });
@@ -150,19 +163,22 @@
         });
     });
 
-    // 離職確認：名下還有裝備沒還的話，一併提醒要先追回（純提醒，不擋送出）
-    document.querySelectorAll('.js-resign').forEach(function (f) {
-        f.addEventListener('submit', function (event) {
-            var owed = parseInt(f.dataset.owed || '0', 10);
-            var text = '確定要把「' + f.dataset.name + '」改成「離職」嗎？';
-            if (owed > 0) {
-                text += '\n\n⚠️ 名下還有 ' + owed + ' 件裝備沒有歸還，需先追回，再辦理退保。';
-            }
-            if (!window.confirm(text)) {
-                event.preventDefault();
-            }
+    // 離職：選離職日期（＝退保日期）；名下還有裝備沒還的話一併提醒要先追回（純提醒，不擋送出）
+    var resignDialog = document.getElementById('resign-dialog');
+    var resignForm = document.getElementById('resign-form');
+    var resignOwed = document.getElementById('resign-owed');
+    document.querySelectorAll('.js-resign').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            resignForm.action = '/delivery/personnel/' + btn.dataset.id + '/resign';
+            document.getElementById('resign-text').textContent = '請選擇「' + btn.dataset.name + '」的離職日期，確定後狀態會改成「離職」，並自動放一筆退保到每日加退保的待送出清單。';
+            var owed = parseInt(btn.dataset.owed || '0', 10);
+            resignOwed.hidden = owed <= 0;
+            resignOwed.textContent = owed > 0 ? '⚠️ 名下還有 ' + owed + ' 件裝備沒有歸還，需先追回，再辦理退保。' : '';
+            document.getElementById('resign-date').value = today();
+            resignDialog.showModal();
         });
     });
+    document.getElementById('resign-cancel').addEventListener('click', function () { resignDialog.close(); });
 })();
 </script>
 {% endblock %}

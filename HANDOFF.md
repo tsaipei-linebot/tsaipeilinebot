@@ -10211,3 +10211,95 @@ bytes，沒測到這個情況。
   `test_delivery_personnel_vendor_change.py`。全部 2263 個通過。用 Playwright 看過
   查詢人員（含報到對話框）、詳細頁、主頁、手機寬度。
 
+
+## 配送部按報到／離職自動進「每日加退保」暫存區（2026-09-24 定案並實作完成）
+
+使用者 2026-09-24 提出，規格逐項確認後說「請實作」，同一天完成。下面先是確認過的規格，
+最後是「實作紀錄」。
+
+### 需求
+
+配送系統的「查詢人員」按「報到」（加保）或「離職」（退保）時，自動把這個人的資料
+放進新北所(配送組)的「每日加退保」**暫存區**（還沒送給人資）。一天下來可以累積很多筆，
+同仁在人資收單前自己按「送出」，才真正交給人資。
+
+### 已確認
+
+1. **暫存區可以手動新增一筆**（使用者選 a）：當天其他加退保也在系統裡填，不用再另外做
+   Excel。原因：同一部門同一天上傳是「覆蓋」（`hr/insurance_repository._upload_doc_id()`
+   固定 `{日期}__{部門}`），不能一邊自動送、一邊再傳 Excel。
+2. **報到也要進暫存區**（加保，日期＝報到日期）；離職進暫存區（退保）。按離職的確認
+   視窗要改成跟報到一樣可以選日期（退保日期）——目前離職按鈕不用選日期。
+3. **期限＝人資按「收單」前**（`hr_insurance_day_locks`，沒有固定幾點截止）。另外要
+   做**下載**：收單前來不及送出的，同仁可以把暫存區下載成 Excel 自己交給人資處理。
+4. **按錯改回來**：離職後改回在職（或報到後改回待報到），暫存區那一筆自動刪掉。
+5. **放棄報到不用處理**（沒有加保過）。
+
+### 規劃
+
+- 暫存區是新的 Firestore collection，欄位對照人資上傳範本的 11 欄
+  （`hr/insurance_excel._SOURCE_HEADER`：編號/廠商/班別/姓名/身分證/勞保加保日期/
+  勞保退保日期/勞保追退日期/健保加保月份/眷屬健保/備註）。
+- 「送出給人資」＝系統把暫存區組成同一份 11 欄 Excel，走既有的 `save_upload()`，
+  所以**人資端的彙總／收單／下載完全不用改**。
+- 已經送出的那筆，之後人員狀態再改回來，系統只能提示「已送出，請聯絡人資」，不能撤回。
+
+### 2026-09-24 追加確認
+
+- **身分證字號留空**（選 A），人資收到後自己補；舊資料裡有身分證的照樣自動帶入。
+- **送出或下載之後要保留紀錄**，以後才能追蹤同仁有沒有操作。規劃：暫存區的資料
+  **永遠不真的刪除**，每一筆有狀態——待送出／已送出／已下載／已取消（按錯改回來
+  或手動刪掉），每次變更都記「誰、什麼時候」。送出或下載後就離開「待送出」清單，
+  不會重複送；另外有一頁「加退保紀錄」可以依日期、人員、狀態查。人員詳細頁也列出
+  這個人的加退保紀錄。
+
+### 實作紀錄（2026-09-24）
+
+**資料**：新 collection `hr_insurance_drafts`（`hr/db.py`），一筆一份文件（uuid），欄位
+`vendor/shift/name/id_number/insured_date/withdrawn_date/recovery_date/health_month/
+dependents/note`（對照範本 11 欄，`FIELD_HEADERS`）＋`department`（標準寫法）、`kind`
+（add 報到／remove 離職／manual 手動）、`personnel_id`、`status`、`sent_work_date`、
+`history`（每次動作 {action, at, by, by_name, note}）。**永遠不刪除**，只改狀態。
+存取集中在 `hr/insurance_draft_repository.py`。
+
+**哪些部門有暫存區**：`hr/config.py` 的 `INSURANCE_DRAFT_DEPARTMENTS`（目前只有
+新北所(配送組)），其他 6 個部門的上傳頁完全不變。要開放給別的部門就把名稱加進去。
+
+**送出給人資**（`hr/routes/insurance_routes.py` 的 `drafts_send()`）：每次都**重新組一份
+完整檔案**＝當天手動上傳的 Excel 內容＋這一天之前已送出的＋這次待送出的，用既有的
+`upload_file()`＋`save_upload()` 存成「這個部門、這一天」的上傳檔。上傳紀錄多記
+`generated_from_drafts`、`draft_ids`、`base_manual_blob_path`，下次送出才知道要接哪些。
+**人資端（彙總／收單／下載）一行都沒改**，讀到的就是一份跟範本一樣的 11 欄 Excel
+（`hr/insurance_excel.build_department_workbook()`，日期寫成真的 Excel 日期、擋公式注入）。
+已經送出後同仁又手動上傳 Excel，會整份蓋掉——上傳表單會先顯示警告並跳確認視窗。
+
+**下載**（`drafts_download()`）：收單後才顯示按鈕；下載的那幾筆改成「已下載」，
+不會再出現在待送出清單。
+
+**操作紀錄頁** `/hr/insurance/drafts/records`：部門同仁看自己部門，人資（`is_collector`）
+看全部部門；依建立日期（台灣時間）、姓名、狀態篩選，可匯出 Excel。人資彙總頁多一個連結。
+
+**配送系統端**（`delivery/insurance_sync.py` 的 `sync_status_change()`）：
+- 查詢人員「報到」→ 加保；「離職」**改成跳對話框選離職日期**（`resign_date`，存到人員
+  資料新欄位，`repository.update_personnel_resign_date()`）→ 退保
+- 詳細頁直接改狀態也走同一支；沒填日期用今天（台灣時間）並存回人員資料；詳細頁多一個
+  「離職日期」欄位和「加退保紀錄」表
+- 改回來（在職→待報到/放棄報到、離職→其他）：取消還沒送出的那筆；已送出/下載的只提示
+  「請聯絡人資」
+- 寫入暫存區失敗不擋狀態變更，畫面紅字提示手動新增
+- 身分證：配送系統不收，舊資料的 `id_number` 有值才帶入，沒有就空白給人資補
+
+**順手修正**：`hr/routes/insurance_routes.py` 的 `_today()` 原本用 `date.today()`，Cloud Run
+是 UTC，台灣早上 8 點前預設日期會是前一天，改成台灣時間。上傳頁／查歷史改用
+`canonical_department()`（部門字串全形括號也歸到標準寫法），人資彙總頁才對得上。
+
+**測試**：新增 `tests/test_hr_insurance_drafts.py`（資料層、Excel 來回、送出兩次＋先手動
+上傳、收單後擋送出與下載、他部門不能動、紀錄頁與匯出、人資看全部）、
+`tests/test_delivery_insurance_sync.py`（各種狀態轉換、已送出提醒、寫入失敗不炸）；
+`test_delivery_personnel_vendor_change.py`／`test_delivery_personnel_employee_no.py`／
+`test_delivery_personnel_pages.py` 跟著調整。全部 2289 個通過；Playwright 看過上傳頁
+（電腦、手機、收單後）、紀錄頁、人員詳細頁。
+
+**使用者不需要手動設定**：沒有新環境變數；Firestore collection 第一次寫入時自動建立；
+查詢只用單一欄位等於條件，不用建索引。
+

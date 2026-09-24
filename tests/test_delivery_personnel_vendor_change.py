@@ -3,6 +3,7 @@ import os
 import sys
 from unittest import mock
 import unittest
+from urllib.parse import quote
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -11,6 +12,21 @@ from tests import _stub_gcp
 _stub_gcp.install()
 
 from delivery.routes import vendor_routes
+
+
+_NO_SYNC = {"msg": "", "err": ""}
+
+
+def setUpModule():
+    """2026-09-24 起狀態變更會同步每日加退保待送出清單（delivery/insurance_sync.py，
+    有自己的測試 test_delivery_insurance_sync.py）；這裡只測路由本身，先擋掉。"""
+    for patcher in (
+        mock.patch.object(vendor_routes.insurance_sync, "sync_status_change", return_value=_NO_SYNC),
+        mock.patch.object(vendor_routes, "current_user", return_value={"username": "amy", "name": "Amy"}),
+        mock.patch.object(vendor_routes.repository, "update_personnel_resign_date"),
+    ):
+        patcher.start()
+        unittest.addModuleCleanup(patcher.stop)
 
 
 class _FakeRequest:
@@ -182,7 +198,7 @@ class StatusButtonTests(unittest.TestCase):
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("pending_onboard")):
             with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
                 with mock.patch.object(vendor_routes.repository, "update_personnel_hire_date") as mock_hire:
-                    result = vendor_routes.onboard_personnel("p1", hire_date="2026-09-25", back="/delivery/search?vendor=ud", redirect=None)
+                    result = vendor_routes.onboard_personnel("p1", _FakeRequest({}), hire_date="2026-09-25", back="/delivery/search?vendor=ud", redirect=None)
         mock_status.assert_called_once_with("p1", "employed")
         mock_hire.assert_called_once_with("p1", "2026-09-25")
         self.assertTrue(result.headers["location"].startswith("/delivery/search?vendor=ud&msg="))
@@ -190,14 +206,14 @@ class StatusButtonTests(unittest.TestCase):
     def test_onboard_requires_a_date(self):
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("pending_onboard")):
             with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
-                result = vendor_routes.onboard_personnel("p1", hire_date="", back="", redirect=None)
+                result = vendor_routes.onboard_personnel("p1", _FakeRequest({}), hire_date="", back="", redirect=None)
         mock_status.assert_not_called()
         self.assertIn("err=", result.headers["location"])
 
     def test_onboard_only_for_pending(self):
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
             with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
-                vendor_routes.onboard_personnel("p1", hire_date="2026-09-25", back="", redirect=None)
+                vendor_routes.onboard_personnel("p1", _FakeRequest({}), hire_date="2026-09-25", back="", redirect=None)
         mock_status.assert_not_called()
 
     def test_withdraw_only_for_pending(self):
@@ -213,18 +229,74 @@ class StatusButtonTests(unittest.TestCase):
     def test_resign_only_for_employed(self):
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
             with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
-                vendor_routes.resign_personnel("p1", back="", redirect=None)
+                vendor_routes.resign_personnel("p1", _FakeRequest({}), resign_date="2026-09-30", back="", redirect=None)
         mock_status.assert_called_once_with("p1", "resigned")
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("pending_onboard")):
             with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
-                vendor_routes.resign_personnel("p1", back="", redirect=None)
+                vendor_routes.resign_personnel("p1", _FakeRequest({}), resign_date="2026-09-30", back="", redirect=None)
         mock_status.assert_not_called()
 
     def test_back_url_only_accepts_the_search_page(self):
         with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
             with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status"):
-                result = vendor_routes.resign_personnel("p1", back="https://evil.example.com/", redirect=None)
+                result = vendor_routes.resign_personnel("p1", _FakeRequest({}), resign_date="2026-09-30", back="https://evil.example.com/", redirect=None)
         self.assertTrue(result.headers["location"].startswith("/delivery/search?msg="))
+
+    def test_resign_requires_a_date_and_saves_it(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status") as mock_status:
+                result = vendor_routes.resign_personnel("p1", _FakeRequest({}), resign_date="", back="", redirect=None)
+        mock_status.assert_not_called()
+        self.assertIn("err=", result.headers["location"])
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status"):
+                with mock.patch.object(vendor_routes.repository, "update_personnel_resign_date") as mock_resign:
+                    vendor_routes.resign_personnel("p1", _FakeRequest({}), resign_date="2026-09-30", back="", redirect=None)
+        mock_resign.assert_called_once_with("p1", "2026-09-30")
+
+    def test_buttons_sync_the_insurance_drafts(self):
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("pending_onboard")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status"), \
+                    mock.patch.object(vendor_routes.repository, "update_personnel_hire_date"), \
+                    mock.patch.object(vendor_routes.insurance_sync, "sync_status_change",
+                                      return_value={"msg": "已加入每日加退保的待送出清單（加保）", "err": ""}) as mock_sync:
+                result = vendor_routes.onboard_personnel("p1", _FakeRequest({}), hire_date="2026-09-25", back="", redirect=None)
+        self.assertEqual(mock_sync.call_args[0][1:3], ("pending_onboard", "employed"))
+        self.assertEqual(mock_sync.call_args[1]["hire_date"], "2026-09-25")
+        self.assertIn(quote("已加入每日加退保的待送出清單"), result.headers["location"])
+
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=self._person("employed")):
+            with mock.patch.object(vendor_routes.repository, "update_personnel_employment_status"), \
+                    mock.patch.object(vendor_routes.insurance_sync, "sync_status_change",
+                                      return_value={"msg": "", "err": "寫入失敗"}) as mock_sync:
+                result = vendor_routes.resign_personnel("p1", _FakeRequest({}), resign_date="2026-09-30", back="", redirect=None)
+        self.assertEqual(mock_sync.call_args[0][1:3], ("employed", "resigned"))
+        self.assertEqual(mock_sync.call_args[1]["resign_date"], "2026-09-30")
+        self.assertIn("err=", result.headers["location"])
+
+    def test_detail_page_status_change_syncs_insurance_drafts(self):
+        person = {"id": "p1", "name": "王小明", "vendor": "ud", "employment_status": "employed", "hire_date": "2026-01-02"}
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=person), \
+                mock.patch.object(vendor_routes.repository, "applicable_doc_types", return_value=[]), \
+                mock.patch.object(vendor_routes.repository, "update_personnel_employment_status"), \
+                mock.patch.object(vendor_routes.insurance_sync, "sync_status_change", return_value=_NO_SYNC) as mock_sync:
+            asyncio.run(vendor_routes.bulk_update_personnel(
+                "p1", _FakeRequest({"employment_status": "resigned", "resign_date": "2026-10-01"}), redirect=None))
+        self.assertEqual(mock_sync.call_args[0][1:3], ("employed", "resigned"))
+        self.assertEqual(mock_sync.call_args[1]["resign_date"], "2026-10-01")
+
+    def test_detail_page_resign_without_date_uses_today_and_saves_it(self):
+        person = {"id": "p1", "name": "王小明", "vendor": "ud", "employment_status": "employed"}
+        with mock.patch.object(vendor_routes.repository, "get_personnel", return_value=person), \
+                mock.patch.object(vendor_routes.repository, "applicable_doc_types", return_value=[]), \
+                mock.patch.object(vendor_routes.repository, "update_personnel_employment_status"), \
+                mock.patch.object(vendor_routes.repository, "update_personnel_resign_date") as mock_resign, \
+                mock.patch.object(vendor_routes.insurance_sync, "sync_status_change", return_value=_NO_SYNC) as mock_sync:
+            asyncio.run(vendor_routes.bulk_update_personnel(
+                "p1", _FakeRequest({"employment_status": "resigned", "resign_date": ""}), redirect=None))
+        today = vendor_routes.datetime.now(vendor_routes._TAIPEI).date().isoformat()
+        self.assertEqual(mock_resign.call_args_list[-1][0], ("p1", today))
+        self.assertEqual(mock_sync.call_args[1]["resign_date"], today)
 
     def test_old_vendor_page_redirects_to_search_with_vendor(self):
         result = vendor_routes.vendor_list("sf", redirect=None)

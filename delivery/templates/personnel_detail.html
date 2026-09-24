@@ -6,7 +6,10 @@
 <p class="meta">廠商：{{ vendor_name }}　電話：{{ person.phone or "-" }}</p>
 
 {% if request.query_params.get("saved") %}
-<p class="success">已儲存。</p>
+<p class="success">已儲存。{{ request.query_params.get("msg") or "" }}</p>
+{% endif %}
+{% if request.query_params.get("err") %}
+<p class="error">{{ request.query_params.get("err") }}</p>
 {% endif %}
 
 {% if current_employment_status == "resigned" and equipment_debt %}
@@ -58,6 +61,10 @@
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
             到職日期
             <input type="date" name="hire_date" value="{{ person.hire_date or '' }}">
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
+            離職日期
+            <input type="date" name="resign_date" value="{{ person.resign_date or '' }}">
         </label>
         <label style="display:flex; align-items:center; gap:8px; color:var(--text); font-size:14px;">
             工號
@@ -156,6 +163,34 @@
     }
 })();
 </script>
+
+<h2 class="section-title">加退保紀錄</h2>
+<p class="hint">
+    狀態從「待報到」改成「在職」會自動放一筆加保、從「在職」改成「離職」會放一筆退保到
+    <a href="/hr/insurance/upload">每日加退保</a>的待送出清單（日期用上面的到職日期／離職日期，沒填就用今天）；
+    按錯改回來，還沒送出的那筆會自動取消。要按「送出給人資」才算交出去。
+</p>
+{% if insurance_records %}
+<div class="table-scroll">
+<table class="data-table insurance-table">
+    <thead><tr><th>類型</th><th>加保日期</th><th>退保日期</th><th>狀態</th><th>最後操作</th></tr></thead>
+    <tbody>
+        {% for r in insurance_records %}
+        {% set last = (r.history or [{}])[-1] %}
+        <tr>
+            <td>{{ insurance_type_name(r) }}</td>
+            <td>{{ r.insured_date or "-" }}</td>
+            <td>{{ r.withdrawn_date or "-" }}</td>
+            <td>{{ insurance_status_names.get(r.status, r.status) }}{% if r.sent_work_date %}<div class="meta">交給人資 {{ r.sent_work_date }}</div>{% endif %}</td>
+            <td class="meta">{{ last.at | taipei_time }} {{ last.by_name }} {{ insurance_action_names.get(last.action, last.action) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="meta">還沒有加退保紀錄。</p>
+{% endif %}
 
 {% if user.role == "admin" %}
 <form method="post" action="/delivery/personnel/{{ person.id }}/delete" class="js-delete-person" data-name="{{ person.name }}" style="margin-top:24px;">

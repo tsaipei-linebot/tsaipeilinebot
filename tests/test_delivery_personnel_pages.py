@@ -39,6 +39,10 @@ class DeliveryPersonnelPagesTests(unittest.TestCase):
             mock.patch.object(repository, "cooperation_types_by_vendor", return_value={}),
             mock.patch.object(repository, "list_open_incident_events", return_value=[]),
             mock.patch.object(repository, "list_equipment_items", return_value=[]),
+            mock.patch("delivery.insurance_sync.records_for_personnel", return_value=[
+                {"kind": "add", "insured_date": "2026-01-02", "status": "sent", "sent_work_date": "2026-01-02",
+                 "history": [{"action": "sent", "at": 1767312000, "by_name": "Amy"}]},
+            ]),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -48,10 +52,12 @@ class DeliveryPersonnelPagesTests(unittest.TestCase):
         html = self.client.get("/delivery/search").text
         self.assertIn('data-name="待報到的人"', html)  # 報到按鈕
         self.assertIn("/delivery/personnel/p1/withdraw", html)
-        self.assertNotIn("/delivery/personnel/p1/resign", html)
-        self.assertIn("/delivery/personnel/p2/resign", html)
         self.assertNotIn("/delivery/personnel/p2/withdraw", html)
+        # 離職按鈕打開選日期的對話框（2026-09-24 起要選離職日期＝退保日期）
+        self.assertIn('class="btn btn-small btn-danger js-resign"\n                        data-id="p2"', html)
+        self.assertNotIn('js-resign"\n                        data-id="p1"', html)
         self.assertIn('data-owed="1"', html)
+        self.assertIn('name="resign_date"', html)
 
     def test_search_page_expiry_badges(self):
         html = self.client.get("/delivery/search").text
@@ -73,6 +79,9 @@ class DeliveryPersonnelPagesTests(unittest.TestCase):
         self.assertNotIn('type="file"', html)
         self.assertNotIn("身分證", html)
         self.assertIn("/delivery/personnel/p2/delete", html)
+        self.assertIn("加退保紀錄", html)
+        self.assertIn("交給人資 2026-01-02", html)
+        self.assertIn('name="resign_date"', html)
 
     def test_new_personnel_form_has_vendor_choice_and_no_id_number(self):
         html = self.client.get("/delivery/personnel/new?vendor=sf").text

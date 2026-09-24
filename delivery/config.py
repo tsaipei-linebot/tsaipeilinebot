@@ -480,3 +480,8 @@ RIDER_PENDING_CLAIM_TTL_SECONDS = 600
 # 唯一的設定，每一筆需求可以各自不一樣。
 RIDER_DEFAULT_SEARCH_RADIUS_KM = 10
 
+
+# 配送系統按「報到」「離職」自動放進這個部門的「每日加退保」待送出清單
+# （2026-09-24 新增，見 delivery/insurance_sync.py）。要跟
+# hr.config.INSURANCE_DRAFT_DEPARTMENTS 裡的名稱一致。
+DELIVERY_INSURANCE_DEPARTMENT = "新北所(配送組)"

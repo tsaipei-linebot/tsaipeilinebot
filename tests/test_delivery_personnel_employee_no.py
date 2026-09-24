@@ -14,6 +14,20 @@ from delivery import repository
 from delivery.routes import vendor_routes
 
 
+_NO_SYNC = {"msg": "", "err": ""}
+
+
+def setUpModule():
+    """2026-09-24 起狀態變更會同步每日加退保待送出清單（delivery/insurance_sync.py，
+    有自己的測試 test_delivery_insurance_sync.py）；這裡只測路由本身，先擋掉。"""
+    for patcher in (
+        mock.patch.object(vendor_routes.insurance_sync, "sync_status_change", return_value=_NO_SYNC),
+        mock.patch.object(vendor_routes, "current_user", return_value={"username": "amy", "name": "Amy"}),
+    ):
+        patcher.start()
+        unittest.addModuleCleanup(patcher.stop)
+
+
 def _fake_doc_snapshot(exists: bool, data: dict = None, doc_id: str = "p1"):
     snapshot = mock.Mock(exists=exists)
     snapshot.id = doc_id
