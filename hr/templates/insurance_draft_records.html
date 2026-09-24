@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}加退保操作紀錄 - 材霈有限公司-人資專區{% endblock %}
+{% block content %}
+<h1 class="page-title">加退保操作紀錄</h1>
+<p class="hint">待送出清單裡的每一筆，不管送出、下載或刪除都會留下紀錄，這裡可以查是誰、什麼時候做的。日期是依「建立的日期」篩選。</p>
+
+<form method="get" action="/hr/insurance/drafts/records" class="filter-bar">
+    {% if is_collector %}
+    <select name="department">
+        <option value="">全部部門</option>
+        {% for d in department_options %}
+        <option value="{{ d }}" {% if d == filter_department %}selected{% endif %}>{{ d }}</option>
+        {% endfor %}
+    </select>
+    {% endif %}
+    <input type="text" name="name" value="{{ filter_name }}" placeholder="搜尋姓名">
+    <select name="status">
+        <option value="">全部狀態</option>
+        {% for code, label in status_names.items() %}
+        <option value="{{ code }}" {% if code == filter_status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+    <label>從 <input type="date" name="start_date" value="{{ filter_start_date }}"></label>
+    <label>到 <input type="date" name="end_date" value="{{ filter_end_date }}"></label>
+    <button type="submit" class="btn">查詢</button>
+    <a class="btn" href="{{ export_url }}">下載成 Excel</a>
+</form>
+
+{% if records %}
+<div class="table-scroll">
+<table class="data-table insurance-table">
+    <thead>
+        <tr>
+            {% if is_collector %}<th>部門</th>{% endif %}
+            <th>類型</th><th>姓名</th><th>廠商</th><th>加保日期</th><th>退保日期</th>
+            <th>狀態</th><th>來源</th><th>操作紀錄</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in records %}
+        <tr>
+            {% if is_collector %}<td>{{ r.department }}</td>{% endif %}
+            <td>{{ type_name(r) }}</td>
+            <td>{{ r.name }}</td>
+            <td>{{ r.vendor or "-" }}</td>
+            <td>{{ r.insured_date or "-" }}</td>
+            <td>{{ r.withdrawn_date or "-" }}</td>
+            <td>{{ status_names.get(r.status, r.status) }}{% if r.sent_work_date %}<div class="meta">交給人資 {{ r.sent_work_date }}</div>{% endif %}</td>
+            <td>{% include "_insurance_draft_source.html" %}</td>
+            <td class="wrap">
+                {% for h in r.history or [] %}
+                <div class="meta">{{ h.at | taipei_time }} {{ h.by_name }} {{ action_names.get(h.action, h.action) }}{% if h.note %}（{{ h.note }}）{% endif %}</div>
+                {% endfor %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">目前沒有符合條件的紀錄。</p>
+{% endif %}
+
+<p class="back-link"><a href="/hr/insurance">&larr; 回每日加退保</a></p>
+{% endblock %}

@@ -7,13 +7,13 @@
 - 詳細頁只剩 4 種證明的到期日（不再上傳照片、不再有身分證字號/Email/勾選項）
 - 查詢人員每一列的「報到」「放棄報到」「離職」按鈕打這裡的三個路由
 """
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 
-from delivery import repository
+from delivery import insurance_sync, repository
 from delivery.auth import admin_required, current_user, login_required
 from delivery.config import (
     CLIENT_MAP,
@@ -32,6 +32,7 @@ from delivery.templating import templates
 router = APIRouter()
 
 SEARCH_URL = "/delivery/search"
+_TAIPEI = timezone(timedelta(hours=8))
 
 
 def _safe_back(back: str) -> str:
@@ -151,6 +152,10 @@ def personnel_detail(personnel_id: str, request: Request, redirect=Depends(login
             "show_client": vendor_code in CLIENT_VENDORS,
             "doc_statuses": repository.all_document_statuses(person),
             "equipment_debt": debt_rows,
+            "insurance_records": insurance_sync.records_for_personnel(personnel_id),
+            "insurance_type_name": insurance_sync.drafts.draft_type_name,
+            "insurance_status_names": insurance_sync.drafts.STATUS_NAMES,
+            "insurance_action_names": insurance_sync.drafts.ACTION_NAMES,
         },
     )
 
@@ -208,13 +213,23 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
         client = form.get("client", "")
         repository.update_personnel_client(personnel_id, client if client in CLIENT_MAP else "")
 
+    old_status = repository.personnel_employment_status(person)
+    new_status = old_status
     if "employment_status" in form:
         employment_status = form.get("employment_status", "")
         if employment_status in PERSONNEL_STATUS_MAP:
             repository.update_personnel_employment_status(personnel_id, employment_status)
+            new_status = employment_status
 
+    hire_date = person.get("hire_date") or ""
     if "hire_date" in form:
-        repository.update_personnel_hire_date(personnel_id, _valid_date(form.get("hire_date")))
+        hire_date = _valid_date(form.get("hire_date"))
+        repository.update_personnel_hire_date(personnel_id, hire_date)
+
+    resign_date = person.get("resign_date") or ""
+    if "resign_date" in form:
+        resign_date = _valid_date(form.get("resign_date"))
+        repository.update_personnel_resign_date(personnel_id, resign_date)
 
     if "employee_no" in form:
         repository.update_personnel_employee_no(personnel_id, (form.get("employee_no") or "").strip())
@@ -225,11 +240,28 @@ async def bulk_update_personnel(personnel_id: str, request: Request, redirect=De
         if field in form:
             repository.update_personnel_document(personnel_id, doc_type["code"], expiry_date=_valid_date(form.get(field)))
 
-    return RedirectResponse(url=f"/delivery/personnel/{personnel_id}?saved=1", status_code=303)
+    # 詳細頁直接改狀態也一樣進（或取消）每日加退保待送出清單，跟查詢人員的按鈕同一套。
+    # 報到/離職沒填日期就用今天（台灣時間），同時存回人員資料，兩邊日期才一致。
+    today = datetime.now(_TAIPEI).date().isoformat()
+    if old_status == "pending_onboard" and new_status == "employed" and not hire_date:
+        hire_date = today
+        repository.update_personnel_hire_date(personnel_id, hire_date)
+    if old_status == "employed" and new_status == "resigned" and not resign_date:
+        resign_date = today
+        repository.update_personnel_resign_date(personnel_id, resign_date)
+    sync = insurance_sync.sync_status_change(
+        {**person, "vendor": effective_vendor}, old_status, new_status, current_user(request),
+        hire_date=hire_date, resign_date=resign_date,
+    )
+    url = f"/delivery/personnel/{personnel_id}?saved=1"
+    for key in ("msg", "err"):
+        if sync[key]:
+            url = _with_message(url, key, sync[key])
+    return RedirectResponse(url=url, status_code=303)
 
 
 @router.post("/personnel/{personnel_id}/onboard")
-def onboard_personnel(personnel_id: str, hire_date: str = Form(""), back: str = Form(""), redirect=Depends(login_required)):
+def onboard_personnel(personnel_id: str, request: Request, hire_date: str = Form(""), back: str = Form(""), redirect=Depends(login_required)):
     """查詢人員頁的「報到」：狀態改在職，到職日期填入同仁選的日期。只有
     「待報到」的人可以按（畫面上也只有待報到才顯示這顆按鈕）。"""
     if redirect:
@@ -243,7 +275,8 @@ def onboard_personnel(personnel_id: str, hire_date: str = Form(""), back: str = 
         return RedirectResponse(url=_with_message(back_url, "err", "請選擇報到日期。"), status_code=303)
     repository.update_personnel_employment_status(personnel_id, "employed")
     repository.update_personnel_hire_date(personnel_id, hire_date)
-    return RedirectResponse(url=_with_message(back_url, "msg", f"{person.get('name')} 已報到（{hire_date}）。"), status_code=303)
+    sync = insurance_sync.sync_status_change(person, "pending_onboard", "employed", current_user(request), hire_date=hire_date)
+    return _status_redirect(back_url, f"{person.get('name')} 已報到（{hire_date}）", sync)
 
 
 @router.post("/personnel/{personnel_id}/withdraw")
@@ -260,17 +293,32 @@ def withdraw_personnel(personnel_id: str, back: str = Form(""), redirect=Depends
 
 
 @router.post("/personnel/{personnel_id}/resign")
-def resign_personnel(personnel_id: str, back: str = Form(""), redirect=Depends(login_required)):
-    """「離職」：只有在職的人可以按。名下還有裝備沒還的提醒在按鈕的確認視窗
-    裡（查詢人員頁），這裡不擋。"""
+def resign_personnel(personnel_id: str, request: Request, resign_date: str = Form(""), back: str = Form(""), redirect=Depends(login_required)):
+    """「離職」：只有在職的人可以按，要選離職日期（＝帶進每日加退保的退保日期）。
+    名下還有裝備沒還的提醒在按鈕的對話框裡（查詢人員頁），這裡不擋。"""
     if redirect:
         return redirect
     back_url = _safe_back(back)
     person = repository.get_personnel(personnel_id)
+    resign_date = _valid_date(resign_date)
     if not person or repository.personnel_employment_status(person) != "employed":
         return RedirectResponse(url=_with_message(back_url, "err", "這個人目前不是「在職」。"), status_code=303)
+    if not resign_date:
+        return RedirectResponse(url=_with_message(back_url, "err", "請選擇離職日期。"), status_code=303)
     repository.update_personnel_employment_status(personnel_id, "resigned")
-    return RedirectResponse(url=_with_message(back_url, "msg", f"{person.get('name')} 已改成離職。"), status_code=303)
+    repository.update_personnel_resign_date(personnel_id, resign_date)
+    sync = insurance_sync.sync_status_change(person, "employed", "resigned", current_user(request), resign_date=resign_date)
+    return _status_redirect(back_url, f"{person.get('name')} 已改成離職（{resign_date}）", sync)
+
+
+def _status_redirect(back_url: str, done: str, sync: dict) -> RedirectResponse:
+    """狀態按鈕送出後回查詢人員頁：成功訊息接上加退保待送出清單的結果；寫入失敗
+    或撤不回來的提醒放 err（紅字）。"""
+    msg = done + (f"，{sync['msg']}" if sync.get("msg") else "") + "。"
+    url = _with_message(back_url, "msg", msg)
+    if sync.get("err"):
+        url = _with_message(url, "err", sync["err"])
+    return RedirectResponse(url=url, status_code=303)
 
 
 @router.get("/cooperation-types")

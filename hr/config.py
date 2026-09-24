@@ -93,3 +93,8 @@ INSURANCE_UPLOAD_DEPARTMENTS = [
 # /accounts 建立這個部門並指派給負責的同仁，這裡只認這個字串（全平台
 # 管理員永遠視同人資身份，見 insurance_repository.is_collector()）。
 INSURANCE_COLLECTOR_DEPARTMENT = "人資部門"
+# 有「加退保暫存區」的部門（2026-09-24 新增，見 hr/insurance_draft_repository.py）：
+# 上傳頁多一個「待送出清單」，可以手動新增、送出給人資、收單後下載。
+# 新北所(配送組)的配送系統按「報到」「離職」也會自動寫進這裡。其他部門要開
+# 放的話把名稱加進來即可（名稱要跟 INSURANCE_UPLOAD_DEPARTMENTS 一致）。
+INSURANCE_DRAFT_DEPARTMENTS = ["新北所(配送組)"]

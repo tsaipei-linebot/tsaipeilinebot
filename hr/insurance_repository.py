@@ -71,10 +71,14 @@ def get_upload(department: str, work_date: str):
 
 def save_upload(
     department: str, work_date: str, blob_path: str, filename: str,
-    uploaded_by: str, uploaded_by_name: str,
+    uploaded_by: str, uploaded_by_name: str, **extra,
 ) -> None:
     """新增或覆蓋「這個部門、這一天」的上傳紀錄——文件 id 是固定的
-    「日期__部門」組合，所以同一天重傳就是覆寫同一筆，不會累積多筆。"""
+    「日期__部門」組合，所以同一天重傳就是覆寫同一筆，不會累積多筆。
+
+    `extra`：暫存區「送出給人資」產生的檔案會多記 `generated_from_drafts`、
+    `draft_ids`、`base_manual_blob_path`（見 hr/routes/insurance_routes.py 的
+    `drafts_send()`）；手動上傳不帶，整筆覆寫時這幾個欄位就自然清掉。"""
     ref = insurance_uploads_ref().document(_upload_doc_id(department, work_date))
     ref.set({
         "department": department,
@@ -84,6 +88,7 @@ def save_upload(
         "uploaded_by": uploaded_by,
         "uploaded_by_name": uploaded_by_name,
         "uploaded_at": time.time(),
+        **extra,
     })
 
 

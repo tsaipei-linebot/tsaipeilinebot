@@ -11,6 +11,7 @@ LICENSES_COLLECTION = "hr_licenses"
 TRAININGS_COLLECTION = "hr_trainings"
 INSURANCE_UPLOADS_COLLECTION = "hr_insurance_uploads"
 INSURANCE_DAY_LOCKS_COLLECTION = "hr_insurance_day_locks"
+INSURANCE_DRAFTS_COLLECTION = "hr_insurance_drafts"
 
 
 def incident_events_ref():
@@ -39,3 +40,7 @@ def insurance_uploads_ref():
 
 def insurance_day_locks_ref():
     return get_db().collection(INSURANCE_DAY_LOCKS_COLLECTION)
+
+
+def insurance_drafts_ref():
+    return get_db().collection(INSURANCE_DRAFTS_COLLECTION)

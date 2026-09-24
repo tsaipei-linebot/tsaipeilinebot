@@ -23,6 +23,7 @@ import io
 import openpyxl
 from openpyxl import Workbook
 
+from hr.insurance_draft_repository import format_time
 from hr.storage import download_file
 
 _SOURCE_HEADER = (
@@ -163,3 +164,76 @@ def build_summary_workbook(uploads: list) -> bytes:
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+
+# ==========================================
+# 加退保暫存區（2026-09-24 新增，見 hr/insurance_draft_repository.py）
+# ==========================================
+_SOURCE_DATE_HEADERS = {"勞保加保日期", "勞保退保日期", "勞保追退日期"}
+
+
+def _source_cell(header, value):
+    """寫回部門範本格式時，日期欄位盡量寫成真正的 Excel 日期（人資開檔看到
+    的是日期、`_parse_date()` 讀回來也認得），其他欄位當文字並擋公式注入。"""
+    if header in _SOURCE_DATE_HEADERS:
+        parsed = _parse_date(value)
+        if parsed:
+            return parsed
+    if value is None:
+        return ""
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value
+    return _sanitize_cell(str(value).strip())
+
+
+def build_department_workbook(rows: list) -> bytes:
+    """把資料列（key 是 `_SOURCE_HEADER` 的表頭）組成跟部門上傳範本一樣的 11 欄
+    Excel。暫存區「送出給人資」「下載」都用這個，所以產出的檔案
+    `parse_department_workbook()` 讀得回來，人資端的彙總表不用改。「編號」
+    一律重新從 1 編。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "加退保"
+    ws.append(list(_SOURCE_HEADER))
+    for seq, row in enumerate(rows, start=1):
+        cells = [seq] + [_source_cell(h, row.get(h)) for h in _SOURCE_HEADER[1:]]
+        ws.append(cells)
+        for col, header in enumerate(_SOURCE_HEADER, start=1):
+            if header in _SOURCE_DATE_HEADERS and isinstance(cells[col - 1], datetime.date):
+                ws.cell(row=seq + 1, column=col).number_format = "yyyy-mm-dd"
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def build_draft_records_workbook(drafts: list, status_names: dict, type_name) -> bytes:
+    """「加退保操作紀錄」頁的匯出：範本 11 欄之外，多列部門、類型、狀態、誰建立、
+    最後一次操作。只是查紀錄用，不會改變任何一筆的狀態。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "加退保操作紀錄"
+    ws.append(["部門", "類型", "狀態", "交給人資的日期"] + list(_SOURCE_HEADER[1:]) + ["建立者", "建立時間", "最後操作"])
+    for draft in drafts:
+        history = draft.get("history") or []
+        last = history[-1] if history else {}
+        ws.append(
+            [
+                _sanitize_cell(draft.get("department", "")),
+                type_name(draft),
+                status_names.get(draft.get("status"), draft.get("status", "")),
+                draft.get("sent_work_date", ""),
+            ]
+            + [_sanitize_cell(str(draft.get(key) or "")) for key in (
+                "vendor", "shift", "name", "id_number", "insured_date", "withdrawn_date",
+                "recovery_date", "health_month", "dependents", "note",
+            )]
+            + [
+                _sanitize_cell(draft.get("created_by_name", "")),
+                format_time(draft.get("created_at")),
+                _sanitize_cell(f"{last.get('by_name', '')} {format_time(last.get('at'))}".strip()),
+            ]
+        )
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+

@@ -1017,3 +1017,22 @@ a.sheet-tab-btn { display: inline-block; text-decoration: none; }
 .onboard-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 .onboard-dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .onboard-dialog input[type="date"] { padding: 8px; border: 1px solid var(--border); border-radius: 8px; font: inherit; }
+
+/* 每日加退保待送出清單／操作紀錄（2026-09-24）：手機上表格橫向捲動，不要一個字一行 */
+.insurance-table th,
+.insurance-table td {
+    white-space: nowrap;
+}
+.insurance-table td.wrap {
+    white-space: normal;
+    min-width: 260px;
+}
+.draft-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0;
+}
+.draft-add {
+    margin: 8px 0 12px;
+}

@@ -1,0 +1,32 @@
+{# 暫存區一筆資料的欄位（手動新增、修改共用）。d = 目前的值（新增時是空的） #}
+<label>姓名（必填）
+    <input type="text" name="name" value="{{ d.name or '' }}" required>
+</label>
+<label>廠商
+    <input type="text" name="vendor" value="{{ d.vendor or '' }}">
+</label>
+<label>班別
+    <input type="text" name="shift" value="{{ d.shift or '' }}">
+</label>
+<label>身分證（可留空，人資收到後補）
+    <input type="text" name="id_number" value="{{ d.id_number or '' }}">
+</label>
+<label>勞保加保日期
+    <input type="date" name="insured_date" value="{{ d.insured_date or '' }}">
+</label>
+<label>勞保退保日期
+    <input type="date" name="withdrawn_date" value="{{ d.withdrawn_date or '' }}">
+</label>
+<label>勞保追退日期
+    <input type="date" name="recovery_date" value="{{ d.recovery_date or '' }}">
+</label>
+<label>健保加保月份
+    <input type="text" name="health_month" value="{{ d.health_month or '' }}">
+</label>
+<label>眷屬健保
+    <input type="text" name="dependents" value="{{ d.dependents or '' }}">
+</label>
+<label>備註
+    <input type="text" name="note" value="{{ d.note or '' }}">
+</label>
+<p class="hint">加保、退保、追退日期至少要填一個。</p>

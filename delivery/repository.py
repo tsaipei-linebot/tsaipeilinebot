@@ -934,6 +934,12 @@ def update_personnel_hire_date(personnel_id: str, hire_date: str):
     personnel_ref().document(personnel_id).update({"hire_date": hire_date, "updated_at": time.time()})
 
 
+def update_personnel_resign_date(personnel_id: str, resign_date: str):
+    """離職日期（2026-09-24 新增）：按「離職」時選的日期，也是帶進每日加退保
+    待送出清單的退保日期（見 delivery/insurance_sync.py）。"""
+    personnel_ref().document(personnel_id).update({"resign_date": resign_date, "updated_at": time.time()})
+
+
 # ==========================================
 # 應徵名單（Google 表單 webhook 寫入，錄取後轉正式人員）
 # ==========================================
