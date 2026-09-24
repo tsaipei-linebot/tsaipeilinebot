@@ -151,7 +151,11 @@ TAIPEI_TZ = pytz.timezone("Asia/Taipei")
 # 資料源：政府資料開放平台《登記工廠名錄》(經濟部產業發展署，dataset id 6569)
 # ==========================================
 FACTORY_OPENDATA_DATASET_ID = os.getenv("FACTORY_OPENDATA_DATASET_ID", "6569")
-FACTORY_WATCH_LOOKBACK_DAYS = _int_env("FACTORY_WATCH_LOOKBACK_DAYS", 10)
+# 2026-09-24 從 10 天改成 60 天：政府的工廠名錄大約每個月才更新一次，而且會
+# 晚半個月以上才發布（例如 9/18 發布的是 8 月的資料），只看最近 10 天的話，
+# 名錄裡最新一筆的核准日期早就超過 10 天，永遠篩不到任何一家。放寬到 60 天
+# 不會重複通知，已經通知過的工廠由 Firestore 去重擋掉。
+FACTORY_WATCH_LOOKBACK_DAYS = _int_env("FACTORY_WATCH_LOOKBACK_DAYS", 60)
 FACTORY_WATCH_SHEET_ID = os.getenv("FACTORY_WATCH_SHEET_ID", "")
 FACTORY_WATCH_SHEET_NAME = os.getenv("FACTORY_WATCH_SHEET_NAME", "新登記工廠")
 # 目前尚未決定要推播給哪個 LINE 帳號/群組，先留空；設定後即可自動開始推播

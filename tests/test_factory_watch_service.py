@@ -57,19 +57,21 @@ class WithinLookbackTests(unittest.TestCase):
         record = {"approval_date": date.today() - timedelta(days=30)}
         self.assertFalse(fw._within_lookback(record, lookback_days=10))
 
-    def test_unparseable_date_is_not_excluded(self):
-        # 日期格式無法辨識時不能直接濾掉，要交給去重機制把關，避免漏掉真正的新工廠
-        self.assertTrue(fw._within_lookback({"approval_date": None}, lookback_days=10))
+    def test_unparseable_date_is_excluded(self):
+        """2026-09-24 改：名錄是全台好幾萬家工廠，日期看不懂也當成新的，第一次
+        跑就會把沒填登記核准日期的全部灌進來（見 _within_lookback 的說明）。"""
+        self.assertFalse(fw._within_lookback({"approval_date": None}, lookback_days=10))
 
 
 class DedupKeyTests(unittest.TestCase):
-    def test_prefers_tax_id(self):
-        record = {"tax_id": "12345678", "reg_no": "REG001", "name": "測試工廠", "address": "台北市"}
-        self.assertEqual(fw._dedup_key(record), "tax:12345678")
+    def test_prefers_factory_registration_number(self):
+        """同一家公司（統一編號相同）常有好幾座工廠，要用工廠登記編號區分。"""
+        record = {"tax_id": "16396083", "reg_no": "99641358", "name": "點鑫產業股份有限公司二廠", "address": "臺中市"}
+        self.assertEqual(fw._dedup_key(record), "reg:99641358")
 
-    def test_falls_back_to_reg_no(self):
-        record = {"tax_id": "", "reg_no": "REG001", "name": "測試工廠", "address": "台北市"}
-        self.assertEqual(fw._dedup_key(record), "reg:REG001")
+    def test_falls_back_to_tax_id(self):
+        record = {"tax_id": "12345678", "reg_no": "", "name": "測試工廠", "address": "台北市"}
+        self.assertEqual(fw._dedup_key(record), "tax:12345678")
 
     def test_falls_back_to_name_address_hash(self):
         record = {"tax_id": "", "reg_no": "", "name": "測試工廠", "address": "台北市"}
@@ -118,6 +120,125 @@ class FindFirstCsvUrlTests(unittest.TestCase):
     def test_csv_url_with_query_string(self):
         payload = {"url": "https://example.com/data.csv?download=1"}
         self.assertEqual(fw._find_first_csv_url(payload), "https://example.com/data.csv?download=1")
+
+
+# 2026-09-24 實測的真實檔案結構（使用者在 Cloud Shell 一步一步下載出來的）：
+# data.gov.tw 資料集掛的 CSV 只是一份「目錄」，真正的名錄在目錄指到的 ZIP 裡。
+_INDEX_CSV = (
+    "﻿序號,年份,名稱,檔案格式,下載連結\r\n"
+    "1,113,登記工廠名錄,ZIP,https://serv.gcis.nat.gov.tw/RDownLoad/Data/statistical/"
+    "%E7%94%9F%E7%94%A2%E4%B8%AD%E5%B7%A5%E5%BB%A0%E6%B8%85%E5%86%8A.zip\r\n"
+)
+_REAL_HEADER = (
+    "工廠名稱,工廠登記編號,工廠設立許可案號,工廠地址,工廠市鎮鄉村里,工廠負責人姓名,統一編號,"
+    "工廠組織型態,工廠設立核准日期,工廠登記核准日期,工廠登記狀態,產業類別,主要產品"
+)
+
+
+def _roc(d):
+    return f"{d.year - 1911:03d}{d.month:02d}{d.day:02d}"
+
+
+def _real_csv(rows):
+    lines = [_REAL_HEADER] + [",".join(f'"{v}"' for v in row) for row in rows]
+    return ("﻿" + "\r\n".join(lines) + "\r\n").encode("utf-8")
+
+
+def _zip_of(csv_bytes, name="11508.csv"):
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(name, csv_bytes)
+    return buffer.getvalue()
+
+
+def _factory_row(name, reg_no, tax_id, approval, industry="08食品製造業  "):
+    return [name, reg_no, "", "臺中市太平區鵬儀路366巷1弄1號", "", "謝嫦娥", tax_id, "股份有限公司", "", approval, "生產中", industry, ""]
+
+
+class IndexCsvTests(unittest.TestCase):
+    def test_index_csv_points_to_zip(self):
+        url = fw.pick_archive_url_from_index(_INDEX_CSV.lstrip("﻿"))
+        self.assertTrue(url.startswith("https://serv.gcis.nat.gov.tw/"))
+        self.assertTrue(url.endswith(".zip"))
+
+    def test_picks_latest_year_when_several(self):
+        text = "序號,年份,名稱,檔案格式,下載連結\n1,112,舊,ZIP,https://x/old.zip\n2,113,新,ZIP,https://x/new.zip\n"
+        self.assertEqual(fw.pick_archive_url_from_index(text), "https://x/new.zip")
+
+    def test_real_data_csv_is_not_an_index(self):
+        self.assertEqual(fw.pick_archive_url_from_index(_REAL_HEADER + "\n"), "")
+
+    def test_reads_csv_inside_zip(self):
+        import csv
+
+        content = _real_csv([_factory_row("點晶科技股份有限公司", "95A00371", "97334073", "0900615")])
+        rows = list(csv.DictReader(fw._open_csv_text_from_zip(_zip_of(content))))
+        self.assertEqual(rows[0]["工廠名稱"], "點晶科技股份有限公司")
+        self.assertEqual(rows[0]["工廠登記核准日期"], "0900615")
+
+
+class RunWeeklyScanTests(unittest.TestCase):
+    """用真實的檔案結構（目錄 CSV → ZIP → 名錄 CSV）跑一次完整流程。"""
+
+    def setUp(self):
+        from unittest import mock
+
+        from salesdev import repository
+        from tests._fake_firestore import FakeFirestore
+
+        self.db = FakeFirestore()
+        recent = _roc(date.today() - timedelta(days=20))
+        old = _roc(date.today() - timedelta(days=400))
+        zip_bytes = _zip_of(_real_csv([
+            _factory_row("點鑫產業股份有限公司", "99641359", "16396083", recent),
+            # 同一家公司（統一編號相同）的第二座工廠，要當成另一家新工廠
+            _factory_row("點鑫產業股份有限公司二廠", "99641358", "16396083", recent),
+            _factory_row("老工廠", "11111111", "22222222", old),
+            _factory_row("沒日期工廠", "33333333", "44444444", ""),
+        ]))
+
+        class _Resp:
+            def __init__(self, content):
+                self.content = content
+
+            def raise_for_status(self):
+                pass
+
+        def fake_get(url, timeout=None):
+            return _Resp(_INDEX_CSV.encode("utf-8") if url.endswith(".csv") else zip_bytes)
+
+        for patcher in (
+            mock.patch.object(fw, "db", self.db),
+            mock.patch.object(repository, "get_db", return_value=self.db),
+            mock.patch.object(fw, "_discover_csv_url", return_value="https://www.ida.gov.tw/opendata/02/SDD6569.csv"),
+            mock.patch.object(fw, "FACTORY_WATCH_LINE_TARGET_ID", ""),
+            mock.patch.object(fw, "FACTORY_WATCH_LOOKBACK_DAYS", 60),
+            mock.patch.object(fw.requests, "get", side_effect=fake_get),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_first_run_saves_recent_factories_including_second_plant(self):
+        from salesdev import repository
+
+        summary = fw.run_weekly_scan(None)
+        self.assertEqual(summary["errors"], [])
+        self.assertEqual(summary["fetched"], 4)
+        self.assertEqual(summary["undated"], 1)
+        self.assertEqual(summary["candidates"], 2)
+        self.assertEqual(summary["new_count"], 2)
+        factories = repository.list_factories()
+        self.assertEqual(sorted(f["name"] for f in factories), ["點鑫產業股份有限公司", "點鑫產業股份有限公司二廠"])
+        self.assertEqual(factories[0]["industry"], "08食品製造業")
+
+    def test_second_run_does_not_repeat(self):
+        fw.run_weekly_scan(None)
+        summary = fw.run_weekly_scan(None)
+        self.assertEqual(summary["candidates"], 2)
+        self.assertEqual(summary["new_count"], 0)
 
 
 if __name__ == "__main__":
