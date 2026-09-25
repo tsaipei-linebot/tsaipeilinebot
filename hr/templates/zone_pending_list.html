@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}待進人員 - {{ department }}專區{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ department }}專區</h1>
+{% include "_zone_tabs.html" %}
+
+<div class="page-head">
+    <h2 class="section-title">待進人員</h2>
+    <div class="btn-list" style="flex-direction: row;">
+        <a class="btn btn-primary" href="/hr/zone/pending/new">＋新增人員</a>
+    </div>
+</div>
+<p class="hint">
+    先把之後幾天要加退保的人排好。到了那一天，「每日加退保」會自動帶出當天的名單，一鍵送出給人資。
+    加保日和退保日不同天會自動拆成兩列；同一個人同一天重複登記加保（或退保）會擋下來。
+</p>
+
+<form method="get" action="/hr/zone/pending" class="filter-bar">
+    <label>日期 從 <input type="date" name="date_from" value="{{ filters.date_from }}"></label>
+    <label>到 <input type="date" name="date_to" value="{{ filters.date_to }}"></label>
+    <input type="text" name="name" value="{{ filters.name }}" placeholder="姓名或身分證">
+    <select name="vendor">
+        <option value="">全部廠商</option>
+        {% for v in all_vendor_names %}<option value="{{ v }}" {% if filters.vendor == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+    <select name="status">
+        <option value="open" {% if filters.status == 'open' %}selected{% endif %}>還沒送出</option>
+        {% for code, label in status_names.items() %}<option value="{{ code }}" {% if filters.status == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        <option value="all" {% if filters.status == 'all' %}selected{% endif %}>全部</option>
+    </select>
+    <button type="submit" class="btn">查詢</button>
+</form>
+
+{% if rows %}
+<div class="table-scroll">
+<table class="data-table insurance-table">
+    <thead>
+        <tr><th>日期</th><th>類型</th><th>廠商</th><th>班別</th><th>姓名</th><th>身分證</th><th>加保日期</th><th>退保日期</th><th>備註</th><th>狀態</th><th>建立人員</th><th>操作</th></tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr>
+            <td>{{ day_of(r) }}</td>
+            <td>{{ type_name(r) }}</td>
+            <td>{{ r.vendor or "-" }}</td>
+            <td>{{ r.shift or "-" }}</td>
+            <td>{{ r.name }}{% if r.rejected_reason and r.status == "pending" %}<div class="error-text">人資退件：{{ r.rejected_reason }}</div>{% endif %}</td>
+            <td>{{ r.id_number or "-" }}</td>
+            <td>{{ r.insured_date or "-" }}</td>
+            <td>{{ r.withdrawn_date or "-" }}</td>
+            <td>{{ r.note or "" }}</td>
+            <td>{{ status_names.get(r.status, r.status) }}{% if r.sent_work_date %}<div class="meta">交給人資 {{ r.sent_work_date }}</div>{% endif %}</td>
+            <td>{{ r.created_by_name }}</td>
+            <td class="row-actions">
+                {% if r.status == "pending" %}
+                <a class="btn btn-small" href="/hr/zone/pending/{{ r.id }}/edit">修改</a>
+                <form method="post" action="/hr/zone/pending/{{ r.id }}/cancel" class="inline-action js-cancel" data-name="{{ r.name }}">
+                    <button type="submit" class="btn btn-small btn-danger">刪除</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">目前沒有符合條件的待進人員。</p>
+{% endif %}
+
+<h2 class="section-title">Excel 批次匯入</h2>
+<p class="hint">
+    欄位跟每天交給人資的範本一樣（編號／廠商／班別／姓名／身分證／勞保加保日期／勞保退保日期／勞保追退日期／健保加保月份／眷屬健保／備註）。
+    廠商、班別要跟清單上的名稱完全一樣；身分證必填、日期至少一個。有問題的列不會匯入，會列出來讓你修正。
+</p>
+<p><a href="/hr/zone/pending/template.xlsx">下載匯入範本</a></p>
+<form method="post" action="/hr/zone/pending/import" enctype="multipart/form-data" class="inline-form">
+    <input type="file" name="file" accept=".xlsx" required>
+    <button type="submit" class="btn btn-primary">上傳並匯入</button>
+</form>
+
+<p class="back-link"><a href="/hr/insurance/drafts/records">加退保操作紀錄</a> ・ <a href="/portal">回主頁</a></p>
+
+{% set flash_msg = msg %}{% set flash_err = err %}
+{% set flash_list = [] %}
+{% for row, reason in import_errors %}{% set _ = flash_list.append("第 " ~ row ~ " 列：" ~ reason) %}{% endfor %}
+{% include "_flash_popup.html" %}
+<script>
+document.querySelectorAll('.js-cancel').forEach(function (f) {
+    f.addEventListener('submit', function (event) {
+        if (!window.confirm('確定要刪除「' + f.dataset.name + '」這一筆嗎？（紀錄會保留）')) { event.preventDefault(); }
+    });
+});
+</script>
+{% endblock %}

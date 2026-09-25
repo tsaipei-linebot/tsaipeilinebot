@@ -13,6 +13,7 @@ from hr.routes import (
     license_routes,
     reminder_routes,
     training_routes,
+    zone_routes,
 )
 
 hr_app = FastAPI(title="人資專區")
@@ -41,3 +42,4 @@ hr_app.include_router(training_routes.router)
 hr_app.include_router(file_routes.router)
 hr_app.include_router(reminder_routes.router)
 hr_app.include_router(insurance_routes.router)
+hr_app.include_router(zone_routes.router)

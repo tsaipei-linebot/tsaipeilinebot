@@ -1,0 +1,36 @@
+{# 可搜尋的下拉選單（打字篩選，但一定要從清單選）。macro：picker(name, label, choices, value, required) #}
+{% macro picker(name, label, choices, value="", required=True) %}
+<label>{{ label }}{% if not required %}（可空白）{% endif %}
+    <input type="text" name="{{ name }}" list="picker-{{ name }}" value="{{ value or '' }}" autocomplete="off"
+           class="js-picker" data-label="{{ label }}" data-required="{{ '1' if required else '' }}"
+           placeholder="打字搜尋{{ label }}" {% if required %}required{% endif %}>
+    <datalist id="picker-{{ name }}">
+        {% for choice in choices %}<option value="{{ choice }}"></option>{% endfor %}
+    </datalist>
+</label>
+{% endmacro %}
+
+{% macro picker_script() %}
+<script>
+(function () {
+    // 送出前確認每個搜尋選單的值真的在清單裡（伺服器端也會再檢查一次）
+    document.querySelectorAll('form').forEach(function (form) {
+        var pickers = form.querySelectorAll('.js-picker');
+        if (!pickers.length) { return; }
+        form.addEventListener('submit', function (event) {
+            for (var i = 0; i < pickers.length; i++) {
+                var input = pickers[i];
+                var value = input.value.trim();
+                if (!value && !input.dataset.required) { continue; }
+                var ok = Array.prototype.some.call(input.list.options, function (o) { return o.value === value; });
+                if (!ok) {
+                    event.preventDefault();
+                    window.showAlert('「' + input.dataset.label + '」請從清單選一個（打字可以搜尋）。找不到的話請主管先到「' + input.dataset.label + '維護」新增。');
+                    return;
+                }
+            }
+        });
+    });
+})();
+</script>
+{% endmacro %}

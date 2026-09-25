@@ -97,7 +97,12 @@ INSURANCE_COLLECTOR_DEPARTMENT = "人資部門"
 # 上傳頁多一個「待送出清單」，可以手動新增、送出給人資、收單後下載。
 # 新北所(配送組)的配送系統按「報到」「離職」也會自動寫進這裡。其他部門要開
 # 放的話把名稱加進來即可（名稱要跟 INSURANCE_UPLOAD_DEPARTMENTS 一致）。
-INSURANCE_DRAFT_DEPARTMENTS = ["新北所(配送組)"]
+INSURANCE_DRAFT_DEPARTMENTS = ["新北所(配送組)", "台北所(派遣組)", "台北所(國際組)"]
+# 有「待進人員」的部門（2026-09-25 新增，見 HANDOFF.md「台北所(派遣組)／台北所(國際組)專區」）：
+# 專區多「待進人員」「廠商維護」「班別維護」分頁，同仁提前排好之後幾天要加退保的人（存在同一個
+# 暫存區 hr_insurance_drafts），廠商／班別只能從主管維護的清單選、身分證必填。也要列在上面的
+# INSURANCE_DRAFT_DEPARTMENTS 裡。
+INSURANCE_ZONE_DEPARTMENTS = ["台北所(派遣組)", "台北所(國際組)"]
 # 只有人資會上傳的「部門」（2026-09-25 新增）：不是帳號部門主檔裡的部門，不會出現在任何所的
 # 首頁卡片，只出現在人資代傳的下拉選單和彙總頁。蝦皮每天有 E-learning、離店與實習通報兩份
 # 檔案（格式見 hr/insurance_shopee.py），分開存、互不覆蓋。

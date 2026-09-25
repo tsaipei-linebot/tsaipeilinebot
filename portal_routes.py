@@ -35,6 +35,10 @@ from services.salary_repayment_service import has_finance_access
 _INSURANCE_MERGED_ELSEWHERE_DEPARTMENTS = {
     platform_accounts.normalize_department(d) for d in ("新北所(配送組)", "桃園所", "高雄所")
 }
+# 有「待進人員」的部門（台北所兩組），首頁卡片說明不一樣
+from hr.config import INSURANCE_ZONE_DEPARTMENTS  # noqa: E402
+
+_ZONE_DEPARTMENTS = {platform_accounts.normalize_department(d) for d in INSURANCE_ZONE_DEPARTMENTS}
 
 router = APIRouter()
 
@@ -192,10 +196,12 @@ def portal_home(request: Request, redirect=Depends(_require_login)):
         not in _INSURANCE_MERGED_ELSEWHERE_DEPARTMENTS
     ):
         department = account.get("department") or ""
+        # 台北所(派遣組)／(國際組)專區（2026-09-25）多了「待進人員」分頁，見 hr/routes/zone_routes.py
+        zone = platform_accounts.normalize_department(department) in _ZONE_DEPARTMENTS
         cards.append(
             {
                 "name": f"{department}專區",
-                "description": "上傳每日加退保 Excel、查詢自己部門的上傳紀錄",
+                "description": "每日加退保、待進人員（提前排好要加退保的人）" if zone else "上傳每日加退保 Excel、查詢自己部門的上傳紀錄",
                 "href": "/hr/insurance/upload",
                 "help_href": "/hr/insurance/help",
             }

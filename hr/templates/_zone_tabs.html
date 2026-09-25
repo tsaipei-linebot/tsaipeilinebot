@@ -1,0 +1,9 @@
+{# 台北所專區分頁（2026-09-25）。需要 zone_tab、zone_manager（hr/routes/zone_routes.zone_tabs_context）。 #}
+<nav class="zone-tabs">
+    <a href="/hr/insurance/upload" class="{% if zone_tab == 'daily' %}active{% endif %}">每日加退保</a>
+    <a href="/hr/zone/pending" class="{% if zone_tab == 'pending' %}active{% endif %}">待進人員</a>
+    {% if zone_manager %}
+    <a href="/hr/zone/options/vendor" class="{% if zone_tab == 'vendor' %}active{% endif %}">廠商維護</a>
+    <a href="/hr/zone/options/shift" class="{% if zone_tab == 'shift' %}active{% endif %}">班別維護</a>
+    {% endif %}
+</nav>

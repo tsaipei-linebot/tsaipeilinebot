@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% block title %}每日加退保上傳 - 材霈有限公司-人資專區{% endblock %}
 {% block content %}
+{% if zone %}
+<h1 class="page-title">{{ department }}專區</h1>
+{% include "_zone_tabs.html" %}
+{% else %}
 <h1 class="page-title">{% if proxy %}每日加退保代傳{% else %}每日加退保上傳{% endif %}</h1>
+{% endif %}
 {% if proxy %}
 <p class="hint">人資代傳：選好部門和日期再上傳。{% if not shopee %}這個部門那天已經有檔案的話，預設「接在後面」，不會蓋掉原本的資料。{% endif %}人資不受收單限制。</p>
 {% else %}
