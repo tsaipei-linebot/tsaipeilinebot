@@ -6,13 +6,16 @@
 這支把「挑公司」這一步自動化。
 
 跟 `jobs_104.py` 一樣打 104 前端自己在用的搜尋 JSON API（不是官方公開 API），
-欄位可能變動，所以一律寬鬆讀取。**2026-09-25 寫這支時開發環境連不到 104**，
-下面幾個地方是依照 104 網頁版的網址參數推測、沒有實際連線驗證過，第一次正式
-跑完要看 `/salesdev?tab=hiring` 上方的執行結果確認：
-- 產業篩選參數 `indcat` 跟產業代碼（`INDUSTRY_CODES`）：就算 104 不認得這個
-  參數，下面還有一道「產業名稱關鍵字」的篩選當保險。
-- 公司頁的員工人數（`fetch_company_info()`）：先試公司頁的 JSON，不行再從
-  公司頁 HTML 裡找「員工人數」，都拿不到就回傳 None（畫面顯示「人數未知」）。
+欄位可能變動，所以一律寬鬆讀取。欄位意思參考開源專案 a7512cs/104-mcp-server
+實測整理的說明（2026-09-25 查的）：
+- 每筆職缺自己就帶 `employeeCount`（員工人數），**0 或沒有這個欄位＝公司沒公開**
+  （約半數公司不提供），不是 0 人。第一版曾經另外打公司頁
+  `/company/ajax/content/…` 取人數，正式環境 55 間全部取不到，已拿掉。
+- `jobType=1` 是 104 的廣告位，會無視關鍵字硬塞在最前面，要排除。
+- `order=16` 才是「最新更新在前」（15 是相關性）。
+- 職缺名稱裡 104 用 `[[[關鍵字]]]` 標記命中的字，要清掉。
+- 產業篩選參數 `indcat`：2026-09-25 第一次正式跑，排除派遣公司 0 筆（派遣公司
+  的產業是人力仲介，被 indcat 擋在 104 那端）、產業名稱不符 9 筆，看起來有生效。
 """
 import json
 import logging
@@ -46,13 +49,8 @@ INDUSTRY_DESC_KEYWORDS = (
     "機械", "金屬", "塑膠", "橡膠", "化學", "材料", "器材",
 )
 _INDUSTRY_FIELDS = ("coIndustryDesc", "coIndDesc", "industryDesc", "indcatDesc")
-
-COMPANY_AJAX_URL = "https://www.104.com.tw/company/ajax/content/{cust_id}"
-_EMPLOYEE_KEYS = ("empNo", "employeeCount", "empNum", "employees")
-_EMPLOYEE_HTML_RES = (
-    re.compile(r'"empNo"\s*:\s*"([^"]*)"'),
-    re.compile(r"員工人數[^0-9\n]{0,20}([\d,]+)\s*人"),
-)
+_AD_JOB_TYPE = 1
+_HIGHLIGHT_RE = re.compile(r"\[\[\[|\]\]\]")
 
 
 def _search_page(client: HttpClient, keyword: str, page: int) -> dict:
@@ -60,7 +58,7 @@ def _search_page(client: HttpClient, keyword: str, page: int) -> dict:
         "ro": 0,
         "keyword": keyword,
         "indcat": ",".join(INDUSTRY_CODES),
-        "order": 15,  # 依更新日期排序，每週只要看最近更新的前幾頁
+        "order": 16,  # 最新更新在前，每週只要看最近更新的前幾頁（15 是相關性）
         "asc": 0,
         "page": page,
         "mode": "s",
@@ -92,6 +90,8 @@ def cust_id_from_url(company_url: str) -> str:
 
 def parse_item(item: dict):
     """回傳 (職缺 dict, 略過原因)；要留下的略過原因是空字串。純函式。"""
+    if item.get("jobType") == _AD_JOB_TYPE:
+        return None, "ad"
     company_name = clean_text(item.get("custName", "") or "")
     if not company_name:
         return None, "no_company"
@@ -114,10 +114,11 @@ def parse_item(item: dict):
         "company_url": company_url,
         "industry": industry,
         "job_id": job_id,
-        "job_title": clean_text(item.get("jobName", "") or ""),
+        "job_title": clean_text(_HIGHLIGHT_RE.sub("", item.get("jobName", "") or "")),
         "job_url": job_url,
         "area": clean_text(item.get("jobAddrNoDesc", "") or ""),
         "appear_date": str(item.get("appearDate", "") or ""),
+        "employee_count": parse_employee_count(item.get("employeeCount")),
     }, ""
 
 
@@ -125,7 +126,10 @@ def collect_hiring_jobs(client: HttpClient, keywords: list, max_pages: int = DEF
     """搜尋每個關鍵字的前幾頁，回傳 (職缺 list, 統計)。時間到就停，保留已經
     抓到的，stats["deadline_hit"] 設成 True。"""
     jobs = {}
-    stats = {"raw_items": 0, "dispatch_skipped": 0, "industry_skipped": 0, "errors": [], "deadline_hit": False}
+    stats = {
+        "raw_items": 0, "ad_skipped": 0, "dispatch_skipped": 0, "industry_skipped": 0,
+        "errors": [], "deadline_hit": False,
+    }
     try:
         for keyword in keywords:
             for page in range(1, max_pages + 1):
@@ -148,7 +152,9 @@ def collect_hiring_jobs(client: HttpClient, keywords: list, max_pages: int = DEF
                 stats["raw_items"] += len(items)
                 for item in items:
                     job, reason = parse_item(item)
-                    if reason == "dispatch":
+                    if reason == "ad":
+                        stats["ad_skipped"] += 1
+                    elif reason == "dispatch":
                         stats["dispatch_skipped"] += 1
                     elif reason == "industry":
                         stats["industry_skipped"] += 1
@@ -164,68 +170,18 @@ def collect_hiring_jobs(client: HttpClient, keywords: list, max_pages: int = DEF
 
 
 # ---------------------------------------------------------------------------
-# 公司頁：員工人數
+# 員工人數
 # ---------------------------------------------------------------------------
 
 def parse_employee_count(raw) -> int:
-    """「250人」「1,200 人」「500人以上」→ 數字；「暫不提供」、空白 → None。純函式。"""
-    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+    """搜尋結果的 employeeCount：350、"350"、"1,200人" → 數字；0、空白、「暫不提供」
+    → None（公司沒公開）。純函式。"""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
         return int(raw) if raw > 0 else None
     digits = re.search(r"\d[\d,]*", str(raw or ""))
     if not digits:
         return None
     value = int(digits.group(0).replace(",", ""))
     return value if value > 0 else None
-
-
-def _find_key(node, keys):
-    if isinstance(node, dict):
-        for key in keys:
-            if key in node and node[key] not in (None, ""):
-                return node[key]
-        for value in node.values():
-            found = _find_key(value, keys)
-            if found not in (None, ""):
-                return found
-    elif isinstance(node, list):
-        for value in node:
-            found = _find_key(value, keys)
-            if found not in (None, ""):
-                return found
-    return None
-
-
-def fetch_company_info(client: HttpClient, cust_id: str, company_url: str = "") -> dict:
-    """回傳 {"employee_count": int 或 None, "employee_raw": 原始文字, "industry": 產業}。
-    兩種方法都拿不到人數時 employee_count 是 None（呼叫端記成失敗、之後再試）。
-    DeadlineReached 往外丟。"""
-    company_url = company_url or f"https://www.104.com.tw/company/{cust_id}"
-    result = {"employee_count": None, "employee_raw": "", "industry": ""}
-    try:
-        payload = client.get(COMPANY_AJAX_URL.format(cust_id=cust_id), headers={"Referer": company_url}).json()
-        raw = _find_key(payload, _EMPLOYEE_KEYS)
-        result["employee_raw"] = clean_text(str(raw or ""))
-        result["employee_count"] = parse_employee_count(raw)
-        industry = _find_key(payload, ("industryDesc",))
-        result["industry"] = clean_text(industry) if isinstance(industry, str) else ""
-        if result["employee_count"] is not None:
-            return result
-    except DeadlineReached:
-        raise
-    except Exception as exc:
-        logger.info("104 公司頁 JSON 取不到 %s：%s", cust_id, exc)
-
-    try:
-        html = client.get(company_url).text
-    except DeadlineReached:
-        raise
-    except Exception as exc:
-        logger.info("104 公司頁 HTML 取不到 %s：%s", cust_id, exc)
-        return result
-    for pattern in _EMPLOYEE_HTML_RES:
-        match = pattern.search(html)
-        if match and parse_employee_count(match.group(1)) is not None:
-            result["employee_raw"] = clean_text(match.group(1))
-            result["employee_count"] = parse_employee_count(match.group(1))
-            break
-    return result

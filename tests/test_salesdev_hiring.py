@@ -44,14 +44,11 @@ class _Resp:
 
 
 class FakeClient:
-    """依網址回傳假資料。search_pages: {(keyword, page): payload}；companies:
-    {cust_id: ajax payload 或 Exception}；html: {cust_id: 公司頁 HTML}。
-    deadline_after：打到第幾次請求就丟 DeadlineReached。"""
+    """search_pages: {(keyword, page): payload}。deadline_after：打到第幾次請求就丟
+    DeadlineReached。只有搜尋 API，打其他網址直接失敗（員工人數不再去開公司頁）。"""
 
-    def __init__(self, search_pages=None, companies=None, html=None, deadline_after=None):
+    def __init__(self, search_pages=None, deadline_after=None):
         self.search_pages = search_pages or {}
-        self.companies = companies or {}
-        self.html = html or {}
         self.deadline_after = deadline_after
         self.calls = []
 
@@ -59,17 +56,9 @@ class FakeClient:
         self.calls.append((url, params))
         if self.deadline_after is not None and len(self.calls) > self.deadline_after:
             raise DeadlineReached()
-        if url == hiring_104.SEARCH_API:
-            return _Resp(self.search_pages.get((params["keyword"], params["page"]), {"data": []}))
-        cust_id = url.rstrip("/").rsplit("/", 1)[-1]
-        if "/ajax/" in url:
-            payload = self.companies.get(cust_id, RuntimeError("HTTP 404"))
-            if isinstance(payload, Exception):
-                raise payload
-            return _Resp(payload)
-        if cust_id in self.html:
-            return _Resp(text=self.html[cust_id])
-        raise RuntimeError("HTTP 404")
+        if url != hiring_104.SEARCH_API:
+            raise AssertionError(f"不應該打搜尋以外的網址：{url}")
+        return _Resp(self.search_pages.get((params["keyword"], params["page"]), {"data": []}))
 
 
 class ParseItemTests(unittest.TestCase):
@@ -91,10 +80,22 @@ class ParseItemTests(unittest.TestCase):
         self.assertEqual(reason, "")
         self.assertEqual(job["industry"], "")
 
-    def test_search_sends_industry_filter(self):
+    def test_ads_are_skipped(self):
+        self.assertEqual(hiring_104.parse_item(_item("a", jobType=1))[1], "ad")
+        self.assertEqual(hiring_104.parse_item(_item("a", jobType=2))[1], "")
+
+    def test_highlight_marks_removed_and_employee_count_read(self):
+        job, _ = hiring_104.parse_item(_item("a", jobName="[[[作業員]]](日班)", employeeCount=350))
+        self.assertEqual(job["job_title"], "作業員(日班)")
+        self.assertEqual(job["employee_count"], 350)
+        self.assertIsNone(hiring_104.parse_item(_item("a", employeeCount=0))[0]["employee_count"])
+        self.assertIsNone(hiring_104.parse_item(_item("a"))[0]["employee_count"])
+
+    def test_search_sends_industry_filter_and_newest_order(self):
         client = FakeClient()
         hiring_104.collect_hiring_jobs(client, ["作業員"], max_pages=1)
         self.assertEqual(client.calls[0][1]["indcat"], "1001000000,1002000000")
+        self.assertEqual(client.calls[0][1]["order"], 16)
         self.assertNotIn("area", client.calls[0][1])
 
 
@@ -114,6 +115,28 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(stats["industry_skipped"], 1)
         self.assertFalse(stats["deadline_hit"])
 
+    def test_list_shaped_data_follows_metadata_pagination(self):
+        """104 實際回的形狀：data 是陣列，總頁數在 metadata.pagination（2026-09-25 第一次
+        正式跑，每個關鍵字只抓了第 1 頁才發現）。"""
+        client = FakeClient(
+            search_pages={
+                ("作業員", 1): {"data": [_item("j1")], "metadata": {"pagination": {"lastPage": 3, "total": 60}}},
+                ("作業員", 2): {"data": [_item("j2")], "metadata": {"pagination": {"lastPage": 3, "total": 60}}},
+                ("作業員", 3): {"data": [_item("j3")], "metadata": {"pagination": {"lastPage": 3, "total": 60}}},
+            }
+        )
+        jobs, _ = hiring_104.collect_hiring_jobs(client, ["作業員"], max_pages=5)
+        self.assertEqual(len(jobs), 3)
+        self.assertEqual(len(client.calls), 3)
+
+    def test_pagination_total_only(self):
+        from salesdev.scrapers import jobs_104
+
+        items = [{}] * 20
+        self.assertEqual(jobs_104._extract_items_and_total_page({"data": items, "metadata": {"pagination": {"total": 45}}})[1], 3)
+        self.assertEqual(jobs_104._extract_items_and_total_page({"data": items})[1], 1)
+        self.assertEqual(jobs_104._extract_items_and_total_page({"data": {"list": items, "totalPage": 4}})[1], 4)
+
     def test_deadline_keeps_what_was_found(self):
         client = FakeClient(
             search_pages={("作業員", 1): {"data": {"list": [_item("j1")], "totalPage": 5}}}, deadline_after=1
@@ -132,23 +155,9 @@ class EmployeeCountTests(unittest.TestCase):
         self.assertIsNone(hiring_104.parse_employee_count("暫不提供"))
         self.assertIsNone(hiring_104.parse_employee_count(""))
         self.assertIsNone(hiring_104.parse_employee_count("0人"))
-
-    def test_ajax_json_nested_field(self):
-        client = FakeClient(companies={"c1": {"data": {"empNo": "350人", "industryDesc": "半導體製造業"}}})
-        info = hiring_104.fetch_company_info(client, "c1")
-        self.assertEqual(info["employee_count"], 350)
-        self.assertEqual(info["industry"], "半導體製造業")
-
-    def test_falls_back_to_html(self):
-        client = FakeClient(html={"c1": "<div>員工人數：1,050 人</div>"})
-        self.assertEqual(hiring_104.fetch_company_info(client, "c1")["employee_count"], 1050)
-
-    def test_nothing_found_returns_none(self):
-        self.assertIsNone(hiring_104.fetch_company_info(FakeClient(), "c1")["employee_count"])
-
-    def test_deadline_propagates(self):
-        with self.assertRaises(DeadlineReached):
-            hiring_104.fetch_company_info(FakeClient(deadline_after=0), "c1")
+        self.assertIsNone(hiring_104.parse_employee_count(0))
+        self.assertIsNone(hiring_104.parse_employee_count(None))
+        self.assertEqual(hiring_104.parse_employee_count("1,200"), 1200)
 
 
 class TaxIdMatchTests(unittest.TestCase):
@@ -192,6 +201,25 @@ class RepositoryTests(_FakeDbMixin, unittest.TestCase):
         self.assertEqual(companies["c1"]["areas"], ["桃園市龜山區", "新北市樹林區"])
         self.assertEqual(companies["c1"]["keywords"], ["作業員", "技術員"])
 
+    def test_aggregate_takes_employee_count_from_jobs(self):
+        jobs = self._jobs()
+        jobs[1]["employee_count"] = 300
+        companies = {c["cust_id"]: c for c in repository.aggregate_hiring_jobs(jobs)}
+        self.assertEqual(companies["c1"]["employee_count"], 300)
+        self.assertIsNone(companies["c2"]["employee_count"])
+
+    def test_employee_count_updates_when_published_and_is_kept_when_not(self):
+        jobs = self._jobs()
+        jobs[0]["employee_count"] = 300
+        repository.upsert_hiring_companies(repository.aggregate_hiring_jobs(jobs), seen_date="2026-09-28")
+        doc = self.db.docs(repository.HIRING_COLLECTION)
+        self.assertEqual((doc["104_c1"]["employee_count"], doc["104_c2"]["employee_count"]), (300, None))
+        jobs[0]["employee_count"] = 320
+        repository.upsert_hiring_companies(repository.aggregate_hiring_jobs(jobs), seen_date="2026-10-05")
+        self.assertEqual(doc["104_c1"]["employee_count"], 320)
+        repository.upsert_hiring_companies(repository.aggregate_hiring_jobs(self._jobs()), seen_date="2026-10-12")
+        self.assertEqual(doc["104_c1"]["employee_count"], 320)
+
     def test_upsert_keeps_employee_count_and_tax_id(self):
         repository.upsert_hiring_companies(repository.aggregate_hiring_jobs(self._jobs()), seen_date="2026-09-28")
         repository.update_hiring_company("104_c1", {"employee_count": 300, "employee_checked_at": "2026-09-28", "tax_id": "11111111"})
@@ -203,11 +231,6 @@ class RepositoryTests(_FakeDbMixin, unittest.TestCase):
         self.assertEqual((doc["employee_count"], doc["tax_id"]), (300, "11111111"))
         self.assertEqual((doc["first_seen"], doc["last_seen"], doc["latest_job_count"]), ("2026-09-28", "2026-10-05", 1))
         self.assertEqual(doc["industry"], "電子")
-
-    def test_employee_retry_stops_after_max_failures(self):
-        repository.upsert_hiring_companies(repository.aggregate_hiring_jobs(self._jobs()))
-        repository.update_hiring_company("104_c2", {"employee_fail_count": repository.HIRING_EMPLOYEE_MAX_FAILURES})
-        self.assertEqual([c["id"] for c in repository.hiring_companies_needing_employee_count()], ["104_c1"])
 
     def test_settings_defaults_and_save(self):
         self.assertEqual(repository.get_hiring_settings()["keywords"], hiring_104.DEFAULT_KEYWORDS)
@@ -237,25 +260,25 @@ class PipelineTests(_FakeDbMixin, unittest.TestCase):
         return {
             ("作業員", 1): {
                 "data": [
-                    _item("j1", cust="c1", name="德勝科技股份有限公司"),
-                    _item("j2", cust="c2", name="小工廠有限公司"),
-                    _item("j3", cust="c3", name="泰藝電子股份有限公司"),
+                    _item("j1", cust="c1", name="德勝科技股份有限公司", employeeCount=350),
+                    _item("j2", cust="c2", name="小工廠有限公司", employeeCount="30"),
+                    _item("j3", cust="c3", name="泰藝電子股份有限公司", employeeCount=0),
+                    _item("j4", cust="c9", name="廣告公司", jobType=1),
                 ]
             }
         }
 
     def test_end_to_end(self):
-        client = FakeClient(
-            search_pages=self._search(),
-            companies={"c1": {"data": {"empNo": "350人"}}, "c2": {"data": {"empNo": "30人"}}},
-        )
+        client = FakeClient(search_pages=self._search())
         summary = self._run(client, g0v=lambda name: {"name": "泰藝電子股份有限公司", "tax_id": "22222222"} if name.startswith("泰藝") else None)
         docs = self.db.docs(repository.HIRING_COLLECTION)
         self.assertEqual(summary["companies_found"], 3)
         self.assertEqual(summary["new_companies"], 3)
-        self.assertEqual((summary["employee_checked"], summary["employee_failed"]), (2, 1))
+        self.assertEqual((summary["employee_known"], summary["ad_skipped"]), (2, 1))
         self.assertEqual(docs["104_c1"]["employee_count"], 350)
-        self.assertEqual(docs["104_c3"]["employee_fail_count"], 1)
+        self.assertEqual(docs["104_c2"]["employee_count"], 30)
+        self.assertIsNone(docs["104_c3"]["employee_count"])
+        self.assertNotIn("104_c9", docs)
         self.assertEqual((docs["104_c1"]["tax_id"], docs["104_c1"]["tax_id_source"]), ("11111111", "登記工廠名錄"))
         self.assertEqual((docs["104_c3"]["tax_id"], docs["104_c3"]["tax_id_source"]), ("22222222", "g0v 公司資料庫"))
         self.assertEqual(docs["104_c2"]["tax_id"], "")
@@ -268,18 +291,11 @@ class PipelineTests(_FakeDbMixin, unittest.TestCase):
         self.assertEqual(summary["companies_found"], 0)
         self.assertIn("104 沒有回傳任何職缺", summary["errors"][0])
 
-    def test_employee_counts_all_failing_is_reported(self):
-        summary = self._run(FakeClient(search_pages=self._search()))
-        self.assertEqual(summary["employee_failed"], 3)
-        self.assertTrue(any("員工人數 3 間都取不到" in e for e in summary["errors"]))
-
-    def test_deadline_during_employee_lookup_leaves_rest_for_next_run(self):
-        client = FakeClient(search_pages=self._search(), companies={"c1": {"data": {"empNo": "350人"}}}, deadline_after=6)
-        # 5 個關鍵字各搜 1 次（第 1 頁之後沒有資料），第 6 次請求查 c1 成功，第 7 次時間到
-        summary = self._run(client)
-        self.assertTrue(summary["deadline_hit"])
-        self.assertEqual(summary["employee_checked"], 1)
-        self.assertEqual(summary["employee_pending"], 2)
+    def test_no_employee_counts_at_all_is_reported(self):
+        items = [_item(f"j{n}", cust=f"c{n}", name=f"工廠{n}有限公司") for n in range(12)]
+        summary = self._run(FakeClient(search_pages={("作業員", 1): {"data": items}}))
+        self.assertEqual(summary["companies_found"], 12)
+        self.assertTrue(any("搜尋結果都沒有員工人數" in e for e in summary["errors"]))
 
     def test_registry_failure_does_not_stop_the_run(self):
         fake_factory_watch = mock.Mock()
