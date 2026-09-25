@@ -1,7 +1,7 @@
 """測試用的記憶體版 Firestore（2026-09-24 新增，給 salesdev 的測試用）。
 
 只實作 salesdev/repository.py 用到的那一小部分 API：collection/document、
-get/set(merge)、where("欄位", "==", 值).stream()、stream()、get_all()、
+get/set(merge)/delete、where("欄位", "==", 值).stream()、stream()、get_all()、
 batch()。merge=True 只做最上層欄位合併（repository 只寫最上層欄位）。
 """
 import copy
@@ -31,6 +31,9 @@ class FakeDocRef:
             self._store[self.id].update(data)
         else:
             self._store[self.id] = data
+
+    def delete(self):
+        self._store.pop(self.id, None)
 
 
 class FakeQuery:
@@ -63,9 +66,15 @@ class FakeBatch:
     def set(self, ref, data, merge=False):
         self._ops.append((ref, data, merge))
 
+    def delete(self, ref):
+        self._ops.append((ref, None, False))
+
     def commit(self):
         for ref, data, merge in self._ops:
-            ref.set(data, merge=merge)
+            if data is None:
+                ref.delete()
+            else:
+                ref.set(data, merge=merge)
         self._ops = []
 
 

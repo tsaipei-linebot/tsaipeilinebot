@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}薪資補款資料搬家 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">薪資補款資料搬家</h1>
+</div>
+<p class="hint">只有全平台管理員看得到這頁。這是薪資補款搬離 GAS 的第 1 步：把 Google 試算表的資料<strong>原樣</strong>搬進平台，並決定「我的專區」和財務部專區要讀哪一邊的資料。</p>
+
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
+{% if notice %}<p class="success js-flash">{{ notice }}</p>{% endif %}
+
+<h2 class="section-title">1. 從試算表同步到平台</h2>
+<p class="hint">按一次，平台的資料就會變得跟試算表一模一樣：新的列加進來、改過的列更新、試算表已經刪掉的列（例如被退回的補款單）也從平台刪掉。每一格都照試算表上顯示的文字存，不修改任何內容。可以重複按，不會重複匯入。</p>
+<form method="post" action="/finance/migration/sync" class="form-stack form-narrow">
+    <button type="submit" class="btn btn-primary">從試算表同步到平台</button>
+</form>
+
+{% if last_synced_at %}
+<p class="hint">最後一次同步：{{ last_synced_at }}（{{ state.get("last_synced_by", "") }}）</p>
+<div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>分頁</th><th>試算表筆數</th><th>新增</th><th>更新</th><th>沒有變動</th><th>刪除</th></tr></thead>
+        <tbody>
+            {% for label, key in [("薪資補款紀錄", "records"), ("員工主管組織表", "org")] %}
+            {% set r = result.get(key) or {} %}
+            <tr>
+                <td>{{ label }}</td><td>{{ r.get("total", 0) }}</td><td>{{ r.get("added", 0) }}</td>
+                <td>{{ r.get("updated", 0) }}</td><td>{{ r.get("unchanged", 0) }}</td><td>{{ r.get("deleted", 0) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% if result.get("blank_id_rows") or result.get("duplicate_ids") %}
+<p class="warning">
+    下面這些列的補款單號有狀況，一樣<strong>照原樣搬過來了，沒有少</strong>，只是提醒你知道：
+    {% if result.get("blank_id_rows") %}<br>補款單號空白：試算表第 {{ result.blank_id_rows | join("、") }} 列{% endif %}
+    {% for dup in result.get("duplicate_ids") or [] %}<br>補款單號「{{ dup.id }}」重複：試算表第 {{ dup.rows | join("、") }} 列跟前面同號{% endfor %}
+</p>
+{% endif %}
+{% else %}
+<p class="empty">還沒有同步過。</p>
+{% endif %}
+
+<h2 class="section-title">2. 讀取來源</h2>
+<p class="hint">目前「我的專區」的補款紀錄和財務部專區讀的是：<strong>{{ source_names[read_source] }}</strong>{% if read_source_changed_at %}（{{ read_source_changed_at }} 由 {{ state.get("read_source_changed_by", "") }} 切換）{% endif %}</p>
+{% if read_source == "firestore" %}
+<p class="warning">現在新的補款單還是由 GAS 寫進試算表，平台資料只到最後一次同步的那一刻。第 4 步（送出流程改由平台處理）上線之前，讀平台資料只適合用來檢查；檢查完建議切回試算表，或每次檢查前先按上面的同步。</p>
+{% endif %}
+<form method="post" action="/finance/migration/source" class="form-stack form-narrow">
+    {% for value, name in source_names.items() %}
+    <label style="display: inline-flex; align-items: center; gap: 6px;">
+        <input type="radio" name="source" value="{{ value }}" {% if value == read_source %}checked{% endif %}> {{ name }}
+    </label>
+    {% endfor %}
+    <button type="submit" class="btn">切換</button>
+</form>
+
+<p class="back-link"><a href="/finance">&larr; 回財務部專區</a></p>
+{% endblock %}

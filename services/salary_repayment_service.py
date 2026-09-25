@@ -5,6 +5,10 @@
 services/factory_watch_service.py／salesdev/sheet_import.py 一樣的
 Cloud Run 服務帳戶 ADC 連線。
 
+**2026-09-25 起可以改讀平台資料**（薪資補款搬離 GAS 階段 2 第 1 步）：`/finance/migration` 把試算表原樣
+同步進 Firestore（`services/salary_repayment_store.py`），開關切到「平台資料」後，`_fetch_rows()` 改讀
+Firestore，回傳格式跟讀試算表完全一樣，下面的篩選／排序邏輯不用分兩套。預設仍讀試算表。
+
 這份試算表有兩個相關分頁：
 - 「員工主管組織表」：只用來把補款紀錄裡「核准主管」欄位存的 LINE ID
   換算回看得懂的姓名（見 `build_line_id_name_lookup`）。**誰是誰的主管
@@ -29,6 +33,7 @@ from config import (
     SALARY_REPAYMENT_SHEET_ID,
 )
 import platform_accounts
+from services import salary_repayment_store
 
 _SERVICE_ACCOUNT_HINT = (
     "沒有權限讀取這份 Google Sheet，請把這份試算表分享「檢視者」權限給 "
@@ -133,10 +138,9 @@ def _resolve_approver_name(record: dict, line_id_name_lookup: dict) -> str:
     return line_id_name_lookup.get(line_id, line_id)
 
 
-def _fetch_sheet_rows():
-    """回傳 (org_rows, record_rows, error)——把兩個分頁的原始資料抓下來，
-    給 get_my_repayment_records()／get_all_approved_repayment_records()
-    共用，避免兩邊各自重複一份幾乎一樣的 Sheets API 呼叫跟錯誤處理。"""
+def fetch_sheet_values():
+    """回傳 (org_values, record_values, error)——兩個分頁的原始值（含表頭列、每格是試算表顯示的
+    文字）。讀試算表顯示用（`_fetch_sheet_rows()`）跟同步進平台（`salary_repayment_store`）共用。"""
     if not SALARY_REPAYMENT_SHEET_ID:
         return [], [], "尚未設定 SALARY_REPAYMENT_SHEET_ID，請聯絡系統管理員設定。"
 
@@ -161,16 +165,34 @@ def _fetch_sheet_rows():
         return [], [], f"讀取 Google Sheet 時發生錯誤：{e}"
 
     value_ranges = result.get("valueRanges", [])
-    org_rows = rows_to_dicts(value_ranges[0].get("values", [])) if len(value_ranges) > 0 else []
-    record_rows = rows_to_dicts(value_ranges[1].get("values", [])) if len(value_ranges) > 1 else []
-    return org_rows, record_rows, None
+    org_values = value_ranges[0].get("values", []) if len(value_ranges) > 0 else []
+    record_values = value_ranges[1].get("values", []) if len(value_ranges) > 1 else []
+    return org_values, record_values, None
+
+
+def _fetch_sheet_rows():
+    """回傳 (org_rows, record_rows, error)——把兩個分頁的原始資料抓下來，
+    給 get_my_repayment_records()／get_all_approved_repayment_records()
+    共用，避免兩邊各自重複一份幾乎一樣的 Sheets API 呼叫跟錯誤處理。"""
+    org_values, record_values, error = fetch_sheet_values()
+    if error:
+        return [], [], error
+    return rows_to_dicts(org_values), rows_to_dicts(record_values), None
+
+
+def _fetch_rows():
+    """依 `/finance/migration` 的讀取來源開關（2026-09-25 新增）決定讀試算表還是平台資料，
+    兩邊回傳格式一樣。開關讀不到一律當成試算表。"""
+    if salary_repayment_store.read_source() == salary_repayment_store.SOURCE_FIRESTORE:
+        return salary_repayment_store.load_rows()
+    return _fetch_sheet_rows()
 
 
 def get_my_repayment_records(viewer_name: str):
     """回傳 (records, error)。records 是 viewer_name 看得到的補款紀錄列表
     （已經把「核准主管」從 LINE ID 換成姓名、依申請時間新到舊排序）；讀取
     失敗時 records 是空列表，error 是可以直接顯示在畫面上的中文說明。"""
-    org_rows, record_rows, error = _fetch_sheet_rows()
+    org_rows, record_rows, error = _fetch_rows()
     if error:
         return [], error
 
@@ -192,7 +214,7 @@ def get_all_approved_repayment_records():
     """回傳 (records, error)，records 依申請時間新到舊排序，已核准的補款
     紀錄，不套用 get_my_repayment_records() 那套「申請人本人或其主管」的
     可見範圍篩選。"""
-    org_rows, record_rows, error = _fetch_sheet_rows()
+    org_rows, record_rows, error = _fetch_rows()
     if error:
         return [], error
 

@@ -18,6 +18,10 @@ GAS 那一側一行都不用動。預設仍是 PDF，維持原本的行為。
 **只顯示「已核准」的紀錄**：試算表裡「已退回」的紀錄 GAS 那邊本來就會
 直接刪除、不會留在表裡；「尚未審核」的財務不需要看到（只看確定要撥款
 的），2026-09-22 使用者明確確認。
+
+**`/finance/migration`（2026-09-25 新增，只有全平台管理員）**：薪資補款搬離 GAS 階段 2 的第 1 步。
+按鈕把試算表原樣同步進平台資料庫（見 `services/salary_repayment_store.py`），另一個開關決定 `/me`、
+`/finance` 讀試算表還是平台資料，隨時可以切回去。
 """
 from urllib.parse import quote
 
@@ -28,7 +32,14 @@ from fastapi.responses import RedirectResponse, Response
 
 import platform_accounts
 from platform_templating import templates
-from services.salary_repayment_service import DISPLAY_COLUMNS, get_all_approved_repayment_records, has_finance_access
+from config import TAIPEI_TZ
+from services import salary_repayment_store as store
+from services.salary_repayment_service import (
+    DISPLAY_COLUMNS,
+    fetch_sheet_values,
+    get_all_approved_repayment_records,
+    has_finance_access,
+)
 from services.pdf_to_image import convert_pdf_zip_to_png_zip
 from services.salary_repayment_submit_service import export_approved_salary_pdfs_zip
 
@@ -52,6 +63,7 @@ def _home_context(request: Request, export_error: str = ""):
         "salary_repayment_records": records,
         "salary_repayment_error": error,
         "export_error": export_error,
+        "read_source_name": store.SOURCE_NAMES[store.read_source()],
     }
 
 
@@ -119,3 +131,71 @@ def finance_export_pdf(
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
+
+
+def _require_admin(request: Request):
+    account = platform_accounts.current_account(request)
+    if not account:
+        return RedirectResponse(url="/login?next=/finance/migration", status_code=303)
+    if not account.get("is_platform_admin"):
+        return RedirectResponse(url="/finance", status_code=303)
+    return None
+
+
+def _taipei_time(value) -> str:
+    if not value or not hasattr(value, "astimezone"):
+        return ""
+    return value.astimezone(TAIPEI_TZ).strftime("%Y-%m-%d %H:%M")
+
+
+def _migration_page(request: Request, error: str = "", notice: str = "", status_code: int = 200):
+    state = store.get_state()
+    return templates.TemplateResponse(
+        request,
+        "finance_migration.html",
+        {
+            "user": platform_accounts.current_account(request),
+            "state": state,
+            "read_source": store.read_source(),
+            "source_names": store.SOURCE_NAMES,
+            "last_synced_at": _taipei_time(state.get("last_synced_at")),
+            "read_source_changed_at": _taipei_time(state.get("read_source_changed_at")),
+            "result": state.get("last_result") or {},
+            "error": error,
+            "notice": notice,
+        },
+        status_code=status_code,
+    )
+
+
+@router.get("/finance/migration")
+def finance_migration(request: Request, notice: str = "", redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    notices = {"synced": "已經從試算表同步到平台。", "source": "讀取來源已經切換。"}
+    return _migration_page(request, notice=notices.get(notice, ""))
+
+
+@router.post("/finance/migration/sync")
+def finance_migration_sync(request: Request, redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    org_values, record_values, error = fetch_sheet_values()
+    if error:
+        return _migration_page(request, error=error, status_code=400)
+    if not record_values:
+        return _migration_page(request, error="試算表「薪資補款紀錄」分頁是空的，沒有同步。請確認分頁名稱是否正確。", status_code=400)
+    store.sync_from_sheet(org_values, record_values, platform_accounts.current_account(request))
+    return RedirectResponse(url="/finance/migration?notice=synced", status_code=303)
+
+
+@router.post("/finance/migration/source")
+def finance_migration_source(request: Request, source: str = Form(...), redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    if source not in store.SOURCE_NAMES:
+        return _migration_page(request, error="讀取來源不正確。", status_code=400)
+    if source == store.SOURCE_FIRESTORE and not store.get_state().get("last_synced_at"):
+        return _migration_page(request, error="還沒有從試算表同步過，平台上沒有資料，請先按「從試算表同步到平台」。", status_code=400)
+    store.set_read_source(source, platform_accounts.current_account(request))
+    return RedirectResponse(url="/finance/migration?notice=source", status_code=303)

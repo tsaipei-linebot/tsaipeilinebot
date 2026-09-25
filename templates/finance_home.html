@@ -5,6 +5,9 @@
     <h1 class="page-title">財務部專區</h1>
 </div>
 <p class="hint">這裡顯示所有已核准的薪資補款紀錄（不分申請人/主管）。</p>
+{% if user and user.is_platform_admin %}
+<p class="hint">管理員：目前資料來源是「{{ read_source_name }}」。<a href="/finance/migration">薪資補款資料搬家</a></p>
+{% endif %}
 
 <h2 class="section-title">下載存查單</h2>
 <p class="hint">選一個日期區間（依「申請日」欄位），系統會把區間內所有已核准的補款紀錄各自產生一份存查單（格式跟核准信附件一致），打包成一個 ZIP 檔案下載。</p>
