@@ -146,7 +146,8 @@ def _sync_collection(collection, assigned: list, now) -> dict:
             counts["unchanged"] += 1
             continue
         counts["updated" if old else "added"] += 1
-        sets[doc_id] = {"fields": fields, "row_number": row_number, "source": SOURCE_SHEET, "synced_at": now}
+        # 保留同步以外的欄位（例如第 2 步搬好的照片 photo_*），只換掉試算表那幾個
+        sets[doc_id] = {**(old or {}), "fields": fields, "row_number": row_number, "source": SOURCE_SHEET, "synced_at": now}
     keep = {doc_id for doc_id, _, _ in assigned}
     deletes = [doc_id for doc_id, data in existing.items() if doc_id not in keep and data.get("source") == SOURCE_SHEET]
     counts["deleted"] = len(deletes)
