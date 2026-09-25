@@ -22,7 +22,8 @@ GAS 那一側一行都不用動。預設仍是 PDF，維持原本的行為。
 **`/finance/migration`（2026-09-25 新增，只有全平台管理員）**：薪資補款搬離 GAS 階段 2 的第 1 步。
 按鈕把試算表原樣同步進平台資料庫（見 `services/salary_repayment_store.py`），另一個開關決定 `/me`、
 `/finance` 讀試算表還是平台資料，隨時可以切回去。第 2 步（同一頁）：「搬佐證照片」按鈕把 Drive 上的
-照片複製到 Cloud Storage（見 `services/salary_repayment_photos.py`），一次一批。
+照片複製到 Cloud Storage（見 `services/salary_repayment_photos.py`），一次一批。第 3 步：「檢查寫入權限」
+按鈕確認平台能寫回「薪資補款紀錄」（見 `services/salary_repayment_sheet_writer.py`），不改任何內容。
 """
 from urllib.parse import quote
 
@@ -35,6 +36,7 @@ import platform_accounts
 from platform_templating import templates
 from config import SALARY_PHOTO_GCS_BUCKET, TAIPEI_TZ
 from services import salary_repayment_photos as photos
+from services import salary_repayment_sheet_writer as sheet_writer
 from services import salary_repayment_store as store
 from services.salary_repayment_service import (
     DISPLAY_COLUMNS,
@@ -252,3 +254,13 @@ def finance_migration_photo(doc_id: str, request: Request, redirect=Depends(_req
             "Cache-Control": "private, no-store",
         },
     )
+
+
+@router.post("/finance/migration/check-write")
+def finance_migration_check_write(request: Request, redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    ok, message = sheet_writer.check_write_access()
+    if ok:
+        return _migration_page(request, notice=message)
+    return _migration_page(request, error=message, status_code=400)

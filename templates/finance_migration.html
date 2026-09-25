@@ -4,7 +4,7 @@
 <div class="page-head">
     <h1 class="page-title">薪資補款資料搬家</h1>
 </div>
-<p class="hint">只有全平台管理員看得到這頁。這是薪資補款搬離 GAS 的前兩步：把 Google 試算表的資料和佐證照片<strong>原樣</strong>搬進平台，並決定「我的專區」和財務部專區要讀哪一邊的資料。</p>
+<p class="hint">只有全平台管理員看得到這頁。這是薪資補款搬離 GAS 的前三步：把 Google 試算表的資料和佐證照片<strong>原樣</strong>搬進平台、確認平台能寫回試算表，並決定「我的專區」和財務部專區要讀哪一邊的資料。</p>
 
 {% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 {% if notice %}<p class="success js-flash">{{ notice }}</p>{% endif %}
@@ -84,7 +84,13 @@
 <p class="empty">請先完成第 1 項的同步，才能搬照片。</p>
 {% endif %}
 
-<h2 class="section-title">3. 讀取來源</h2>
+<h2 class="section-title">3. 檢查平台能不能寫回試算表</h2>
+<p class="hint">之後補款單改由平台處理時，平台要照 GAS 原本的方式把資料寫進「薪資補款紀錄」，財務看的「材霈會計對帳表」才會跟著更新。按這個按鈕只是確認權限：平台會把第 1 列的表頭原封不動寫回去，<strong>試算表內容不會有任何改變</strong>。</p>
+<form method="post" action="/finance/migration/check-write" class="form-stack form-narrow">
+    <button type="submit" class="btn">檢查寫入權限</button>
+</form>
+
+<h2 class="section-title">4. 讀取來源</h2>
 <p class="hint">目前「我的專區」的補款紀錄和財務部專區讀的是：<strong>{{ source_names[read_source] }}</strong>{% if read_source_changed_at %}（{{ read_source_changed_at }} 由 {{ state.get("read_source_changed_by", "") }} 切換）{% endif %}</p>
 {% if read_source == "firestore" %}
 <p class="warning">現在新的補款單還是由 GAS 寫進試算表，平台資料只到最後一次同步的那一刻。第 4 步（送出流程改由平台處理）上線之前，讀平台資料只適合用來檢查；檢查完建議切回試算表，或每次檢查前先按上面的同步。</p>
