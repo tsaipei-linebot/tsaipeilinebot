@@ -3,17 +3,18 @@
 
 流程：
 1. 用畫面上設定的關鍵字搜 104（全台、電子資訊／半導體＋一般製造業），排除派遣
-   公司，依公司彙總、寫進 Firestore（`repository.upsert_hiring_companies()`）。
-2. 還不知道員工人數的公司，逐一打開 104 公司頁取員工人數，職缺多的先查。
-3. 還沒有統一編號的公司，用經濟部《登記工廠名錄》（新登記工廠掃描用的同一份）
+   公司跟 104 廣告位，依公司彙總、寫進 Firestore（`repository.upsert_hiring_companies()`）。
+   員工人數直接用搜尋結果每一筆帶的 `employeeCount`（公司沒公開就是「人數未知」）。
+2. 還沒有統一編號的公司，用經濟部《登記工廠名錄》（新登記工廠掃描用的同一份）
    以公司名稱對統一編號；名錄對不到的，再用 g0v 公司資料庫查（名稱要完全一樣
    才算）。都對不到就留空，交給 Cowork 查。
 
-**時間上限**：Cloud Run 一個請求預設最多 300 秒。第 1、2 步都在打 104，每次
-請求至少間隔 1.5 秒，限制在 `SALESDEV_HIRING_TIME_BUDGET_SECONDS`（預設 180 秒）
-內；時間到就停，已經查到的都會存下來，沒查完的員工人數下次執行接著查（第一次
-跑公司很多，可以用 `gcloud scheduler jobs run` 多手動跑幾次補齊）。第 3 步不打
-104，排在最後面。
+**時間上限**：Cloud Run 一個請求預設最多 300 秒。第 1 步在打 104，每次請求至少
+間隔 1.5 秒，限制在 `SALESDEV_HIRING_TIME_BUDGET_SECONDS`（預設 180 秒）內；時間到
+就停，已經抓到的照樣存。第 2 步不打 104，排在最後面。
+
+（2026-09-25 第一版另外逐一打開 104 公司頁取員工人數，正式環境全部取不到、還把
+時間用光，已經拿掉，見 salesdev/scrapers/hiring_104.py 開頭。）
 """
 import logging
 import time
@@ -22,7 +23,7 @@ import unicodedata
 from config import SALESDEV_HIRING_TIME_BUDGET_SECONDS
 from salesdev import repository
 from salesdev.scrapers import hiring_104
-from salesdev.scrapers.base import DeadlineReached, HttpClient
+from salesdev.scrapers.base import HttpClient
 
 logger = logging.getLogger(__name__)
 
@@ -108,35 +109,6 @@ def _fill_tax_ids(summary: dict, hard_deadline: float):
 # 主流程
 # ---------------------------------------------------------------------------
 
-def _fill_employee_counts(client: HttpClient, summary: dict):
-    pending = repository.hiring_companies_needing_employee_count()
-    for index, company in enumerate(pending):
-        try:
-            info = hiring_104.fetch_company_info(client, company["cust_id"], company.get("company_url", ""))
-        except DeadlineReached:
-            summary["deadline_hit"] = True
-            summary["employee_pending"] = len(pending) - index
-            return
-        fields = {}
-        if info.get("industry") and not company.get("industry"):
-            fields["industry"] = info["industry"]
-        if info.get("employee_count") is not None:
-            fields.update(
-                {
-                    "employee_count": info["employee_count"],
-                    "employee_raw": info.get("employee_raw", ""),
-                    "employee_checked_at": repository.today_str(),
-                }
-            )
-            summary["employee_checked"] += 1
-        else:
-            fields["employee_fail_count"] = (company.get("employee_fail_count") or 0) + 1
-            fields["employee_raw"] = info.get("employee_raw", "")
-            summary["employee_failed"] += 1
-        repository.update_hiring_company(company["id"], fields)
-    summary["employee_pending"] = 0
-
-
 def run_weekly_hiring_scan(time_budget_seconds: int = None, client: HttpClient = None) -> dict:
     started = time.monotonic()
     budget = time_budget_seconds or SALESDEV_HIRING_TIME_BUDGET_SECONDS
@@ -147,13 +119,12 @@ def run_weekly_hiring_scan(time_budget_seconds: int = None, client: HttpClient =
         "keywords": settings["keywords"],
         "raw_items": 0,
         "kept_jobs": 0,
+        "ad_skipped": 0,
         "dispatch_skipped": 0,
         "industry_skipped": 0,
         "companies_found": 0,
         "new_companies": 0,
-        "employee_checked": 0,
-        "employee_failed": 0,
-        "employee_pending": 0,
+        "employee_known": 0,
         "tax_id_matched": 0,
         "deadline_hit": False,
         "errors": [],
@@ -161,7 +132,7 @@ def run_weekly_hiring_scan(time_budget_seconds: int = None, client: HttpClient =
     client = client or HttpClient(deadline=started + budget)
 
     jobs, stats = hiring_104.collect_hiring_jobs(client, settings["keywords"], settings["max_pages"])
-    for key in ("raw_items", "dispatch_skipped", "industry_skipped"):
+    for key in ("raw_items", "ad_skipped", "dispatch_skipped", "industry_skipped"):
         summary[key] = stats[key]
     summary["errors"].extend(stats["errors"][:5])
     summary["deadline_hit"] = stats["deadline_hit"]
@@ -176,24 +147,15 @@ def run_weekly_hiring_scan(time_budget_seconds: int = None, client: HttpClient =
     try:
         companies = repository.aggregate_hiring_jobs(jobs)
         summary["companies_found"] = len(companies)
+        summary["employee_known"] = sum(1 for c in companies if c.get("employee_count") is not None)
         summary["new_companies"] = repository.upsert_hiring_companies(companies)["new"]
+        if len(companies) >= 10 and not summary["employee_known"]:
+            summary["errors"].append(
+                f"找到 {len(companies)} 間公司，但搜尋結果都沒有員工人數（104 可能改了欄位），請通知系統管理窗口"
+            )
     except Exception as exc:
         logger.exception("104 產線公司：寫入 Firestore 失敗")
         summary["errors"].append(f"寫入資料庫失敗：{exc}")
-
-    if not summary["deadline_hit"]:
-        try:
-            _fill_employee_counts(client, summary)
-        except Exception as exc:
-            logger.exception("104 產線公司：查員工人數失敗")
-            summary["errors"].append(f"查員工人數失敗：{exc}")
-    else:
-        summary["employee_pending"] = len(repository.hiring_companies_needing_employee_count())
-
-    if summary["employee_failed"] and not summary["employee_checked"]:
-        summary["errors"].append(
-            f"員工人數 {summary['employee_failed']} 間都取不到（104 公司頁格式可能改了），請通知系統管理窗口"
-        )
 
     try:
         _fill_tax_ids(summary, started + HARD_LIMIT_SECONDS)

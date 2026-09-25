@@ -31,13 +31,30 @@ def _search_page(client: HttpClient, keyword: str, page: int) -> dict:
 
 
 def _extract_items_and_total_page(payload) -> tuple:
-    """data 欄位實際看過兩種形狀：直接是陣列，或 {"list": [...], "totalPage": N}。"""
+    """data 欄位實際看過兩種形狀：直接是陣列，或 {"list": [...], "totalPage": N}。
+
+    2026-09-25 修正：data 是陣列時，總頁數放在 `metadata.pagination`（`lastPage`，
+    或只有符合總筆數 `total`），原本一律當成只有 1 頁，每個關鍵字都只抓了第 1 頁
+    （104 產線徵才公司第一次正式跑，5 個關鍵字剛好 160 筆＝每頁 32 筆 × 5 才發現）。"""
     data_field = payload.get("data", []) if isinstance(payload, dict) else []
     if isinstance(data_field, list):
-        return data_field, 1
+        return data_field, _total_page_from_metadata(payload.get("metadata"), len(data_field))
     if isinstance(data_field, dict):
         return data_field.get("list", []), data_field.get("totalPage", 1)
     return [], 1
+
+
+def _total_page_from_metadata(metadata, page_size: int) -> int:
+    pagination = metadata.get("pagination") if isinstance(metadata, dict) else None
+    if not isinstance(pagination, dict):
+        return 1
+    last_page = pagination.get("lastPage")
+    if isinstance(last_page, int) and last_page > 0:
+        return last_page
+    total = pagination.get("total")
+    if isinstance(total, int) and total > 0 and page_size > 0:
+        return -(-total // page_size)  # 無條件進位
+    return 1
 
 
 def _normalize_link(link: str) -> str:

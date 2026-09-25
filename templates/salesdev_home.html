@@ -128,9 +128,9 @@
 <div class="salesdev-run">
     {% if latest_hiring_run %}
     <strong>最近一次每週抓取：</strong>{{ latest_hiring_run.started_at }}
-    （104 回傳 {{ latest_hiring_run.raw_items }} 筆，排除派遣公司 {{ latest_hiring_run.dispatch_skipped }} 筆、產業不符 {{ latest_hiring_run.industry_skipped }} 筆）
+    （104 回傳 {{ latest_hiring_run.raw_items }} 筆，排除廣告 {{ latest_hiring_run.ad_skipped or 0 }} 筆、派遣公司 {{ latest_hiring_run.dispatch_skipped }} 筆、產業不符 {{ latest_hiring_run.industry_skipped }} 筆）
     ，找到 {{ latest_hiring_run.companies_found }} 間公司（新的 {{ latest_hiring_run.new_companies }} 間）；
-    查到員工人數 {{ latest_hiring_run.employee_checked }} 間{% if latest_hiring_run.employee_failed %}、取不到 {{ latest_hiring_run.employee_failed }} 間{% endif %}{% if latest_hiring_run.employee_pending %}、還有 {{ latest_hiring_run.employee_pending }} 間下次再查{% endif %}；
+    其中有公開員工人數 {{ latest_hiring_run.employee_known or 0 }} 間；
     對到統一編號 {{ latest_hiring_run.tax_id_matched }} 間
     {% if latest_hiring_run.deadline_hit %}<span class="badge badge-pending">時間到提早結束</span>{% endif %}
     {% if latest_hiring_run.errors %}
@@ -177,7 +177,7 @@
         </tbody>
     </table>
 </div>
-<p class="hint">「職缺數」是最近一次抓取時這間公司刊了幾筆符合條件的職缺。點公司名稱會開 104 公司頁。</p>
+<p class="hint">「職缺數」是最近一次抓取時這間公司刊了幾筆符合條件的職缺。員工人數是公司在 104 上填的，大約一半的公司沒有公開，會顯示「未知」。點公司名稱會開 104 公司頁。</p>
 {% endif %}
 
 {% if is_module_admin %}

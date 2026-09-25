@@ -427,9 +427,6 @@ def latest_run():
 
 HIRING_MAX_TITLES = 5
 HIRING_MAX_AREAS = 8
-# 員工人數連續取不到幾次就不再試（避免 104 公司頁格式改了之後，每週都把
-# 時間花在同一批注定失敗的公司上）
-HIRING_EMPLOYEE_MAX_FAILURES = 3
 
 
 def hiring_ref():
@@ -459,6 +456,7 @@ def aggregate_hiring_jobs(jobs: list) -> list:
                 "company_name": job.get("company_name", ""),
                 "company_url": job.get("company_url", ""),
                 "industry": "",
+                "employee_count": None,
                 "job_ids": set(),
                 "titles": [],
                 "areas": [],
@@ -468,6 +466,8 @@ def aggregate_hiring_jobs(jobs: list) -> list:
         company["job_ids"].add(job.get("job_id", ""))
         if job.get("industry") and not company["industry"]:
             company["industry"] = job["industry"]
+        if job.get("employee_count") is not None:
+            company["employee_count"] = max(company["employee_count"] or 0, job["employee_count"])
         title = job.get("job_title", "")
         if title and title not in company["titles"] and len(company["titles"]) < HIRING_MAX_TITLES:
             company["titles"].append(title)
@@ -486,8 +486,9 @@ def aggregate_hiring_jobs(jobs: list) -> list:
 
 
 def upsert_hiring_companies(companies: list, seen_date: str = None) -> dict:
-    """寫入這次抓到的公司。已經存在的只更新職缺數/標題/地區/最近出現，
-    **不會**蓋掉已經查到的員工人數、統一編號、第一次出現日期。"""
+    """寫入這次抓到的公司。已經存在的只更新職缺數/標題/地區/最近出現；員工人數
+    這次有公開才更新（這次沒公開就保留上次的），**不會**蓋掉已經對到的統一編號、
+    第一次出現日期。"""
     seen_date = seen_date or today_str()
     stats = {"new": 0, "updated": 0}
     records = {hiring_doc_id(c.get("source", "104"), c["cust_id"]): c for c in companies if c.get("cust_id")}
@@ -515,14 +516,16 @@ def upsert_hiring_companies(companies: list, seen_date: str = None) -> dict:
         }
         if company.get("industry") or old is None:
             data["industry"] = company.get("industry", "")
+        if company.get("employee_count") is not None:
+            data["employee_count"] = company["employee_count"]
+            data["employee_checked_at"] = seen_date
+        elif old is None:
+            data["employee_count"] = None
+            data["employee_checked_at"] = ""
         if old is None:
             data.update(
                 {
                     "first_seen": seen_date,
-                    "employee_count": None,
-                    "employee_raw": "",
-                    "employee_checked_at": "",
-                    "employee_fail_count": 0,
                     "tax_id": "",
                     "tax_id_source": "",
                     "created_at": time.time(),
@@ -543,16 +546,6 @@ def list_hiring_companies() -> list:
         reverse=True,
     )
     return companies
-
-
-def hiring_companies_needing_employee_count() -> list:
-    """還沒查到員工人數、失敗次數也還沒到上限的公司，職缺多的排前面先查。"""
-    pending = [
-        c for c in list_hiring_companies()
-        if not c.get("employee_checked_at") and (c.get("employee_fail_count") or 0) < HIRING_EMPLOYEE_MAX_FAILURES
-    ]
-    pending.sort(key=lambda c: (c.get("latest_job_count", 0), c.get("last_seen", "")), reverse=True)
-    return pending
 
 
 def update_hiring_company(doc_id: str, fields: dict):
