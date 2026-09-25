@@ -80,6 +80,20 @@
     </thead>
     <tbody>
         {% for row in rows %}
+        {% if row.shopee %}
+        {% for item in row.shopee %}
+        <tr>
+            <td>{{ row.department }}（{{ item.kind_name }}）</td>
+            <td>{% if item.upload %}已上傳{% else %}未上傳{% endif %}</td>
+            <td>{% if item.upload %}{{ item.upload.filename }}{% if item.upload.summary %}<div class="meta">{{ item.upload.summary }}</div>{% endif %}{% else %}-{% endif %}</td>
+            <td>{{ item.upload.uploaded_by_name if item.upload else "-" }}</td>
+            <td class="row-actions">
+                {% if item.upload %}<a href="/hr/files/{{ item.upload.blob_path }}">下載</a>{% endif %}
+                <a href="/hr/insurance/upload?department={{ row.department | urlencode }}&kind={{ item.kind }}&work_date={{ work_date }}">上傳</a>
+            </td>
+        </tr>
+        {% endfor %}
+        {% else %}
         {% set last = (row.upload.upload_history or [{}])[-1] if row.upload else {} %}
         <tr>
             <td>{{ row.department }}</td>
@@ -94,6 +108,7 @@
                 <a href="/hr/insurance/upload?department={{ row.department | urlencode }}&work_date={{ work_date }}">代傳</a>
             </td>
         </tr>
+        {% endif %}
         {% endfor %}
     </tbody>
 </table>

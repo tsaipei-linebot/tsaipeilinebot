@@ -3,7 +3,7 @@
 {% block content %}
 <h1 class="page-title">{% if proxy %}每日加退保代傳{% else %}每日加退保上傳{% endif %}</h1>
 {% if proxy %}
-<p class="hint">人資代傳：選好部門和日期再上傳。這個部門那天已經有檔案的話，預設「接在後面」，不會蓋掉原本的資料。人資不受收單限制。</p>
+<p class="hint">人資代傳：選好部門和日期再上傳。{% if not shopee %}這個部門那天已經有檔案的話，預設「接在後面」，不會蓋掉原本的資料。{% endif %}人資不受收單限制。</p>
 {% else %}
 <p class="hint">部門：{{ department }}</p>
 {% endif %}
@@ -20,6 +20,15 @@
             {% endfor %}
         </select>
     </label>
+    {% if shopee %}
+    <label>檔案種類
+        <select name="kind" onchange="this.form.submit()">
+            {% for code, name in kind_names.items() %}
+            <option value="{{ code }}" {% if code == kind %}selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    {% endif %}
     {% endif %}
     <label>選擇日期
         <input type="date" name="work_date" value="{{ work_date }}" onchange="this.form.submit()">
@@ -135,7 +144,14 @@
     <input type="hidden" name="work_date" value="{{ work_date }}">
     {% if proxy %}
     <input type="hidden" name="department" value="{{ department }}">
-    {% if existing %}
+    {% if shopee %}
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <p class="hint">
+        {% if kind == "elearning" %}E-learning：每一位都在「課程權限開通日期(投保日期)」那天當天加退；沒有日期的照樣列出、投保日留空。
+        {% else %}離店與實習通報：「○○實習」分頁只取 A 欄是「漏保」或空白的列，依「實習日期1」加保；「○○離店異動」分頁只取異動類型是「離店」的列，依「異動日期」退保。{% endif %}
+        上傳時會先檢查格式；同一天同一種檔案再傳一次會直接取代。
+    </p>
+    {% elif existing %}
     <fieldset class="mode-choice">
         <legend>{{ department }} {{ work_date }} 已經有檔案，這份要怎麼處理？</legend>
         <label><input type="radio" name="mode" value="append" checked> 接在原本資料的後面（建議）</label>
@@ -143,7 +159,7 @@
     </fieldset>
     {% endif %}
     {% endif %}
-    <label>加退保 Excel 檔案
+    <label>{% if shopee %}{{ kind_names[kind] }} Excel 檔案{% else %}加退保 Excel 檔案{% endif %}
         <input type="file" name="file" required>
     </label>
     <button type="submit" class="btn btn-primary">上傳</button>
@@ -153,9 +169,11 @@
 {% if existing %}
 <h2>{{ work_date }} 已交給人資的檔案</h2>
 <p>檔名：{{ existing.filename }}（最後由 {{ existing.uploaded_by_name }} 更新）</p>
+{% if existing.summary %}<p class="hint">{{ existing.summary }}</p>{% endif %}
 <p><a href="/hr/files/{{ existing.blob_path }}">下載目前這份檔案</a></p>
 <p class="hint">
-    {% if proxy %}人資代傳預設接在這份檔案後面；選「整份取代」才會蓋掉。
+    {% if shopee %}再上傳一次同一種檔案會直接取代這份。
+    {% elif proxy %}人資代傳預設接在這份檔案後面；選「整份取代」才會蓋掉。
     {% elif drafts_enabled %}同一天再從待送出清單送出，會把新的資料接在這份檔案後面；直接再上傳 Excel 則會整個蓋掉這份。
     {% else %}再上傳一次會直接蓋掉上面這份。{% endif %}
 </p>

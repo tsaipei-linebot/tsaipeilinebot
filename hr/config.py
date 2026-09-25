@@ -98,3 +98,7 @@ INSURANCE_COLLECTOR_DEPARTMENT = "人資部門"
 # 新北所(配送組)的配送系統按「報到」「離職」也會自動寫進這裡。其他部門要開
 # 放的話把名稱加進來即可（名稱要跟 INSURANCE_UPLOAD_DEPARTMENTS 一致）。
 INSURANCE_DRAFT_DEPARTMENTS = ["新北所(配送組)"]
+# 只有人資會上傳的「部門」（2026-09-25 新增）：不是帳號部門主檔裡的部門，不會出現在任何所的
+# 首頁卡片，只出現在人資代傳的下拉選單和彙總頁。蝦皮每天有 E-learning、離店與實習通報兩份
+# 檔案（格式見 hr/insurance_shopee.py），分開存、互不覆蓋。
+INSURANCE_SHOPEE_DEPARTMENT = "蝦皮"

@@ -39,7 +39,7 @@
         <tr>
             <td>{{ r.work_date }}</td>
             {% if is_collector %}
-            <td>{{ r.department }}</td>
+            <td>{{ r.department }}{% if r.kind %}（{{ kind_names.get(r.kind, r.kind) }}）{% endif %}</td>
             {% endif %}
             <td>{{ r.filename }}</td>
             <td>{{ r.uploaded_by_name }}</td>
