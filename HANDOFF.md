@@ -9840,6 +9840,31 @@ PR 說明，常常很長。
 - 人資彙總頁多一列「蝦皮」（Q9 要）。只有人資能傳，不會出現在任何所的首頁卡片。
 - 「收單後下載待送出清單」的按鈕**保留**當備用。
 
+### 實作紀錄 PR1：人資代傳＋收單後補件（2026-09-25 完成；蝦皮部門是 PR2，還沒做）
+
+- **人資代傳**：`/hr/insurance/upload` 對 `is_collector` 開放（`_upload_target()`），多一個部門下拉
+  （`?department=`）。POST 多 `department`、`mode`：那天已有檔案且不是 `replace` → `_append_to_day()`
+  接在後面（上傳的檔案要是 11 欄範本格式，讀不出來會擋下請改選整份取代）；`replace` 才整份覆蓋。
+  部門同仁傳 `department` 會被忽略（只能傳自己部門）。彙總頁每列多「代傳」連結、頁首多「代傳」按鈕，
+  「最後上傳」下面標「人資代傳／人資收進補件」。
+- **`_append_to_day()`**（`hr/routes/insurance_routes.py`）：暫存區送出、人資收補件、人資代傳接在後面
+  都走這支＝「那天現在那份檔案的內容＋新的列」重新組一份存回去。**取代了 2026-09-24 第一版的
+  `base_manual_blob_path` 重組法**（舊欄位留在舊資料裡，不再使用）。
+- 上傳紀錄文件多 `upload_history`：每次變動記 {mode, filename, by, by_name, at}，mode＝upload 部門上傳／
+  replace 人資整份取代／append 人資代傳接在後面／send 待送出清單送出／accept 人資收進補件；整份覆蓋
+  也會保留舊紀錄。`draft_ids` 一路累加（接在後面時保留）。
+- **補件**：`hr/insurance_draft_repository.py` 新狀態 `late_pending`（補件待收），`submit_late()`／
+  `withdraw_late()`／`reject_late()`（回 pending＋`rejected_reason`，下次 `mark_sent()` 清掉）；
+  `mark_sent(action="accepted")` 記人資收件。路由：部門 `POST /insurance/drafts/late-submit`（只限已收單的
+  日期）、`/insurance/drafts/{id}/late-withdraw`；人資 `POST /insurance/late/accept`、`/insurance/late/reject`
+  （`draft_ids` 多選，收件依「部門＋補件日期」分組接到那天檔案後面）。退件預設原因
+  `LATE_REJECT_DEFAULT_REASON`。配送系統「按錯改回來」連補件待收的一起取消。
+- 操作紀錄頁、人員詳細頁、待送出清單都多「建立人員」。
+- 使用說明：`hr/templates/help.html`、`insurance_help.html`、`delivery/templates/help.html` 都補了代傳／補件。
+- 測試：`tests/test_hr_insurance_drafts.py` 新增 `ProxyUploadTests`、`LateSubmissionTests`（共 12 個）。
+  全部 2301 個通過；Playwright 看過部門端（收單後）、人資彙總頁（電腦／手機）、代傳頁。
+- 使用者不需要手動設定。
+
 **「材霈_離店與實習通報」（蝦皮的第二種檔案，2026-09-25 確認）**——使用者給過一份刪掉身分證的範例檔
 （還有真實姓名，**沒有放進 repo**），這裡只記結構：
 

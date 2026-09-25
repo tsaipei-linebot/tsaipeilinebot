@@ -12,6 +12,11 @@
 cancelled（按錯改回來、或同仁手動刪掉），每次變更都往 `history` 加一筆
 「誰、什麼時候、做了什麼」。
 
+**收單後補件**（2026-09-25 新增，見 HANDOFF.md「人資代傳各所加退保 ＋ 收單後補件」）：
+收單後同仁按「送出補件給人資」→ 狀態「補件待收」late_pending（人資處理前可撤回）→
+人資在彙總頁「收進今天的資料」（→ 已送出）或「退件」（→ 回到待送出，帶退件原因紅字，
+下次送出時清掉）。
+
 每一筆的欄位對照部門上傳範本（`hr/insurance_excel._SOURCE_HEADER`），日期
 一律存 ISO 字串（YYYY-MM-DD）。
 """
@@ -27,9 +32,11 @@ STATUS_PENDING = "pending"
 STATUS_SENT = "sent"
 STATUS_DOWNLOADED = "downloaded"
 STATUS_CANCELLED = "cancelled"
+STATUS_LATE = "late_pending"
 
 STATUS_NAMES = {
     STATUS_PENDING: "待送出",
+    STATUS_LATE: "補件待收",
     STATUS_SENT: "已送出",
     STATUS_DOWNLOADED: "已下載",
     STATUS_CANCELLED: "已取消",
@@ -45,6 +52,10 @@ ACTION_NAMES = {
     "sent": "送出給人資",
     "downloaded": "下載",
     "cancelled": "取消",
+    "late_submitted": "送出補件",
+    "late_withdrawn": "撤回補件",
+    "accepted": "人資收進補件",
+    "rejected": "人資退件",
 }
 
 # 可以編輯的欄位 → 部門上傳範本的欄位名稱（Excel 表頭）
@@ -152,9 +163,12 @@ def update_draft(draft_id: str, fields: dict, actor: dict) -> bool:
     return True
 
 
-def cancel_draft(draft_id: str, actor: dict, reason: str = "") -> bool:
+def cancel_draft(draft_id: str, actor: dict, reason: str = "", allow_late: bool = False) -> bool:
+    """同仁手動刪除只能刪「待送出」的（補件待收要先撤回）；配送系統「按錯改回來」
+    （`cancel_pending_for_personnel`）連補件待收的一起取消（`allow_late`），反正人資還沒收。"""
     draft = get_draft(draft_id)
-    if not draft or draft.get("status") != STATUS_PENDING:
+    allowed = (STATUS_PENDING, STATUS_LATE) if allow_late else (STATUS_PENDING,)
+    if not draft or draft.get("status") not in allowed:
         return False
     _append_history(draft, {"status": STATUS_CANCELLED}, _history_entry("cancelled", actor, reason))
     return True
@@ -176,6 +190,11 @@ def list_pending(department: str) -> list:
     return list_drafts(department, STATUS_PENDING)
 
 
+def list_late(department: str = "") -> list:
+    """補件待收；`department` 空字串＝全部部門（人資彙總頁用）。"""
+    return list_drafts(department, STATUS_LATE)
+
+
 def drafts_for_personnel(personnel_id: str) -> list:
     drafts = [_with_id(s) for s in insurance_drafts_ref().where("personnel_id", "==", personnel_id).stream()]
     drafts.sort(key=lambda d: d.get("created_at") or 0, reverse=True)
@@ -186,12 +205,48 @@ def get_drafts(draft_ids: list) -> list:
     return [d for d in (get_draft(i) for i in draft_ids) if d]
 
 
-def mark_sent(drafts: list, work_date: str, actor: dict) -> None:
+def mark_sent(drafts: list, work_date: str, actor: dict, action: str = "sent") -> None:
+    """送出（部門同仁）或人資收進補件（`action="accepted"`）。之前被退件的標記一併清掉。"""
     for draft in drafts:
         _append_history(
             draft,
-            {"status": STATUS_SENT, "sent_work_date": work_date},
-            _history_entry("sent", actor, f"交給人資的日期 {work_date}"),
+            {"status": STATUS_SENT, "sent_work_date": work_date, "rejected_reason": ""},
+            _history_entry(action, actor, f"交給人資的日期 {work_date}"),
+        )
+
+
+def submit_late(drafts: list, work_date: str, actor: dict) -> None:
+    """收單後送出補件：等人資收進或退件。`late_work_date` 是同仁送出當下選的日期
+    （已收單的那一天），人資收進時接到那一天的檔案。"""
+    for draft in drafts:
+        _append_history(
+            draft,
+            {"status": STATUS_LATE, "late_work_date": work_date, "rejected_reason": ""},
+            _history_entry("late_submitted", actor, f"補件日期 {work_date}"),
+        )
+
+
+def withdraw_late(draft_id: str, actor: dict) -> bool:
+    draft = get_draft(draft_id)
+    if not draft or draft.get("status") != STATUS_LATE:
+        return False
+    _append_history(draft, {"status": STATUS_PENDING, "late_work_date": ""}, _history_entry("late_withdrawn", actor))
+    return True
+
+
+def reject_late(drafts: list, reason: str, actor: dict) -> None:
+    """人資退件：回到待送出清單，畫面上用紅字顯示退件原因，下次送出時清掉。"""
+    for draft in drafts:
+        _append_history(
+            draft,
+            {
+                "status": STATUS_PENDING,
+                "late_work_date": "",
+                "rejected_reason": reason,
+                "rejected_by_name": actor.get("name", ""),
+                "rejected_at": time.time(),
+            },
+            _history_entry("rejected", actor, reason),
         )
 
 
@@ -207,7 +262,7 @@ def cancel_pending_for_personnel(personnel_id: str, kind: str, actor: dict, reas
     drafts = [d for d in drafts_for_personnel(personnel_id) if d.get("kind") == kind]
     cancelled = 0
     for draft in drafts:
-        if draft.get("status") == STATUS_PENDING and cancel_draft(draft["id"], actor, reason):
+        if draft.get("status") in (STATUS_PENDING, STATUS_LATE) and cancel_draft(draft["id"], actor, reason, allow_late=True):
             cancelled += 1
     latest_active = next((d for d in drafts if d.get("status") != STATUS_CANCELLED), None)
     already_sent = bool(

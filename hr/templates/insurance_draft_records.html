@@ -33,7 +33,7 @@
         <tr>
             {% if is_collector %}<th>部門</th>{% endif %}
             <th>類型</th><th>姓名</th><th>廠商</th><th>加保日期</th><th>退保日期</th>
-            <th>狀態</th><th>來源</th><th>操作紀錄</th>
+            <th>狀態</th><th>來源</th><th>建立人員</th><th>操作紀錄</th>
         </tr>
     </thead>
     <tbody>
@@ -45,8 +45,9 @@
             <td>{{ r.vendor or "-" }}</td>
             <td>{{ r.insured_date or "-" }}</td>
             <td>{{ r.withdrawn_date or "-" }}</td>
-            <td>{{ status_names.get(r.status, r.status) }}{% if r.sent_work_date %}<div class="meta">交給人資 {{ r.sent_work_date }}</div>{% endif %}</td>
+            <td>{{ status_names.get(r.status, r.status) }}{% if r.rejected_reason and r.status == "pending" %}<div class="error-text">人資退件：{{ r.rejected_reason }}</div>{% endif %}{% if r.sent_work_date %}<div class="meta">交給人資 {{ r.sent_work_date }}</div>{% endif %}</td>
             <td>{% include "_insurance_draft_source.html" %}</td>
+            <td>{{ r.created_by_name }}</td>
             <td class="wrap">
                 {% for h in r.history or [] %}
                 <div class="meta">{{ h.at | taipei_time }} {{ h.by_name }} {{ action_names.get(h.action, h.action) }}{% if h.note %}（{{ h.note }}）{% endif %}</div>

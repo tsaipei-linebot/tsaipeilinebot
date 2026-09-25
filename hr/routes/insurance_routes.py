@@ -18,6 +18,7 @@ hr.auth 的 admin/staff 兩層，是比對帳號的 `department` 字串（見
   的寫法不變。
 """
 import datetime
+import time
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
@@ -47,6 +48,7 @@ router = APIRouter()
 
 
 _TAIPEI = datetime.timezone(datetime.timedelta(hours=8))
+LATE_REJECT_DEFAULT_REASON = "已超過下班時間，請明天再送"
 
 
 def _today() -> str:
@@ -121,7 +123,13 @@ def _account_department(user: dict) -> str:
 
 def _upload_context(user: dict, department: str, work_date: str, error: str = "", msg: str = "") -> dict:
     existing = repo.get_upload(department, work_date)
-    drafts_enabled = drafts_repo.department_has_drafts(department)
+    proxy = repo.is_collector(user)
+    # 待送出清單只給那個部門自己的同仁看；人資代傳時不顯示（人資收補件在彙總頁）
+    drafts_enabled = (
+        drafts_repo.department_has_drafts(department)
+        and repo.can_upload(user)
+        and _account_department(user) == department
+    )
     return {
         "user": user,
         "department": department,
@@ -130,41 +138,124 @@ def _upload_context(user: dict, department: str, work_date: str, error: str = ""
         "existing": existing,
         "error": error,
         "msg": msg,
+        "proxy": proxy,
+        "department_options": INSURANCE_UPLOAD_DEPARTMENTS if proxy else [],
         "drafts_enabled": drafts_enabled,
         "pending": drafts_repo.list_pending(department) if drafts_enabled else [],
+        "late": drafts_repo.list_late(department) if drafts_enabled else [],
         "type_name": drafts_repo.draft_type_name,
-        # 這一天已經從暫存區送出、還在人資那份檔案裡的筆數：再手動上傳 Excel
+        # 這一天已經從暫存區送出、還在人資那份檔案裡的筆數：再整份上傳 Excel
         # 會把它們蓋掉，畫面要提醒
-        "sent_in_existing": len((existing or {}).get("draft_ids") or []) if (existing or {}).get("generated_from_drafts") else 0,
+        "sent_in_existing": len((existing or {}).get("draft_ids") or []),
     }
 
 
+def _upload_target(user: dict, department: str = ""):
+    """回傳這次上傳頁要看/傳哪個部門，沒權限回 None。
+
+    2026-09-25 起人資（`is_collector`）可以代傳：用下拉選單選部門（沒選就用自己的部門，
+    自己不是 7 個所之一就用第一個）；各所同仁只能傳自己部門。"""
+    if repo.is_collector(user):
+        department = drafts_repo.canonical_department(department)
+        if department in INSURANCE_UPLOAD_DEPARTMENTS:
+            return department
+        own = _account_department(user)
+        return own if own in INSURANCE_UPLOAD_DEPARTMENTS else INSURANCE_UPLOAD_DEPARTMENTS[0]
+    if repo.can_upload(user):
+        return _account_department(user)
+    return None
+
+
+def _upload_page_url(department: str, work_date: str, user: dict, key: str = "", value: str = "") -> str:
+    params = {"work_date": work_date}
+    if repo.is_collector(user):
+        params["department"] = department
+    if key and value:
+        params[key] = value
+    return "/hr/insurance/upload?" + urlencode(params)
+
+
 @router.get("/insurance/upload")
-def upload_page(request: Request, work_date: str = "", msg: str = "", err: str = "", redirect=Depends(_require_login)):
+def upload_page(
+    request: Request, work_date: str = "", department: str = "", msg: str = "", err: str = "",
+    redirect=Depends(_require_login),
+):
     if redirect:
         return redirect
     user = current_user(request)
-    if not repo.can_upload(user):
+    target = _upload_target(user, department)
+    if not target:
         return RedirectResponse(url="/portal", status_code=303)
     work_date = work_date or _today()
-    return templates.TemplateResponse(
-        request, "insurance_upload.html", _upload_context(user, _account_department(user), work_date, err, msg)
+    return templates.TemplateResponse(request, "insurance_upload.html", _upload_context(user, target, work_date, err, msg))
+
+
+def _upload_history(existing: dict, user: dict, mode: str, filename: str) -> list:
+    """每次這一天這個部門的檔案有變動都記一筆（誰、什麼時候、怎麼變的），整份覆蓋也不會
+    把之前的紀錄洗掉。mode：upload 部門上傳／replace 人資整份取代／append 人資代傳接在後面／
+    send 待送出清單送出／accept 人資收進補件。"""
+    return list((existing or {}).get("upload_history") or []) + [{
+        "mode": mode,
+        "filename": filename,
+        "by": user.get("username", ""),
+        "by_name": user.get("name", ""),
+        "at": time.time(),
+    }]
+
+
+def _append_to_day(department: str, work_date: str, new_rows: list, user: dict, mode: str, added_draft_ids=()) -> str:
+    """把資料列接到「這個部門、這一天」現有檔案的後面，重新存成一份。回傳錯誤訊息
+    （空字串＝成功）。暫存區送出、人資收進補件、人資代傳「接在後面」都走這裡——
+    每次都是「現在那份檔案的內容＋新的」，前面交過的不會被蓋掉。"""
+    existing = repo.get_upload(department, work_date) or {}
+    rows = []
+    if existing.get("blob_path"):
+        content, _ = download_file(existing["blob_path"])
+        if content is None:
+            return "讀不到這一天原本的檔案，沒有送出，請聯絡工程師。"
+        try:
+            rows.extend(parse_department_workbook(content))
+        except Exception:
+            return "這一天原本的檔案讀不出來（格式跟範本不同），沒有送出，請聯絡人資或工程師。"
+    rows.extend(new_rows)
+    filename = f"{work_date}_{department}_加退保.xlsx"
+    try:
+        blob_path = upload_file(
+            "insurance", f"{work_date}_{department}", filename, build_department_workbook(rows),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    except StorageNotConfigured:
+        return "檔案儲存空間尚未設定，請聯絡工程師。"
+    draft_ids = list(existing.get("draft_ids") or []) + list(added_draft_ids)
+    repo.save_upload(
+        department, work_date, blob_path, filename, user["username"], user["name"],
+        generated_from_drafts=bool(draft_ids),
+        draft_ids=draft_ids,
+        upload_history=_upload_history(existing, user, mode, filename),
     )
+    return ""
 
 
 @router.post("/insurance/upload")
 async def upload_submit(
     request: Request,
     work_date: str = Form(...),
+    department: str = Form(""),
+    mode: str = Form("append"),
     file: UploadFile = File(None),
     redirect=Depends(_require_login),
 ):
+    """部門同仁：整份上傳（同一天再傳＝覆蓋，收單前才能傳）。
+    人資代傳：選部門；那天已經有檔案時預設「接在後面」（mode=append），也可以選
+    「整份取代」（mode=replace）。人資不受收單限制。"""
     if redirect:
         return redirect
     user = current_user(request)
-    if not repo.can_upload(user):
+    target = _upload_target(user, department)
+    if not target:
         return RedirectResponse(url="/portal", status_code=303)
-    department = _account_department(user)
+    department = target
+    proxy = repo.is_collector(user)
 
     def _render_error(message: str):
         return templates.TemplateResponse(
@@ -180,13 +271,30 @@ async def upload_submit(
     if error:
         return _render_error(error)
 
+    existing = repo.get_upload(department, work_date)
+    if proxy and existing and mode != "replace":
+        try:
+            new_rows = parse_department_workbook(content)
+        except Exception:
+            return _render_error("這份 Excel 讀不出來（格式跟範本不同），沒辦法接在後面。請確認檔案，或改選「整份取代」。")
+        error = _append_to_day(department, work_date, new_rows, user, "append")
+        if error:
+            return _render_error(error)
+        return RedirectResponse(
+            url=_upload_page_url(department, work_date, user, "msg", f"已接在 {department} {work_date} 原本的資料後面（{len(new_rows)} 筆）。"),
+            status_code=303,
+        )
+
     try:
         blob_path = upload_file("insurance", f"{work_date}_{department}", filename, content, content_type)
     except StorageNotConfigured:
         return _render_error("檔案儲存空間尚未設定，請聯絡工程師。")
 
-    repo.save_upload(department, work_date, blob_path, filename, user["username"], user["name"])
-    return RedirectResponse(url=f"/hr/insurance/upload?work_date={work_date}", status_code=303)
+    repo.save_upload(
+        department, work_date, blob_path, filename, user["username"], user["name"],
+        upload_history=_upload_history(existing, user, "replace" if proxy else "upload", filename),
+    )
+    return RedirectResponse(url=_upload_page_url(department, work_date, user, "msg", "已上傳。"), status_code=303)
 
 
 @router.get("/insurance/history")
@@ -242,6 +350,10 @@ def summary_page(request: Request, work_date: str = "", redirect=Depends(login_r
             "work_date": work_date,
             "closed": repo.is_day_closed(work_date),
             "rows": repo.summary_for_date(work_date),
+            "late": drafts_repo.list_late(),
+            "type_name": drafts_repo.draft_type_name,
+            "msg": request.query_params.get("msg", ""),
+            "err": request.query_params.get("err", ""),
         },
     )
 
@@ -423,9 +535,10 @@ def drafts_send(request: Request, work_date: str = Form(""), redirect=Depends(_r
     """送出給人資：把待送出清單組成部門範本格式的 Excel，存成「這個部門、這一天」
     的上傳檔（跟手動上傳同一個位置，人資端完全一樣）。
 
-    同一天可以送很多次、也可能先手動上傳過 Excel——每次送出都**重新組一份
-    完整的檔案**：當天手動上傳的那份 Excel 內容（`base_manual_blob_path`）＋
-    這一天之前已經送出的（`draft_ids`）＋這次的待送出，不會蓋掉前面交過的。"""
+    同一天可以送很多次、也可能先手動上傳過 Excel、或人資代傳過——每次送出都是
+    「那一天現在那份檔案的內容＋這次的待送出」（`_append_to_day()`），不會蓋掉前面
+    交過的。（2026-09-24 第一版是記 `base_manual_blob_path` 再重組，2026-09-25 加人資
+    代傳時改成這個比較單純的做法。）"""
     if redirect:
         return redirect
     user, department, deny = _draft_user(request)
@@ -436,54 +549,19 @@ def drafts_send(request: Request, work_date: str = Form(""), redirect=Depends(_r
         return RedirectResponse(url=_upload_url("", "err", "請選擇日期。"), status_code=303)
     if not repo.can_upload_for_date(user, work_date):
         return RedirectResponse(
-            url=_upload_url(work_date, "err", "這一天已經收單，沒辦法送出。可以按「下載待送出清單」把 Excel 交給人資處理。"),
+            url=_upload_url(work_date, "err", "這一天已經收單，請按「送出補件給人資」，或下載待送出清單交給人資。"),
             status_code=303,
         )
     pending = drafts_repo.list_pending(department)
     if not pending:
         return RedirectResponse(url=_upload_url(work_date, "err", "待送出清單是空的。"), status_code=303)
 
-    existing = repo.get_upload(department, work_date) or {}
-    if existing.get("generated_from_drafts"):
-        base_blob = existing.get("base_manual_blob_path") or ""
-        previous_ids = list(existing.get("draft_ids") or [])
-    else:
-        base_blob = existing.get("blob_path") or ""
-        previous_ids = []
-
-    rows = []
-    if base_blob:
-        content, _ = download_file(base_blob)
-        if content is None:
-            return RedirectResponse(url=_upload_url(work_date, "err", "讀不到這一天手動上傳的 Excel，請聯絡工程師。"), status_code=303)
-        try:
-            rows.extend(parse_department_workbook(content))
-        except Exception:
-            return RedirectResponse(
-                url=_upload_url(work_date, "err", "這一天手動上傳的 Excel 讀不出來（格式跟範本不同），沒有送出，請聯絡人資或工程師。"),
-                status_code=303,
-            )
-    previous = drafts_repo.get_drafts(previous_ids)
-    rows.extend(drafts_repo.draft_to_source_row(d) for d in previous + pending)
-
-    filename = f"{work_date}_{department}_加退保.xlsx"
-    try:
-        blob_path = upload_file(
-            "insurance",
-            f"{work_date}_{department}",
-            filename,
-            build_department_workbook(rows),
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-    except StorageNotConfigured:
-        return RedirectResponse(url=_upload_url(work_date, "err", "檔案儲存空間尚未設定，請聯絡工程師。"), status_code=303)
-
-    repo.save_upload(
-        department, work_date, blob_path, filename, user["username"], user["name"],
-        generated_from_drafts=True,
-        draft_ids=[d["id"] for d in previous] + [d["id"] for d in pending],
-        base_manual_blob_path=base_blob,
+    error = _append_to_day(
+        department, work_date, [drafts_repo.draft_to_source_row(d) for d in pending], user, "send",
+        added_draft_ids=[d["id"] for d in pending],
     )
+    if error:
+        return RedirectResponse(url=_upload_url(work_date, "err", error), status_code=303)
     drafts_repo.mark_sent(pending, work_date, user)
     return RedirectResponse(url=_upload_url(work_date, "msg", f"已送出 {len(pending)} 筆給人資（{work_date}）。"), status_code=303)
 
@@ -494,6 +572,94 @@ def _xlsx_response(content: bytes, filename: str) -> Response:
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
+
+
+# ---------- 收單後補件（2026-09-25） ----------
+@router.post("/insurance/drafts/late-submit")
+def drafts_late_submit(request: Request, work_date: str = Form(""), redirect=Depends(_require_login)):
+    """收單後，部門同仁把待送出清單整批送成「補件」，等人資在彙總頁收進或退件。"""
+    if redirect:
+        return redirect
+    user, department, deny = _draft_user(request)
+    if deny:
+        return deny
+    work_date = _valid_date(work_date)
+    if not work_date or not repo.is_day_closed(work_date):
+        return RedirectResponse(url=_upload_url(work_date, "err", "這一天還沒收單，請直接按「送出給人資」。"), status_code=303)
+    pending = drafts_repo.list_pending(department)
+    if not pending:
+        return RedirectResponse(url=_upload_url(work_date, "err", "待送出清單是空的。"), status_code=303)
+    drafts_repo.submit_late(pending, work_date, user)
+    return RedirectResponse(
+        url=_upload_url(work_date, "msg", f"已送出 {len(pending)} 筆補件，等人資收進或退件。"), status_code=303
+    )
+
+
+@router.post("/insurance/drafts/{draft_id}/late-withdraw")
+def drafts_late_withdraw(draft_id: str, request: Request, work_date: str = Form(""), redirect=Depends(_require_login)):
+    if redirect:
+        return redirect
+    user, department, deny = _draft_user(request)
+    if deny:
+        return deny
+    draft = _own_pending_draft(draft_id, department)
+    if not draft or not drafts_repo.withdraw_late(draft_id, user):
+        return RedirectResponse(url=_upload_url(work_date, "err", "這一筆人資已經處理了，沒辦法撤回。"), status_code=303)
+    return RedirectResponse(url=_upload_url(work_date, "msg", f"已撤回補件：{draft.get('name')}，回到待送出清單。"), status_code=303)
+
+
+def _summary_url(work_date: str, key: str, value: str) -> str:
+    return "/hr/insurance/summary?" + urlencode({"work_date": work_date, key: value})
+
+
+async def _late_drafts_from_form(request: Request) -> tuple:
+    form = await request.form()
+    ids = [i for i in form.getlist("draft_ids") if i]
+    drafts = [d for d in drafts_repo.get_drafts(ids) if d.get("status") == drafts_repo.STATUS_LATE]
+    return form, drafts
+
+
+@router.post("/insurance/late/accept")
+async def late_accept(request: Request, redirect=Depends(login_required)):
+    """人資收進補件：依「部門＋補件日期」分組，接到那一天那個部門的檔案後面。"""
+    if redirect:
+        return redirect
+    user = current_user(request)
+    if not repo.is_collector(user):
+        return RedirectResponse(url="/hr/", status_code=303)
+    form, drafts = await _late_drafts_from_form(request)
+    back_date = _valid_date(form.get("work_date")) or _today()
+    if not drafts:
+        return RedirectResponse(url=_summary_url(back_date, "err", "請勾選要收進的補件（或已經被處理過了）。"), status_code=303)
+    groups = {}
+    for draft in drafts:
+        groups.setdefault((draft.get("department", ""), draft.get("late_work_date") or back_date), []).append(draft)
+    for (department, work_date), items in groups.items():
+        error = _append_to_day(
+            department, work_date, [drafts_repo.draft_to_source_row(d) for d in items], user, "accept",
+            added_draft_ids=[d["id"] for d in items],
+        )
+        if error:
+            return RedirectResponse(url=_summary_url(back_date, "err", f"{department}：{error}"), status_code=303)
+        drafts_repo.mark_sent(items, work_date, user, action="accepted")
+    return RedirectResponse(url=_summary_url(back_date, "msg", f"已收進 {len(drafts)} 筆補件。"), status_code=303)
+
+
+@router.post("/insurance/late/reject")
+async def late_reject(request: Request, redirect=Depends(login_required)):
+    """人資退件：回到部門的待送出清單，帶退件原因。"""
+    if redirect:
+        return redirect
+    user = current_user(request)
+    if not repo.is_collector(user):
+        return RedirectResponse(url="/hr/", status_code=303)
+    form, drafts = await _late_drafts_from_form(request)
+    back_date = _valid_date(form.get("work_date")) or _today()
+    reason = (form.get("reason") or "").strip() or LATE_REJECT_DEFAULT_REASON
+    if not drafts:
+        return RedirectResponse(url=_summary_url(back_date, "err", "請勾選要退件的補件（或已經被處理過了）。"), status_code=303)
+    drafts_repo.reject_late(drafts, reason, user)
+    return RedirectResponse(url=_summary_url(back_date, "msg", f"已退件 {len(drafts)} 筆（{reason}）。"), status_code=303)
 
 
 @router.post("/insurance/drafts/download")
