@@ -3,7 +3,7 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">補款登記</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 <form method="post" action="/delivery/function/repayment" class="form-stack form-narrow">
     <label>廠商
         <select name="vendor" required>

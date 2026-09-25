@@ -20,7 +20,7 @@
 
 {% if result %}
     {% if result.header_error %}
-    <p class="error">檔案格式錯誤：{{ result.header_error }}</p>
+    <p class="error js-flash">檔案格式錯誤：{{ result.header_error }}</p>
     {% else %}
     <p class="meta">
         成功建立 {{ result.created|length }} 筆，

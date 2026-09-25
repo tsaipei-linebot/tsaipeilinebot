@@ -7,8 +7,8 @@
     <span class="badge {{ status_badges.get(group.review_status, '') }}">{{ group.review_status }}</span>
 </div>
 
-{% if msg %}<p class="success">{{ msg }}</p>{% endif %}
-{% if err %}<p class="warning">{{ err }}</p>{% endif %}
+{% if msg %}<p class="success js-flash">{{ msg }}</p>{% endif %}
+{% if err %}<p class="warning js-flash">{{ err }}</p>{% endif %}
 
 <p class="meta">
     {{ group.job_count }} 筆職缺・{{ group.agency_names|length }} 家派遣公司（{{ group.agency_names|join('、') }}）・

@@ -12,9 +12,9 @@
 </p>
 
 {% if error == "not_found" %}
-<p class="error">找不到這個部門，可能已經被刪除了。</p>
+<p class="error js-flash">找不到這個部門，可能已經被刪除了。</p>
 {% elif error == "in_use" %}
-<p class="error">還有帳號設定成這個部門，沒辦法刪除——請先到「帳號權限管理」把那些帳號改成別的部門，再回來刪除。</p>
+<p class="error js-flash">還有帳號設定成這個部門，沒辦法刪除——請先到「帳號權限管理」把那些帳號改成別的部門，再回來刪除。</p>
 {% endif %}
 
 <table class="data-table">

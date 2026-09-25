@@ -9,8 +9,8 @@
     </div>
 </div>
 
-{% if msg %}<p class="success">{{ msg }}</p>{% endif %}
-{% if err %}<p class="warning">{{ err }}</p>{% endif %}
+{% if msg %}<p class="success js-flash">{{ msg }}</p>{% endif %}
+{% if err %}<p class="warning js-flash">{{ err }}</p>{% endif %}
 {% if load_error %}<p class="warning">{{ load_error }}</p>{% endif %}
 
 <div class="salesdev-run">

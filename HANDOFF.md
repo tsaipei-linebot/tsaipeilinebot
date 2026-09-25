@@ -10553,3 +10553,25 @@ PR1（專區分頁、廠商/班別維護、待進人員，PR #238）、PR2（每
   送出類的測試改成帶勾選的 id。全部 2340 個通過；Playwright 看過台北所每日加退保頁（電腦、手機）。
 - 使用者不需要手動設定。
 
+
+## 整個系統的提醒改成彈出視窗（2026-09-25）
+
+使用者在台北所專區討論時提出「整個系統所有的提醒能否改為彈出式視窗？比較不會沒注意到」，先做了台北所那幾頁
+（PR #238／#239），這次擴大到全系統。
+
+- **`delivery/static/flash.js`（新檔）**：4 個 base.html（`templates/`、`delivery/`、`hr/`、`management/`）都在 `<head>`
+  載入（所有子系統本來就共用 `/delivery/static/`）。頁面上 `class` 有 `js-flash` 的訊息：`.success` → 右下角提示 4 秒
+  自動消失；`.error`／`.warning` → `<dialog>` 彈出視窗、要按「確定」（保留原本訊息裡的連結；同一頁好幾個錯誤合併成
+  一個視窗）。原本的文字只是藏起來，還留在 HTML 裡（沒 JS 也看得到、測試也驗得到）。
+- **`window.alert()` 也換成同一個彈出視窗**：系統裡 11 個 alert 都是「提醒完就 return」，不需要擋住程式，所以直接
+  覆寫；`window.confirm()` 維持瀏覽器原生（要等使用者回答）。另外提供 `window.showAlert(文字, [清單])`、
+  `window.showToast(文字)`。
+- **哪些要彈、哪些不彈**：67 個樣板、90 處「操作結果」訊息加了 `js-flash`（`{% if error/err/msg/saved/submitted/
+  generated/deleted/hired… %}`、匯入格式錯誤等）。**固定的狀態提示不加**（每次打開頁面都在，彈出來會很煩）：
+  配送主頁「有 N 筆未結案意外事件」、人員詳細頁「離職但還有裝備沒還」、每日加退保「已收單」「整份上傳會蓋掉」、
+  待進人員「還沒有廠商選項」、合約總表的上限警告、財務/我的專區的資料讀取失敗、業務開發的讀取失敗、表格裡的
+  「人資退件」紅字、離職對話框裡的裝備提醒。
+- `hr/templates/_flash_popup.html` 改成只輸出 `js-flash` 元素，實際顯示交給 flash.js。
+- **新頁面的寫法**：操作結果訊息寫 `<p class="success js-flash">`／`<p class="error js-flash">`；
+  `tests/test_flash_popup.py` 會檢查 `{% if error|err|msg %}<p class="…">` 沒有漏加 js-flash。
+- 測試：全部 2344 個通過；Playwright 看過成功提示、錯誤彈窗、alert 改用彈窗。

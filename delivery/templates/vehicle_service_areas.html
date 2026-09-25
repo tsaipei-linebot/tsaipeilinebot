@@ -3,7 +3,7 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">服務區域管理</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 
 <h2 class="section-title">新增服務區域</h2>
 <form method="post" action="/delivery/vehicles/service-areas/new" class="form-stack form-narrow">

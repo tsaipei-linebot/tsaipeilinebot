@@ -3,8 +3,8 @@
 {% block content %}
 <h1 class="page-title">每日加退彙總</h1>
 
-{% if msg %}<p class="success">{{ msg }}</p>{% endif %}
-{% if err %}<p class="error">{{ err }}</p>{% endif %}
+{% if msg %}<p class="success js-flash">{{ msg }}</p>{% endif %}
+{% if err %}<p class="error js-flash">{{ err }}</p>{% endif %}
 
 <form method="get" action="/hr/insurance/summary" class="filter-bar">
     <label>選擇日期

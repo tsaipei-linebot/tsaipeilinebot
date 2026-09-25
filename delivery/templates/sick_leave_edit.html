@@ -3,7 +3,7 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">編輯假別登記：{{ record.personnel_name }}</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 <p class="hint">這裡只修正登記內容，核准狀態請回假別查詢頁另外操作。</p>
 
 <form method="post" action="/delivery/function/sick-leave/records/{{ record.id }}/edit" class="form-stack form-narrow">

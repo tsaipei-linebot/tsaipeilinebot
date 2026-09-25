@@ -17,13 +17,13 @@
 </p>
 
 {% if hired %}
-<p class="success">已錄取「{{ hired }}」，人員已經加到<a href="/delivery/search">查詢人員</a>（待報到）。</p>
+<p class="success js-flash">已錄取「{{ hired }}」，人員已經加到<a href="/delivery/search">查詢人員</a>（待報到）。</p>
 {% endif %}
 {% if error == "vendor_required" %}
-<p class="error">請先選擇廠商才能錄取。</p>
+<p class="error js-flash">請先選擇廠商才能錄取。</p>
 {% endif %}
 {% if error == "test_drive_required" %}
-<p class="error">這個人還沒通過試駕，無法錄取（剛才選的廠商/合作方式/試駕狀態已經先幫你存起來了）。</p>
+<p class="error js-flash">這個人還沒通過試駕，無法錄取（剛才選的廠商/合作方式/試駕狀態已經先幫你存起來了）。</p>
 {% endif %}
 
 <form method="get" action="/delivery/applicants" class="filter-bar">

@@ -10,7 +10,7 @@
 <p class="hint">選一個日期區間（依「申請日」欄位），系統會把區間內所有已核准的補款紀錄各自產生一份存查單（格式跟核准信附件一致），打包成一個 ZIP 檔案下載。</p>
 <p class="hint">兩種格式的<strong>內容完全一樣</strong>，差別只在檔案類型：<strong>PDF</strong> 適合歸檔保存；<strong>圖片</strong>適合列印留底，因為在檔案總管裡可以一次全選、右鍵直接列印，不用一份一份開。</p>
 {% if export_error %}
-<p class="error">{{ export_error }}</p>
+<p class="error js-flash">{{ export_error }}</p>
 {% endif %}
 <form method="post" action="/finance/export-pdf" class="form-stack form-narrow">
     <label>起始日期

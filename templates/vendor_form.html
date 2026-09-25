@@ -4,7 +4,7 @@
 <h1 class="page-title">{{ '編輯廠商：' + vendor.name if vendor else '新增廠商' }}</h1>
 
 {% if error %}
-<p class="error">{{ error }}</p>
+<p class="error js-flash">{{ error }}</p>
 {% endif %}
 
 <form method="post" action="{{ '/vendors/' + vendor.id + '/edit' if vendor and vendor.id else '/vendors/new' }}" class="form-stack form-narrow">

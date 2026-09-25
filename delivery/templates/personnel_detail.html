@@ -6,10 +6,10 @@
 <p class="meta">廠商：{{ vendor_name }}　電話：{{ person.phone or "-" }}</p>
 
 {% if request.query_params.get("saved") %}
-<p class="success">已儲存。{{ request.query_params.get("msg") or "" }}</p>
+<p class="success js-flash">已儲存。{{ request.query_params.get("msg") or "" }}</p>
 {% endif %}
 {% if request.query_params.get("err") %}
-<p class="error">{{ request.query_params.get("err") }}</p>
+<p class="error js-flash">{{ request.query_params.get("err") }}</p>
 {% endif %}
 
 {% if current_employment_status == "resigned" and equipment_debt %}

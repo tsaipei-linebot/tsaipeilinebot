@@ -4,7 +4,7 @@
 <h1 class="page-title">上傳業績報表</h1>
 
 {% if error %}
-<p class="error">{{ error }}</p>
+<p class="error js-flash">{{ error }}</p>
 {% endif %}
 
 <form method="post" action="/management/kpi-reports/new" enctype="multipart/form-data" class="form-stack form-narrow">

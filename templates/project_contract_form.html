@@ -8,17 +8,17 @@
 </p>
 
 {% if submitted %}
-<p class="success">專案合約已送出，已寄送通知信給人資與財務單位。</p>
+<p class="success js-flash">專案合約已送出，已寄送通知信給人資與財務單位。</p>
 {% endif %}
 {% if submit_unknown %}
-<p class="warning">
+<p class="warning js-flash">
     這筆專案合約很可能其實已經送出成功了，只是材霈平台這邊沒辦法確認職缺維護系統的回應
     （這是對方系統偶爾會出現的已知狀況）。請先確認財會/人資信箱有沒有收到通知信，
     如果沒有收到才需要重新送出，避免不小心送出兩筆重複的合約資料。
 </p>
 {% endif %}
 {% if error %}
-<p class="error">{{ error }}</p>
+<p class="error js-flash">{{ error }}</p>
 {% endif %}
 
 <form method="post" action="/project-contracts" enctype="multipart/form-data" id="project-contract-form" class="form-stack">

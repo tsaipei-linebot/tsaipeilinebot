@@ -5,7 +5,7 @@
 <p class="hint">選一個日期區間（選同一天就是只下載那一天），系統會把這段期間各部門已上傳的資料整理成一份「全區域加退保紀錄表」格式的 Excel。投保單位/出生年月日/班次級距/招募人員這幾欄系統沒有資料來源，會是空白，下載後請自行補上。</p>
 
 {% if error %}
-<p class="error">{{ error }}</p>
+<p class="error js-flash">{{ error }}</p>
 {% endif %}
 
 <form method="post" action="/hr/insurance/download" class="form-stack form-narrow">
