@@ -4,7 +4,7 @@
 <div class="page-head">
     <h1 class="page-title">薪資補款資料搬家</h1>
 </div>
-<p class="hint">只有全平台管理員看得到這頁。這是薪資補款搬離 GAS 的第 1 步：把 Google 試算表的資料<strong>原樣</strong>搬進平台，並決定「我的專區」和財務部專區要讀哪一邊的資料。</p>
+<p class="hint">只有全平台管理員看得到這頁。這是薪資補款搬離 GAS 的前兩步：把 Google 試算表的資料和佐證照片<strong>原樣</strong>搬進平台，並決定「我的專區」和財務部專區要讀哪一邊的資料。</p>
 
 {% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 {% if notice %}<p class="success js-flash">{{ notice }}</p>{% endif %}
@@ -42,7 +42,49 @@
 <p class="empty">還沒有同步過。</p>
 {% endif %}
 
-<h2 class="section-title">2. 讀取來源</h2>
+<h2 class="section-title">2. 搬佐證照片（Google Drive → 平台）</h2>
+<p class="hint">把每筆補款單的佐證照片從 Google Drive <strong>複製</strong>一份到平台。Drive 上的照片和試算表的連結都不會動，舊連結照樣能開。一次搬一批（大約 45 秒），按到「待搬」變成 0 為止。</p>
+{% if photos %}
+<div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>有照片的補款單</th><th>已搬好</th><th>待搬</th><th>失敗</th><th>沒有照片</th></tr></thead>
+        <tbody>
+            <tr>
+                <td>{{ photos.with_photo }}</td><td>{{ photos.counts.done }}</td><td>{{ photos.counts.pending }}</td>
+                <td>{{ photos.counts.failed }}</td><td>{{ photos.counts.none }}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+<form method="post" action="/finance/migration/photos" class="form-stack form-narrow">
+    {% if photos.counts.failed %}
+    <label style="display: inline-flex; align-items: center; gap: 6px;">
+        <input type="checkbox" name="include_failed" value="1"> 連失敗的也一起重試
+    </label>
+    {% endif %}
+    <button type="submit" class="btn btn-primary">搬下一批照片</button>
+</form>
+{% if photos.done_samples %}
+<p class="hint">抽查已搬好的照片：{% for sample in photos.done_samples %}<a href="/finance/migration/photo/{{ sample.doc_id | urlencode }}" target="_blank" rel="noopener">{{ sample.salary_id or sample.doc_id }}</a>{% if not loop.last %}、{% endif %}{% endfor %}</p>
+{% endif %}
+{% if photos.failed %}
+<p class="warning">下面這些補款單的照片搬不過來。試算表和 Drive 上的原始連結都沒有動，舊連結能不能開還是跟以前一樣。</p>
+<div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>補款單號</th><th>試算表第幾列</th><th>原因</th></tr></thead>
+        <tbody>
+            {% for item in photos.failed %}
+            <tr><td>{{ item.salary_id }}</td><td>{{ item.row_number }}</td><td>{{ item.error }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% else %}
+<p class="empty">請先完成第 1 項的同步，才能搬照片。</p>
+{% endif %}
+
+<h2 class="section-title">3. 讀取來源</h2>
 <p class="hint">目前「我的專區」的補款紀錄和財務部專區讀的是：<strong>{{ source_names[read_source] }}</strong>{% if read_source_changed_at %}（{{ read_source_changed_at }} 由 {{ state.get("read_source_changed_by", "") }} 切換）{% endif %}</p>
 {% if read_source == "firestore" %}
 <p class="warning">現在新的補款單還是由 GAS 寫進試算表，平台資料只到最後一次同步的那一刻。第 4 步（送出流程改由平台處理）上線之前，讀平台資料只適合用來檢查；檢查完建議切回試算表，或每次檢查前先按上面的同步。</p>

@@ -21,7 +21,8 @@ GAS 那一側一行都不用動。預設仍是 PDF，維持原本的行為。
 
 **`/finance/migration`（2026-09-25 新增，只有全平台管理員）**：薪資補款搬離 GAS 階段 2 的第 1 步。
 按鈕把試算表原樣同步進平台資料庫（見 `services/salary_repayment_store.py`），另一個開關決定 `/me`、
-`/finance` 讀試算表還是平台資料，隨時可以切回去。
+`/finance` 讀試算表還是平台資料，隨時可以切回去。第 2 步（同一頁）：「搬佐證照片」按鈕把 Drive 上的
+照片複製到 Cloud Storage（見 `services/salary_repayment_photos.py`），一次一批。
 """
 from urllib.parse import quote
 
@@ -32,7 +33,8 @@ from fastapi.responses import RedirectResponse, Response
 
 import platform_accounts
 from platform_templating import templates
-from config import TAIPEI_TZ
+from config import SALARY_PHOTO_GCS_BUCKET, TAIPEI_TZ
+from services import salary_repayment_photos as photos
 from services import salary_repayment_store as store
 from services.salary_repayment_service import (
     DISPLAY_COLUMNS,
@@ -161,6 +163,7 @@ def _migration_page(request: Request, error: str = "", notice: str = "", status_
             "last_synced_at": _taipei_time(state.get("last_synced_at")),
             "read_source_changed_at": _taipei_time(state.get("read_source_changed_at")),
             "result": state.get("last_result") or {},
+            "photos": photos.summary() if state.get("last_synced_at") else None,
             "error": error,
             "notice": notice,
         },
@@ -169,10 +172,22 @@ def _migration_page(request: Request, error: str = "", notice: str = "", status_
 
 
 @router.get("/finance/migration")
-def finance_migration(request: Request, notice: str = "", redirect=Depends(_require_admin)):
+def finance_migration(
+    request: Request,
+    notice: str = "",
+    copied: int = 0,
+    failed: int = 0,
+    remaining: int = 0,
+    redirect=Depends(_require_admin),
+):
     if redirect:
         return redirect
-    notices = {"synced": "已經從試算表同步到平台。", "source": "讀取來源已經切換。"}
+    notices = {
+        "synced": "已經從試算表同步到平台。",
+        "source": "讀取來源已經切換。",
+        "photos": f"這一批搬好 {copied} 張、失敗 {failed} 張，還有 {remaining} 張待搬。"
+        + ("請再按一次「搬下一批照片」。" if remaining else ""),
+    }
     return _migration_page(request, notice=notices.get(notice, ""))
 
 
@@ -199,3 +214,41 @@ def finance_migration_source(request: Request, source: str = Form(...), redirect
         return _migration_page(request, error="還沒有從試算表同步過，平台上沒有資料，請先按「從試算表同步到平台」。", status_code=400)
     store.set_read_source(source, platform_accounts.current_account(request))
     return RedirectResponse(url="/finance/migration?notice=source", status_code=303)
+
+
+@router.post("/finance/migration/photos")
+def finance_migration_photos(request: Request, include_failed: str = Form(""), redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    if not SALARY_PHOTO_GCS_BUCKET:
+        return _migration_page(request, error="尚未設定 DELIVERY_GCS_BUCKET 環境變數，沒辦法存照片，請聯絡系統管理員。", status_code=400)
+    if not store.get_state().get("last_synced_at"):
+        return _migration_page(request, error="請先按「從試算表同步到平台」，再搬照片。", status_code=400)
+    result = photos.copy_batch(include_failed=bool(include_failed))
+    return RedirectResponse(
+        url=f"/finance/migration?notice=photos&copied={result['copied']}&failed={result['failed']}&remaining={result['remaining']}",
+        status_code=303,
+    )
+
+
+# 只直接顯示這幾種圖片；其他類型（原樣照搬的舊資料可能有）一律改成下載，避免瀏覽器把它當網頁執行
+_INLINE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
+@router.get("/finance/migration/photo/{doc_id}")
+def finance_migration_photo(doc_id: str, request: Request, redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    content, content_type = photos.get_photo_for_doc(doc_id)
+    if content is None:
+        return Response(content="找不到這張照片，可能還沒搬過來。", status_code=404, media_type="text/plain; charset=utf-8")
+    inline = content_type in _INLINE_TYPES
+    return Response(
+        content=content,
+        media_type=content_type if inline else "application/octet-stream",
+        headers={
+            "Content-Disposition": "inline" if inline else f"attachment; filename*=UTF-8''{quote(doc_id)}",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
