@@ -178,9 +178,11 @@ class SummaryForDateTests(unittest.TestCase):
             rows = repo.summary_for_date("2026-09-22")
         self.assertEqual([r["department"] for r in rows], [
             "台北所(派遣組)", "台北所(國際組)", "新北所(派遣組)", "新北所(配送組)",
-            "桃園所", "台中所", "高雄所",
+            "桃園所", "台中所", "高雄所", "蝦皮",
         ])
-        self.assertTrue(all(r["upload"] is None for r in rows))
+        self.assertTrue(all(r["upload"] is None for r in rows[:7]))
+        # 蝦皮（2026-09-25）：一列、兩種檔案各自一格
+        self.assertEqual([k["kind_name"] for k in rows[7]["shopee"]], ["E-learning", "離店與實習通報"])
 
 
 class RocDateTests(unittest.TestCase):

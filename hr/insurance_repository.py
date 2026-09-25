@@ -34,7 +34,7 @@ E-learning 這幾種檔案（2026-09-22 使用者確認之後如果需要再另�
 import time
 
 import platform_accounts
-from hr.config import INSURANCE_COLLECTOR_DEPARTMENT, INSURANCE_UPLOAD_DEPARTMENTS
+from hr.config import INSURANCE_COLLECTOR_DEPARTMENT, INSURANCE_SHOPEE_DEPARTMENT, INSURANCE_UPLOAD_DEPARTMENTS
 from hr.db import insurance_day_locks_ref, insurance_uploads_ref
 
 _NORMALIZED_UPLOAD_DEPARTMENTS = {platform_accounts.normalize_department(d) for d in INSURANCE_UPLOAD_DEPARTMENTS}
@@ -56,12 +56,14 @@ def has_insurance_access(account: dict) -> bool:
     return can_upload(account) or is_collector(account)
 
 
-def _upload_doc_id(department: str, work_date: str) -> str:
-    return f"{work_date}__{department}"
+def _upload_doc_id(department: str, work_date: str, kind: str = "") -> str:
+    """`kind`：同一個部門一天有好幾種檔案時用（目前只有蝦皮的 E-learning／離店與實習通報，
+    見 hr/insurance_shopee.py），各自一筆、互不覆蓋。7 個所不帶 kind，id 跟以前一樣。"""
+    return f"{work_date}__{department}" + (f"__{kind}" if kind else "")
 
 
-def get_upload(department: str, work_date: str):
-    snapshot = insurance_uploads_ref().document(_upload_doc_id(department, work_date)).get()
+def get_upload(department: str, work_date: str, kind: str = ""):
+    snapshot = insurance_uploads_ref().document(_upload_doc_id(department, work_date, kind)).get()
     if not snapshot.exists:
         return None
     data = snapshot.to_dict() or {}
@@ -71,17 +73,18 @@ def get_upload(department: str, work_date: str):
 
 def save_upload(
     department: str, work_date: str, blob_path: str, filename: str,
-    uploaded_by: str, uploaded_by_name: str, **extra,
+    uploaded_by: str, uploaded_by_name: str, kind: str = "", **extra,
 ) -> None:
     """新增或覆蓋「這個部門、這一天」的上傳紀錄——文件 id 是固定的
     「日期__部門」組合，所以同一天重傳就是覆寫同一筆，不會累積多筆。
 
     `extra`：暫存區「送出給人資」產生的檔案會多記 `generated_from_drafts`、
-    `draft_ids`、`base_manual_blob_path`（見 hr/routes/insurance_routes.py 的
-    `drafts_send()`）；手動上傳不帶，整筆覆寫時這幾個欄位就自然清掉。"""
-    ref = insurance_uploads_ref().document(_upload_doc_id(department, work_date))
+    `draft_ids`、`upload_history`（見 hr/routes/insurance_routes.py 的
+    `_append_to_day()`）；手動上傳不帶，整筆覆寫時這幾個欄位就自然清掉。"""
+    ref = insurance_uploads_ref().document(_upload_doc_id(department, work_date, kind))
     ref.set({
         "department": department,
+        "kind": kind,
         "work_date": work_date,
         "blob_path": blob_path,
         "filename": filename,
@@ -147,7 +150,18 @@ def summary_for_date(work_date: str) -> list:
     """人資「每日加退彙總」頁用：7 個部門這一天各自傳了沒，依
     `INSURANCE_UPLOAD_DEPARTMENTS` 固定順序（跟 `/departments` 主檔清單
     一致）列出，每個部門帶出它今天的上傳紀錄（沒傳過是 None）。"""
-    return [
+    from hr import insurance_shopee
+
+    rows = [
         {"department": department, "upload": get_upload(department, work_date)}
         for department in INSURANCE_UPLOAD_DEPARTMENTS
     ]
+    # 蝦皮（2026-09-25）：一列、底下分兩種檔案各自有沒有傳
+    rows.append({
+        "department": INSURANCE_SHOPEE_DEPARTMENT,
+        "shopee": [
+            {"kind": kind, "kind_name": name, "upload": get_upload(INSURANCE_SHOPEE_DEPARTMENT, work_date, kind)}
+            for kind, name in insurance_shopee.KIND_NAMES.items()
+        ],
+    })
+    return rows

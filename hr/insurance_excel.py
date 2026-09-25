@@ -140,6 +140,23 @@ def build_summary_workbook(uploads: list) -> bytes:
         if content is None:
             continue
         department = upload.get("department", "")
+        if upload.get("kind"):
+            # 蝦皮（2026-09-25）：E-learning／離店與實習通報，格式不同，見 hr/insurance_shopee.py
+            from hr import insurance_shopee
+
+            try:
+                shopee_rows = insurance_shopee.parse(upload["kind"], content)
+            except Exception:
+                continue
+            for record in shopee_rows:
+                ws.append([
+                    _sanitize_cell(seq), "", insurance_shopee.VENDOR_NAME,
+                    _sanitize_cell(record["store"]), _sanitize_cell(record["name"]),
+                    _sanitize_cell(record["id_number"]), _sanitize_cell(record["insured_text"]),
+                    "", "", "", _sanitize_cell(record["note"]), "",
+                ])
+                seq += 1
+            continue
         try:
             source_rows = parse_department_workbook(content)
         except Exception:

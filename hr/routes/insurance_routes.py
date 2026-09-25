@@ -27,11 +27,13 @@ from fastapi.responses import RedirectResponse, Response
 import platform_accounts
 from file_type_sniff import is_allowed_upload
 from hr import insurance_draft_repository as drafts_repo
+from hr import insurance_shopee
 from hr import insurance_repository as repo
 from hr.auth import current_user, login_required
 from hr.config import (
     ALLOWED_UPLOAD_CONTENT_TYPES,
     INSURANCE_DRAFT_DEPARTMENTS,
+    INSURANCE_SHOPEE_DEPARTMENT,
     INSURANCE_UPLOAD_DEPARTMENTS,
     MAX_UPLOAD_BYTES,
 )
@@ -121,8 +123,19 @@ def _account_department(user: dict) -> str:
     return drafts_repo.canonical_department(user.get("department") or "")
 
 
-def _upload_context(user: dict, department: str, work_date: str, error: str = "", msg: str = "") -> dict:
-    existing = repo.get_upload(department, work_date)
+PROXY_DEPARTMENTS = INSURANCE_UPLOAD_DEPARTMENTS + [INSURANCE_SHOPEE_DEPARTMENT]
+
+
+def _shopee_kind(department: str, kind: str) -> str:
+    """蝦皮要選檔案種類（沒選就 E-learning）；其他部門一律沒有 kind。"""
+    if department != INSURANCE_SHOPEE_DEPARTMENT:
+        return ""
+    return kind if kind in insurance_shopee.KIND_NAMES else insurance_shopee.KIND_ELEARNING
+
+
+def _upload_context(user: dict, department: str, work_date: str, error: str = "", msg: str = "", kind: str = "") -> dict:
+    kind = _shopee_kind(department, kind)
+    existing = repo.get_upload(department, work_date, kind)
     proxy = repo.is_collector(user)
     # 待送出清單只給那個部門自己的同仁看；人資代傳時不顯示（人資收補件在彙總頁）
     drafts_enabled = (
@@ -139,7 +152,10 @@ def _upload_context(user: dict, department: str, work_date: str, error: str = ""
         "error": error,
         "msg": msg,
         "proxy": proxy,
-        "department_options": INSURANCE_UPLOAD_DEPARTMENTS if proxy else [],
+        "department_options": PROXY_DEPARTMENTS if proxy else [],
+        "shopee": department == INSURANCE_SHOPEE_DEPARTMENT,
+        "kind": kind,
+        "kind_names": insurance_shopee.KIND_NAMES,
         "drafts_enabled": drafts_enabled,
         "pending": drafts_repo.list_pending(department) if drafts_enabled else [],
         "late": drafts_repo.list_late(department) if drafts_enabled else [],
@@ -157,7 +173,7 @@ def _upload_target(user: dict, department: str = ""):
     自己不是 7 個所之一就用第一個）；各所同仁只能傳自己部門。"""
     if repo.is_collector(user):
         department = drafts_repo.canonical_department(department)
-        if department in INSURANCE_UPLOAD_DEPARTMENTS:
+        if department in PROXY_DEPARTMENTS:
             return department
         own = _account_department(user)
         return own if own in INSURANCE_UPLOAD_DEPARTMENTS else INSURANCE_UPLOAD_DEPARTMENTS[0]
@@ -166,10 +182,12 @@ def _upload_target(user: dict, department: str = ""):
     return None
 
 
-def _upload_page_url(department: str, work_date: str, user: dict, key: str = "", value: str = "") -> str:
+def _upload_page_url(department: str, work_date: str, user: dict, key: str = "", value: str = "", kind: str = "") -> str:
     params = {"work_date": work_date}
     if repo.is_collector(user):
         params["department"] = department
+    if kind:
+        params["kind"] = kind
     if key and value:
         params[key] = value
     return "/hr/insurance/upload?" + urlencode(params)
@@ -177,7 +195,7 @@ def _upload_page_url(department: str, work_date: str, user: dict, key: str = "",
 
 @router.get("/insurance/upload")
 def upload_page(
-    request: Request, work_date: str = "", department: str = "", msg: str = "", err: str = "",
+    request: Request, work_date: str = "", department: str = "", kind: str = "", msg: str = "", err: str = "",
     redirect=Depends(_require_login),
 ):
     if redirect:
@@ -187,7 +205,7 @@ def upload_page(
     if not target:
         return RedirectResponse(url="/portal", status_code=303)
     work_date = work_date or _today()
-    return templates.TemplateResponse(request, "insurance_upload.html", _upload_context(user, target, work_date, err, msg))
+    return templates.TemplateResponse(request, "insurance_upload.html", _upload_context(user, target, work_date, err, msg, kind))
 
 
 def _upload_history(existing: dict, user: dict, mode: str, filename: str) -> list:
@@ -242,6 +260,7 @@ async def upload_submit(
     work_date: str = Form(...),
     department: str = Form(""),
     mode: str = Form("append"),
+    kind: str = Form(""),
     file: UploadFile = File(None),
     redirect=Depends(_require_login),
 ):
@@ -257,9 +276,11 @@ async def upload_submit(
     department = target
     proxy = repo.is_collector(user)
 
+    kind = _shopee_kind(department, kind)
+
     def _render_error(message: str):
         return templates.TemplateResponse(
-            request, "insurance_upload.html", _upload_context(user, department, work_date, message), status_code=400
+            request, "insurance_upload.html", _upload_context(user, department, work_date, message, kind=kind), status_code=400
         )
 
     if not work_date:
@@ -270,6 +291,27 @@ async def upload_submit(
     content, content_type, filename, error = await _read_upload_file(file)
     if error:
         return _render_error(error)
+
+    if kind:
+        # 蝦皮：先讀一次確認格式對（分頁、欄位），同一天同一種檔案再傳＝覆蓋
+        try:
+            shopee_rows = insurance_shopee.parse(kind, content)
+        except insurance_shopee.ShopeeFileError as exc:
+            return _render_error(str(exc))
+        existing = repo.get_upload(department, work_date, kind)
+        try:
+            blob_path = upload_file("insurance", f"{work_date}_{department}_{kind}", filename, content, content_type)
+        except StorageNotConfigured:
+            return _render_error("檔案儲存空間尚未設定，請聯絡工程師。")
+        summary = insurance_shopee.describe(kind, shopee_rows)
+        repo.save_upload(
+            department, work_date, blob_path, filename, user["username"], user["name"], kind=kind,
+            summary=summary, upload_history=_upload_history(existing, user, "replace" if existing else "upload", filename),
+        )
+        return RedirectResponse(
+            url=_upload_page_url(department, work_date, user, "msg", f"已上傳 {insurance_shopee.KIND_NAMES[kind]}：{summary}。", kind=kind),
+            status_code=303,
+        )
 
     existing = repo.get_upload(department, work_date)
     if proxy and existing and mode != "replace":
@@ -310,7 +352,7 @@ def history_page(request: Request, department: str = "", start_date: str = "", e
         records = repo.list_all_history(start_date, end_date)
         if department:
             records = [r for r in records if r.get("department") == department]
-        department_options = INSURANCE_UPLOAD_DEPARTMENTS
+        department_options = PROXY_DEPARTMENTS
     else:
         records = repo.list_department_history(_account_department(user))
         if start_date:
@@ -330,6 +372,7 @@ def history_page(request: Request, department: str = "", start_date: str = "", e
             "filter_department": department,
             "filter_start_date": start_date,
             "filter_end_date": end_date,
+            "kind_names": insurance_shopee.KIND_NAMES,
         },
     )
 
