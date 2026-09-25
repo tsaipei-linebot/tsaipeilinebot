@@ -53,6 +53,11 @@ class _Env:
         return path
 
 
+def _ids(department=DEPT):
+    """每日加退保頁畫面上會勾選的那些（2026-09-25 起送出要帶勾選的 id）。"""
+    return [d["id"] for d in drafts.list_pending(department)]
+
+
 def _rows(content):
     return [(r["姓名"], r["勞保加保日期"], r["勞保退保日期"]) for r in parse_department_workbook(content)]
 
@@ -128,7 +133,7 @@ class DraftRouteTests(unittest.TestCase):
     def test_upload_page_shows_pending_list(self):
         drafts.add_draft(DEPT, {"name": "王小明", "vendor": "UD", "insured_date": "2026-09-25"}, AMY, kind=drafts.KIND_ADD)
         html = self.client.get("/hr/insurance/upload?work_date=2026-09-25").text
-        self.assertIn("待送出清單（1 筆）", html)
+        self.assertIn("2026-09-25 的名單（1 筆）", html)
         self.assertIn("配送系統（報到）", html)
         self.assertIn("送出給人資（2026-09-25）", html)
 
@@ -140,8 +145,8 @@ class DraftRouteTests(unittest.TestCase):
         self.assertEqual(self.env.db.docs("hr_insurance_drafts"), {})
 
     def test_manual_add_requires_name_and_a_date(self):
-        self.assertIn("err=", self._add("", insured_date="2026-09-25").headers["location"])
-        self.assertIn("err=", self._add("王小明").headers["location"])
+        self.assertEqual(self._add("", insured_date="2026-09-25").status_code, 400)
+        self.assertIn("至少要填一個", self._add("王小明").text)
         self.assertIn("msg=", self._add("王小明", withdrawn_date="2026-09-25").headers["location"])
         self.assertEqual(drafts.list_pending(DEPT)[0]["kind"], drafts.KIND_MANUAL)
 
@@ -152,9 +157,9 @@ class DraftRouteTests(unittest.TestCase):
         repo.save_upload(DEPT, "2026-09-25", "hr/insurance/manual.xlsx", "m.xlsx", "amy", "Amy")
 
         self._add("甲", insured_date="2026-09-25")
-        self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25"})
+        self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25", "draft_ids": _ids()})
         self._add("乙", withdrawn_date="2026-09-25")
-        response = self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25"})
+        response = self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25", "draft_ids": _ids()})
         self.assertIn("msg=", response.headers["location"])
 
         upload = repo.get_upload(DEPT, "2026-09-25")
@@ -168,12 +173,12 @@ class DraftRouteTests(unittest.TestCase):
     def test_send_blocked_after_closing_and_download_marks_downloaded(self):
         self._add("甲", insured_date="2026-09-25")
         repo.close_day("2026-09-25", "hr", "HR")
-        response = self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25"})
+        response = self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25", "draft_ids": _ids()})
         self.assertIn("err=", response.headers["location"])
         self.assertIsNone(repo.get_upload(DEPT, "2026-09-25"))
-        self.assertIn("下載待送出清單", self.client.get("/hr/insurance/upload?work_date=2026-09-25").text)
+        self.assertIn("下載勾選的資料", self.client.get("/hr/insurance/upload?work_date=2026-09-25").text)
 
-        response = self._post("/hr/insurance/drafts/download", {"work_date": "2026-09-25"})
+        response = self._post("/hr/insurance/drafts/download", {"work_date": "2026-09-25", "draft_ids": _ids()})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(_rows(response.content)[0][0], "甲")
         self.assertEqual(drafts.list_pending(DEPT), [])
@@ -181,7 +186,7 @@ class DraftRouteTests(unittest.TestCase):
 
     def test_manual_upload_warns_when_drafts_were_already_sent(self):
         self._add("甲", insured_date="2026-09-25")
-        self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25"})
+        self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25", "draft_ids": _ids()})
         html = self.client.get("/hr/insurance/upload?work_date=2026-09-25").text
         self.assertIn("已經從待送出清單送出 1 筆", html)
 
@@ -277,7 +282,7 @@ class ProxyUploadTests(unittest.TestCase):
     def test_append_keeps_rows_sent_from_drafts(self):
         self.account = AMY
         self.client.post("/hr/insurance/drafts/new", data={"work_date": "2026-09-25", "name": "配送甲", "insured_date": "2026-09-25"})
-        self.client.post("/hr/insurance/drafts/send", data={"work_date": "2026-09-25"})
+        self.client.post("/hr/insurance/drafts/send", data={"work_date": "2026-09-25", "draft_ids": _ids()})
         self.account = HR
         self._upload(DEPT, ["人資乙"])
         self.assertEqual(self._names(DEPT), ["配送甲", "人資乙"])
@@ -310,12 +315,12 @@ class LateSubmissionTests(unittest.TestCase):
         self._add("甲")
         html = self.client.get("/hr/insurance/upload?work_date=2026-09-25").text
         self.assertIn("送出補件給人資（2026-09-25）", html)
-        self.assertIn("備用：下載待送出清單", html)
-        self.assertIn("err=", self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25"}).headers["location"])
+        self.assertIn("備用：下載勾選的資料", html)
+        self.assertIn("err=", self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25", "draft_ids": _ids()}).headers["location"])
 
     def test_late_submit_and_withdraw(self):
         self._add("甲")
-        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25"})
+        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25", "draft_ids": _ids()})
         self.assertEqual(drafts.list_pending(DEPT), [])
         [late_id] = self._late_ids()
         self.assertIn("補件待收（1 筆）", self.client.get("/hr/insurance/upload?work_date=2026-09-25").text)
@@ -324,14 +329,14 @@ class LateSubmissionTests(unittest.TestCase):
 
     def test_late_submit_not_allowed_before_closing(self):
         self._add("甲")
-        response = self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-26"})
+        response = self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-26", "draft_ids": _ids()})
         self.assertIn("err=", response.headers["location"])
         self.assertEqual(self._late_ids(), [])
 
     def test_hr_accept_appends_to_that_days_file(self):
         self._add("甲")
         self._add("乙")
-        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25"})
+        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25", "draft_ids": _ids()})
         self.account = HR
         html = self.client.get("/hr/insurance/summary?work_date=2026-09-25").text
         self.assertIn("有 2 筆補件待處理", html)
@@ -348,20 +353,20 @@ class LateSubmissionTests(unittest.TestCase):
 
     def test_hr_reject_returns_to_pending_with_reason_until_next_send(self):
         self._add("甲")
-        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25"})
+        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25", "draft_ids": _ids()})
         self.account = HR
         self._post("/hr/insurance/late/reject", {"work_date": "2026-09-25", "draft_ids": self._late_ids(), "reason": ""})
         self.account = AMY
         [draft] = drafts.list_pending(DEPT)
         self.assertEqual(draft["rejected_reason"], "已超過下班時間，請明天再送")
         self.assertIn("人資退件：已超過下班時間，請明天再送", self.client.get("/hr/insurance/upload?work_date=2026-09-26").text)
-        self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-26"})
+        self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-26", "draft_ids": _ids()})
         sent = drafts.get_draft(draft["id"])
         self.assertEqual((sent["status"], sent["rejected_reason"]), ("sent", ""))
 
     def test_department_staff_cannot_accept(self):
         self._add("甲")
-        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25"})
+        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25", "draft_ids": _ids()})
         self._post("/hr/insurance/late/accept", {"work_date": "2026-09-25", "draft_ids": self._late_ids()})
         self.assertEqual(len(self._late_ids()), 1)
 

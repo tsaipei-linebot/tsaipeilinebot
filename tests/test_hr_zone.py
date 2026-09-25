@@ -211,12 +211,12 @@ class AccessAndPageTests(_Base):
         self.account = TAOYUAN
         self.assertEqual(self.client.get("/hr/zone/pending", follow_redirects=False).headers["location"], "/portal")
 
-    def test_daily_page_shows_tabs_and_hides_drafts_until_date_feature(self):
+    def test_daily_page_shows_tabs(self):
         self._new(insured_date="2026-09-26")
         html = self.client.get("/hr/insurance/upload?work_date=2026-09-26").text
         self.assertIn('class="zone-tabs"', html)
         self.assertIn("待進人員", html)
-        self.assertNotIn("待送出清單（", html)
+        self.assertIn("2026-09-26 的名單（1 筆）", html)
         self.assertNotIn("廠商維護", html)  # 專員看不到
         self.account = BOSS
         self.assertIn("廠商維護", self.client.get("/hr/insurance/upload").text)
@@ -236,6 +236,98 @@ class AccessAndPageTests(_Base):
         html = self.client.get("/hr/zone/pending").text
         self.assertIn("台北所(國際組)專區", html)
         self.assertNotIn("A123456789", html)
+
+
+class DailyByDateTests(_Base):
+    """每日加退保依日期自動帶入（2026-09-25 第二部分）。"""
+
+    def setUp(self):
+        super().setUp()
+        self.env_blobs = {}
+        from hr.routes import insurance_routes
+        for p in (
+            mock.patch.object(insurance_routes, "upload_file", side_effect=self._upload),
+            mock.patch.object(insurance_routes, "download_file", side_effect=lambda path: (self.env_blobs.get(path), "x")),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+        self._new(name="過期", id_number="A1", insured_date="2026-09-24", withdrawn_date="2026-09-24")
+        self._new(name="今天", id_number="A2", insured_date="2026-09-26", withdrawn_date="2026-09-26")
+        self._new(name="之後", id_number="A3", insured_date="2026-09-28", withdrawn_date="2026-09-28")
+
+    def _upload(self, category, entity_id, filename, content, content_type):
+        path = f"hr/{category}/{entity_id}/{len(self.env_blobs)}.xlsx"
+        self.env_blobs[path] = content
+        return path
+
+    def _id(self, name):
+        return next(d["id"] for d in drafts.list_pending(DEPT) if d["name"] == name)
+
+    def test_page_groups_by_date(self):
+        html = self.client.get("/hr/insurance/upload?work_date=2026-09-26").text
+        self.assertIn("日期已過、還沒送出（1 筆）", html)
+        self.assertIn("2026-09-26 的名單（1 筆）", html)
+        self.assertIn("之後日期，還不會送出（1 筆）", html)
+        self.assertIn("/hr/zone/pending/new?date=2026-09-26&amp;back=", html)
+        # 之後日期那一區沒有勾選框
+        future_part = html.split("之後日期，還不會送出")[1]
+        self.assertNotIn(f'value="{self._id("之後")}"', future_part.split("</details>")[0])
+
+    def test_send_only_checked_and_not_future(self):
+        ids = [self._id("過期"), self._id("今天"), self._id("之後")]
+        response = self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-26", "draft_ids": ids})
+        self.assertIn("msg=", response.headers["location"])
+        statuses = {d["name"]: d["status"] for d in drafts.list_drafts(DEPT)}
+        self.assertEqual(statuses, {"過期": "sent", "今天": "sent", "之後": "pending"})
+
+    def test_unchecked_rows_stay(self):
+        self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-26", "draft_ids": [self._id("今天")]})
+        self.assertEqual(sorted(d["name"] for d in drafts.list_pending(DEPT)), ["之後", "過期"])
+        response = self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-26"})
+        self.assertIn("err=", response.headers["location"])
+
+    def test_old_delivery_form_routes_redirect_zone_to_zone_forms(self):
+        response = self.client.get("/hr/insurance/drafts/new?date=2026-09-26", follow_redirects=False)
+        self.assertTrue(response.headers["location"].startswith("/hr/zone/pending/new?date=2026-09-26"))
+
+
+class DeliveryByDateTests(unittest.TestCase):
+    """配送組也改成不送未來日期；手動新增加保退保不同天也自動拆。"""
+
+    def setUp(self):
+        self.db = FakeFirestore()
+        self.account = {"username": "amy", "name": "Amy", "department": "新北所(配送組)", "modules": [], "is_platform_admin": False, "rank": ""}
+        from hr.routes import insurance_routes
+        self.blobs = {}
+        for p in (
+            mock.patch.object(drafts, "insurance_drafts_ref", side_effect=lambda: self.db.collection("d")),
+            mock.patch.object(repo, "insurance_uploads_ref", side_effect=lambda: self.db.collection("u")),
+            mock.patch.object(repo, "insurance_day_locks_ref", side_effect=lambda: self.db.collection("l")),
+            mock.patch.object(platform_accounts, "current_account", side_effect=lambda request: self.account),
+            mock.patch.object(insurance_routes, "upload_file", side_effect=lambda *a: f"hr/x/{len(self.blobs)}"),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+        self.client = TestClient(main.app)
+
+    def test_future_resign_date_is_not_sent(self):
+        drafts.add_draft("新北所(配送組)", {"name": "下週離職", "withdrawn_date": "2026-10-05"}, self.account, kind="remove")
+        drafts.add_draft("新北所(配送組)", {"name": "今天報到", "insured_date": "2026-09-26"}, self.account, kind="add")
+        html = self.client.get("/hr/insurance/upload?work_date=2026-09-26").text
+        self.assertIn("之後日期，還不會送出（1 筆）", html)
+        ids = [d["id"] for d in drafts.list_pending("新北所(配送組)")]
+        self.client.post("/hr/insurance/drafts/send", data={"work_date": "2026-09-26", "draft_ids": ids}, follow_redirects=False)
+        self.assertEqual([d["name"] for d in drafts.list_pending("新北所(配送組)")], ["下週離職"])
+
+    def test_manual_add_page_and_split(self):
+        html = self.client.get("/hr/insurance/drafts/new?date=2026-09-26").text
+        self.assertIn('name="insured_date" value="2026-09-26"', html)
+        response = self.client.post("/hr/insurance/drafts/new", data={
+            "work_date": "2026-09-26", "name": "王小明", "insured_date": "2026-09-26", "withdrawn_date": "2026-10-01",
+        }, follow_redirects=False)
+        self.assertIn("msg=", response.headers["location"])
+        rows = sorted((d["insured_date"], d["withdrawn_date"]) for d in drafts.list_pending("新北所(配送組)"))
+        self.assertEqual(rows, [("", "2026-10-01"), ("2026-09-26", "")])
 
 
 class PendingRuleUnitTests(unittest.TestCase):

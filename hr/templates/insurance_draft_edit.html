@@ -1,12 +1,14 @@
 {% extends "base.html" %}
-{% block title %}修改待送出資料 - 材霈有限公司-人資專區{% endblock %}
+{% block title %}{% if is_new %}新增待送出資料{% else %}修改待送出資料{% endif %} - 材霈有限公司-人資專區{% endblock %}
 {% block content %}
-<h1 class="page-title">修改待送出資料</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
-<form method="post" action="/hr/insurance/drafts/{{ draft.id }}/edit" class="form-stack form-narrow">
+<h1 class="page-title">{% if is_new %}新增待送出資料{% else %}修改待送出資料{% endif %}</h1>
+<form method="post" action="{% if is_new %}/hr/insurance/drafts/new{% else %}/hr/insurance/drafts/{{ draft.id }}/edit{% endif %}" class="form-stack form-narrow">
     <input type="hidden" name="work_date" value="{{ work_date }}">
     {% with d = draft %}{% include "_insurance_draft_fields.html" %}{% endwith %}
-    <button type="submit" class="btn btn-primary">儲存</button>
+    <p class="hint">加保和退保不同天會自動拆成兩列（到了各自的日期才會送出）。</p>
+    <button type="submit" class="btn btn-primary">{% if is_new %}加入待送出清單{% else %}儲存{% endif %}</button>
 </form>
 <p class="back-link"><a href="/hr/insurance/upload{% if work_date %}?work_date={{ work_date }}{% endif %}">&larr; 回每日加退保</a></p>
+{% set flash_err = error %}
+{% include "_flash_popup.html" %}
 {% endblock %}
