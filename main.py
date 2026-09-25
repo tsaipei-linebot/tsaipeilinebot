@@ -23,6 +23,7 @@ import dispatch_routes
 import dispatch_webhook_routes
 import finance_routes
 import job_listing_routes
+import job_portal_line_relay_routes
 import job_portal_mail_routes
 import project_contract_routes
 import login_routes
@@ -129,6 +130,10 @@ app.include_router(finance_routes.router)
 # 寄通知信的端點（2026-09-23 新增，見 job_portal_mail_routes.py 開頭）。
 # 靠 header 上的共用密鑰驗證，不走登入 session。
 app.include_router(job_portal_mail_routes.router)
+
+# /api/job-portal/line-webhook：職缺維護 LINE 官方帳號的「總機」（2026-09-25 新增，見
+# job_portal_line_relay_routes.py 開頭）。驗 LINE 簽章後把訊息原封不動轉給 GAS。
+app.include_router(job_portal_line_relay_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，

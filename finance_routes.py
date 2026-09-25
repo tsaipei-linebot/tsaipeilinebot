@@ -35,6 +35,7 @@ from fastapi.responses import RedirectResponse, Response
 import platform_accounts
 from platform_templating import templates
 from config import SALARY_PHOTO_GCS_BUCKET, TAIPEI_TZ
+from services import job_portal_line_relay as line_relay
 from services import salary_repayment_photos as photos
 from services import salary_repayment_sheet_writer as sheet_writer
 from services import salary_repayment_store as store
@@ -166,6 +167,8 @@ def _migration_page(request: Request, error: str = "", notice: str = "", status_
             "read_source_changed_at": _taipei_time(state.get("read_source_changed_at")),
             "result": state.get("last_result") or {},
             "photos": photos.summary() if state.get("last_synced_at") else None,
+            "line_relay_configured": line_relay.is_configured(),
+            "line_relay_logs": [{**e, "at_text": _taipei_time(e.get("at"))} for e in line_relay.recent()],
             "error": error,
             "notice": notice,
         },
