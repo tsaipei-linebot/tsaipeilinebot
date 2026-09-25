@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% from "_option_picker.html" import picker, picker_script %}
+{% block title %}{% if mode == 'edit' %}修改待進人員{% else %}新增待進人員{% endif %} - {{ department }}專區{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ department }}專區</h1>
+{% include "_zone_tabs.html" %}
+<h2 class="section-title">{% if mode == 'edit' %}修改待進人員{% else %}新增待進人員{% endif %}</h2>
+
+{% if not vendor_names %}
+<p class="error">還沒有任何廠商選項，請主管先到「廠商維護」新增，才能登記待進人員。</p>
+{% endif %}
+
+<form method="post" action="{% if mode == 'edit' %}/hr/zone/pending/{{ draft.id }}/edit{% else %}/hr/zone/pending/new{% endif %}" class="form-stack form-narrow" id="pending-form">
+    <input type="hidden" name="back" value="{{ back }}">
+    {% if mode != 'edit' %}
+    <fieldset class="mode-choice">
+        <legend>新增方式</legend>
+        <label><input type="radio" name="mode" value="single" {% if mode != 'multi' %}checked{% endif %}> 一筆（自己填加保／退保日期）</label>
+        <label><input type="radio" name="mode" value="multi" {% if mode == 'multi' %}checked{% endif %}> 多日期（同一個人排好幾天，一次建好）</label>
+    </fieldset>
+    {% endif %}
+
+    {{ picker("vendor", "廠商", vendor_names, values.vendor) }}
+    {{ picker("shift", "班別", shift_names, values.shift, required=False) }}
+    <label>姓名
+        <input type="text" name="name" value="{{ values.name or '' }}" required>
+    </label>
+    <label>身分證（必填）
+        <input type="text" name="id_number" value="{{ values.id_number or '' }}" required style="text-transform: uppercase;">
+    </label>
+
+    <div id="single-dates" {% if mode == 'multi' %}hidden{% endif %}>
+        <label>勞保加保日期
+            <input type="date" name="insured_date" value="{{ values.insured_date or '' }}">
+        </label>
+        <label>勞保退保日期
+            <input type="date" name="withdrawn_date" value="{{ values.withdrawn_date or '' }}">
+        </label>
+        <label>勞保追退日期
+            <input type="date" name="recovery_date" value="{{ values.recovery_date or '' }}">
+        </label>
+        <p class="hint">當天加退就把加保、退保填同一天。加保和退保不同天會自動拆成兩列。</p>
+    </div>
+
+    {% if mode != 'edit' %}
+    <div id="multi-dates" {% if mode != 'multi' %}hidden{% endif %}>
+        <fieldset class="mode-choice">
+            <legend>類型</legend>
+            {% for code, label in multi_types.items() %}
+            <label><input type="radio" name="multi_type" value="{{ code }}" {% if (values.multi_type or 'both') == code %}checked{% endif %}> {{ label }}</label>
+            {% endfor %}
+        </fieldset>
+        <label>選日期
+            <span style="display:flex; gap:8px; align-items:center;">
+                <input type="date" id="date-pick">
+                <button type="button" class="btn btn-small" id="date-add">加入</button>
+            </span>
+        </label>
+        <label>或一次加入連續日期
+            <span style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <input type="date" id="range-from"> 到 <input type="date" id="range-to">
+                <button type="button" class="btn btn-small" id="range-add">加入這段</button>
+            </span>
+        </label>
+        <div class="date-chips" id="date-chips"></div>
+        <p class="hint">每個日期會建一列。</p>
+    </div>
+    {% endif %}
+
+    <label>健保加保月份
+        <input type="text" name="health_month" value="{{ values.health_month or '' }}">
+    </label>
+    <label>眷屬健保
+        <input type="text" name="dependents" value="{{ values.dependents or '' }}">
+    </label>
+    <label>備註
+        <input type="text" name="note" value="{{ values.note or '' }}">
+    </label>
+    <button type="submit" class="btn btn-primary">儲存</button>
+</form>
+<p class="back-link"><a href="{{ back or '/hr/zone/pending' }}">&larr; 返回</a></p>
+
+{% set flash_err = err %}
+{% include "_flash_popup.html" %}
+{{ picker_script() }}
+<script>
+(function () {
+    var single = document.getElementById('single-dates');
+    var multi = document.getElementById('multi-dates');
+    var chips = document.getElementById('date-chips');
+    if (!multi) { return; }
+    var dates = {{ dates | tojson }};
+    function render() {
+        dates.sort();
+        chips.innerHTML = '';
+        dates.forEach(function (d, i) {
+            var chip = document.createElement('span');
+            chip.className = 'date-chip';
+            chip.textContent = d;
+            var hidden = document.createElement('input');
+            hidden.type = 'hidden'; hidden.name = 'dates'; hidden.value = d;
+            var remove = document.createElement('button');
+            remove.type = 'button'; remove.textContent = '✕'; remove.setAttribute('aria-label', '移除 ' + d);
+            remove.addEventListener('click', function () { dates.splice(i, 1); render(); });
+            chip.appendChild(hidden); chip.appendChild(remove);
+            chips.appendChild(chip);
+        });
+    }
+    function add(d) { if (d && dates.indexOf(d) === -1) { dates.push(d); } }
+    document.getElementById('date-add').addEventListener('click', function () {
+        add(document.getElementById('date-pick').value); render();
+    });
+    document.getElementById('range-add').addEventListener('click', function () {
+        var from = document.getElementById('range-from').value, to = document.getElementById('range-to').value;
+        if (!from || !to || from > to) { window.showAlert('請選好開始和結束日期（開始不能晚於結束）。'); return; }
+        var d = new Date(from + 'T00:00:00'), end = new Date(to + 'T00:00:00'), count = 0;
+        while (d <= end && count < 62) {
+            var m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+            add(d.getFullYear() + '-' + m + '-' + day);
+            d.setDate(d.getDate() + 1); count++;
+        }
+        render();
+    });
+    document.querySelectorAll('input[name="mode"]').forEach(function (r) {
+        r.addEventListener('change', function () {
+            var isMulti = document.querySelector('input[name="mode"]:checked').value === 'multi';
+            multi.hidden = !isMulti; single.hidden = isMulti;
+        });
+    });
+    document.getElementById('pending-form').addEventListener('submit', function (event) {
+        var isMulti = document.querySelector('input[name="mode"]:checked').value === 'multi';
+        if (isMulti && !dates.length) { event.preventDefault(); window.showAlert('多日期請至少加入一個日期。'); }
+    });
+    render();
+})();
+</script>
+{% endblock %}

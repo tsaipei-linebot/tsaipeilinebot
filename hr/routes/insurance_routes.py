@@ -44,6 +44,7 @@ from hr.insurance_excel import (
     parse_department_workbook,
 )
 from hr.storage import StorageNotConfigured, download_file, upload_file
+from hr.routes import zone_routes
 from hr.templating import templates
 
 router = APIRouter()
@@ -138,11 +139,11 @@ def _upload_context(user: dict, department: str, work_date: str, error: str = ""
     existing = repo.get_upload(department, work_date, kind)
     proxy = repo.is_collector(user)
     # 待送出清單只給那個部門自己的同仁看；人資代傳時不顯示（人資收補件在彙總頁）
-    drafts_enabled = (
-        drafts_repo.department_has_drafts(department)
-        and repo.can_upload(user)
-        and _account_department(user) == department
-    )
+    own_department = repo.can_upload(user) and _account_department(user) == department
+    zone = own_department and zone_routes.is_zone_department(department)
+    # 台北所（有待進人員的部門）的「依日期自動帶入」是下一個 PR 才做，這之前每日加退保頁先不顯示
+    # 待送出清單，避免把之後日期的待進人員一次全送出去
+    drafts_enabled = drafts_repo.department_has_drafts(department) and own_department and not zone
     return {
         "user": user,
         "department": department,
@@ -160,6 +161,8 @@ def _upload_context(user: dict, department: str, work_date: str, error: str = ""
         "pending": drafts_repo.list_pending(department) if drafts_enabled else [],
         "late": drafts_repo.list_late(department) if drafts_enabled else [],
         "type_name": drafts_repo.draft_type_name,
+        "zone": zone,
+        **(zone_routes.zone_tabs_context(user, "daily") if zone else {}),
         # 這一天已經從暫存區送出、還在人資那份檔案裡的筆數：再整份上傳 Excel
         # 會把它們蓋掉，畫面要提醒
         "sent_in_existing": len((existing or {}).get("draft_ids") or []),

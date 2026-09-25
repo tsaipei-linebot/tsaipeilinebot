@@ -10449,9 +10449,9 @@ dependents/note`（對照範本 11 欄，`FIELD_HEADERS`）＋`department`（標
 主旨兩案：A「{公司名稱} 新廠人力規劃－材霈人力解決方案」、B「恭喜貴司新設{工廠地區}廠區｜產線
 人力可以交給我們」。
 
-## 【待辦，規格已確認、等使用者說「請實作」】台北所(派遣組)／台北所(國際組)專區：待進人員＋每日加退保自動帶入（2026-09-25 討論）
+## 台北所(派遣組)／台北所(國際組)專區：待進人員＋每日加退保自動帶入（2026-09-25 確認規格，分兩個 PR 實作）
 
-**這一節是還沒做的需求**。
+PR1（專區分頁、廠商/班別維護、待進人員）已完成，PR2（每日加退保依日期自動帶入、彈出視窗提醒）還沒做。
 
 ### 需求
 
@@ -10504,3 +10504,31 @@ dependents/note`（對照範本 11 欄，`FIELD_HEADERS`）＋`department`（標
   （「蝦皮(台南)(時薪)-外籍」），不能合成一份，但現在先留對應欄位，之後可以自動帶出彙總表「投保單位」
   （主頁廠商有記簽約公司）、依客戶做統計。
 - **多日期的類型**：每個勾選的日期建一列，類型選「當天加退／只加保／只退保」。
+
+### 實作紀錄 PR1：專區分頁＋廠商/班別維護＋待進人員（2026-09-25）
+
+- **`hr/config.py`**：`INSURANCE_ZONE_DEPARTMENTS`（台北所兩組），也加進 `INSURANCE_DRAFT_DEPARTMENTS`
+  （待進人員存在同一個暫存區 `hr_insurance_drafts`，`kind="zone"`）。
+- **`hr/insurance_options.py`（新檔）**：collection `hr_insurance_options`（department/type=vendor|shift/name/
+  active/platform_vendor_name）。不能改名、不能刪，只能停用；同部門同種類不能重名。`platform_vendor_choices()`
+  列主頁廠商管理裡「服務部門」有勾這一組的客戶名稱（同名一次、全形括號也認）。
+- **`hr/insurance_pending.py`（新檔）**：`clean_fields()`（身分證轉大寫去空白、日期接受 2026-09-26／2026/9/26）、
+  `validate()`（廠商必選且要是啟用中的選項、班別可空但有填就要在清單、身分證必填、日期至少一個）、`split()`
+  （加保/退保不同天拆兩列，追退日期跟退保那列）、`expand_multi()`（多日期）、`find_duplicates()`（同身分證、
+  同一天、同是加保或同是退保；已取消的不算；同一批彼此也比）、`prepare_import()`（Excel 每列檢查，錯的列回
+  (Excel 列號, 原因)）。
+- **`hr/routes/zone_routes.py`（新檔，掛在 hr_app）**：`/hr/zone/pending`（清單＋篩選日期/姓名或身分證/廠商/
+  狀態）、`/pending/new`（`mode=single|multi`，`?date=` 預帶日期、`back=` 存完回去——給 PR2 每日加退保的
+  「＋新增人員」捷徑用，只接受 `/hr/` 開頭）、`/pending/{id}/edit`（改完不同天也會拆）、`/cancel`、
+  `/pending/template.xlsx`、`/pending/import`、`/zone/options/{vendor|shift}`（主管：`is_manager_rank()` 或全平台
+  管理員）。權限只看帳號部門（不用勾人資模組）。
+- 樣板：`_zone_tabs.html`（分頁）、`_flash_popup.html`（**彈出視窗**：錯誤/警告 `<dialog>` 要按確定、成功右下角
+  toast 4 秒；文字伺服器端直接寫進去，JS 另外提供 `window.showAlert()`）、`_option_picker.html`（`<datalist>`
+  可搜尋選單，送出前檢查一定要是清單裡的值）、`zone_pending_list.html`、`zone_pending_form.html`（多日期：
+  單日加入或連續日期一次加入，最多 62 天）、`zone_options.html`。
+- 每日加退保頁（`/hr/insurance/upload`）對台北所顯示專區分頁；**PR2 之前先不顯示待送出清單**（避免把之後
+  日期的待進人員一次全送）。首頁卡片說明改成「每日加退保、待進人員」，連結不變。
+- 測試：新增 `tests/test_hr_zone.py`（22 個）。全部 2334 個通過；Playwright 看過待進人員清單、多日期新增、
+  重複時的彈出視窗、廠商維護。
+- 使用者不需要手動設定。上線後請**主管先到「廠商維護」「班別維護」建選項**，同仁才能登記待進人員。
+

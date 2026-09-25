@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ type_name }}維護 - {{ department }}專區{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ department }}專區</h1>
+{% include "_zone_tabs.html" %}
+
+<h2 class="section-title">{{ type_name }}維護</h2>
+<p class="hint">
+    待進人員的「{{ type_name }}」只能從這裡建好的選項選。選項不能改名、不能刪除（已經登記的資料要對得上），
+    要改名就新增一個、把舊的停用；停用的不會出現在下拉選單，以前的資料照樣顯示。只有主管（副主任以上）看得到這頁。
+</p>
+
+<form method="post" action="/hr/zone/options/{{ option_type }}/new" class="filter-bar">
+    <label>新增{{ type_name }}
+        <input type="text" name="name" required placeholder="例：{% if option_type == 'vendor' %}蝦皮(台南)(時薪)-外籍{% else %}外籍夜班{% endif %}">
+    </label>
+    {% if option_type == "vendor" %}
+    <label>對應主頁廠商（可空白）
+        <select name="platform_vendor_name">
+            <option value="">（先不選）</option>
+            {% for name in platform_vendor_choices %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+        </select>
+    </label>
+    {% endif %}
+    <button type="submit" class="btn btn-primary">新增</button>
+</form>
+{% if option_type == "vendor" and not platform_vendor_choices %}
+<p class="hint">「對應主頁廠商」的選項來自主頁「廠商管理」裡「服務部門」有勾「{{ department }}」的客戶，目前還沒有。可以先不選，之後再補。</p>
+{% endif %}
+
+{% if rows %}
+<div class="table-scroll">
+<table class="data-table insurance-table">
+    <thead><tr><th>{{ type_name }}</th>{% if option_type == "vendor" %}<th>對應主頁廠商</th>{% endif %}<th>狀態</th><th>建立</th><th>操作</th></tr></thead>
+    <tbody>
+        {% for o in rows %}
+        <tr>
+            <td>{{ o.name }}</td>
+            {% if option_type == "vendor" %}
+            <td>
+                <form method="post" action="/hr/zone/options/item/{{ o.id }}/platform-vendor" class="inline-action">
+                    <select name="platform_vendor_name" onchange="this.form.submit()">
+                        <option value="">（未對應）</option>
+                        {% for name in platform_vendor_choices %}<option value="{{ name }}" {% if o.platform_vendor_name == name %}selected{% endif %}>{{ name }}</option>{% endfor %}
+                        {% if o.platform_vendor_name and o.platform_vendor_name not in platform_vendor_choices %}<option value="{{ o.platform_vendor_name }}" selected>{{ o.platform_vendor_name }}</option>{% endif %}
+                    </select>
+                </form>
+            </td>
+            {% endif %}
+            <td>{% if o.active != false %}<span class="badge badge-ok">啟用</span>{% else %}<span class="badge badge-resigned">停用</span>{% endif %}</td>
+            <td class="meta">{{ o.created_by_name }} {{ o.created_at | taipei_time }}</td>
+            <td>
+                <form method="post" action="/hr/zone/options/item/{{ o.id }}/active" class="inline-action">
+                    {% if o.active != false %}
+                    <input type="hidden" name="active" value="0"><button type="submit" class="btn btn-small">停用</button>
+                    {% else %}
+                    <input type="hidden" name="active" value="1"><button type="submit" class="btn btn-small">重新啟用</button>
+                    {% endif %}
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">還沒有任何{{ type_name }}，請先新增。</p>
+{% endif %}
+
+{% set flash_msg = msg %}{% set flash_err = err %}
+{% include "_flash_popup.html" %}
+{% endblock %}
