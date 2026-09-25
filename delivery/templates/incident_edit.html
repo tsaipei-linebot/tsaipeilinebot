@@ -3,7 +3,7 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">編輯意外事件：{{ incident.personnel_name }}</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 <p class="hint">這裡只修正原始回報內容，風險等級跟結案狀態請回詳細頁另外操作。</p>
 
 <form method="post" action="/delivery/incidents/{{ incident.id }}/edit" class="form-stack form-narrow">

@@ -7,11 +7,11 @@
 <p class="hint">這裡只會顯示跟你有關的資料：你自己送出的申請，或是你身為主管、同仁送出的申請。</p>
 
 {% if submitted_salary_id %}
-<p class="success">申請已送出（單號：{{ submitted_salary_id }}），已通知主管審核，核准結果會出現在下方紀錄裡。</p>
+<p class="success js-flash">申請已送出（單號：{{ submitted_salary_id }}），已通知主管審核，核准結果會出現在下方紀錄裡。</p>
 {% endif %}
 
 {% if submit_unknown %}
-<p class="warning">
+<p class="warning js-flash">
     剛才那筆薪資補款申請，很可能其實已經送出成功了，只是材霈平台這邊沒辦法確認職缺維護系統的
     回應（這是對方系統偶爾會出現的已知狀況）。請先確認下方紀錄裡有沒有看到這筆申請——如果看到了，
     就不用再送一次；如果暫時沒看到，過一下重新整理這頁再確認一次，還是沒有才需要重新送出，
@@ -20,10 +20,10 @@
 {% endif %}
 
 {% if resend_ok %}
-<p class="success">通知信已重新寄出。</p>
+<p class="success js-flash">通知信已重新寄出。</p>
 {% endif %}
 {% if resend_error %}
-<p class="warning">補寄信失敗：{{ resend_error }}</p>
+<p class="warning js-flash">補寄信失敗：{{ resend_error }}</p>
 {% endif %}
 
 <h2 class="section-title">薪資補款紀錄</h2>

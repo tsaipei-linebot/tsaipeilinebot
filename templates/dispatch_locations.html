@@ -2,7 +2,7 @@
 {% block title %}{{ site_name }}地點管理 - 材霈有限公司{% endblock %}
 {% block content %}
 <h1 class="page-title">{{ site_name }}地點管理</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 
 <h2 class="section-title">新增地點</h2>
 <form method="post" action="/dispatch/{{ site }}/locations/new" class="form-stack form-narrow">
@@ -28,7 +28,7 @@
 
 {% if import_result %}
     {% if import_result.header_error %}
-    <p class="error">檔案格式錯誤：{{ import_result.header_error }}</p>
+    <p class="error js-flash">檔案格式錯誤：{{ import_result.header_error }}</p>
     {% else %}
     <p class="meta">成功建立 {{ import_result.created|length }} 筆，失敗 {{ import_result.failed|length }} 筆。</p>
     {% if import_result.failed %}

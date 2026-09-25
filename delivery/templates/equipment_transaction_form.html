@@ -3,7 +3,7 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">裝備異動登記</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 
 <form method="post" action="/delivery/equipment/transaction" class="form-stack form-narrow">
     <label>異動類型

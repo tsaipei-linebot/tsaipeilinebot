@@ -12,13 +12,13 @@
 </p>
 
 {% if error == "self" %}
-<p class="error">不能刪除自己的帳號。</p>
+<p class="error js-flash">不能刪除自己的帳號。</p>
 {% elif error == "platform_admin" %}
-<p class="error">不能刪除擁有全平台管理權限的帳號。</p>
+<p class="error js-flash">不能刪除擁有全平台管理權限的帳號。</p>
 {% elif error == "not_found" %}
-<p class="error">找不到這個帳號，可能已經被刪除了。</p>
+<p class="error js-flash">找不到這個帳號，可能已經被刪除了。</p>
 {% elif error == "cannot_impersonate_admin" %}
-<p class="error">不能切換成全平台管理員帳號的視角。</p>
+<p class="error js-flash">不能切換成全平台管理員帳號的視角。</p>
 {% endif %}
 
 {% for department, dept_accounts in grouped_accounts %}

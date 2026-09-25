@@ -7,11 +7,11 @@
 <p class="hint">這裡列出你自己送出過、或你的部屬送出過的合約紀錄，方便之後同一個客戶要用時直接重新下載。</p>
 
 {% if generated %}
-<p class="success">合約已產生並下載，紀錄也已存檔。</p>
+<p class="success js-flash">合約已產生並下載，紀錄也已存檔。</p>
 {% endif %}
 
 {% if upload_error %}
-<p class="error">{{ upload_error_messages.get(upload_error, "上傳失敗，請稍後再試。") }}</p>
+<p class="error js-flash">{{ upload_error_messages.get(upload_error, "上傳失敗，請稍後再試。") }}</p>
 {% endif %}
 
 <p>

@@ -1,41 +1,10 @@
-{# 提醒改用彈出視窗（2026-09-25，先用在台北所專區、每日加退保、待進人員這幾頁；整個系統之後再一起改）。
-   錯誤／警告：彈出視窗，要按「確定」才關；成功：畫面右下角出現幾秒自動消失。
-   用法：{% set flash_msg = msg %}{% set flash_err = err %}{% set flash_list = [...] %}{% include "_flash_popup.html" %}
-   JS 也可以直接呼叫 window.showAlert('文字') 彈出錯誤視窗（取代 alert）。文字是伺服器端直接寫進視窗裡，
-   沒有 JS 也看得到（dialog 沒開時瀏覽器不顯示，所以另外有 noscript 備援）。 #}
-<dialog id="flash-dialog" class="flash-dialog" data-open="{{ '1' if flash_err else '' }}">
-    <p id="flash-dialog-text" class="flash-dialog-text">{{ flash_err or "" }}</p>
-    <ul id="flash-dialog-list" class="flash-dialog-list">{% for item in (flash_list or []) %}<li>{{ item }}</li>{% endfor %}</ul>
-    <div class="btn-list" style="flex-direction: row; justify-content: flex-end;">
-        <button type="button" class="btn btn-primary" id="flash-dialog-ok">確定</button>
-    </div>
-</dialog>
-<div id="flash-toast" class="flash-toast" data-open="{{ '1' if flash_msg else '' }}" hidden>{{ flash_msg or "" }}</div>
-{% if flash_err or flash_msg %}<noscript><p class="{{ 'error' if flash_err else 'success' }}">{{ flash_err or flash_msg }}</p></noscript>{% endif %}
-<script>
-(function () {
-    var dialog = document.getElementById('flash-dialog');
-    var text = document.getElementById('flash-dialog-text');
-    var list = document.getElementById('flash-dialog-list');
-    var toast = document.getElementById('flash-toast');
-    document.getElementById('flash-dialog-ok').addEventListener('click', function () { dialog.close(); });
-    window.showAlert = function (message, items) {
-        text.textContent = message || '';
-        list.innerHTML = '';
-        (items || []).forEach(function (item) {
-            var li = document.createElement('li');
-            li.textContent = item;
-            list.appendChild(li);
-        });
-        if (dialog.open) { dialog.close(); }
-        dialog.showModal();
-    };
-    window.showToast = function (message) {
-        if (message) { toast.textContent = message; }
-        toast.hidden = false;
-        setTimeout(function () { toast.hidden = true; }, 4000);
-    };
-    if (toast.dataset.open) { window.showToast(); }
-    if (dialog.dataset.open) { dialog.showModal(); }
-})();
-</script>
+{# 彈出視窗提醒（2026-09-25）。實際顯示交給全系統共用的 /delivery/static/flash.js（base.html 已載入）：
+   .js-flash.success → 右下角提示幾秒自動消失；.js-flash.error → 彈出視窗要按「確定」。
+   用法：{% set flash_msg = msg %}{% set flash_err = err %}{% set flash_list = [...] %}{% include "_flash_popup.html" %} #}
+{% if flash_msg %}<p class="success js-flash">{{ flash_msg }}</p>{% endif %}
+{% if flash_err %}
+<div class="error js-flash">
+    <p class="flash-dialog-text" style="margin:0 0 8px;">{{ flash_err }}</p>
+    {% if flash_list %}<ul class="flash-dialog-list">{% for item in flash_list %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+</div>
+{% endif %}

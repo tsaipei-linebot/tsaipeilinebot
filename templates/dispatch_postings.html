@@ -2,7 +2,7 @@
 {% block title %}{{ site_name }}需求時段管理 - 材霈有限公司{% endblock %}
 {% block content %}
 <h1 class="page-title">{{ site_name }}需求時段管理</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 
 <h2 class="section-title">開需求</h2>
 {% if not locations %}

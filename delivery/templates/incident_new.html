@@ -3,7 +3,7 @@
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h1 class="page-title">新增意外事件</h1>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
 <p class="hint">跟 LINE 群組回報是同一套資料：如果人員名稱＋發生時間跟既有紀錄完全相同，會直接更新那一筆，不會產生重複紀錄。</p>
 
 <form method="post" action="/delivery/incidents/new" class="form-stack form-narrow">
