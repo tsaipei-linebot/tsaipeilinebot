@@ -173,7 +173,7 @@
 {% if insurance_records %}
 <div class="table-scroll">
 <table class="data-table insurance-table">
-    <thead><tr><th>類型</th><th>加保日期</th><th>退保日期</th><th>狀態</th><th>最後操作</th></tr></thead>
+    <thead><tr><th>類型</th><th>加保日期</th><th>退保日期</th><th>狀態</th><th>建立人員</th><th>最後操作</th></tr></thead>
     <tbody>
         {% for r in insurance_records %}
         {% set last = (r.history or [{}])[-1] %}
@@ -182,6 +182,7 @@
             <td>{{ r.insured_date or "-" }}</td>
             <td>{{ r.withdrawn_date or "-" }}</td>
             <td>{{ insurance_status_names.get(r.status, r.status) }}{% if r.sent_work_date %}<div class="meta">交給人資 {{ r.sent_work_date }}</div>{% endif %}</td>
+            <td>{{ r.created_by_name }}</td>
             <td class="meta">{{ last.at | taipei_time }} {{ last.by_name }} {{ insurance_action_names.get(last.action, last.action) }}</td>
         </tr>
         {% endfor %}

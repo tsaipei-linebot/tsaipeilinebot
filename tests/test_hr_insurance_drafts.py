@@ -159,7 +159,8 @@ class DraftRouteTests(unittest.TestCase):
 
         upload = repo.get_upload(DEPT, "2026-09-25")
         self.assertTrue(upload["generated_from_drafts"])
-        self.assertEqual(upload["base_manual_blob_path"], "hr/insurance/manual.xlsx")
+        self.assertEqual([h["mode"] for h in upload["upload_history"]], ["send", "send"])
+        self.assertEqual(len(upload["draft_ids"]), 2)
         self.assertEqual([r[0] for r in _rows(self.env.blobs[upload["blob_path"]])], ["手動的人", "甲", "乙"])
         statuses = {d["name"]: (d["status"], d["sent_work_date"]) for d in drafts.list_drafts(DEPT)}
         self.assertEqual(statuses, {"甲": ("sent", "2026-09-25"), "乙": ("sent", "2026-09-25")})
@@ -219,6 +220,157 @@ class DraftRouteTests(unittest.TestCase):
         html = self.client.get("/hr/insurance/drafts/records").text
         self.assertIn("甲", html)
         self.assertIn("全部部門", html)
+
+
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+class ProxyUploadTests(unittest.TestCase):
+    """人資代傳（2026-09-25）：選部門，那天已經有檔案預設接在後面。"""
+
+    def setUp(self):
+        self.env = _Env()
+        self.env.start(self)
+        self.account = HR
+        patcher = mock.patch.object(platform_accounts, "current_account", side_effect=lambda request: self.account)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = TestClient(main.app)
+
+    def _upload(self, department, names, mode=None):
+        data = {"work_date": "2026-09-25", "department": department}
+        if mode:
+            data["mode"] = mode
+        content = build_department_workbook([{"姓名": n, "勞保加保日期": "2026-09-25"} for n in names])
+        return self.client.post("/hr/insurance/upload", data=data, files={"file": ("a.xlsx", content, XLSX)}, follow_redirects=False)
+
+    def _names(self, department):
+        upload = repo.get_upload(department, "2026-09-25")
+        return [r[0] for r in _rows(self.env.blobs[upload["blob_path"]])]
+
+    def test_hr_sees_department_dropdown(self):
+        html = self.client.get("/hr/insurance/upload?department=台中所&work_date=2026-09-25").text
+        self.assertIn("每日加退保代傳", html)
+        self.assertIn('<option value="台中所" selected>', html)
+        self.assertNotIn("待送出清單（", html)
+
+    def test_append_is_default_when_file_exists_and_replace_is_optional(self):
+        self._upload("台中所", ["甲"])
+        self._upload("台中所", ["乙"])
+        self.assertEqual(self._names("台中所"), ["甲", "乙"])
+        self._upload("台中所", ["丙"], mode="replace")
+        self.assertEqual(self._names("台中所"), ["丙"])
+        modes = [h["mode"] for h in repo.get_upload("台中所", "2026-09-25")["upload_history"]]
+        self.assertEqual(modes, ["replace", "append", "replace"])
+
+    def test_hr_can_upload_after_closing(self):
+        repo.close_day("2026-09-25", "hr", "HR")
+        self._upload("高雄所", ["甲"])
+        self.assertEqual(self._names("高雄所"), ["甲"])
+
+    def test_department_staff_cannot_choose_another_department(self):
+        self.account = AMY
+        self._upload("台中所", ["甲"])
+        self.assertIsNone(repo.get_upload("台中所", "2026-09-25"))
+        self.assertEqual(self._names(DEPT), ["甲"])
+
+    def test_append_keeps_rows_sent_from_drafts(self):
+        self.account = AMY
+        self.client.post("/hr/insurance/drafts/new", data={"work_date": "2026-09-25", "name": "配送甲", "insured_date": "2026-09-25"})
+        self.client.post("/hr/insurance/drafts/send", data={"work_date": "2026-09-25"})
+        self.account = HR
+        self._upload(DEPT, ["人資乙"])
+        self.assertEqual(self._names(DEPT), ["配送甲", "人資乙"])
+        self.assertEqual(len(repo.get_upload(DEPT, "2026-09-25")["draft_ids"]), 1)
+
+
+class LateSubmissionTests(unittest.TestCase):
+    """收單後補件：部門送出補件 → 人資收進或退件（2026-09-25）。"""
+
+    def setUp(self):
+        self.env = _Env()
+        self.env.start(self)
+        self.account = AMY
+        patcher = mock.patch.object(platform_accounts, "current_account", side_effect=lambda request: self.account)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = TestClient(main.app)
+        repo.close_day("2026-09-25", "hr", "HR")
+
+    def _post(self, url, data):
+        return self.client.post(url, data=data, follow_redirects=False)
+
+    def _add(self, name):
+        self._post("/hr/insurance/drafts/new", {"work_date": "2026-09-25", "name": name, "withdrawn_date": "2026-09-25"})
+
+    def _late_ids(self):
+        return [d["id"] for d in drafts.list_late(DEPT)]
+
+    def test_closed_day_offers_late_submission(self):
+        self._add("甲")
+        html = self.client.get("/hr/insurance/upload?work_date=2026-09-25").text
+        self.assertIn("送出補件給人資（2026-09-25）", html)
+        self.assertIn("備用：下載待送出清單", html)
+        self.assertIn("err=", self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-25"}).headers["location"])
+
+    def test_late_submit_and_withdraw(self):
+        self._add("甲")
+        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25"})
+        self.assertEqual(drafts.list_pending(DEPT), [])
+        [late_id] = self._late_ids()
+        self.assertIn("補件待收（1 筆）", self.client.get("/hr/insurance/upload?work_date=2026-09-25").text)
+        self._post(f"/hr/insurance/drafts/{late_id}/late-withdraw", {"work_date": "2026-09-25"})
+        self.assertEqual(drafts.get_draft(late_id)["status"], drafts.STATUS_PENDING)
+
+    def test_late_submit_not_allowed_before_closing(self):
+        self._add("甲")
+        response = self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-26"})
+        self.assertIn("err=", response.headers["location"])
+        self.assertEqual(self._late_ids(), [])
+
+    def test_hr_accept_appends_to_that_days_file(self):
+        self._add("甲")
+        self._add("乙")
+        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25"})
+        self.account = HR
+        html = self.client.get("/hr/insurance/summary?work_date=2026-09-25").text
+        self.assertIn("有 2 筆補件待處理", html)
+        ids = self._late_ids()
+        response = self._post("/hr/insurance/late/accept", {"work_date": "2026-09-25", "draft_ids": ids[:1]})
+        self.assertIn("msg=", response.headers["location"])
+        upload = repo.get_upload(DEPT, "2026-09-25")
+        self.assertEqual([r[0] for r in _rows(self.env.blobs[upload["blob_path"]])], ["甲"])
+        accepted = drafts.get_draft(ids[0])
+        self.assertEqual((accepted["status"], accepted["sent_work_date"]), ("sent", "2026-09-25"))
+        self.assertEqual(accepted["history"][-1]["action"], "accepted")
+        self.assertEqual(accepted["history"][-1]["by_name"], "HR")
+        self.assertEqual(accepted["created_by_name"], "Amy")  # 建立人員不變
+
+    def test_hr_reject_returns_to_pending_with_reason_until_next_send(self):
+        self._add("甲")
+        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25"})
+        self.account = HR
+        self._post("/hr/insurance/late/reject", {"work_date": "2026-09-25", "draft_ids": self._late_ids(), "reason": ""})
+        self.account = AMY
+        [draft] = drafts.list_pending(DEPT)
+        self.assertEqual(draft["rejected_reason"], "已超過下班時間，請明天再送")
+        self.assertIn("人資退件：已超過下班時間，請明天再送", self.client.get("/hr/insurance/upload?work_date=2026-09-26").text)
+        self._post("/hr/insurance/drafts/send", {"work_date": "2026-09-26"})
+        sent = drafts.get_draft(draft["id"])
+        self.assertEqual((sent["status"], sent["rejected_reason"]), ("sent", ""))
+
+    def test_department_staff_cannot_accept(self):
+        self._add("甲")
+        self._post("/hr/insurance/drafts/late-submit", {"work_date": "2026-09-25"})
+        self._post("/hr/insurance/late/accept", {"work_date": "2026-09-25", "draft_ids": self._late_ids()})
+        self.assertEqual(len(self._late_ids()), 1)
+
+    def test_personnel_revert_also_cancels_late_submissions(self):
+        draft_id = drafts.add_draft(DEPT, {"name": "甲", "withdrawn_date": "2026-09-25"}, AMY, kind=drafts.KIND_REMOVE, personnel_id="p1")
+        drafts.submit_late([drafts.get_draft(draft_id)], "2026-09-25", AMY)
+        result = drafts.cancel_pending_for_personnel("p1", drafts.KIND_REMOVE, AMY, "改回")
+        self.assertEqual(result["cancelled"], 1)
+        self.assertEqual(drafts.get_draft(draft_id)["status"], drafts.STATUS_CANCELLED)
 
 
 if __name__ == "__main__":

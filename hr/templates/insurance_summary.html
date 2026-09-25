@@ -3,6 +3,9 @@
 {% block content %}
 <h1 class="page-title">每日加退彙總</h1>
 
+{% if msg %}<p class="success">{{ msg }}</p>{% endif %}
+{% if err %}<p class="error">{{ err }}</p>{% endif %}
+
 <form method="get" action="/hr/insurance/summary" class="filter-bar">
     <label>選擇日期
         <input type="date" name="work_date" value="{{ work_date }}" onchange="this.form.submit()">
@@ -18,34 +21,103 @@
         <button type="submit" class="btn btn-primary" onclick="return confirm('確定要收單嗎？收單後這 7 個部門今天就不能再上傳了。')">收單</button>
     </form>
     {% endif %}
+    <a class="btn" href="/hr/insurance/upload?work_date={{ work_date }}">代傳</a>
     <a class="btn" href="/hr/insurance/download">下載彙總檔案</a>
     <a class="btn" href="/hr/insurance/history">查詢全部歷史紀錄</a>
 </p>
 
-<table class="data-table">
+{% if late %}
+<section class="help-section late-panel">
+    <h2>⚠️ 有 {{ late | length }} 筆補件待處理</h2>
+    <p class="hint">收單後部門才送來的資料。「收進」＝接到那個部門那一天的檔案後面；「退件」＝退回部門的待送出清單，部門隔天再送。</p>
+    <form method="post" id="late-form">
+        <input type="hidden" name="work_date" value="{{ work_date }}">
+        <div class="table-scroll">
+        <table class="data-table insurance-table">
+            <thead>
+                <tr><th><input type="checkbox" id="late-all" aria-label="全選"></th><th>部門</th><th>補件日期</th><th>類型</th><th>姓名</th><th>廠商</th><th>加保日期</th><th>退保日期</th><th>建立人員</th></tr>
+            </thead>
+            <tbody>
+                {% for r in late %}
+                <tr>
+                    <td><input type="checkbox" name="draft_ids" value="{{ r.id }}" class="late-check"></td>
+                    <td>{{ r.department }}</td>
+                    <td>{{ r.late_work_date }}</td>
+                    <td>{{ type_name(r) }}</td>
+                    <td>{{ r.name }}</td>
+                    <td>{{ r.vendor or "-" }}</td>
+                    <td>{{ r.insured_date or "-" }}</td>
+                    <td>{{ r.withdrawn_date or "-" }}</td>
+                    <td>{{ r.created_by_name }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <div class="draft-actions">
+            <button type="submit" class="btn btn-primary" formaction="/hr/insurance/late/accept">收進勾選的補件</button>
+        </div>
+        <div class="draft-actions">
+            <label>退件原因
+                <input type="text" name="reason" value="已超過下班時間，請明天再送" style="min-width:260px;">
+            </label>
+            <button type="submit" class="btn btn-danger" formaction="/hr/insurance/late/reject">退件勾選的補件</button>
+        </div>
+    </form>
+</section>
+{% endif %}
+
+<div class="table-scroll">
+<table class="data-table insurance-table">
     <thead>
         <tr>
             <th>部門</th>
             <th>今日上傳狀態</th>
             <th>檔名</th>
-            <th>上傳人</th>
+            <th>最後上傳</th>
             <th></th>
         </tr>
     </thead>
     <tbody>
         {% for row in rows %}
+        {% set last = (row.upload.upload_history or [{}])[-1] if row.upload else {} %}
         <tr>
             <td>{{ row.department }}</td>
             <td>{% if row.upload %}已上傳{% else %}未上傳{% endif %}</td>
             <td>{{ row.upload.filename if row.upload else "-" }}</td>
-            <td>{{ row.upload.uploaded_by_name if row.upload else "-" }}</td>
-            <td>{% if row.upload %}<a href="/hr/files/{{ row.upload.blob_path }}">下載</a>{% endif %}</td>
+            <td>
+                {{ row.upload.uploaded_by_name if row.upload else "-" }}
+                {% if last.mode in ("append", "replace") %}<div class="meta">人資代傳</div>{% elif last.mode == "accept" %}<div class="meta">人資收進補件</div>{% endif %}
+            </td>
+            <td class="row-actions">
+                {% if row.upload %}<a href="/hr/files/{{ row.upload.blob_path }}">下載</a>{% endif %}
+                <a href="/hr/insurance/upload?department={{ row.department | urlencode }}&work_date={{ work_date }}">代傳</a>
+            </td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+</div>
 
 <p><a href="/hr/insurance/drafts/records">加退保操作紀錄（各部門待送出清單的送出／下載／刪除紀錄）</a></p>
 
 <p class="back-link"><a href="/hr/">&larr; 回主頁</a></p>
+
+<script>
+(function () {
+    var all = document.getElementById('late-all');
+    var form = document.getElementById('late-form');
+    if (!all || !form) { return; }
+    all.addEventListener('change', function () {
+        document.querySelectorAll('.late-check').forEach(function (c) { c.checked = all.checked; });
+    });
+    form.addEventListener('submit', function (event) {
+        var checked = document.querySelectorAll('.late-check:checked').length;
+        if (!checked) { window.alert('請先勾選補件。'); event.preventDefault(); return; }
+        var reject = event.submitter && event.submitter.formAction.indexOf('/reject') !== -1;
+        var text = reject ? '確定要退件這 ' + checked + ' 筆嗎？會退回部門的待送出清單。' : '確定要收進這 ' + checked + ' 筆嗎？會接到部門那一天的檔案後面。';
+        if (!window.confirm(text)) { event.preventDefault(); }
+    });
+})();
+</script>
 {% endblock %}

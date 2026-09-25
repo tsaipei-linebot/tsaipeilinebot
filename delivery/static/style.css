@@ -1036,3 +1036,34 @@ a.sheet-tab-btn { display: inline-block; text-decoration: none; }
 .draft-add {
     margin: 8px 0 12px;
 }
+
+/* 每日加退保：人資退件紅字、代傳「接在後面／整份取代」、彙總頁補件區（2026-09-25） */
+.error-text {
+    color: var(--danger, #c0392b);
+    font-size: 13px;
+    white-space: normal;
+}
+.mode-choice {
+    border: 1px solid var(--border, #e5e0da);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.late-panel {
+    border-left: 4px solid var(--danger, #c0392b);
+}
+.mode-choice label,
+.draft-actions label {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--text);
+}
+.mode-choice input[type="radio"] {
+    width: auto;
+    margin: 0;
+}
