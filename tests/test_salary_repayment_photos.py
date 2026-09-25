@@ -22,7 +22,7 @@ from tests._fake_firestore import FakeFirestore
 
 ADMIN = {"username": "boss", "name": "老闆", "department": "", "is_platform_admin": True, "modules": []}
 FINANCE = {"username": "carol", "name": "Carol", "department": "財務部", "is_platform_admin": False, "modules": []}
-HEADER = ["補款單號", "申請人姓名", "佐證照片網址"]
+HEADER = ["補款單號", "申請人姓名", "補款佐證(照片)"]
 FILE_A = "1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 FILE_B = "1BBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
 JPEG = b"\xff\xd8\xff\xe0fake-jpeg"
@@ -61,6 +61,20 @@ class PhotoTestCase(unittest.TestCase):
 
     def doc(self, doc_id):
         return self.db.docs(store.RECORDS_COLLECTION)[doc_id]
+
+
+class PhotoColumnTests(unittest.TestCase):
+    def test_real_gas_header(self):
+        self.assertEqual(photos.photo_url({"補款佐證(照片)": f" {url(FILE_A)} "}), url(FILE_A))
+
+    def test_other_header_with_keyword(self):
+        self.assertEqual(photos.photo_url({"補款佐證圖檔": url(FILE_A)}), url(FILE_A))
+
+    def test_header_renamed_but_value_is_a_drive_link(self):
+        self.assertEqual(photos.photo_url({"備註": "無", "U": url(FILE_A)}), url(FILE_A))
+
+    def test_empty_known_column_means_no_photo(self):
+        self.assertEqual(photos.photo_url({"補款佐證(照片)": "", "備註": url(FILE_A)}), "")
 
 
 class DownloadTests(unittest.TestCase):
