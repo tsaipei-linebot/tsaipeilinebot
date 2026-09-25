@@ -24,7 +24,11 @@ import requests
 from config import GCP_PROJECT_ID, SALARY_PHOTO_GCS_BUCKET
 from services import salary_repayment_store as store
 
-PHOTO_COLUMN = "佐證照片網址"
+# 試算表 U 欄的表頭，GAS 建分頁時寫的是「補款佐證(照片)」（`Project_Salary.js` 的標題列）。
+# 2026-09-25 第一版寫成 HANDOFF 欄位對照表上的「佐證照片網址」，結果 218 筆全部判斷成沒有照片——所以
+# 改成依序找：已知的表頭名稱 → 表頭含「佐證」→ 值看起來是 Drive／lh3 照片網址的欄位。
+PHOTO_COLUMNS = ("補款佐證(照片)", "補款佐證（照片）", "佐證照片網址")
+_PHOTO_URL = re.compile(r"https?://(lh3\.googleusercontent\.com/d/|drive\.google\.com/)")
 BLOB_PREFIX = "salary/photos/"
 MAX_BYTES = 25 * 1024 * 1024
 DOWNLOAD_TIMEOUT = 30
@@ -118,8 +122,21 @@ def download_photo(blob_path: str) -> tuple:
     return blob.download_as_bytes(), blob.content_type
 
 
+def photo_url(fields: dict) -> str:
+    for column in PHOTO_COLUMNS:
+        if column in fields:
+            return (fields.get(column) or "").strip()
+    for column, value in fields.items():
+        if "佐證" in column:
+            return (value or "").strip()
+    for value in fields.values():
+        if _PHOTO_URL.match((value or "").strip()):
+            return value.strip()
+    return ""
+
+
 def photo_status(doc: dict) -> str:
-    url = ((doc.get("fields") or {}).get(PHOTO_COLUMN) or "").strip()
+    url = photo_url(doc.get("fields") or {})
     if not url:
         return STATUS_NONE
     if doc.get("photo_blob") and doc.get("photo_source_url") == url:
@@ -158,7 +175,7 @@ def copy_batch(include_failed: bool = False, seconds: float = BATCH_SECONDS) -> 
     for doc_id, doc in todo:
         if time.monotonic() - started > seconds:
             break
-        url = doc["fields"][PHOTO_COLUMN].strip()
+        url = photo_url(doc["fields"])
         now = datetime.now(timezone.utc)
         ref = store.records_ref().document(doc_id)
         file_id = drive_file_id(url)
