@@ -10,11 +10,14 @@
   備註、聯絡紀錄
 - `/salesdev/export.xlsx`：下載 Excel
 - `/salesdev/import-sheet`：一次性匯入舊試算表（模組管理員限定）
+- `/salesdev?tab=hiring`：104 產線徵才公司（2026-09-25 新增，每週自動抓，見
+  `salesdev/hiring_pipeline.py`）；`/salesdev/hiring/settings` 改搜尋條件（管理員）
 
 跟 delivery/management/hr 不同，這個模組直接掛在根 app 上、複用同一顆
 登入 session cookie（比照 portal_routes.py／accounts_routes.py 的做法）。
 能不能進來由 /accounts 的權限設定決定。
 """
+import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
@@ -29,7 +32,8 @@ from salesdev.sheet_import import import_from_sheet
 router = APIRouter()
 
 MODULE_CODE = "salesdev"
-TABS = ("leads", "internal", "factories")
+TABS = ("leads", "internal", "hiring", "factories")
+HIRING_SIZE_FILTERS = ("big", "unknown", "small", "all")
 
 STATUS_BADGES = {
     repository.STATUS_PENDING: "badge-pending",
@@ -79,7 +83,9 @@ def _common_context(request: Request) -> dict:
 
 
 @router.get("/salesdev")
-def salesdev_home(request: Request, tab: str = "leads", status: str = "", redirect=Depends(_require_access)):
+def salesdev_home(
+    request: Request, tab: str = "leads", status: str = "", size: str = "big", redirect=Depends(_require_access)
+):
     if redirect:
         return redirect
     tab = tab if tab in TABS else "leads"
@@ -94,6 +100,11 @@ def salesdev_home(request: Request, tab: str = "leads", status: str = "", redire
             "groups": [],
             "internal_jobs": [],
             "factories": [],
+            "hiring_companies": [],
+            "hiring_counts": {},
+            "hiring_size": size if size in HIRING_SIZE_FILTERS else "big",
+            "hiring_settings": repository.default_hiring_settings(),
+            "latest_hiring_run": None,
             "load_error": "",
             "is_module_admin": _is_module_admin(request),
         }
@@ -110,6 +121,18 @@ def salesdev_home(request: Request, tab: str = "leads", status: str = "", redire
             context["groups"] = groups
         elif tab == "internal":
             context["internal_jobs"] = repository.list_internal_jobs()
+        elif tab == "hiring":
+            settings = repository.get_hiring_settings()
+            companies = repository.list_hiring_companies()
+            buckets = [(c, repository.hiring_size_bucket(c, settings["min_employees"])) for c in companies]
+            context["hiring_counts"] = {
+                key: sum(1 for _, b in buckets if b == key) for key in ("big", "unknown", "small")
+            }
+            context["hiring_counts"]["all"] = len(companies)
+            size_filter = context["hiring_size"]
+            context["hiring_companies"] = [c for c, b in buckets if size_filter == "all" or b == size_filter]
+            context["hiring_settings"] = settings
+            context["latest_hiring_run"] = repository.latest_hiring_run()
         else:
             context["factories"] = repository.list_factories()
     except Exception as exc:
@@ -213,7 +236,10 @@ def salesdev_export(request: Request, redirect=Depends(_require_access)):
     if redirect:
         return redirect
     content = build_workbook(
-        repository.list_groups(), repository.list_all_jobs(), repository.list_factories()
+        repository.list_groups(),
+        repository.list_all_jobs(),
+        repository.list_factories(),
+        repository.list_hiring_companies(),
     )
     filename = f"業務開發名單_{repository.today_str()}.xlsx"
     return Response(
@@ -240,3 +266,34 @@ def salesdev_import_sheet(request: Request, redirect=Depends(_require_access)):
             f"新登記工廠 {stats['factories_read']} 筆（新增 {stats['new_factories']}）。"
         ),
     )
+
+
+_KEYWORD_SPLIT_RE = re.compile(r"[\s,，、;；]+")
+
+
+@router.post("/salesdev/hiring/settings")
+async def salesdev_hiring_settings(request: Request, redirect=Depends(_require_access)):
+    """104 產線徵才公司的搜尋條件（管理員限定）。下一次每週自動抓取才會套用。"""
+    if redirect:
+        return redirect
+    back = "/salesdev?tab=hiring"
+    if not _is_module_admin(request):
+        return _redirect(back, err="只有這個專區的管理員可以修改搜尋條件。")
+    form = await request.form()
+    keywords = []
+    for keyword in _KEYWORD_SPLIT_RE.split(str(form.get("keywords", ""))):
+        if keyword and keyword not in keywords:
+            keywords.append(keyword)
+    try:
+        min_employees = int(str(form.get("min_employees", "")).strip())
+        max_pages = int(str(form.get("max_pages", "")).strip())
+    except ValueError:
+        return _redirect(back, err="員工人數門檻、每個關鍵字抓幾頁都要填數字。")
+    if not keywords:
+        return _redirect(back, err="請至少填一個搜尋關鍵字。")
+    if len(keywords) > 10:
+        return _redirect(back, err="關鍵字最多 10 個（每個關鍵字都要花時間搜尋，太多會來不及在時間內抓完）。")
+    if min_employees < 1 or not 1 <= max_pages <= 10:
+        return _redirect(back, err="員工人數門檻要大於 0；每個關鍵字抓幾頁要在 1～10 之間。")
+    repository.save_hiring_settings(keywords, min_employees, max_pages, _username(request))
+    return _redirect(back, msg="已儲存搜尋條件，下一次每週自動抓取會照新的條件搜尋。")

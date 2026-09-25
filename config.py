@@ -180,6 +180,10 @@ SALESDEV_SCRAPE_TRIGGER_SECRET = os.getenv("SALESDEV_SCRAPE_TRIGGER_SECRET", "")
 SALESDEV_SCRAPE_TIME_BUDGET_SECONDS = _int_env("SALESDEV_SCRAPE_TIME_BUDGET_SECONDS", 240)
 # 每日摘要要推播給誰（LINE user ID 或群組 ID），留空就不推播
 SALESDEV_LINE_TARGET_ID = os.getenv("SALESDEV_LINE_TARGET_ID", "")
+# 2026-09-25 新增「104 產線徵才公司」每週抓取（/internal/salesdev/hiring/run，
+# 跟每日抓職缺共用 SALESDEV_SCRAPE_TRIGGER_SECRET）：打 104 的時間上限（秒），
+# 之後還要對統一編號，所以比每日抓職缺的 240 秒短，見 salesdev/hiring_pipeline.py
+SALESDEV_HIRING_TIME_BUDGET_SECONDS = _int_env("SALESDEV_HIRING_TIME_BUDGET_SECONDS", 180)
 
 # ==========================================
 # 11. 我的專區（/me）：薪資補款紀錄

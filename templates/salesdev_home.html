@@ -32,6 +32,7 @@
 <div class="sheet-tabs">
     <a class="sheet-tab-btn{{ ' active' if tab == 'leads' else '' }}" href="/salesdev">開發名單（依地點）</a>
     <a class="sheet-tab-btn{{ ' active' if tab == 'internal' else '' }}" href="/salesdev?tab=internal">非客戶線索</a>
+    <a class="sheet-tab-btn{{ ' active' if tab == 'hiring' else '' }}" href="/salesdev?tab=hiring">104 產線徵才公司</a>
     <a class="sheet-tab-btn{{ ' active' if tab == 'factories' else '' }}" href="/salesdev?tab=factories">新登記工廠</a>
 </div>
 
@@ -119,6 +120,77 @@
         </tbody>
     </table>
 </div>
+{% endif %}
+
+{% elif tab == 'hiring' %}
+<p class="hint">每週自動到 104 搜尋<strong>工廠自己刊登</strong>的產線職缺（派遣公司刊的不算），一間公司一列。條件：關鍵字「{{ hiring_settings.keywords|join('、') }}」、地區全台、產業電子資訊／半導體與一般製造業（含塑膠、金屬、機械等）。職缺多的代表最近很缺人，排在前面。統一編號是用經濟部登記工廠名錄自動對的，對不到的留空，交給 Cowork 查。</p>
+
+<div class="salesdev-run">
+    {% if latest_hiring_run %}
+    <strong>最近一次每週抓取：</strong>{{ latest_hiring_run.started_at }}
+    （104 回傳 {{ latest_hiring_run.raw_items }} 筆，排除派遣公司 {{ latest_hiring_run.dispatch_skipped }} 筆、產業不符 {{ latest_hiring_run.industry_skipped }} 筆）
+    ，找到 {{ latest_hiring_run.companies_found }} 間公司（新的 {{ latest_hiring_run.new_companies }} 間）；
+    查到員工人數 {{ latest_hiring_run.employee_checked }} 間{% if latest_hiring_run.employee_failed %}、取不到 {{ latest_hiring_run.employee_failed }} 間{% endif %}{% if latest_hiring_run.employee_pending %}、還有 {{ latest_hiring_run.employee_pending }} 間下次再查{% endif %}；
+    對到統一編號 {{ latest_hiring_run.tax_id_matched }} 間
+    {% if latest_hiring_run.deadline_hit %}<span class="badge badge-pending">時間到提早結束</span>{% endif %}
+    {% if latest_hiring_run.errors %}
+    <ul class="salesdev-run-errors">
+        {% for e in latest_hiring_run.errors %}<li>{{ e }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% else %}
+    <strong>還沒有每週抓取紀錄。</strong>每週排程設定好之後，這裡會顯示每次抓取的結果。
+    {% endif %}
+</div>
+
+<div class="filter-bar">
+    <span>員工人數：</span>
+    <a class="btn btn-small{{ ' btn-primary' if hiring_size == 'big' else '' }}" href="/salesdev?tab=hiring&size=big">{{ hiring_settings.min_employees }} 人以上（{{ hiring_counts.get('big', 0) }}）</a>
+    <a class="btn btn-small{{ ' btn-primary' if hiring_size == 'unknown' else '' }}" href="/salesdev?tab=hiring&size=unknown">人數未知（{{ hiring_counts.get('unknown', 0) }}）</a>
+    <a class="btn btn-small{{ ' btn-primary' if hiring_size == 'small' else '' }}" href="/salesdev?tab=hiring&size=small">未滿 {{ hiring_settings.min_employees }} 人（{{ hiring_counts.get('small', 0) }}）</a>
+    <a class="btn btn-small{{ ' btn-primary' if hiring_size == 'all' else '' }}" href="/salesdev?tab=hiring&size=all">全部（{{ hiring_counts.get('all', 0) }}）</a>
+</div>
+
+{% if not hiring_companies %}
+<div class="empty-state">
+    <p class="empty-state-title">{% if hiring_counts.get('all', 0) %}這個條件下沒有公司{% else %}目前還沒有資料{% endif %}</p>
+    <p class="empty-state-text">{% if hiring_counts.get('all', 0) %}換一個員工人數條件看看；員工人數還沒查到的公司在「人數未知」。{% else %}每週排程開始之後，公司會出現在這裡。{% endif %}</p>
+</div>
+{% else %}
+<input type="text" class="sheet-search" data-search-for="salesdev-hiring" placeholder="搜尋公司名稱、產業、職缺、地區...">
+<div class="table-scroll">
+    <table class="data-table sticky-head salesdev-table" id="salesdev-hiring">
+        <thead><tr><th>公司名稱</th><th>統一編號</th><th>產業</th><th>員工人數</th><th>職缺數</th><th>職缺例子</th><th>工作地區</th><th>最近出現</th></tr></thead>
+        <tbody>
+            {% for c in hiring_companies %}
+            <tr>
+                <td>{% if c.company_url %}<a href="{{ c.company_url }}" target="_blank" rel="noopener">{{ c.company_name }}</a>{% else %}{{ c.company_name }}{% endif %}</td>
+                <td>{{ c.tax_id }}{% if c.tax_id %}<div class="meta">{{ c.tax_id_source }}</div>{% endif %}</td>
+                <td>{{ c.industry }}</td>
+                <td>{% if c.employee_count is not none %}{{ c.employee_count }} 人{% else %}<span class="meta">未知</span>{% endif %}</td>
+                <td>{{ c.latest_job_count }}</td>
+                <td>{{ c.latest_job_titles|join('、') }}</td>
+                <td>{{ c.areas|join('、') }}</td>
+                <td>{{ c.last_seen }}{% if c.first_seen and c.first_seen != c.last_seen %}<div class="meta">第一次 {{ c.first_seen }}</div>{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="hint">「職缺數」是最近一次抓取時這間公司刊了幾筆符合條件的職缺。點公司名稱會開 104 公司頁。</p>
+{% endif %}
+
+{% if is_module_admin %}
+<section class="salesdev-admin">
+    <h2 class="section-title">搜尋條件（管理員）</h2>
+    <p class="hint">改完之後，<strong>下一次每週自動抓取</strong>才會照新的條件搜尋。關鍵字越多、頁數越多，每次要花的時間越長，最多 10 個關鍵字。{% if hiring_settings.updated_at %}上次由 {{ hiring_settings.updated_by }} 在 {{ hiring_settings.updated_at }} 修改。{% endif %}</p>
+    <form method="post" action="/salesdev/hiring/settings" class="form-stack form-narrow">
+        <label>搜尋關鍵字（用「、」或逗號分開）<input type="text" name="keywords" value="{{ hiring_settings.keywords|join('、') }}"></label>
+        <label>員工人數門檻（人以上）<input type="number" name="min_employees" value="{{ hiring_settings.min_employees }}" min="1"></label>
+        <label>每個關鍵字抓幾頁（1～10，每頁約 20 筆，依更新日期由新到舊）<input type="number" name="max_pages" value="{{ hiring_settings.max_pages }}" min="1" max="10"></label>
+        <button type="submit" class="btn">儲存搜尋條件</button>
+    </form>
+</section>
 {% endif %}
 
 {% else %}

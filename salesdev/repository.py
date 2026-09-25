@@ -16,6 +16,13 @@
 - `salesdev_runs`：每次自動抓取的結果摘要，畫面上方顯示「最近一次抓取」
   用，同仁一眼就能看出排程有沒有在跑。
 
+2026-09-25 新增「104 產線徵才公司」（見 salesdev/hiring_pipeline.py）：
+- `salesdev_hiring_companies`：工廠自己在 104 刊產線職缺的公司，一間一筆，
+  文件 ID「104_公司頁代碼」。
+- `salesdev_hiring_runs`：每週抓取的結果摘要（跟每日抓職缺分開存，不然
+  `latest_run()` 會拿到另一種格式的紀錄）。
+- `salesdev_settings/hiring_104`：搜尋關鍵字、員工人數門檻，管理員在畫面上改。
+
 職缺是不是「派遣公司內部職缺」：`internal_reason`（自動判斷的關鍵字）＋
 `internal_override`（人工改過就以人工為準：True=是內部職缺、False=不是、
 None=沒改過）。內部職缺不屬於任何一組（`group_id` 是空字串），但
@@ -34,6 +41,10 @@ JOBS_COLLECTION = "salesdev_jobs"
 GROUPS_COLLECTION = "salesdev_groups"
 FACTORIES_COLLECTION = "salesdev_factories"
 RUNS_COLLECTION = "salesdev_runs"
+HIRING_COLLECTION = "salesdev_hiring_companies"
+HIRING_RUNS_COLLECTION = "salesdev_hiring_runs"
+SETTINGS_COLLECTION = "salesdev_settings"
+HIRING_SETTINGS_DOC = "hiring_104"
 
 STATUS_PENDING = "待審查"
 STATUS_SELECTED = "已勾選待反查"
@@ -405,6 +416,201 @@ def record_run(summary: dict):
 
 def latest_run():
     runs = [s.to_dict() or {} for s in runs_ref().stream()]
+    if not runs:
+        return None
+    return max(runs, key=lambda r: r.get("created_at", 0))
+
+
+# ---------------------------------------------------------------------------
+# 104 產線徵才公司（2026-09-25 新增）
+# ---------------------------------------------------------------------------
+
+HIRING_MAX_TITLES = 5
+HIRING_MAX_AREAS = 8
+# 員工人數連續取不到幾次就不再試（避免 104 公司頁格式改了之後，每週都把
+# 時間花在同一批注定失敗的公司上）
+HIRING_EMPLOYEE_MAX_FAILURES = 3
+
+
+def hiring_ref():
+    return get_db().collection(HIRING_COLLECTION)
+
+
+def hiring_runs_ref():
+    return get_db().collection(HIRING_RUNS_COLLECTION)
+
+
+def hiring_doc_id(source: str, cust_id: str) -> str:
+    return f"{source}_{cust_id}".replace("/", "_")
+
+
+def aggregate_hiring_jobs(jobs: list) -> list:
+    """把一次抓到的職缺依公司彙總（一間一筆）。純函式。"""
+    companies = {}
+    for job in jobs:
+        cust_id = job.get("cust_id", "")
+        if not cust_id:
+            continue
+        company = companies.setdefault(
+            cust_id,
+            {
+                "source": job.get("source", "104"),
+                "cust_id": cust_id,
+                "company_name": job.get("company_name", ""),
+                "company_url": job.get("company_url", ""),
+                "industry": "",
+                "job_ids": set(),
+                "titles": [],
+                "areas": [],
+                "keywords": [],
+            },
+        )
+        company["job_ids"].add(job.get("job_id", ""))
+        if job.get("industry") and not company["industry"]:
+            company["industry"] = job["industry"]
+        title = job.get("job_title", "")
+        if title and title not in company["titles"] and len(company["titles"]) < HIRING_MAX_TITLES:
+            company["titles"].append(title)
+        area = job.get("area", "")
+        if area and area not in company["areas"] and len(company["areas"]) < HIRING_MAX_AREAS:
+            company["areas"].append(area)
+        keyword = job.get("keyword", "")
+        if keyword and keyword not in company["keywords"]:
+            company["keywords"].append(keyword)
+    result = []
+    for company in companies.values():
+        company["latest_job_count"] = len(company.pop("job_ids"))
+        company["latest_job_titles"] = company.pop("titles")
+        result.append(company)
+    return result
+
+
+def upsert_hiring_companies(companies: list, seen_date: str = None) -> dict:
+    """寫入這次抓到的公司。已經存在的只更新職缺數/標題/地區/最近出現，
+    **不會**蓋掉已經查到的員工人數、統一編號、第一次出現日期。"""
+    seen_date = seen_date or today_str()
+    stats = {"new": 0, "updated": 0}
+    records = {hiring_doc_id(c.get("source", "104"), c["cust_id"]): c for c in companies if c.get("cust_id")}
+    if not records:
+        return stats
+    refs = {doc_id: hiring_ref().document(doc_id) for doc_id in records}
+    existing = {}
+    for snapshot in get_db().get_all(list(refs.values())):
+        if snapshot.exists:
+            existing[snapshot.id] = snapshot.to_dict() or {}
+
+    operations = []
+    for doc_id, company in records.items():
+        old = existing.get(doc_id)
+        data = {
+            "source": company.get("source", "104"),
+            "cust_id": company["cust_id"],
+            "company_name": company.get("company_name", ""),
+            "company_url": company.get("company_url", ""),
+            "latest_job_count": company.get("latest_job_count", 0),
+            "latest_job_titles": company.get("latest_job_titles", []),
+            "areas": company.get("areas", []),
+            "keywords": company.get("keywords", []),
+            "last_seen": seen_date,
+        }
+        if company.get("industry") or old is None:
+            data["industry"] = company.get("industry", "")
+        if old is None:
+            data.update(
+                {
+                    "first_seen": seen_date,
+                    "employee_count": None,
+                    "employee_raw": "",
+                    "employee_checked_at": "",
+                    "employee_fail_count": 0,
+                    "tax_id": "",
+                    "tax_id_source": "",
+                    "created_at": time.time(),
+                }
+            )
+            stats["new"] += 1
+        else:
+            stats["updated"] += 1
+        operations.append((refs[doc_id], data, True))
+    _commit_in_batches(operations)
+    return stats
+
+
+def list_hiring_companies() -> list:
+    companies = [{"id": s.id, **(s.to_dict() or {})} for s in hiring_ref().stream()]
+    companies.sort(
+        key=lambda c: (c.get("last_seen", ""), c.get("latest_job_count", 0), c.get("employee_count") or 0),
+        reverse=True,
+    )
+    return companies
+
+
+def hiring_companies_needing_employee_count() -> list:
+    """還沒查到員工人數、失敗次數也還沒到上限的公司，職缺多的排前面先查。"""
+    pending = [
+        c for c in list_hiring_companies()
+        if not c.get("employee_checked_at") and (c.get("employee_fail_count") or 0) < HIRING_EMPLOYEE_MAX_FAILURES
+    ]
+    pending.sort(key=lambda c: (c.get("latest_job_count", 0), c.get("last_seen", "")), reverse=True)
+    return pending
+
+
+def update_hiring_company(doc_id: str, fields: dict):
+    hiring_ref().document(doc_id).set(fields, merge=True)
+
+
+def hiring_size_bucket(company: dict, min_employees: int) -> str:
+    """big＝達到門檻、small＝未滿門檻、unknown＝人數未知。純函式。"""
+    count = company.get("employee_count")
+    if count is None:
+        return "unknown"
+    return "big" if count >= min_employees else "small"
+
+
+def default_hiring_settings() -> dict:
+    from salesdev.scrapers import hiring_104
+
+    return {
+        "keywords": list(hiring_104.DEFAULT_KEYWORDS),
+        "min_employees": hiring_104.DEFAULT_MIN_EMPLOYEES,
+        "max_pages": hiring_104.DEFAULT_MAX_PAGES,
+    }
+
+
+def get_hiring_settings() -> dict:
+    settings = default_hiring_settings()
+    snapshot = get_db().collection(SETTINGS_COLLECTION).document(HIRING_SETTINGS_DOC).get()
+    stored = (snapshot.to_dict() or {}) if snapshot.exists else {}
+    if stored.get("keywords"):
+        settings["keywords"] = [k for k in stored["keywords"] if k]
+    for key in ("min_employees", "max_pages"):
+        if isinstance(stored.get(key), int) and stored[key] > 0:
+            settings[key] = stored[key]
+    for key in ("updated_by", "updated_at"):
+        if stored.get(key):
+            settings[key] = stored[key]
+    return settings
+
+
+def save_hiring_settings(keywords: list, min_employees: int, max_pages: int, username: str):
+    get_db().collection(SETTINGS_COLLECTION).document(HIRING_SETTINGS_DOC).set(
+        {
+            "keywords": keywords,
+            "min_employees": min_employees,
+            "max_pages": max_pages,
+            "updated_by": username,
+            "updated_at": now_str(),
+        },
+        merge=True,
+    )
+
+
+def record_hiring_run(summary: dict):
+    hiring_runs_ref().document(str(int(time.time() * 1000))).set({**summary, "created_at": time.time()})
+
+
+def latest_hiring_run():
+    runs = [s.to_dict() or {} for s in hiring_runs_ref().stream()]
     if not runs:
         return None
     return max(runs, key=lambda r: r.get("created_at", 0))

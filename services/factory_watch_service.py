@@ -220,6 +220,20 @@ def _normalize_record(raw_row: dict, columns: dict) -> dict:
     }
 
 
+def iter_registry_records():
+    """一筆一筆產生整份登記工廠名錄（已經整理成 _normalize_record() 的格式）。
+    2026-09-25 新增給 salesdev/hiring_pipeline.py 用公司名稱反查統一編號；
+    欄位對不上時丟 RuntimeError，跟 run_weekly_scan() 同一個檢查。"""
+    columns = None
+    for row in _iter_raw_rows():
+        if columns is None:
+            columns = _resolve_columns(list(row.keys()))
+            missing = [key for key in ("name", "tax_id") if key not in columns]
+            if missing:
+                raise RuntimeError(f"名錄欄位對不上（找不到 {missing}），實際欄位開頭是 {list(row.keys())[:5]}")
+        yield _normalize_record(row, columns)
+
+
 def _within_lookback(record: dict, lookback_days: int) -> bool:
     approval = record.get("approval_date")
     if approval is None:
