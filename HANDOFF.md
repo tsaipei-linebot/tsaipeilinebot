@@ -10517,6 +10517,62 @@ LinkedIn，台灣中小型工廠的人資大多不在上面。**結論：不接 
 主旨兩案：A「{公司名稱} 新廠人力規劃－材霈人力解決方案」、B「恭喜貴司新設{工廠地區}廠區｜產線
 人力可以交給我們」。
 
+## 業務開發：「104 產線徵才公司」每週自動抓（2026-09-25）
+
+使用者原本手動在 104 搜「作業員」「技術員」、挑電子／製造業、員工 100 人以上的公司，再請 Cowork
+找信箱寄介紹信（見上一節）。這次把「挑公司」自動化。使用者決定的條件：關鍵字作業員、技術員、包裝員、
+倉管、品檢；地區全台；產業電子資訊、半導體、塑膠、金屬、機械、一般製造業；員工 100 人以上；每週一次。
+上線前先確認過每日抓職缺 9/25 07:00 從 Cloud Run 抓到 104 58 筆，**104 沒有擋 Cloud Run 的主機**。
+
+**做了什麼**
+- `salesdev/scrapers/hiring_104.py`：打同一個 104 搜尋 API，跟 `jobs_104.py` 相反——**排除**派遣公司
+  （`match_dispatch_company()`）跟材霈自己。產業用 `indcat=1001000000,1002000000`（電子資訊／軟體／
+  半導體、一般製造業），再加一道產業名稱關鍵字篩選當保險（`INDUSTRY_DESC_KEYWORDS`，結果沒帶產業名稱就
+  不擋）。依更新日期排序，每個關鍵字抓前 5 頁。員工人數 `fetch_company_info()`：先試
+  `/company/ajax/content/{公司代碼}` 的 JSON（遞迴找 `empNo` 等欄位），不行再從公司頁 HTML 找「員工人數」。
+- `salesdev/hiring_pipeline.py`：搜尋 → 依公司彙總（`repository.aggregate_hiring_jobs()`）→ 寫 Firestore
+  → 查員工人數（職缺多的先查，連續 3 次取不到就不再試）→ 對統一編號。打 104 的時間上限
+  `SALESDEV_HIRING_TIME_BUDGET_SECONDS`（預設 180 秒），時間到就停，沒查完的員工人數下次接著查。
+  統一編號：用新登記工廠掃描下載的同一份經濟部《登記工廠名錄》（`factory_watch_service.iter_registry_records()`
+  新增），工廠名稱取到「有限公司」為止跟 104 公司登記名稱（「品牌_登記名稱」取底線後面）比對，同名對到
+  不同統編就不猜；名錄對不到的再用 `company_registry_lookup.lookup_company()`（g0v）查，名稱要完全一樣，
+  每次最多 20 間；整個請求 270 秒內一定結束。
+- Firestore：`salesdev_hiring_companies`（文件 ID `104_公司代碼`，重抓不會蓋掉已查到的員工人數/統編/
+  第一次出現）、`salesdev_hiring_runs`（每週結果，跟每日抓職缺的 `salesdev_runs` 分開，不然 `latest_run()`
+  會拿到另一種格式）、`salesdev_settings/hiring_104`（搜尋條件）。
+- 觸發端點 `POST /internal/salesdev/hiring/run`，**跟每日抓職缺共用 `SALESDEV_SCRAPE_TRIGGER_SECRET`**
+  （header `X-Salesdev-Scrape-Secret`），不用新環境變數。
+- 畫面：`/salesdev?tab=hiring`「104 產線徵才公司」分頁，一間一列（公司名稱連 104 公司頁、統一編號＋來源、
+  產業、員工人數、職缺數、職缺例子、工作地區、最近出現）；員工人數切換「100 人以上（預設）／人數未知／
+  未滿／全部」；上方顯示最近一次每週抓取的結果與錯誤訊息（104 沒回傳資料、產業全部不符、員工人數全部
+  取不到都會用紅字提示）。管理員在分頁最下方可以改關鍵字（最多 10 個）、員工人數門檻、每個關鍵字抓幾頁
+  （1～10），`POST /salesdev/hiring/settings`。「下載 Excel」多一個「104產線徵才公司」工作表。使用說明
+  `/salesdev/help` 加一節。
+- 測試：`tests/test_salesdev_hiring.py`（30 個）；`test_salesdev_pipeline_import_export.py` 的 Excel 測試
+  改成四個工作表。全部 2394 個測試通過。
+
+**還沒驗證（開發環境連不到 104，第一次正式跑完要看分頁上方的結果）**
+- `indcat` 參數跟產業代碼是照 104 網頁版網址推測的。104 不認得的話會回傳所有產業，由產業名稱關鍵字
+  那道篩選擋；如果「產業不符」的筆數很大、找到的公司很少，就是代碼或關鍵字要調。
+- 員工人數的 JSON 端點跟欄位名稱沒實測過（`jobs_104.py` 註記過 104 的職缺詳情 ajax 一律 404）。如果
+  「員工人數都取不到」，要改 `fetch_company_info()`，畫面仍然可以用「人數未知」看到公司、依職缺數排序。
+- 第一次跑公司很多，員工人數一次查不完（每間約 1.5～3 秒），要手動多跑幾次補齊（見上線步驟 3）。
+- 還沒接 Email 流程：「下載待查名單 → Cowork → 匯入 → 寄信」是上一節的規格，等使用者回覆那些問題再做。
+
+**上線步驟（使用者在 Cloud Shell 執行，合併部署完成之後）**
+1. 取出每日抓職缺用的那把密鑰（存到這個 Cloud Shell 視窗的暫存變數 `SECRET`，第 2 步要在同一個視窗）：
+   ```
+   SECRET=$(gcloud run services describe recruitment-bot --region=asia-east1 --project=tsaipei-505807 --format=json | python3 -c "import json,sys; env=json.load(sys.stdin)['spec']['template']['spec']['containers'][0].get('env',[]); print(next((e.get('value','') for e in env if e['name']=='SALESDEV_SCRAPE_TRIGGER_SECRET'),''))"); echo "${#SECRET}"
+   ```
+   確認：印出來的數字是 48（密鑰長度）；是 0 代表沒取到，不要繼續。
+2. 建立每週一 06:00 的排程（避開每日 07:00 抓職缺，不要兩個同時打 104）：
+   ```
+   gcloud scheduler jobs create http salesdev-weekly-hiring --project=tsaipei-505807 --location=asia-east1 --schedule="0 6 * * 1" --time-zone="Asia/Taipei" --uri="https://recruitment-bot-412901869672.asia-east1.run.app/internal/salesdev/hiring/run" --http-method=POST --headers="X-Salesdev-Scrape-Secret=$SECRET" --attempt-deadline=600s
+   ```
+3. 馬上手動跑一次：`gcloud scheduler jobs run salesdev-weekly-hiring --project=tsaipei-505807 --location=asia-east1`，
+   約 5 分鐘後開 `/salesdev?tab=hiring`，上方要出現「最近一次每週抓取」。如果寫「還有 N 間下次再查」，
+   隔 5 分鐘再跑一次同一行指令，直到 N 變 0。
+
 ## 台北所(派遣組)／台北所(國際組)專區：待進人員＋每日加退保自動帶入（2026-09-25 確認規格，分兩個 PR 實作）
 
 PR1（專區分頁、廠商/班別維護、待進人員，PR #238）、PR2（每日加退保依日期自動帶入）都已完成。

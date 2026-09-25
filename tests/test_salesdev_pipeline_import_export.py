@@ -139,16 +139,19 @@ class ImportFromSheetTests(_FakeDbMixin, unittest.TestCase):
 
 
 class ExcelExportTests(unittest.TestCase):
-    def test_three_sheets_and_formula_injection_is_neutralised(self):
+    def test_four_sheets_and_formula_injection_is_neutralised(self):
         import openpyxl
 
         groups = [{"id": "g1", "label": "桃園市桃園區桃鶯路", "review_status": "待審查", "job_count": 2, "agency_names": ["悅盛"],
                    "sources": ["chickpt"], "note": "=HYPERLINK(\"x\")", "contact_logs": [{"at": "2026-09-24 10:00", "by": "少凱", "text": "打過電話"}]}]
         jobs = [{"id": "j1", "group_id": "g1", "source": "chickpt", "job_title": "包裝員", "internal_reason": ""},
                 {"id": "j2", "group_id": "", "source": "104", "job_title": "人力仲介行政", "internal_reason": "人力仲介"}]
-        content = excel_export.build_workbook(groups, jobs, [{"name": "新工廠", "found_date": "2026-09-19"}])
+        hiring = [{"company_name": "=德勝", "employee_count": None, "latest_job_titles": ["作業員", "品檢"]}]
+        content = excel_export.build_workbook(groups, jobs, [{"name": "新工廠", "found_date": "2026-09-19"}], hiring)
         workbook = openpyxl.load_workbook(io.BytesIO(content))
-        self.assertEqual(workbook.sheetnames, ["開發名單（依地點）", "全部職缺", "新登記工廠"])
+        self.assertEqual(workbook.sheetnames, ["開發名單（依地點）", "全部職缺", "104產線徵才公司", "新登記工廠"])
+        hiring_row = [c.value for c in workbook["104產線徵才公司"][2]]
+        self.assertEqual((hiring_row[0], hiring_row[3], hiring_row[5]), ("'=德勝", None, "作業員、品檢"))
         group_row = [c.value for c in workbook["開發名單（依地點）"][2]]
         self.assertEqual(group_row[14], "'=HYPERLINK(\"x\")")
         self.assertIn("打過電話", group_row[15])

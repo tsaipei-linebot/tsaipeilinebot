@@ -44,6 +44,7 @@ from management.app import management_app
 from hr.app import hr_app
 from services.factory_watch_service import run_weekly_scan
 from salesdev.pipeline import run_daily_scrape as run_salesdev_daily_scrape
+from salesdev.hiring_pipeline import run_weekly_hiring_scan as run_salesdev_hiring_scan
 from services.daily_report_service import run_daily_report
 from services.session_service import db as _firestore_db, SESSIONS_COLLECTION as _SESSIONS_COLLECTION
 from services.notion_service import fetch_jobs_data, fetch_faqs_data, sanitize_uri, record_resume_click
@@ -444,6 +445,20 @@ async def trigger_salesdev_scrape(x_salesdev_scrape_secret: str = Header(None)):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     summary = await run_in_threadpool(run_salesdev_daily_scrape, line_bot_api)
+    return summary
+
+
+# 業務開發「104 產線徵才公司」每週抓取（2026-09-25 新增，見
+# salesdev/hiring_pipeline.py）：由 Cloud Scheduler 每週呼叫，跟上面每日抓職缺
+# 共用同一把密鑰（同一個模組，少設定一個環境變數）。
+@app.post("/internal/salesdev/hiring/run")
+async def trigger_salesdev_hiring_scan(x_salesdev_scrape_secret: str = Header(None)):
+    if not SALESDEV_SCRAPE_TRIGGER_SECRET or not x_salesdev_scrape_secret or not hmac.compare_digest(
+        x_salesdev_scrape_secret, SALESDEV_SCRAPE_TRIGGER_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    summary = await run_in_threadpool(run_salesdev_hiring_scan)
     return summary
 
 

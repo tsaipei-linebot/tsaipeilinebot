@@ -13,6 +13,7 @@
     <a class="btn btn-small" href="#review-selection">勾選待反查</a>
     <a class="btn btn-small" href="#group-detail">詳細頁：反查結果、備註、聯絡紀錄</a>
     <a class="btn btn-small" href="#internal">非客戶線索</a>
+    <a class="btn btn-small" href="#hiring">104 產線徵才公司</a>
     <a class="btn btn-small" href="#factories">新登記工廠</a>
     <a class="btn btn-small" href="#export">下載 Excel</a>
 </div>
@@ -69,6 +70,19 @@
     </ul>
 </section>
 
+<section id="hiring" class="help-section">
+    <h2>104 產線徵才公司</h2>
+    <p class="hint">每週自動到 104 找<strong>工廠自己刊登</strong>產線職缺的公司，當作可以寄介紹信的開發對象。跟「開發名單」不一樣：開發名單是派遣公司刊的職缺，這裡把派遣公司排除掉。</p>
+    <ul>
+        <li><strong>搜尋條件</strong>：關鍵字預設「作業員、技術員、包裝員、倉管、品檢」，地區全台，產業只留電子資訊／半導體跟一般製造業（含塑膠、金屬、機械等）。每個關鍵字看最近更新的前幾頁</li>
+        <li><strong>一間公司一列</strong>，「職缺數」是最近一次抓取時這間公司刊了幾筆符合條件的職缺，數字大代表最近很缺人，排在前面</li>
+        <li><strong>員工人數</strong>：系統會打開每間公司的 104 公司頁看員工人數。上方按鈕可以切換「100 人以上」「人數未知」「未滿 100 人」「全部」。新公司很多的時候一次查不完，沒查到的會顯示「未知」，下週接著查</li>
+        <li><strong>統一編號</strong>：系統用經濟部登記工廠名錄（新登記工廠用的同一份資料）依公司名稱自動對，對不到的留空，之後交給 Cowork 查信箱時一起查</li>
+        <li><strong>搜尋條件（管理員）</strong>：分頁最下方可以改關鍵字、員工人數門檻、每個關鍵字抓幾頁，下一次每週抓取才會套用</li>
+        <li>最上方的框框會顯示最近一次每週抓取的結果；出現紅字錯誤訊息（例如「104 沒有回傳任何職缺」「員工人數都取不到」）請通知系統管理窗口</li>
+    </ul>
+</section>
+
 <section id="factories" class="help-section">
     <h2>新登記工廠</h2>
     <ul>
@@ -80,7 +94,7 @@
 <section id="export" class="help-section">
     <h2>下載 Excel</h2>
     <ul>
-        <li>頁面右上角「下載 Excel」，會下載當下最新的完整資料，一個檔案裡有三個工作表：開發名單（依地點）、全部職缺、新登記工廠</li>
+        <li>頁面右上角「下載 Excel」，會下載當下最新的完整資料，一個檔案裡有四個工作表：開發名單（依地點）、全部職缺、104 產線徵才公司、新登記工廠</li>
         <li>要自己整理或交給其他人時用這個，不用再開試算表</li>
     </ul>
 </section>
