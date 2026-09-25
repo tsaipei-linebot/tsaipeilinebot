@@ -10646,3 +10646,40 @@ PR1（專區分頁、廠商/班別維護、待進人員，PR #238）、PR2（每
 這頁的同步按鈕停掉（不然會用試算表蓋掉平台的新資料——雖然 `source` 不同不會被刪，但同單號會被覆蓋），
 並把讀取來源固定為平台資料。
 
+## 薪資補款搬離 GAS 階段 2 第 2 步：佐證照片 Drive → Cloud Storage（2026-09-25）
+
+### 做了什麼
+
+- **`services/salary_repayment_photos.py`（新檔）**：GAS 存的照片網址是
+  `https://lh3.googleusercontent.com/d/{Drive 檔案 ID}`，每個檔案都設成「知道連結的人都能看」
+  （`Project_Salary.js` 的 `uploadSalaryImageToDrive()`），所以**不需要 Drive API、不需要使用者分享
+  任何東西**就能下載：先試 `drive.google.com/uc?export=download&id=`（原始檔），不行再試 lh3。
+  - 檔案 ID 抓法跟 GAS 一樣（`[-\w]{25,}`）。
+  - 回來是 HTML（檔案被刪／權限改成要登入）＝失敗並記原因；其他內容原樣照存（不限 JPG/PNG，
+    延續「原樣照搬」）。
+  - 存到共用私有 bucket（`DELIVERY_GCS_BUCKET`，`config.SALARY_PHOTO_GCS_BUCKET`）的
+    `salary/photos/{文件 id}/{隨機}.副檔名`。
+  - 結果寫在 `salary_repayments` 文件：`photo_blob`／`photo_content_type`／`photo_source_url`／
+    `photo_copied_at`，失敗 `photo_error`／`photo_error_url`／`photo_error_at`。
+  - 狀態 `photo_status()`：沒有照片／已搬好／失敗／待搬；`photo_source_url` 跟目前網址不同就當待搬（重搬）。
+  - `copy_batch()` 一次最多約 45 秒，避免網頁請求逾時；失敗的只有勾「連失敗的也一起重試」才會重試。
+- **`services/salary_repayment_store.py`**：重新同步改成保留同步以外的欄位（`{**舊文件, 新欄位}`），
+  不然第 1 步的同步會把搬好的照片紀錄洗掉。
+- **`/finance/migration` 加第 2 區「搬佐證照片」**：統計表、「搬下一批照片」按鈕、抽查連結、失敗清單。
+  `/finance/migration/photo/{文件 id}`（只有全平台管理員）看搬好的照片；只有 jpeg/png/gif/webp 直接顯示，
+  其他類型一律改成下載＋`nosniff`（避免舊資料裡萬一有 SVG／HTML 在我們網域被當網頁執行）。
+- **Drive 上的照片、試算表網址都沒動**，LINE 卡片、通知信照舊用 Drive 連結。
+
+### 上線後使用者要做的
+
+1. 財務部專區 →「薪資補款資料搬家」→ 先按第 1 區「從試算表同步到平台」（同步最新資料）。
+2. 第 2 區按「搬下一批照片」，一直按到「待搬」變成 0。
+3. 點「抽查已搬好的照片」的幾個連結，確認照片正常。
+4. 有「失敗」的：先勾「連失敗的也一起重試」再按一次；還是失敗的，把失敗清單的原因貼給 Claude。
+
+### 下一步
+
+第 3 步：平台寫入時同步一列回試算表給財務看。**開工前使用者要先把「薪資補款」試算表分享「編輯者」
+權限給 Cloud Run 服務帳戶**（見上面「使用者要先準備的六件事」第 1 項）。照片在平台上給同仁/主管看的
+畫面，等第 4、5 步（送出、核准改由平台處理）再一起做。
+
