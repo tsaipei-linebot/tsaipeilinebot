@@ -10849,3 +10849,41 @@ A1 放 `=QUERY(IMPORTRANGE(來源, "薪資補款紀錄!A:U"), "select Col1, Col2
 - GAS 那邊送出的程式要停用（不然兩邊都收單），核准卡片還是 GAS 發的話，GAS 核准時改的是試算表、不是
   Firestore——所以第 4、5 步可能要一起切換，開工前再跟使用者確認切換順序。
 
+## 職缺維護 LINE 官方帳號改由平台當「總機」（2026-09-25，GAS 搬家階段 2 方案 B 第一段）
+
+### 為什麼
+
+第 4、5 步（送出、核准改由平台處理）討論時提出兩個方案：A＝核准卡片按鈕改開平台網頁、LINE Webhook 不動；
+B＝LINE Webhook 改指向平台，平台處理補款、其他轉給 GAS。使用者一開始以為 GAS 會整個停掉，說明「這個官方
+帳號同時負責補款／職缺維護／專案合約／綁定＋PIN 登記，要到階段 4 全部搬完才能關 GAS」之後，**選 B**：
+Webhook 切換只做一次、現在就做，之後每搬一個功能就是平台多接一種訊息、少轉一種，階段 4 不再轉就關 GAS。
+
+### 這一段做了什麼（行為完全不變）
+
+- `POST /api/job-portal/line-webhook`（`job_portal_line_relay_routes.py`）：用 Channel secret 驗
+  `X-Line-Signature`（不對 403、沒設定 503），**馬上回 200，背景把 body 原封不動 POST 給
+  `JOB_PORTAL_LINE_RELAY_TARGET_URL`**（就是原本 LINE 後台的 GAS 網址含 `?webhook_secret=`，GAS 的驗證照舊）。
+  GAS 用事件裡的 replyToken 回覆，轉發很快不會過期。
+- `services/job_portal_line_relay.py`：簽章、事件種類摘要（`message`、`postback:review_salary`…，**不存訊息
+  內容**）、轉發、最近 30 筆轉發紀錄（Firestore `job_portal_line_relay/recent`）。
+- `/finance/migration` 第 4 區「LINE 總機」顯示是否設定好、最近轉發紀錄；原本第 4 區「讀取來源」改成第 5 區。
+- 新環境變數 `JOB_PORTAL_LINE_CHANNEL_SECRET`、`JOB_PORTAL_LINE_RELAY_TARGET_URL`（`config.py`）。
+
+### 使用者要做的（切換步驟）
+
+1. LINE Developers → 職缺維護那個官方帳號的 channel →「Messaging API」分頁 → Webhook URL：**整串複製**（這就是
+   轉發網址，含 `?webhook_secret=`），先貼到記事本存著（也是退回用的網址）。
+2. 同一個 channel →「Basic settings」分頁 → Channel secret：複製。
+3. Cloud Shell 設環境變數（兩個值用各自的一行設，網址裡有 `?`、`=` 要整個用雙引號包起來）。
+4. 挑沒人用的時段，把 LINE 後台 Webhook URL 改成
+   `https://recruitment-bot-412901869672.asia-east1.run.app/api/job-portal/line-webhook` → 按「Verify」要 Success。
+5. 用 LINE 傳一則訊息給官方帳號、請主管試按一張職缺或補款核准卡片（或做一次綁定），到
+   `/finance/migration` 第 4 區看紀錄都是 ✅。
+6. **退回**：把 LINE 後台 Webhook URL 改回第 1 步存的原網址即可，平台這邊不用動。
+
+### 下一段
+
+補款送出＋核准改由平台處理：平台自己收單、推核准卡片（沿用 `action=review_salary` 的 postback 格式），總機
+攔下 `review_salary` 的 postback 自己處理——**只攔平台建立的單（Firestore `source="platform"`）**，切換前
+GAS 發出去、還沒按的舊卡片照樣轉給 GAS，這樣就不用要求主管切換前把待審核的單審完。需要 Channel access token。
+

@@ -227,6 +227,14 @@ JOB_PORTAL_ADMIN_API_SECRET = os.getenv("JOB_PORTAL_ADMIN_API_SECRET", "")
 # 值），沒設定或對不上一律回 403，等同這個端點不存在。
 JOB_PORTAL_MAIL_WEBHOOK_SECRET = os.getenv("JOB_PORTAL_MAIL_WEBHOOK_SECRET", "")
 
+# 職缺維護 LINE 官方帳號的「總機」（2026-09-25 新增，GAS 搬家階段 2，見 job_portal_line_relay_routes.py）：
+# LINE Webhook 網址改指向平台 /api/job-portal/line-webhook，平台驗 LINE 簽章後把訊息原封不動轉給 GAS。
+# - JOB_PORTAL_LINE_CHANNEL_SECRET：那個官方帳號的 Channel secret（LINE Developers → Basic settings）。
+# - JOB_PORTAL_LINE_RELAY_TARGET_URL：原本設在 LINE 後台的 Webhook 網址（GAS 網址＋?webhook_secret=…），
+#   整串照抄，平台轉發時就打這個網址。
+JOB_PORTAL_LINE_CHANNEL_SECRET = os.getenv("JOB_PORTAL_LINE_CHANNEL_SECRET", "")
+JOB_PORTAL_LINE_RELAY_TARGET_URL = os.getenv("JOB_PORTAL_LINE_RELAY_TARGET_URL", "")
+
 # ==========================================
 # 11-1. 寄信（SMTP）
 # 平台自己寄信用的 SMTP 設定，見 services/email_service.py 開頭的說明。

@@ -90,7 +90,30 @@
     <button type="submit" class="btn">檢查寫入權限</button>
 </form>
 
-<h2 class="section-title">4. 讀取來源</h2>
+<h2 class="section-title">4. LINE 總機（職缺維護 LINE 官方帳號）</h2>
+<p class="hint">LINE 的 Webhook 網址改成平台之後，平台會先收到這個官方帳號的所有訊息，再<strong>原封不動轉給 GAS</strong>。補款、職缺、合約、綁定登記的行為都跟現在一樣。下面是最近 30 筆轉發紀錄（只記時間和種類，不記訊息內容）。</p>
+{% if not line_relay_configured %}
+<p class="warning">還沒設定 Channel secret 或轉發網址（Cloud Run 環境變數 JOB_PORTAL_LINE_CHANNEL_SECRET、JOB_PORTAL_LINE_RELAY_TARGET_URL），總機還沒啟用，LINE 訊息目前仍是直接送到 GAS。</p>
+{% elif not line_relay_logs %}
+<p class="empty">總機已設定好，但還沒收到任何訊息（LINE 後台的 Webhook 網址可能還沒改成平台）。</p>
+{% else %}
+<div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>時間</th><th>訊息種類</th><th>結果</th></tr></thead>
+        <tbody>
+            {% for log in line_relay_logs %}
+            <tr>
+                <td>{{ log.at_text }}</td>
+                <td>{{ log.events | join("、") if log.events else "（LINE 後台驗證）" }}</td>
+                <td>{% if log.ok %}✅ {% else %}❌ {% endif %}{{ log.note }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<h2 class="section-title">5. 讀取來源</h2>
 <p class="hint">目前「我的專區」的補款紀錄和財務部專區讀的是：<strong>{{ source_names[read_source] }}</strong>{% if read_source_changed_at %}（{{ read_source_changed_at }} 由 {{ state.get("read_source_changed_by", "") }} 切換）{% endif %}</p>
 {% if read_source == "firestore" %}
 <p class="warning">現在新的補款單還是由 GAS 寫進試算表，平台資料只到最後一次同步的那一刻。第 4 步（送出流程改由平台處理）上線之前，讀平台資料只適合用來檢查；檢查完建議切回試算表，或每次檢查前先按上面的同步。</p>
