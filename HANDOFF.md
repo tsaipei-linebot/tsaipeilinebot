@@ -10451,7 +10451,7 @@ dependents/note`（對照範本 11 欄，`FIELD_HEADERS`）＋`department`（標
 
 ## 台北所(派遣組)／台北所(國際組)專區：待進人員＋每日加退保自動帶入（2026-09-25 確認規格，分兩個 PR 實作）
 
-PR1（專區分頁、廠商/班別維護、待進人員）已完成，PR2（每日加退保依日期自動帶入、彈出視窗提醒）還沒做。
+PR1（專區分頁、廠商/班別維護、待進人員，PR #238）、PR2（每日加退保依日期自動帶入）都已完成。
 
 ### 需求
 
@@ -10531,4 +10531,25 @@ PR1（專區分頁、廠商/班別維護、待進人員）已完成，PR2（每�
 - 測試：新增 `tests/test_hr_zone.py`（22 個）。全部 2334 個通過；Playwright 看過待進人員清單、多日期新增、
   重複時的彈出視窗、廠商維護。
 - 使用者不需要手動設定。上線後請**主管先到「廠商維護」「班別維護」建選項**，同仁才能登記待進人員。
+
+### 實作紀錄 PR2：每日加退保依日期自動帶入（台北所＋配送組，2026-09-25）
+
+- **`hr/routes/insurance_routes._date_groups()`**：待送出清單依「這一列最早的日期」（`zone_routes.entry_day`）分三區：
+  `overdue`（比選定日期早、還沒送）、`due`（等於選定日期）、`future`（之後）。overdue＋due 有勾選框（預設勾），
+  future 收在 `<details>` 只能看。台北所、配送組共用同一個畫面（台北所多顯示班別、身分證欄，「來源」欄改顯示
+  建立人員）。
+- **送出／補件／下載都只處理勾選的、而且日期不晚於選定那天的**（`_selected_due()`；表單被竄改送進未來日期的
+  id 也不會送）。沒勾任何一筆會擋下並提醒。
+- 「＋新增人員」捷徑：台北所 → `/hr/zone/pending/new?date=…&back=每日加退保頁`（日期預帶成當天加退）；配送組 →
+  新的 `GET /hr/insurance/drafts/new?date=…`（預帶加保日期，改用 `insurance_draft_edit.html` 的新增模式），
+  拿掉原本頁面上展開的手動新增表單。台北所打舊的 `/insurance/drafts/new|edit` 會被導到專區的表單。
+- **配送組手動新增／修改也會「加保退保不同天自動拆兩列」**（`insurance_pending.split()`），不然會在加保那天
+  把之後的退保一起送出。
+- 刪除按鈕用 HTML `form="cancel-{id}"` 指到頁面下方各自的隱藏表單（不能在送出表單裡巢狀 form）。
+- 每日加退保頁的成功／錯誤訊息改用彈出視窗（`_flash_popup.html`），7 個所都適用；頁面上固定的狀態提示（已收單、
+  整份上傳會蓋掉）維持原本的紅字。
+- 使用說明：`hr/templates/insurance_help.html`、`delivery/templates/help.html` 補上依日期送出、新增人員捷徑。
+- 測試：`tests/test_hr_zone.py` 新增 `DailyByDateTests`、`DeliveryByDateTests`；`tests/test_hr_insurance_drafts.py`
+  送出類的測試改成帶勾選的 id。全部 2340 個通過；Playwright 看過台北所每日加退保頁（電腦、手機）。
+- 使用者不需要手動設定。
 

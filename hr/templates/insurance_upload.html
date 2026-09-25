@@ -13,8 +13,6 @@
 <p class="hint">部門：{{ department }}</p>
 {% endif %}
 
-{% if msg %}<p class="success">{{ msg }}</p>{% endif %}
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
 
 <form method="get" action="/hr/insurance/upload" class="filter-bar">
     {% if proxy %}
@@ -41,59 +39,86 @@
 </form>
 
 {% if drafts_enabled %}
+{% macro draft_rows(rows, checkable) %}
+<div class="table-scroll">
+<table class="data-table insurance-table">
+    <thead>
+        <tr>{% if checkable %}<th><input type="checkbox" class="js-check-all" checked aria-label="全選"></th>{% endif %}<th>日期</th><th>類型</th><th>姓名</th><th>廠商</th>{% if zone %}<th>班別</th><th>身分證</th>{% endif %}<th>加保日期</th><th>退保日期</th><th>備註</th><th>{% if zone %}建立人員{% else %}來源{% endif %}</th><th>操作</th></tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr>
+            {% if checkable %}<td><input type="checkbox" name="draft_ids" value="{{ r.id }}" class="js-check" checked></td>{% endif %}
+            <td>{{ day_of(r) }}</td>
+            <td>{{ type_name(r) }}</td>
+            <td>{{ r.name }}{% if r.rejected_reason %}<div class="error-text">人資退件：{{ r.rejected_reason }}</div>{% endif %}</td>
+            <td>{{ r.vendor or "-" }}</td>
+            {% if zone %}<td>{{ r.shift or "-" }}</td><td>{{ r.id_number or "-" }}</td>{% endif %}
+            <td>{{ r.insured_date or "-" }}</td>
+            <td>{{ r.withdrawn_date or "-" }}</td>
+            <td>{{ r.note or "" }}</td>
+            <td>{% if zone %}{{ r.created_by_name }}{% else %}{% include "_insurance_draft_source.html" %}<div class="meta">建立人員 {{ r.created_by_name }}</div>{% endif %}</td>
+            <td class="row-actions">
+                <a class="btn btn-small" href="{{ edit_url(r) }}">修改</a>
+                <button type="submit" class="btn btn-small btn-danger js-cancel-draft" form="cancel-{{ r.id }}" data-name="{{ r.name }}">刪除</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endmacro %}
 <section class="help-section">
-    <h2>待送出清單（{{ pending | length }} 筆）</h2>
+    <div class="page-head">
+        <h2>{{ work_date }} 要交給人資的加退保</h2>
+        <a class="btn btn-primary" href="{{ add_url }}">＋新增人員</a>
+    </div>
     <p class="hint">
-        配送系統按「報到」（加保）、「離職」（退保）會自動加進來，也可以在下面手動新增。
+        {% if zone %}系統依「待進人員」的日期自動帶出：日期是這一天的人，加上日期已經過了、還沒送出的人。之後日期的人不會送出，等到那天再帶出。
+        {% else %}配送系統按「報到」（加保）、「離職」（退保）會自動加進來，也可以按「＋新增人員」手動新增。只會送出日期是這一天或更早的人，之後日期的人等到那天再送。{% endif %}
         這裡的資料<strong>還沒交給人資</strong>，要按「送出給人資」才算數；送出前都可以修改或刪除。
     </p>
-    {% if pending %}
-    <div class="table-scroll">
-    <table class="data-table insurance-table">
-        <thead>
-            <tr><th>類型</th><th>姓名</th><th>廠商</th><th>加保日期</th><th>退保日期</th><th>備註</th><th>來源</th><th>操作</th></tr>
-        </thead>
-        <tbody>
-            {% for r in pending %}
-            <tr>
-                <td>{{ type_name(r) }}</td>
-                <td>{{ r.name }}{% if r.rejected_reason %}<div class="error-text">人資退件：{{ r.rejected_reason }}</div>{% endif %}</td>
-                <td>{{ r.vendor or "-" }}</td>
-                <td>{{ r.insured_date or "-" }}</td>
-                <td>{{ r.withdrawn_date or "-" }}</td>
-                <td>{{ r.note or "" }}</td>
-                <td>{% include "_insurance_draft_source.html" %}<div class="meta">建立人員 {{ r.created_by_name }} {{ r.created_at | taipei_time }}</div></td>
-                <td class="row-actions">
-                    <a class="btn btn-small" href="/hr/insurance/drafts/{{ r.id }}/edit?work_date={{ work_date }}">修改</a>
-                    <form method="post" action="/hr/insurance/drafts/{{ r.id }}/cancel" class="inline-action js-cancel-draft" data-name="{{ r.name }}">
-                        <input type="hidden" name="work_date" value="{{ work_date }}">
-                        <button type="submit" class="btn btn-small btn-danger">刪除</button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    {% if closed %}
-    <p class="error">{{ work_date }} 人資已經收單。請按「送出補件給人資」，人資收進後才算數；人資也可能退件，退件的會回到這裡並標紅字。</p>
-    <form method="post" action="/hr/insurance/drafts/late-submit" class="js-confirm draft-actions" data-confirm="確定要把這 {{ pending | length }} 筆送出補件給人資（{{ work_date }}）嗎？人資處理前可以撤回。">
+
+    {% if overdue or due %}
+    <form method="post" id="send-form">
         <input type="hidden" name="work_date" value="{{ work_date }}">
-        <button type="submit" class="btn btn-primary">送出補件給人資（{{ work_date }}）</button>
-    </form>
-    <form method="post" action="/hr/insurance/drafts/download" class="js-confirm draft-actions" data-confirm="下載後這 {{ pending | length }} 筆會改成「已下載」，不會再出現在待送出清單。請記得把檔案交給人資。確定下載嗎？">
-        <input type="hidden" name="work_date" value="{{ work_date }}">
-        <button type="submit" class="btn btn-small">備用：下載待送出清單（Excel）自己交給人資</button>
+        {% if overdue %}
+        <h3 class="error-text" style="font-size:16px;">🔴 日期已過、還沒送出（{{ overdue | length }} 筆）</h3>
+        <p class="hint">可能是忘記送，或事後才補登的。日期會照原本的日期交給人資，人資會自己判斷怎麼處理。</p>
+        {{ draft_rows(overdue, True) }}
+        {% endif %}
+        <h3 style="font-size:16px;">{{ work_date }} 的名單（{{ due | length }} 筆）</h3>
+        {% if due %}{{ draft_rows(due, True) }}{% else %}<p class="empty">這一天沒有要加退保的人。</p>{% endif %}
+
+        {% if closed %}
+        <p class="error">{{ work_date }} 人資已經收單。請按「送出補件給人資」，人資收進後才算數；人資也可能退件，退件的會回到這裡並標紅字。</p>
+        <div class="draft-actions">
+            <button type="submit" class="btn btn-primary js-send" formaction="/hr/insurance/drafts/late-submit" data-verb="送出補件給人資">送出補件給人資（{{ work_date }}）</button>
+            <button type="submit" class="btn btn-small js-send" formaction="/hr/insurance/drafts/download" data-verb="下載（下載後會改成「已下載」，請記得把檔案交給人資）">備用：下載勾選的資料（Excel）自己交給人資</button>
+        </div>
+        {% else %}
+        <div class="draft-actions">
+            <button type="submit" class="btn btn-primary js-send" formaction="/hr/insurance/drafts/send" data-verb="送出給人資（送出後就不能修改）">送出給人資（{{ work_date }}）</button>
+        </div>
+        {% endif %}
     </form>
     {% else %}
-    <form method="post" action="/hr/insurance/drafts/send" class="js-confirm draft-actions" data-confirm="確定要把這 {{ pending | length }} 筆送出給人資（日期 {{ work_date }}）嗎？送出後就不能修改。">
+    <p class="empty">{{ work_date }} 沒有要交給人資的資料。</p>
+    {% endif %}
+
+    {% if future %}
+    <details class="draft-add">
+        <summary>之後日期，還不會送出（{{ future | length }} 筆）</summary>
+        {{ draft_rows(future, False) }}
+    </details>
+    {% endif %}
+
+    {% for r in overdue + due + future %}
+    <form method="post" action="{{ cancel_url(r) }}" id="cancel-{{ r.id }}" hidden>
         <input type="hidden" name="work_date" value="{{ work_date }}">
-        <button type="submit" class="btn btn-primary">送出給人資（{{ work_date }}）</button>
+        <input type="hidden" name="back" value="{{ back_here }}">
     </form>
-    {% endif %}
-    {% else %}
-    <p class="empty">目前沒有待送出的資料。</p>
-    {% endif %}
+    {% endfor %}
 
     {% if late %}
     <h3>補件待收（{{ late | length }} 筆）</h3>
@@ -123,14 +148,6 @@
     </div>
     {% endif %}
 
-    <details class="draft-add">
-        <summary class="btn btn-small">＋ 手動新增一筆</summary>
-        <form method="post" action="/hr/insurance/drafts/new" class="form-stack form-narrow">
-            <input type="hidden" name="work_date" value="{{ work_date }}">
-            {% with d = {} %}{% include "_insurance_draft_fields.html" %}{% endwith %}
-            <button type="submit" class="btn btn-primary">加入待送出清單</button>
-        </form>
-    </details>
     <p><a href="/hr/insurance/drafts/records">查詢加退保操作紀錄（送出、下載、刪除都查得到）</a></p>
 </section>
 
@@ -211,12 +228,29 @@
         });
     }
     {% if drafts_enabled %}
-    document.querySelectorAll('.js-cancel-draft').forEach(function (f) {
-        f.addEventListener('submit', function (event) {
-            if (!window.confirm('確定要把「' + f.dataset.name + '」從待送出清單刪掉嗎？（紀錄會保留，查得到）')) { event.preventDefault(); }
+    document.querySelectorAll('.js-cancel-draft').forEach(function (b) {
+        b.addEventListener('click', function (event) {
+            if (!window.confirm('確定要把「' + b.dataset.name + '」刪掉嗎？（紀錄會保留，查得到）')) { event.preventDefault(); }
         });
     });
+    // 每一區的全選
+    document.querySelectorAll('.js-check-all').forEach(function (all) {
+        all.addEventListener('change', function () {
+            all.closest('table').querySelectorAll('.js-check').forEach(function (c) { c.checked = all.checked; });
+        });
+    });
+    var sendForm = document.getElementById('send-form');
+    if (sendForm) {
+        sendForm.addEventListener('submit', function (event) {
+            var count = sendForm.querySelectorAll('.js-check:checked').length;
+            if (!count) { event.preventDefault(); window.showAlert('請先勾選要送出的人。'); return; }
+            var verb = (event.submitter && event.submitter.dataset.verb) || '送出';
+            if (!window.confirm('確定要把勾選的 ' + count + ' 筆' + verb + '嗎？')) { event.preventDefault(); }
+        });
+    }
     {% endif %}
 })();
 </script>
+{% set flash_msg = msg %}{% set flash_err = error %}
+{% include "_flash_popup.html" %}
 {% endblock %}

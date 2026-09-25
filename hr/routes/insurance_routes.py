@@ -27,6 +27,7 @@ from fastapi.responses import RedirectResponse, Response
 import platform_accounts
 from file_type_sniff import is_allowed_upload
 from hr import insurance_draft_repository as drafts_repo
+from hr import insurance_pending
 from hr import insurance_shopee
 from hr import insurance_repository as repo
 from hr.auth import current_user, login_required
@@ -143,7 +144,7 @@ def _upload_context(user: dict, department: str, work_date: str, error: str = ""
     zone = own_department and zone_routes.is_zone_department(department)
     # 台北所（有待進人員的部門）的「依日期自動帶入」是下一個 PR 才做，這之前每日加退保頁先不顯示
     # 待送出清單，避免把之後日期的待進人員一次全送出去
-    drafts_enabled = drafts_repo.department_has_drafts(department) and own_department and not zone
+    drafts_enabled = drafts_repo.department_has_drafts(department) and own_department
     return {
         "user": user,
         "department": department,
@@ -158,7 +159,7 @@ def _upload_context(user: dict, department: str, work_date: str, error: str = ""
         "kind": kind,
         "kind_names": insurance_shopee.KIND_NAMES,
         "drafts_enabled": drafts_enabled,
-        "pending": drafts_repo.list_pending(department) if drafts_enabled else [],
+        **_date_groups(department, work_date, drafts_enabled, zone),
         "late": drafts_repo.list_late(department) if drafts_enabled else [],
         "type_name": drafts_repo.draft_type_name,
         "zone": zone,
@@ -166,6 +167,31 @@ def _upload_context(user: dict, department: str, work_date: str, error: str = ""
         # 這一天已經從暫存區送出、還在人資那份檔案裡的筆數：再整份上傳 Excel
         # 會把它們蓋掉，畫面要提醒
         "sent_in_existing": len((existing or {}).get("draft_ids") or []),
+    }
+
+
+def _date_groups(department: str, work_date: str, drafts_enabled: bool, zone: bool) -> dict:
+    """待送出清單依日期分三區（2026-09-25）：日期已過還沒送（overdue）、這一天（due）、之後日期（future）。
+    日期＝這一列最早的日期（`zone_routes.entry_day`）。只有 overdue＋due 能送出，future 等到那天。"""
+    if not drafts_enabled:
+        return {"overdue": [], "due": [], "future": []}
+    rows = sorted(drafts_repo.list_pending(department), key=lambda r: (zone_routes.entry_day(r), r.get("name", "")))
+    back_here = f"/hr/insurance/upload?work_date={work_date}"
+    if zone:
+        add_url = f"/hr/zone/pending/new?date={work_date}&back={quote(back_here)}"
+    else:
+        add_url = f"/hr/insurance/drafts/new?date={work_date}"
+    return {
+        "overdue": [r for r in rows if zone_routes.entry_day(r) < work_date],
+        "due": [r for r in rows if zone_routes.entry_day(r) == work_date],
+        "future": [r for r in rows if zone_routes.entry_day(r) > work_date],
+        "day_of": zone_routes.entry_day,
+        "add_url": add_url,
+        "back_here": back_here,
+        "edit_url": (lambda r: f"/hr/zone/pending/{r['id']}/edit?back={quote(back_here)}") if zone
+        else (lambda r: f"/hr/insurance/drafts/{r['id']}/edit?work_date={work_date}"),
+        "cancel_url": (lambda r: f"/hr/zone/pending/{r['id']}/cancel") if zone
+        else (lambda r: f"/hr/insurance/drafts/{r['id']}/cancel"),
     }
 
 
@@ -498,6 +524,44 @@ def _draft_fields_from_form(form) -> tuple:
     return fields, ""
 
 
+async def _selected_due(request: Request, department: str) -> tuple:
+    """送出／補件／下載共用：畫面上勾選的、還在待送出、而且日期不晚於選定那天的。
+    回傳 (work_date, drafts)。之後日期的就算被竄改送進來也不會送出。"""
+    form = await request.form()
+    work_date = _valid_date(form.get("work_date"))
+    ids = set(form.getlist("draft_ids"))
+    rows = [
+        d for d in drafts_repo.list_pending(department)
+        if d["id"] in ids and work_date and zone_routes.entry_day(d) <= work_date
+    ]
+    return work_date, rows
+
+
+def _zone_redirect(department: str, url: str):
+    """台北所的待進人員要用專區的表單（廠商/班別下拉、身分證必填、重複檢查）。"""
+    if zone_routes.is_zone_department(department):
+        return RedirectResponse(url=url, status_code=303)
+    return None
+
+
+@router.get("/insurance/drafts/new")
+def drafts_new_page(request: Request, date: str = "", redirect=Depends(_require_login)):
+    """手動新增一筆（每日加退保頁「＋新增人員」）：日期先帶這一天的加保日期，存好回到每日加退保頁。"""
+    if redirect:
+        return redirect
+    user, department, deny = _draft_user(request)
+    if deny:
+        return deny
+    day = _valid_date(date)
+    zone = _zone_redirect(department, f"/hr/zone/pending/new?date={day}&back={quote(_upload_url(day))}")
+    if zone:
+        return zone
+    return templates.TemplateResponse(
+        request, "insurance_draft_edit.html",
+        {"user": user, "draft": {"insured_date": day}, "work_date": day, "error": "", "is_new": True},
+    )
+
+
 @router.post("/insurance/drafts/new")
 async def drafts_new(request: Request, redirect=Depends(_require_login)):
     if redirect:
@@ -505,13 +569,21 @@ async def drafts_new(request: Request, redirect=Depends(_require_login)):
     user, department, deny = _draft_user(request)
     if deny:
         return deny
+    if zone_routes.is_zone_department(department):
+        return RedirectResponse(url="/hr/zone/pending/new", status_code=303)
     form = await request.form()
     work_date = _valid_date(form.get("work_date"))
     fields, error = _draft_fields_from_form(form)
     if error:
-        return RedirectResponse(url=_upload_url(work_date, "err", error), status_code=303)
-    drafts_repo.add_draft(department, fields, user, kind=drafts_repo.KIND_MANUAL, note="手動新增")
-    return RedirectResponse(url=_upload_url(work_date, "msg", f"已加入待送出清單：{fields['name']}"), status_code=303)
+        return templates.TemplateResponse(
+            request, "insurance_draft_edit.html",
+            {"user": user, "draft": fields, "work_date": work_date, "error": error, "is_new": True}, status_code=400,
+        )
+    entries = insurance_pending.split(fields)
+    for entry in entries:
+        drafts_repo.add_draft(department, entry, user, kind=drafts_repo.KIND_MANUAL, note="手動新增")
+    note = f"已加入待送出清單：{fields['name']}" + ("（加保、退保不同天，已自動拆成兩列）" if len(entries) == 2 else "")
+    return RedirectResponse(url=_upload_url(work_date, "msg", note), status_code=303)
 
 
 def _own_pending_draft(draft_id: str, department: str):
@@ -528,6 +600,9 @@ def drafts_edit_page(draft_id: str, request: Request, work_date: str = "", redir
     user, department, deny = _draft_user(request)
     if deny:
         return deny
+    zone = _zone_redirect(department, f"/hr/zone/pending/{draft_id}/edit?back={quote(_upload_url(work_date))}")
+    if zone:
+        return zone
     draft = _own_pending_draft(draft_id, department)
     if not draft or draft.get("status") != drafts_repo.STATUS_PENDING:
         return RedirectResponse(url=_upload_url(work_date, "err", "這一筆已經送出、下載或取消，不能再修改。"), status_code=303)
@@ -558,9 +633,17 @@ async def drafts_edit_submit(draft_id: str, request: Request, redirect=Depends(_
             {"user": user, "draft": {**draft, **fields}, "work_date": work_date, "error": error},
             status_code=400,
         )
-    if not drafts_repo.update_draft(draft_id, fields, user):
+    if zone_routes.is_zone_department(department):
+        return RedirectResponse(url=f"/hr/zone/pending/{draft_id}/edit", status_code=303)
+    entries = insurance_pending.split(fields)
+    if not drafts_repo.update_draft(draft_id, entries[0], user):
         return RedirectResponse(url=_upload_url(work_date, "err", "這一筆已經送出、下載或取消，不能再修改。"), status_code=303)
-    return RedirectResponse(url=_upload_url(work_date, "msg", f"已修改：{fields['name']}"), status_code=303)
+    note = f"已修改：{fields['name']}"
+    if len(entries) == 2:
+        drafts_repo.add_draft(department, entries[1], user, kind=draft.get("kind") or drafts_repo.KIND_MANUAL,
+                              personnel_id=draft.get("personnel_id", ""), note="修改時加保、退保不同天，自動拆出的退保")
+        note += "（加保、退保不同天，已自動拆成兩列）"
+    return RedirectResponse(url=_upload_url(work_date, "msg", note), status_code=303)
 
 
 @router.post("/insurance/drafts/{draft_id}/cancel")
@@ -577,7 +660,7 @@ def drafts_cancel(draft_id: str, request: Request, work_date: str = Form(""), re
 
 
 @router.post("/insurance/drafts/send")
-def drafts_send(request: Request, work_date: str = Form(""), redirect=Depends(_require_login)):
+async def drafts_send(request: Request, redirect=Depends(_require_login)):
     """送出給人資：把待送出清單組成部門範本格式的 Excel，存成「這個部門、這一天」
     的上傳檔（跟手動上傳同一個位置，人資端完全一樣）。
 
@@ -590,7 +673,7 @@ def drafts_send(request: Request, work_date: str = Form(""), redirect=Depends(_r
     user, department, deny = _draft_user(request)
     if deny:
         return deny
-    work_date = _valid_date(work_date)
+    work_date, pending = await _selected_due(request, department)
     if not work_date:
         return RedirectResponse(url=_upload_url("", "err", "請選擇日期。"), status_code=303)
     if not repo.can_upload_for_date(user, work_date):
@@ -598,9 +681,8 @@ def drafts_send(request: Request, work_date: str = Form(""), redirect=Depends(_r
             url=_upload_url(work_date, "err", "這一天已經收單，請按「送出補件給人資」，或下載待送出清單交給人資。"),
             status_code=303,
         )
-    pending = drafts_repo.list_pending(department)
     if not pending:
-        return RedirectResponse(url=_upload_url(work_date, "err", "待送出清單是空的。"), status_code=303)
+        return RedirectResponse(url=_upload_url(work_date, "err", "請勾選要送出的人（日期還沒到的不能送）。"), status_code=303)
 
     error = _append_to_day(
         department, work_date, [drafts_repo.draft_to_source_row(d) for d in pending], user, "send",
@@ -622,19 +704,18 @@ def _xlsx_response(content: bytes, filename: str) -> Response:
 
 # ---------- 收單後補件（2026-09-25） ----------
 @router.post("/insurance/drafts/late-submit")
-def drafts_late_submit(request: Request, work_date: str = Form(""), redirect=Depends(_require_login)):
+async def drafts_late_submit(request: Request, redirect=Depends(_require_login)):
     """收單後，部門同仁把待送出清單整批送成「補件」，等人資在彙總頁收進或退件。"""
     if redirect:
         return redirect
     user, department, deny = _draft_user(request)
     if deny:
         return deny
-    work_date = _valid_date(work_date)
+    work_date, pending = await _selected_due(request, department)
     if not work_date or not repo.is_day_closed(work_date):
         return RedirectResponse(url=_upload_url(work_date, "err", "這一天還沒收單，請直接按「送出給人資」。"), status_code=303)
-    pending = drafts_repo.list_pending(department)
     if not pending:
-        return RedirectResponse(url=_upload_url(work_date, "err", "待送出清單是空的。"), status_code=303)
+        return RedirectResponse(url=_upload_url(work_date, "err", "請勾選要送出的人（日期還沒到的不能送）。"), status_code=303)
     drafts_repo.submit_late(pending, work_date, user)
     return RedirectResponse(
         url=_upload_url(work_date, "msg", f"已送出 {len(pending)} 筆補件，等人資收進或退件。"), status_code=303
@@ -709,7 +790,7 @@ async def late_reject(request: Request, redirect=Depends(login_required)):
 
 
 @router.post("/insurance/drafts/download")
-def drafts_download(request: Request, work_date: str = Form(""), redirect=Depends(_require_login)):
+async def drafts_download(request: Request, redirect=Depends(_require_login)):
     """收單前來不及送出：把待送出清單下載成範本格式的 Excel，同仁自己交給人資。
     下載後那幾筆改成「已下載」（紀錄保留），不會再出現在待送出清單、也不會
     之後又被送出一次。"""
@@ -718,9 +799,9 @@ def drafts_download(request: Request, work_date: str = Form(""), redirect=Depend
     user, department, deny = _draft_user(request)
     if deny:
         return deny
-    pending = drafts_repo.list_pending(department)
+    work_date, pending = await _selected_due(request, department)
     if not pending:
-        return RedirectResponse(url=_upload_url(_valid_date(work_date), "err", "待送出清單是空的。"), status_code=303)
+        return RedirectResponse(url=_upload_url(work_date, "err", "請勾選要下載的人（日期還沒到的不能下載）。"), status_code=303)
     content = build_department_workbook([drafts_repo.draft_to_source_row(d) for d in pending])
     drafts_repo.mark_downloaded(pending, user)
     return _xlsx_response(content, f"{_today()}_{department}_加退保（未送出）.xlsx")
