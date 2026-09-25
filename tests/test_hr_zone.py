@@ -215,6 +215,7 @@ class AccessAndPageTests(_Base):
         self._new(insured_date="2026-09-26")
         html = self.client.get("/hr/insurance/upload?work_date=2026-09-26").text
         self.assertIn('class="zone-tabs"', html)
+        self.assertIn('href="/hr/insurance/help#zone"', html)  # 分頁右邊的「使用說明」
         self.assertIn("待進人員", html)
         self.assertIn("2026-09-26 的名單（1 筆）", html)
         self.assertNotIn("廠商維護", html)  # 專員看不到
