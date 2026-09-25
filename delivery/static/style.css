@@ -1136,3 +1136,8 @@ a.sheet-tab-btn { display: inline-block; text-decoration: none; }
     cursor: pointer;
     margin-left: 4px;
 }
+.zone-tabs .zone-tabs-help {
+    margin-left: auto;
+    color: var(--muted, #6b7280);
+    font-size: 14px;
+}

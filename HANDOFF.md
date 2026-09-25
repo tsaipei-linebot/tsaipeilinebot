@@ -10575,3 +10575,9 @@ PR1（專區分頁、廠商/班別維護、待進人員，PR #238）、PR2（每
 - **新頁面的寫法**：操作結果訊息寫 `<p class="success js-flash">`／`<p class="error js-flash">`；
   `tests/test_flash_popup.py` 會檢查 `{% if error|err|msg %}<p class="…">` 沒有漏加 js-flash。
 - 測試：全部 2344 個通過；Playwright 看過成功提示、錯誤彈窗、alert 改用彈窗。
+
+### 補充：專區分頁加「使用說明」連結（2026-09-25）
+
+`hr/templates/_zone_tabs.html` 分頁最右邊多「使用說明」，連到 `/hr/insurance/help#zone`（加退保說明頁的台北所那一段，
+`<h2 id="zone">`）；每日加退保上傳頁（7 個所都一樣）下方連結也多「使用說明」。
+
