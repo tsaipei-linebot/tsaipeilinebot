@@ -382,11 +382,11 @@ class HiringPagesTests(_FakeDbMixin, unittest.TestCase):
 
     def test_staff_cannot_change_settings(self):
         with mock.patch.object(self.platform_accounts, "current_account", return_value=self.STAFF):
-            self.assertNotIn("儲存搜尋條件", self.client.get("/salesdev?tab=hiring").text)
+            self.assertEqual(self.client.get("/salesdev?tab=hiring", follow_redirects=False).headers["location"], "/portal")
             resp = self.client.post(
                 "/salesdev/hiring/settings", data={"keywords": "x", "min_employees": "1", "max_pages": "1"}, follow_redirects=False
             )
-        self.assertIn("err=", resp.headers["location"])
+        self.assertEqual(resp.headers["location"], "/portal")
         self.assertEqual(repository.get_hiring_settings()["keywords"], hiring_104.DEFAULT_KEYWORDS)
 
     def test_export_has_hiring_sheet(self):

@@ -315,10 +315,10 @@ class PagesTests(_FakeDbMixin, unittest.TestCase):
 
     def test_staff_cannot_change_settings(self):
         with mock.patch.object(self.platform_accounts, "current_account", return_value=self.STAFF):
-            self.assertNotIn("下一次執行就重抓職缺清單", self.client.get("/salesdev?tab=taiwanjobs").text)
+            self.assertEqual(self.client.get("/salesdev?tab=taiwanjobs", follow_redirects=False).headers["location"], "/portal")
             for url in ("/salesdev/taiwanjobs/settings", "/salesdev/taiwanjobs/refresh"):
                 resp = self.client.post(url, data={"keywords": "x", "zipcodes": "330"}, follow_redirects=False)
-                self.assertIn("err=", resp.headers["location"])
+                self.assertEqual(resp.headers["location"], "/portal")
 
     def test_load_error_still_renders(self):
         with mock.patch.object(tj_repo, "list_companies", side_effect=RuntimeError("Firestore 掛了")):

@@ -11,6 +11,7 @@ from tests import _stub_gcp
 _stub_gcp.install()
 
 import accounts_routes
+import platform_accounts
 import main
 from fastapi.testclient import TestClient
 
@@ -127,6 +128,28 @@ class ModulesFromFormTests(unittest.TestCase):
     def test_no_checked_modules_returns_empty_list(self):
         form = _FakeFormData([])
         self.assertEqual(accounts_routes._modules_from_form(form), [])
+
+    def test_platform_admin_only_module_is_dropped(self):
+        """少凱業務開發專區只給全平台管理員（2026-09-26）：表單上沒有這一格，就算有人
+        硬送 module_salesdev 也不會存進帳號。"""
+        form = _FakeFormData([("module_salesdev", "on"), ("module_hr", "on")])
+        self.assertEqual(accounts_routes._modules_from_form(form), ["hr"])
+
+
+class PlatformAdminOnlyModuleTests(unittest.TestCase):
+    def test_not_offered_on_accounts_page(self):
+        codes = [m["code"] for m in platform_accounts.ASSIGNABLE_MODULES]
+        self.assertNotIn("salesdev", codes)
+        self.assertIn("hr", codes)
+        # 首頁卡片、名稱對照還是要有，全平台管理員才看得到自己的卡片
+        self.assertIn("salesdev", platform_accounts.MODULE_MAP)
+
+    def test_only_platform_admin_has_role(self):
+        other = {"username": "bob", "modules": ["salesdev", "hr"], "rank": "manager", "is_platform_admin": False}
+        self.assertIsNone(platform_accounts.module_role(other, "salesdev"))
+        self.assertEqual(platform_accounts.module_role(other, "hr"), platform_accounts.ROLE_ADMIN)
+        boss = {"username": "boss", "modules": [], "is_platform_admin": True}
+        self.assertEqual(platform_accounts.module_role(boss, "salesdev"), platform_accounts.ROLE_ADMIN)
 
 
 class RankFromFormTests(unittest.TestCase):

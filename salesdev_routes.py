@@ -19,7 +19,8 @@
 
 跟 delivery/management/hr 不同，這個模組直接掛在根 app 上、複用同一顆
 登入 session cookie（比照 portal_routes.py／accounts_routes.py 的做法）。
-能不能進來由 /accounts 的權限設定決定。
+2026-09-26 起**只有全平台管理員（胡少凱本人）能進來**，/accounts 不能再勾選開放
+給其他帳號（見 platform_accounts.PLATFORM_ADMIN_ONLY_MODULES）。
 """
 import re
 from urllib.parse import quote

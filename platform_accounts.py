@@ -94,6 +94,13 @@ MODULES = [
 ]
 MODULE_MAP = {m["code"]: m["name"] for m in MODULES}
 
+# 只有全平台管理員能用的模組（2026-09-26 使用者要求：少凱業務開發專區只給胡少凱
+# 本人看、本人用，不需要讓其他帳號可以勾選）。帳號權限管理頁面（/accounts）不列出
+# 來讓人勾選；就算舊的帳號資料裡還留著這個模組代碼，module_role() 也一律當作沒有
+# 權限。首頁卡片、各頁面的權限檢查都走 module_role()，不用另外改。
+PLATFORM_ADMIN_ONLY_MODULES = {"salesdev"}
+ASSIGNABLE_MODULES = [m for m in MODULES if m["code"] not in PLATFORM_ADMIN_ONLY_MODULES]
+
 # 公司職級，由高到低排序（2026-09-12 新增）。副主任（含）以上在任何
 # 「已開放」的模組裡都視為管理權限（module_role() 回傳 "admin"），主任
 # （含）以下視為一般權限（"staff"）——見 `is_manager_rank()`。這份清單跟
@@ -397,6 +404,8 @@ def module_role(account: dict, module_code: str):
         return None
     if account.get("is_platform_admin"):
         return ROLE_ADMIN
+    if module_code in PLATFORM_ADMIN_ONLY_MODULES:
+        return None
     if module_code not in _open_module_codes(account.get("modules")):
         return None
     return ROLE_ADMIN if is_manager_rank(account.get("rank", "")) else ROLE_STAFF

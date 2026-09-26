@@ -10655,6 +10655,23 @@ LinkedIn，台灣中小型工廠的人資大多不在上面。**結論：不接 
 3. 馬上跑一次：`gcloud scheduler jobs run salesdev-hourly-taiwanjobs --project=tsaipei-505807 --location=asia-east1`，
    約 5 分鐘後看 `/salesdev?tab=taiwanjobs` 上方的結果。
 
+## 少凱業務開發專區改成只有全平台管理員能用（2026-09-26）
+
+使用者要求：「這個專區不需要讓其他帳號可以勾選，都只有胡少凱可以看到跟使用。」
+
+- `platform_accounts.py` 新增 `PLATFORM_ADMIN_ONLY_MODULES = {"salesdev"}`、`ASSIGNABLE_MODULES`（`MODULES`
+  扣掉前者）。`module_role()` 遇到這類模組，不是全平台管理員一律回傳 None——**舊帳號資料裡就算還勾著
+  `salesdev` 也沒有權限**（不管職級）。首頁卡片（`portal_routes.py`）、`/salesdev` 各頁面的權限檢查都走
+  `module_role()`，自動生效。`MODULES` 裡仍保留這一筆（首頁卡片名稱、說明頁連結要用）。
+- `accounts_routes.py`：新增/編輯帳號表單、帳號列表的模組徽章改用 `ASSIGNABLE_MODULES`，畫面上看不到
+  「少凱業務開發專區」；`_modules_from_form()` 也只收可勾選的模組，舊帳號下次存檔時會順便把 `salesdev` 清掉。
+- 使用說明 `/salesdev/help` 的權限說明同步改。
+- 測試：原本「勾了模組的一般帳號進得來、只是看不到管理員按鈕」的 4 個測試改成「被擋回 /portal」；
+  `tests/test_accounts_routes.py` 新增 3 個。之後如果要把這個專區開放給別人，把 `salesdev` 從
+  `PLATFORM_ADMIN_ONLY_MODULES` 拿掉即可。
+
+**使用者不需要做任何設定**（沒有新環境變數、不用改帳號資料）。
+
 ## 台北所(派遣組)／台北所(國際組)專區：待進人員＋每日加退保自動帶入（2026-09-25 確認規格，分兩個 PR 實作）
 
 PR1（專區分頁、廠商/班別維護、待進人員，PR #238）、PR2（每日加退保依日期自動帶入）都已完成。

@@ -60,11 +60,12 @@ class SalesdevPagesTests(unittest.TestCase):
         resp = self.client.get(f"/salesdev/groups/{self.group_id}")
         self.assertIn("&lt;b&gt;黃仁勳&lt;/b&gt;", resp.text)
 
-    def test_staff_does_not_see_import_button_and_cannot_import(self):
+    def test_other_accounts_cannot_open_or_import(self):
+        """只有全平台管理員能用（2026-09-26）：勾了模組的其他帳號也會被擋回首頁。"""
         with mock.patch.object(platform_accounts, "current_account", return_value=STAFF):
-            self.assertNotIn("匯入舊試算表資料", self.client.get("/salesdev").text)
+            self.assertEqual(self.client.get("/salesdev", follow_redirects=False).headers["location"], "/portal")
             resp = self.client.post("/salesdev/import-sheet", follow_redirects=False)
-        self.assertIn("err=", resp.headers["location"])
+        self.assertEqual(resp.headers["location"], "/portal")
 
     def test_other_tabs_render(self):
         self.assertIn("人力仲介行政人員", self.client.get("/salesdev?tab=internal").text)
