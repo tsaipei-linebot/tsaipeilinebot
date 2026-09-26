@@ -11,12 +11,14 @@
 import base64
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 
 import platform_accounts
 from file_type_sniff import looks_like_image
 from platform_templating import templates
-from services.salary_repayment_service import DISPLAY_COLUMNS, get_my_repayment_records
+from services import salary_platform
+from services import salary_repayment_photos as salary_photos
+from services.salary_repayment_service import DISPLAY_COLUMNS, get_my_repayment_records, has_finance_access
 from services.salary_repayment_submit_service import (
     DEDUCTION_FIELDS,
     EARNING_FIELDS,
@@ -85,7 +87,13 @@ def resend_salary_repayment_email_submit(salary_id: str, request: Request, redir
     if error or not any(r.get("補款單號") == salary_id for r in records):
         return RedirectResponse(url="/me?resend_error=找不到這筆紀錄，或您沒有權限操作。", status_code=303)
 
-    result = resend_salary_repayment_email(salary_id)
+    doc = salary_platform.get_doc(salary_id)
+    if salary_platform.is_platform_doc(doc):
+        # 平台建立的單（2026-09-26 起）由平台自己補寄
+        ok, message = salary_platform.send_approval_email(salary_id)
+        result = {"status": "success"} if ok else {"status": "error", "message": message}
+    else:
+        result = resend_salary_repayment_email(salary_id)
     if result.get("status") == "success":
         return RedirectResponse(url="/me?resend_ok=1", status_code=303)
     return RedirectResponse(
@@ -196,7 +204,7 @@ async def create_salary_repayment_submit(
     earnings = _amounts_from_form(form, EARNING_FIELDS, "earning")
     deductions = _amounts_from_form(form, DEDUCTION_FIELDS, "deduction")
 
-    image_base64, image_filename = "", ""
+    image_base64, image_filename, image_content_type = "", "", ""
     if image is not None and image.filename:
         content = await image.read()
         if len(content) > _MAX_IMAGE_BYTES:
@@ -217,6 +225,29 @@ async def create_salary_repayment_submit(
             )
         image_base64 = base64.b64encode(content).decode("ascii")
         image_filename = image.filename
+        image_content_type = "image/png" if content.startswith(b"\x89PNG") else "image/jpeg"
+
+    if salary_platform.is_enabled():
+        # 補款改由平台處理（2026-09-26，見 services/salary_platform.py）；開關在 /finance/migration
+        result = salary_platform.submit(
+            {
+                "applicant_name": account["name"],
+                "name": name.strip(),
+                "id_card": id_card,
+                "vendor": vendor.strip(),
+                "apply_date": apply_date.strip(),
+                "pay_date": pay_date.strip(),
+                "deduct_month": deduct_month.strip(),
+                "compensate_month": compensate_month.strip(),
+                "is_claimable": is_claimable.strip(),
+                "pay_type": pay_type.strip(),
+                "notes": notes.strip(),
+            },
+            earnings,
+            deductions,
+            {"content": base64.b64decode(image_base64), "content_type": image_content_type} if image_base64 else None,
+        )
+        return _submit_result(request, account, result, form_values)
 
     payload = build_payload(
         applicant_name=account["name"],
@@ -236,7 +267,10 @@ async def create_salary_repayment_submit(
         image_filename=image_filename,
     )
     result = submit_salary_repayment(payload)
+    return _submit_result(request, account, result, form_values)
 
+
+def _submit_result(request: Request, account: dict, result: dict, form_values: dict):
     if result.get("status") == "success":
         return RedirectResponse(url="/me?submitted=" + result.get("salaryId", ""), status_code=303)
 
@@ -253,3 +287,38 @@ async def create_salary_repayment_submit(
         _salary_repayment_form_context(account, result.get("message") or "送出失敗，請稍後再試。", form_values),
         status_code=400,
     )
+
+
+@router.get("/me/salary-repayment/{doc_id}/photo")
+def salary_repayment_photo(doc_id: str, request: Request, redirect=Depends(_require_login)):
+    """佐證照片（2026-09-26 新增，核准卡片上的「查看佐證照片」按鈕連到這裡）。看得到的人：全平台管理員、財務部、
+    「我的專區」看得到這筆紀錄的人（申請人本人或其主管），以及員工主管組織表上這位申請人的審核主管。"""
+    if redirect:
+        return redirect
+    account = platform_accounts.current_account(request)
+    doc = salary_platform.get_doc(doc_id)
+    if not doc:
+        return Response(content="找不到這筆補款單。", status_code=404, media_type="text/plain; charset=utf-8")
+    if not _can_view_salary_photo(account, doc_id, doc):
+        return Response(content="您沒有權限查看這張照片。", status_code=403, media_type="text/plain; charset=utf-8")
+    content, content_type = salary_photos.get_photo_for_doc(doc_id)
+    if content is None:
+        return Response(content="這筆補款單沒有佐證照片。", status_code=404, media_type="text/plain; charset=utf-8")
+    inline = content_type in {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    return Response(
+        content=content,
+        media_type=content_type if inline else "application/octet-stream",
+        headers={"Content-Disposition": "inline" if inline else "attachment",
+                 "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"},
+    )
+
+
+def _can_view_salary_photo(account: dict, doc_id: str, doc: dict) -> bool:
+    if has_finance_access(account):  # 含全平台管理員
+        return True
+    records, _ = get_my_repayment_records(account["name"])
+    if any(r.get("補款單號") == doc_id for r in records):
+        return True
+    applicant = (doc.get("fields") or {}).get("申請人姓名", "")
+    org = salary_platform.load_org()
+    return any(s["name"] == account["name"] for s in org.supervisors("", applicant))

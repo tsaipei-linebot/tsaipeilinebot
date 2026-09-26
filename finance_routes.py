@@ -36,6 +36,7 @@ import platform_accounts
 from platform_templating import templates
 from config import SALARY_PHOTO_GCS_BUCKET, TAIPEI_TZ
 from services import job_portal_line_relay as line_relay
+from services import salary_platform
 from services import salary_repayment_photos as photos
 from services import salary_repayment_report as report
 from services import salary_repayment_sheet_writer as sheet_writer
@@ -169,6 +170,10 @@ def _migration_page(request: Request, error: str = "", notice: str = "", status_
             "result": state.get("last_result") or {},
             "photos": photos.summary() if state.get("last_synced_at") else None,
             "preview_records": _preview_candidates() if state.get("last_synced_at") else [],
+            "platform_mode": salary_platform.is_enabled(),
+            "platform_missing": salary_platform.missing_requirements(),
+            "platform_mode_changed_at": _taipei_time(state.get("platform_mode_changed_at")),
+            "sheet_failures": salary_platform.sheet_failures() if state.get("last_synced_at") else [],
             "line_relay_configured": line_relay.is_configured(),
             "line_relay_logs": [{**e, "at_text": _taipei_time(e.get("at"))} for e in line_relay.recent()],
             "error": error,
@@ -192,6 +197,9 @@ def finance_migration(
     notices = {
         "synced": "已經從試算表同步到平台。",
         "source": "讀取來源已經切換。",
+        "platform_on": "補款已改由平台處理：已先同步一次試算表，我的專區、財務部專區也改讀平台資料。",
+        "platform_off": "補款已改回由 GAS 處理，讀取來源也改回 Google 試算表。平台已經建立、還沒審的單，主管按卡片照樣由平台處理。",
+        "sheet_retry": "已補寫進試算表。",
         "photos": f"這一批搬好 {copied} 張、失敗 {failed} 張，還有 {remaining} 張待搬。"
         + ("請再按一次「搬下一批照片」。" if remaining else ""),
     }
@@ -343,3 +351,37 @@ def finance_migration_preview_pdf(doc_id: str, request: Request, redirect=Depend
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(report.pdf_filename(record))}"},
     )
+
+
+
+# ---- 補款改由平台處理的開關（2026-09-26，見 services/salary_platform.py）----
+
+@router.post("/finance/migration/platform-mode")
+def finance_migration_platform_mode(request: Request, enabled: str = Form(""), redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    actor = platform_accounts.current_account(request)
+    if enabled == "1":
+        missing = salary_platform.missing_requirements()
+        if missing:
+            return _migration_page(request, error="還不能切換，還缺：" + "、".join(missing), status_code=400)
+        org_values, record_values, error = fetch_sheet_values()
+        if error or not record_values:
+            return _migration_page(request, error=f"切換前要先同步試算表，但同步失敗：{error or '試算表是空的'}", status_code=400)
+        store.sync_from_sheet(org_values, record_values, actor)
+        store.set_read_source(store.SOURCE_FIRESTORE, actor)
+        salary_platform.set_enabled(True, actor)
+        return RedirectResponse(url="/finance/migration?notice=platform_on", status_code=303)
+    salary_platform.set_enabled(False, actor)
+    store.set_read_source(store.SOURCE_SHEET, actor)
+    return RedirectResponse(url="/finance/migration?notice=platform_off", status_code=303)
+
+
+@router.post("/finance/migration/sheet-retry/{doc_id}")
+def finance_migration_sheet_retry(doc_id: str, request: Request, redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    ok, message = salary_platform.retry_sheet(doc_id)
+    if not ok:
+        return _migration_page(request, error=message, status_code=400)
+    return RedirectResponse(url="/finance/migration?notice=sheet_retry", status_code=303)

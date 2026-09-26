@@ -1,7 +1,7 @@
 """測試用的記憶體版 Firestore（2026-09-24 新增，給 salesdev 的測試用）。
 
 只實作 salesdev/repository.py 用到的那一小部分 API：collection/document、
-get/set(merge)/delete、where("欄位", "==", 值).stream()、stream()、get_all()、
+get/set(merge)/delete/create、where("欄位", "==", 值).stream()、stream()、get_all()、
 batch()。merge=True 只做最上層欄位合併（repository 只寫最上層欄位）。
 """
 import copy
@@ -34,6 +34,12 @@ class FakeDocRef:
 
     def delete(self):
         self._store.pop(self.id, None)
+
+    def create(self, data):
+        """跟真的 Firestore 一樣：文件已經存在就失敗。"""
+        if self.id in self._store:
+            raise ValueError(f"document {self.id} already exists")
+        self._store[self.id] = copy.deepcopy(data)
 
 
 class FakeQuery:

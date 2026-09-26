@@ -184,8 +184,31 @@ def _fetch_rows():
     """依 `/finance/migration` 的讀取來源開關（2026-09-25 新增）決定讀試算表還是平台資料，
     兩邊回傳格式一樣。開關讀不到一律當成試算表。"""
     if salary_repayment_store.read_source() == salary_repayment_store.SOURCE_FIRESTORE:
+        _maybe_background_sync()
         return salary_repayment_store.load_rows()
     return _fetch_sheet_rows()
+
+
+_AUTO_SYNC_MINUTES = 10
+
+
+def _maybe_background_sync() -> None:
+    """補款改由平台處理之後（2026-09-26），試算表還是可能有 GAS 寫進來的新資料（切換前的舊卡片被核准、
+    或有人還在用舊表單直接送給 GAS）。距離上次同步超過 10 分鐘就在背景同步一次，畫面不用等。"""
+    import threading
+    from datetime import datetime, timedelta, timezone
+
+    from services import salary_platform
+
+    try:
+        if not salary_platform.is_enabled():
+            return
+        last = salary_repayment_store.get_state().get("last_synced_at")
+        if last and datetime.now(timezone.utc) - last < timedelta(minutes=_AUTO_SYNC_MINUTES):
+            return
+    except Exception:
+        return
+    threading.Thread(target=salary_platform.sync_from_sheet_quietly, daemon=True).start()
 
 
 def get_my_repayment_records(viewer_name: str):

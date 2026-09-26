@@ -136,7 +136,42 @@
 <p class="empty">平台上還沒有已核准的補款單（請先完成第 1 項的同步）。</p>
 {% endif %}
 
-<h2 class="section-title">6. 讀取來源</h2>
+<h2 class="section-title">6. 補款改由平台處理（切換開關）</h2>
+<p class="hint">打開後，同仁在「我的專區」送出的補款單改由平台處理：平台收單、推核准卡片給主管、處理主管按的核准或退回、寄核准信，並照 GAS 原本的格式寫一列到試算表給財務。<strong>同仁和主管的操作都跟現在一樣。</strong>切換前 GAS 已經發出、還沒按的卡片，照樣由 GAS 處理。出問題時按「改回由 GAS 處理」就回到原狀。</p>
+<p>目前：<strong>{% if platform_mode %}✅ 由平台處理{% else %}由 GAS 處理{% endif %}</strong>{% if platform_mode_changed_at %}（{{ platform_mode_changed_at }} 切換）{% endif %}</p>
+{% if not platform_mode %}
+{% if platform_missing %}
+<p class="warning">還不能切換，還缺：{{ platform_missing | join("、") }}</p>
+{% else %}
+<form method="post" action="/finance/migration/platform-mode" class="form-stack form-narrow" onsubmit="return confirm('確定要改由平台處理補款嗎？');">
+    <input type="hidden" name="enabled" value="1">
+    <button type="submit" class="btn btn-primary">改由平台處理</button>
+</form>
+{% endif %}
+{% else %}
+<form method="post" action="/finance/migration/platform-mode" class="form-stack form-narrow" onsubmit="return confirm('確定要改回由 GAS 處理補款嗎？');">
+    <input type="hidden" name="enabled" value="0">
+    <button type="submit" class="btn">改回由 GAS 處理</button>
+</form>
+{% endif %}
+{% if sheet_failures %}
+<p class="warning">下面這些平台建立的補款單還沒寫進試算表（財務的會計對帳表會少這幾筆），可以按「補寫」重試：</p>
+<div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>補款單號</th><th>哪一步</th><th>原因</th><th></th></tr></thead>
+        <tbody>
+            {% for item in sheet_failures %}
+            <tr>
+                <td>{{ item.doc_id }}</td><td>{{ item.kind }}</td><td>{{ item.error }}</td>
+                <td><form method="post" action="/finance/migration/sheet-retry/{{ item.doc_id | urlencode }}"><button type="submit" class="btn btn-small">補寫</button></form></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<h2 class="section-title">7. 讀取來源</h2>
 <p class="hint">目前「我的專區」的補款紀錄和財務部專區讀的是：<strong>{{ source_names[read_source] }}</strong>{% if read_source_changed_at %}（{{ read_source_changed_at }} 由 {{ state.get("read_source_changed_by", "") }} 切換）{% endif %}</p>
 {% if read_source == "firestore" %}
 <p class="warning">現在新的補款單還是由 GAS 寫進試算表，平台資料只到最後一次同步的那一刻。第 4 步（送出流程改由平台處理）上線之前，讀平台資料只適合用來檢查；檢查完建議切回試算表，或每次檢查前先按上面的同步。</p>

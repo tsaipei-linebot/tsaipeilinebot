@@ -237,6 +237,13 @@ JOB_PORTAL_MAIL_WEBHOOK_SECRET = os.getenv("JOB_PORTAL_MAIL_WEBHOOK_SECRET", "")
 #   整串照抄，平台轉發時就打這個網址。
 JOB_PORTAL_LINE_CHANNEL_SECRET = os.getenv("JOB_PORTAL_LINE_CHANNEL_SECRET", "")
 JOB_PORTAL_LINE_RELAY_TARGET_URL = os.getenv("JOB_PORTAL_LINE_RELAY_TARGET_URL", "")
+# 補款改由平台處理（2026-09-26，見 services/salary_platform.py）：
+# - JOB_PORTAL_LINE_CHANNEL_ACCESS_TOKEN：同一個官方帳號的 Channel access token，平台推核准卡片／回覆主管用。
+# - SALARY_ADMIN_LINE_USER_IDS／SALARY_ADMIN_EMAILS：對應 GAS 指令碼屬性 ADMIN_LINE_USER_ID／ADMIN_EMAIL——
+#   組織表沒幫申請人設主管時改推給系統管理員，系統管理員也可以簽核任何一張單（跟 GAS 一樣）。
+JOB_PORTAL_LINE_CHANNEL_ACCESS_TOKEN = os.getenv("JOB_PORTAL_LINE_CHANNEL_ACCESS_TOKEN", "")
+SALARY_ADMIN_LINE_USER_IDS = os.getenv("SALARY_ADMIN_LINE_USER_IDS", "")
+SALARY_ADMIN_EMAILS = os.getenv("SALARY_ADMIN_EMAILS", "")
 
 # ==========================================
 # 11-1. 寄信（SMTP）
