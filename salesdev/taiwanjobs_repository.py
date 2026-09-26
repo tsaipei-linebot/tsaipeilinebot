@@ -8,13 +8,24 @@
 - `salesdev_tj_runs`：每次執行的結果摘要。
 - `salesdev_settings/taiwanjobs`：關鍵字、郵遞區號（管理員在畫面上改）。
 
+2026-09-26 加上寄信（方案 A：按按鈕開 Gmail 撰寫畫面，使用者自己按寄出）：
+- 公司上多了 `manual_emails`／`manual_phones`（手動新增，自動抓取**不會**動到）、
+  `hidden_emails`／`hidden_phones`（自動抓到但不想用的，隱藏不刪除，之後重抓也不會
+  再冒出來）。畫面上顯示的是 `effective_emails()`／`effective_phones()`。
+- `send_log`：每按一次「開啟 Gmail」記一筆（寄給哪個信箱、日期、誰、內文/簡介版本）。
+  記的是「按下按鈕」，不保證使用者最後真的有按寄出（方案 A 的限制，使用者已知道）。
+
 用 `repository.get_db()` 取連線，測試裡 patch 那一支就好。
 """
 import hashlib
+import re
 import time
+from datetime import datetime, timedelta
 
 from salesdev import repository
 from salesdev.classify import match_dispatch_company
+
+_EMAIL_FORMAT = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 JOBS_COLLECTION = "salesdev_tj_jobs"
 COMPANIES_COLLECTION = "salesdev_tj_companies"
@@ -227,12 +238,125 @@ def email_source(company: dict, email: str) -> str:
     return (company.get("email_sources") or {}).get(email.replace(".", "·"), "")
 
 
+def _visible(auto_values, hidden, manual) -> list:
+    hidden_lower = {h.lower() for h in hidden or []}
+    result = [v for v in auto_values or [] if v.lower() not in hidden_lower]
+    for value in manual or []:
+        if value.lower() not in [r.lower() for r in result]:
+            result.append(value)
+    return result
+
+
+def effective_emails(company: dict) -> list:
+    """畫面上顯示、可以寄的 Email：自動抓到的（扣掉隱藏的）＋手動新增的。純函式。"""
+    return _visible(company.get("emails"), company.get("hidden_emails"), company.get("manual_emails"))
+
+
+def effective_phones(company: dict) -> list:
+    return _visible(company.get("contact_phones"), company.get("hidden_phones"), company.get("manual_phones"))
+
+
 def list_companies() -> list:
     companies = [{"id": s.id, **(s.to_dict() or {})} for s in companies_ref().stream()]
     companies.sort(
-        key=lambda c: (bool(c.get("emails")), c.get("last_seen", ""), c.get("job_count", 0)), reverse=True
+        key=lambda c: (bool(effective_emails(c)), c.get("last_seen", ""), c.get("job_count", 0)), reverse=True
     )
     return companies
+
+
+def get_company(company_id: str):
+    snapshot = companies_ref().document(company_id).get()
+    if not snapshot.exists:
+        return None
+    return {"id": snapshot.id, **(snapshot.to_dict() or {})}
+
+
+CONTACT_KINDS = {"email": ("emails", "manual_emails", "hidden_emails"), "phone": ("contact_phones", "manual_phones", "hidden_phones")}
+MAX_MANUAL = 10
+
+
+def update_contact(company_id: str, kind: str, action: str, value: str) -> str:
+    """手動調整 Email/電話。action：add（手動新增）、remove（刪掉手動新增的）、
+    hide（隱藏自動抓到的）、unhide（取消隱藏）。成功回傳空字串，失敗回傳原因。"""
+    value = (value or "").strip()
+    company = get_company(company_id)
+    if not company:
+        return "找不到這間公司。"
+    if kind not in CONTACT_KINDS or not value:
+        return "請輸入內容。"
+    if kind == "email" and not _EMAIL_FORMAT.match(value):
+        return f"「{value}」看起來不是 Email 格式。"
+    auto_field, manual_field, hidden_field = CONTACT_KINDS[kind]
+    manual = list(company.get(manual_field) or [])
+    hidden = list(company.get(hidden_field) or [])
+    lowered = value.lower()
+    if action == "add":
+        if lowered in [v.lower() for v in manual] or lowered in [v.lower() for v in company.get(auto_field) or []]:
+            hidden = [h for h in hidden if h.lower() != lowered]  # 已經有了：當成取消隱藏
+        elif len(manual) >= MAX_MANUAL:
+            return f"手動新增最多 {MAX_MANUAL} 個。"
+        else:
+            manual.append(value)
+    elif action == "remove":
+        manual = [v for v in manual if v.lower() != lowered]
+    elif action == "hide":
+        if lowered not in [h.lower() for h in hidden]:
+            hidden.append(value)
+    elif action == "unhide":
+        hidden = [h for h in hidden if h.lower() != lowered]
+    else:
+        return "不認得的操作。"
+    companies_ref().document(company_id).set(
+        {manual_field: manual, hidden_field: hidden, "contacts_updated_at": repository.now_str()}, merge=True
+    )
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# 寄信紀錄
+# ---------------------------------------------------------------------------
+
+RESEND_WARNING_DAYS = 60  # 使用者 2026-09-26 決定：兩個月內不重複寄（提醒，確認後仍可寄）
+MAX_SEND_LOG = 200
+
+
+def record_send(company_id: str, email: str, username: str, template_name: str, intro_name: str) -> dict:
+    """按下「開啟 Gmail」時記一筆。回傳這一筆紀錄；找不到公司回傳 None。"""
+    company = get_company(company_id)
+    if not company:
+        return None
+    entry = {
+        "email": (email or "").strip(),
+        "date": repository.today_str(),
+        "at": repository.now_str(),
+        "by": username,
+        "template": template_name or "",
+        "intro": intro_name or "",
+    }
+    log = (list(company.get("send_log") or []) + [entry])[-MAX_SEND_LOG:]
+    companies_ref().document(company_id).set({"send_log": log, "last_sent_date": entry["date"]}, merge=True)
+    return entry
+
+
+def last_sent_by_email(company: dict) -> dict:
+    """{信箱（小寫）: 最近一次寄送的日期}。純函式。"""
+    result = {}
+    for entry in company.get("send_log") or []:
+        key = (entry.get("email") or "").lower()
+        if key and entry.get("date", "") > result.get(key, ""):
+            result[key] = entry["date"]
+    return result
+
+
+def sent_recently(last_date: str, today: str = None, days: int = RESEND_WARNING_DAYS) -> bool:
+    """最近一次寄送是不是在 days 天內。純函式。"""
+    if not last_date:
+        return False
+    today = today or repository.today_str()
+    try:
+        return datetime.fromisoformat(today) - datetime.fromisoformat(last_date) < timedelta(days=days)
+    except ValueError:
+        return False
 
 
 def default_settings() -> dict:

@@ -10672,6 +10672,35 @@ LinkedIn，台灣中小型工廠的人資大多不在上面。**結論：不接 
 
 **使用者不需要做任何設定**（沒有新環境變數、不用改帳號資料）。
 
+## 業務開發：台灣就業通加上「寄信」（2026-09-26，方案 A：開 Gmail 撰寫畫面）
+
+**使用者決定**：方案 A（平台不直接寄信，按按鈕開 Gmail 網頁版撰寫畫面，使用者自己看過、夾 PDF、按寄出）；
+**每封信只有一個收件人**（同公司多個信箱各自一封）；內文跟簡介各有好幾個版本；簡介是文字＋PDF，PDF 自己夾；
+Gmail 網頁版、帳號 `gary@tsaipei.com`（`config.SALESDEV_GMAIL_ACCOUNT`，可用同名環境變數覆蓋）；**兩個月（60 天）
+內不重複寄**（提醒、確認後仍可寄）；不做「有回覆／不要再寄」標記；只有胡少凱能用（整個專區本來就只給全平台管理員）。
+內文使用者還要再確認，先放一份「暫用範本／暫用簡介」。
+
+- 列表（`/salesdev?tab=taiwanjobs`）：最左「寄信」（沒有 Email 時是灰的）＋「編輯」，最右「發信紀錄」（最近日期、
+  共幾次，滑鼠移上去看明細）；多一組篩選「還沒寄過／寄過」、「信件範本」入口。Email/電話欄改顯示
+  `effective_emails()`／`effective_phones()`。
+- 公司頁 `/salesdev/taiwanjobs/companies/{EMPLOYER_ID}`（`templates/salesdev_tj_company.html`）：選內文範本＋簡介版本
+  （下拉選單，選了會記在 cookie，下次預設同一組）→ 預覽主旨/內文（可以直接改，只影響這一次）→ 每個 Email 一顆
+  「開啟 Gmail」：前端用畫面上的主旨/內文組 `https://mail.google.com/mail/?view=cm&fs=1&authuser=…&to=…&su=…&body=…`
+  開新視窗（要在點擊當下開，不然會被當彈出視窗擋），同時背景 `POST …/sent`（JSON）記一筆 `send_log`；60 天內
+  寄過的先 `confirm()`。下方是發信紀錄表、Email/電話的手動新增/刪除/隱藏/取消隱藏（`POST …/contacts`）。
+- `salesdev/taiwanjobs_repository.py`：公司多 `manual_emails`/`manual_phones`/`hidden_emails`/`hidden_phones`
+  （自動抓取只寫 `emails`/`contact_phones`，不會動到這幾個）、`send_log`（最多留 200 筆）、`last_sent_date`；
+  `update_contact()`、`record_send()`、`last_sent_by_email()`、`sent_recently()`。
+- `salesdev/mail_templates.py`＋`templates/salesdev_templates.html`（`/salesdev/templates`）：Firestore
+  `salesdev_mail_templates`，`kind` body（名稱＋主旨＋內容）/intro（名稱＋內容＋附件檔名），可新增、修改、停用；
+  變數 `{公司名稱}{聯絡人}{職缺名稱}{地區}{簡介}`，沒資料時聯絡人寫「人資負責人」、職缺寫「產線人員」；
+  一個範本都沒有時自動放暫用內文/簡介。
+- 「下載 Excel」的台灣就業通工作表多「最近寄信日期」「寄信次數」，Email/電話改成含手動、扣掉隱藏的。
+- 測試 `tests/test_salesdev_mail.py`（15 個）；用 Playwright 實際點「開啟 Gmail」確認網址（單一收件人、用畫面上改過的主旨）。
+
+**已知限制**：記的是「按下開啟 Gmail」，不是「真的寄出」；Gmail 撰寫網址只能帶純文字、不能帶附件；瀏覽器
+沒登入 gary@tsaipei.com 時 Gmail 會要求登入或開到別的帳號。**使用者不需要做任何設定。**
+
 ## 台北所(派遣組)／台北所(國際組)專區：待進人員＋每日加退保自動帶入（2026-09-25 確認規格，分兩個 PR 實作）
 
 PR1（專區分頁、廠商/班別維護、待進人員，PR #238）、PR2（每日加退保依日期自動帶入）都已完成。

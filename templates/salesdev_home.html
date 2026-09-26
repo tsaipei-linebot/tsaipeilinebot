@@ -214,46 +214,58 @@
     {% endif %}
 </div>
 
+{% set tq = '&dispatch=hide' if tj_hide_dispatch else '' %}{% set sq = '&sent=' ~ tj_sent %}
 <div class="filter-bar">
     <span>Email：</span>
-    {% set dq = '&dispatch=hide' if tj_hide_dispatch else '' %}
-    <a class="btn btn-small{{ ' btn-primary' if tj_email == 'yes' else '' }}" href="/salesdev?tab=taiwanjobs&email=yes{{ dq }}">有 Email（{{ tj_counts.get('yes', 0) }}）</a>
-    <a class="btn btn-small{{ ' btn-primary' if tj_email == 'no' else '' }}" href="/salesdev?tab=taiwanjobs&email=no{{ dq }}">沒有 Email（{{ tj_counts.get('no', 0) }}）</a>
-    <a class="btn btn-small{{ ' btn-primary' if tj_email == 'all' else '' }}" href="/salesdev?tab=taiwanjobs&email=all{{ dq }}">全部（{{ tj_counts.get('all', 0) }}）</a>
+    <a class="btn btn-small{{ ' btn-primary' if tj_email == 'yes' else '' }}" href="/salesdev?tab=taiwanjobs&email=yes{{ tq }}{{ sq }}">有 Email（{{ tj_counts.get('yes', 0) }}）</a>
+    <a class="btn btn-small{{ ' btn-primary' if tj_email == 'no' else '' }}" href="/salesdev?tab=taiwanjobs&email=no{{ tq }}{{ sq }}">沒有 Email（{{ tj_counts.get('no', 0) }}）</a>
+    <a class="btn btn-small{{ ' btn-primary' if tj_email == 'all' else '' }}" href="/salesdev?tab=taiwanjobs&email=all{{ tq }}{{ sq }}">全部（{{ tj_counts.get('all', 0) }}）</a>
     {% if tj_hide_dispatch %}
-    <a class="btn btn-small" href="/salesdev?tab=taiwanjobs&email={{ tj_email }}">顯示派遣公司</a>
+    <a class="btn btn-small" href="/salesdev?tab=taiwanjobs&email={{ tj_email }}{{ sq }}">顯示派遣公司</a>
     {% else %}
-    <a class="btn btn-small" href="/salesdev?tab=taiwanjobs&email={{ tj_email }}&dispatch=hide">隱藏派遣公司</a>
+    <a class="btn btn-small" href="/salesdev?tab=taiwanjobs&email={{ tj_email }}&dispatch=hide{{ sq }}">隱藏派遣公司</a>
     {% endif %}
+</div>
+<div class="filter-bar">
+    <span>寄信：</span>
+    <a class="btn btn-small{{ ' btn-primary' if tj_sent == 'all' else '' }}" href="/salesdev?tab=taiwanjobs&email={{ tj_email }}{{ tq }}&sent=all">全部</a>
+    <a class="btn btn-small{{ ' btn-primary' if tj_sent == 'unsent' else '' }}" href="/salesdev?tab=taiwanjobs&email={{ tj_email }}{{ tq }}&sent=unsent">還沒寄過</a>
+    <a class="btn btn-small{{ ' btn-primary' if tj_sent == 'sent' else '' }}" href="/salesdev?tab=taiwanjobs&email={{ tj_email }}{{ tq }}&sent=sent">寄過</a>
+    <a class="btn btn-small" href="/salesdev/templates">信件範本</a>
 </div>
 
 {% if not tj_companies %}
 <div class="empty-state">
     <p class="empty-state-title">{% if tj_counts.get('all', 0) %}這個條件下沒有公司{% else %}目前還沒有資料{% endif %}</p>
-    <p class="empty-state-text">{% if tj_counts.get('all', 0) %}換一個條件看看；職缺頁還沒讀完的公司會先出現在「沒有 Email」。{% else %}每小時排程開始之後，公司會出現在這裡。{% endif %}</p>
+    <p class="empty-state-text">{% if tj_counts.get('all', 0) %}換一個條件看看；職缺頁還沒讀完的公司會先出現在「沒有 Email」。{% else %}排程開始之後，公司會出現在這裡。{% endif %}</p>
 </div>
 {% else %}
 <input type="text" class="sheet-search" data-search-for="salesdev-tj" placeholder="搜尋公司名稱、Email、職缺、地區...">
 <div class="table-scroll">
     <table class="data-table sticky-head salesdev-table" id="salesdev-tj">
-        <thead><tr><th>公司名稱</th><th>Email</th><th>聯絡人</th><th>電話</th><th>職缺數</th><th>職缺例子</th><th>地區</th><th>最近出現</th></tr></thead>
+        <thead><tr><th>寄信</th><th>公司名稱</th><th>Email</th><th>聯絡人</th><th>電話</th><th>職缺數</th><th>職缺例子</th><th>地區</th><th>發信紀錄</th></tr></thead>
         <tbody>
             {% for c in tj_companies %}
+            {% set c_emails = tj_emails_of(c) %}
             <tr>
+                <td>
+                    {% if c_emails %}<a class="btn btn-small btn-primary" href="/salesdev/taiwanjobs/companies/{{ c.id }}#send">寄信</a>{% else %}<span class="btn btn-small" aria-disabled="true" title="沒有 Email，先按「編輯」手動新增">寄信</span>{% endif %}
+                    <div><a class="meta" href="/salesdev/taiwanjobs/companies/{{ c.id }}#contacts">編輯</a></div>
+                </td>
                 <td>{{ c.company_name }}{% if c.is_dispatch %}<div class="meta">派遣公司</div>{% endif %}</td>
-                <td>{% for e in c.emails or [] %}<div>{% set src = tj_email_source(c, e) %}{% if src %}<a href="{{ src }}" target="_blank" rel="noopener" title="開啟找到這個 Email 的職缺頁">{{ e }}</a>{% else %}{{ e }}{% endif %}</div>{% endfor %}</td>
+                <td>{% for e in c_emails %}<div>{% set src = tj_email_source(c, e) %}{% if src %}<a href="{{ src }}" target="_blank" rel="noopener" title="開啟找到這個 Email 的職缺頁">{{ e }}</a>{% else %}{{ e }}{% endif %}{% if e in (c.manual_emails or []) %} <span class="meta">✏️手動</span>{% endif %}</div>{% endfor %}</td>
                 <td>{{ (c.contact_names or [])|join('、') }}</td>
-                <td>{{ (c.contact_phones or [])|join('、') }}</td>
+                <td>{% for p in tj_phones_of(c) %}<div>{{ p }}{% if p in (c.manual_phones or []) %} <span class="meta">✏️手動</span>{% endif %}</div>{% endfor %}</td>
                 <td>{{ c.job_count }}</td>
                 <td>{{ (c.latest_job_titles or [])|join('、') }}</td>
                 <td>{{ (c.areas or [])|join('、') }}</td>
-                <td>{{ c.last_seen }}</td>
+                <td>{% if c.last_sent_date %}<span title="{% for s in (c.send_log or [])|reverse %}{{ s.date }} {{ s.email }}（{{ s.template }}／{{ s.intro }}）&#10;{% endfor %}">{{ c.last_sent_date }}</span><div class="meta">共 {{ (c.send_log or [])|length }} 次</div>{% else %}<span class="meta">尚未寄送</span>{% endif %}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
-<p class="hint">點 Email 會開啟找到這個 Email 的職缺頁，可以確認內容。「派遣公司」是依公司名稱自動判斷的，可以用上方按鈕隱藏。</p>
+<p class="hint">按「寄信」會開啟這間公司的寄信頁面，選好內文和簡介後，每個 Email 各有一個「開啟 Gmail」按鈕，每封信只有一個收件人。「編輯」可以手動新增 Email、電話，或隱藏用不到的。點 Email 會開啟找到這個 Email 的職缺頁。滑鼠移到發信日期上可以看每一次寄給誰。</p>
 {% endif %}
 
 {% if is_module_admin %}
