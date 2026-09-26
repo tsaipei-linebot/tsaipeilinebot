@@ -92,10 +92,13 @@ class RequireAccessDependencyTests(unittest.TestCase):
         self.assertEqual(result.status_code, 303)
         self.assertEqual(result.headers["location"], "/portal")
 
-    def test_logged_in_with_module_access_returns_none(self):
-        account = {"username": "bob", "name": "Bob", "modules": {"salesdev": "staff"}, "is_platform_admin": False}
-        result = salesdev_routes._require_access(self._FakeRequest(account))
-        self.assertIsNone(result)
+    def test_module_checked_but_not_platform_admin_is_redirected(self):
+        """2026-09-26 起只有全平台管理員能進來：舊帳號資料裡就算還勾著這個模組
+        （不管職級），也一律擋回首頁。"""
+        for rank in ("specialist", "manager"):
+            account = {"username": "bob", "name": "Bob", "modules": ["salesdev"], "rank": rank, "is_platform_admin": False}
+            result = salesdev_routes._require_access(self._FakeRequest(account))
+            self.assertEqual(result.headers["location"], "/portal", rank)
 
     def test_platform_admin_always_has_access(self):
         account = {"username": "boss", "name": "Boss", "modules": {}, "is_platform_admin": True}

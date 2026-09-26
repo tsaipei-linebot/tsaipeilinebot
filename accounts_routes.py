@@ -20,14 +20,16 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 import platform_accounts
 import platform_departments
-from platform_accounts import MODULE_ROLE_MAP, MODULES, RANKS
+from platform_accounts import ASSIGNABLE_MODULES, MODULE_ROLE_MAP, RANKS
 from platform_templating import templates
 
 router = APIRouter()
 
 
 def _modules_from_form(form_data) -> list:
-    return [m["code"] for m in MODULES if form_data.get(f"module_{m['code']}")]
+    # 只收可以勾選的模組：只給全平台管理員的模組（例如少凱業務開發專區）不會出現在
+    # 表單上，舊帳號資料裡如果還留著，存檔時順便清掉
+    return [m["code"] for m in ASSIGNABLE_MODULES if form_data.get(f"module_{m['code']}")]
 
 
 def _manager_usernames_from_form(form_data) -> list:
@@ -72,7 +74,7 @@ def _account_form_context(request: Request, account: dict, error: str) -> dict:
     return {
         "user": platform_accounts.current_account(request),
         "account": account,
-        "modules": MODULES,
+        "modules": ASSIGNABLE_MODULES,
         "ranks": RANKS,
         "departments": platform_departments.list_departments(),
         "manager_options": manager_options,
@@ -105,7 +107,7 @@ def accounts_list(request: Request, error: str = "", redirect=Depends(platform_a
         {
             "user": platform_accounts.current_account(request),
             "grouped_accounts": grouped_accounts,
-            "modules": MODULES,
+            "modules": ASSIGNABLE_MODULES,
             "rank_map": platform_accounts.RANK_MAP,
             "role_map": MODULE_ROLE_MAP,
             "error": error,
