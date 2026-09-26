@@ -635,3 +635,101 @@ def retry_sheet(doc_id: str) -> tuple:
             return False, message
     return True, "已補寫進試算表。"
 
+
+# ---------------------------------------------------------------- 財務部批次下載存查單（第 6 步）
+
+def normalize_date(value) -> str:
+    """GAS `normalizeDateValue()`：統一成 yyyy-MM-dd 再比日期區間（試算表可能存成 2026/9/1）。"""
+    text = str(value or "").strip()
+    match = re.match(r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", text)
+    return f"{match.group(1)}-{int(match.group(2)):02d}-{int(match.group(3)):02d}" if match else text
+
+
+def export_pdfs_zip(start_date: str, end_date: str) -> dict:
+    """GAS `exportApprovedSalaryPdfs()` 搬到平台：申請日在區間內、已核准的單，一筆一份 PDF 打包成 ZIP。
+    回傳 {"status","message"} 或 {"status":"success","filename","content"(ZIP bytes),"count","failed_ids"}。"""
+    import io
+    import zipfile
+
+    from services.docx_pdf_conversion import convert_many_docx_to_pdf
+
+    hdrs = headers()
+    org_rows, _, _ = store.load_rows()
+    org = report.Org(org_rows, store.get_state().get("org_headers") or [])
+    records = []
+    for snap in store.records_ref().stream():
+        doc = snap.to_dict() or {}
+        if doc.get("rejected"):
+            continue
+        row = _values(doc, hdrs)
+        if row[C["review_status"]].strip() != STATUS_APPROVED:
+            continue
+        apply_date = normalize_date(row[C["apply_date"]])
+        if apply_date and start_date <= apply_date <= end_date:
+            records.append((doc.get("row_number") or 0, report.build_record(doc.get("fields") or {}, hdrs, org)))
+    if not records:
+        return {"status": "error", "message": "這個日期區間內沒有已核准的補款紀錄。"}
+    records.sort(key=lambda r: r[0])
+    items = [(r["salary_id"], report.build_docx(r)) for _, r in records]
+    pdfs = convert_many_docx_to_pdf(items, log_prefix="[批次存查單轉PDF失敗]")
+    if not pdfs:
+        return {"status": "error", "message": "所有紀錄的 PDF 都產生失敗，請稍後再試或聯絡系統管理員。"}
+    buffer = io.BytesIO()
+    used = set()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for _, record in records:
+            pdf = pdfs.get(record["salary_id"])
+            name = report.pdf_filename(record)
+            if pdf is None or name in used:
+                continue
+            used.add(name)
+            zf.writestr(name, pdf)
+    return {
+        "status": "success",
+        "filename": f"薪資補款存查單_{start_date}_{end_date}.zip",
+        "content": buffer.getvalue(),
+        "count": len(used),
+        "failed_ids": [r["salary_id"] for _, r in records if r["salary_id"] not in pdfs],
+    }
+
+
+# ---------------------------------------------------------------- 刪除測試單
+
+def recent_platform_docs(limit: int = 20) -> list:
+    docs = [(snap.id, snap.to_dict() or {}) for snap in store.records_ref().stream()]
+    mine = [(i, d) for i, d in docs if is_platform_doc(d)]
+    mine.sort(key=lambda x: x[1].get("row_number") or 0, reverse=True)
+    result = []
+    for doc_id, doc in mine[:limit]:
+        fields = doc.get("fields") or {}
+        result.append({
+            "doc_id": doc_id,
+            "applicant": fields.get("申請人姓名", ""),
+            "name": fields.get("員工姓名", ""),
+            "net_total": fields.get("實補總額", ""),
+            "status": "已退回" if doc.get("rejected") else fields.get("審核狀態", ""),
+        })
+    return result
+
+
+def delete_record(doc_id: str, actor: dict) -> tuple:
+    """整筆刪掉平台建立的補款單（給測試單用）：試算表那一列（如果還在）、平台資料、審核佔位都刪掉，並留一筆刪除紀錄。
+    只能刪平台建立的單；從試算表同步來的舊單不能在這裡刪（要刪請直接改試算表再同步）。"""
+    doc = get_doc(doc_id)
+    if not is_platform_doc(doc):
+        return False, "只能刪除平台建立的補款單。"
+    if not doc.get("rejected") and doc.get("sheet_status") != "failed":
+        ok, message = sheet_writer.update_review(doc_id, STATUS_REJECTED)  # 退回＝把那一列刪掉
+        if not ok and "找不到" not in message:
+            return False, f"試算表那一列刪不掉，所以這次沒有刪除：{message}"
+    store.records_ref().document(doc_id).delete()
+    store.get_db().collection(REVIEWS_COLLECTION).document(doc_id).delete()
+    state = store.get_state()
+    log = list(state.get("deleted_records") or [])
+    fields = doc.get("fields") or {}
+    log.insert(0, {"doc_id": doc_id, "by": actor.get("name") or actor.get("username") or "",
+                   "at": datetime.now(timezone.utc), "applicant": fields.get("申請人姓名", ""),
+                   "name": fields.get("員工姓名", ""), "net_total": fields.get("實補總額", "")})
+    store.meta_ref().set({"deleted_records": log[:50]}, merge=True)
+    return True, f"已刪除 {doc_id}。"
+

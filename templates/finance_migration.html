@@ -171,6 +171,24 @@
 </div>
 {% endif %}
 
+{% if platform_docs %}
+<h3>平台建立的補款單（最新 20 筆）</h3>
+<p class="hint">「刪除」<strong>只用在測試單</strong>：會把平台資料和試算表那一列一起刪掉，刪了不能復原。正式的單請不要刪，要退回請主管在 LINE 按退回。</p>
+<div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>補款單號</th><th>申請人</th><th>員工姓名</th><th>實補總額</th><th>狀態</th><th></th></tr></thead>
+        <tbody>
+            {% for item in platform_docs %}
+            <tr>
+                <td>{{ item.doc_id }}</td><td>{{ item.applicant }}</td><td>{{ item.name }}</td><td>{{ item.net_total }}</td><td>{{ item.status }}</td>
+                <td><form method="post" action="/finance/migration/delete/{{ item.doc_id | urlencode }}" onsubmit="return confirm('確定要刪除 {{ item.doc_id }} 嗎？只用在測試單，刪了不能復原。');"><button type="submit" class="btn btn-small">刪除</button></form></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
 <h2 class="section-title">7. 讀取來源</h2>
 <p class="hint">目前「我的專區」的補款紀錄和財務部專區讀的是：<strong>{{ source_names[read_source] }}</strong>{% if read_source_changed_at %}（{{ read_source_changed_at }} 由 {{ state.get("read_source_changed_by", "") }} 切換）{% endif %}</p>
 {% if read_source == "firestore" %}
