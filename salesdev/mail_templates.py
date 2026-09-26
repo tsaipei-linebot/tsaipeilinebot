@@ -9,6 +9,8 @@
 - 內文範本放在「信件範本」專區（/salesdev/templates），可以新增、編輯、刪除。刪掉的範本，
   以前用它寄過的紀錄還在（紀錄裡存的是範本名稱，不是參照）。
 - 內文可以用的變數：`{公司名稱}`、`{聯絡人}`、`{職缺名稱}`、`{地區}`。
+- 2026-09-26 同一天加上「做法二」：每個範本可以**上傳 PDF**（存 GCS，`attachment_blob`），連結 Gmail
+  之後，寄信頁的「建立草稿（含附件）」會在 Gmail 草稿匣建好信、自動夾這個 PDF（見 gmail_drafts.py）。
 
 Firestore `salesdev_mail_templates`。第一次打開、裡面什麼都沒有時，先放一份「暫用」
 範本，使用者確認好正式內容再改。
@@ -101,10 +103,34 @@ def save_template(template_id: str, name: str, subject: str, content: str, attac
 
 
 def delete_template(template_id: str) -> bool:
-    if not get_template(template_id):
+    template = get_template(template_id)
+    if not template:
         return False
     ref().document(template_id).delete()
+    if template.get("attachment_blob"):
+        from salesdev import gmail_drafts
+
+        gmail_drafts.delete_attachment(template["attachment_blob"])
     return True
+
+
+def set_attachment(template_id: str, blob_path: str, filename: str, size: int, username: str):
+    """範本上傳了新的 PDF（blob_path 空白＝移除附件）。舊的檔案刪掉。"""
+    template = get_template(template_id) or {}
+    old_blob = template.get("attachment_blob", "")
+    data = {
+        "attachment_blob": blob_path,
+        "attachment_size": size if blob_path else 0,
+        "updated_by": username,
+        "updated_at": repository.now_str(),
+    }
+    if blob_path:
+        data["attachment_name"] = filename
+    ref().document(template_id).set(data, merge=True)
+    if old_blob and old_blob != blob_path:
+        from salesdev import gmail_drafts
+
+        gmail_drafts.delete_attachment(old_blob)
 
 
 def company_values(company: dict) -> dict:

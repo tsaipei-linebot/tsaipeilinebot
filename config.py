@@ -190,6 +190,11 @@ SALESDEV_TJ_TIME_BUDGET_SECONDS = _int_env("SALESDEV_TJ_TIME_BUDGET_SECONDS", 24
 # 業務開發「寄信」（2026-09-26）：按「開啟 Gmail」時用哪個 Google 帳號開撰寫畫面
 # （Gmail 網址的 authuser），使用者指定 gary@tsaipei.com，見 salesdev/mail_templates.py
 SALESDEV_GMAIL_ACCOUNT = os.getenv("SALESDEV_GMAIL_ACCOUNT", "gary@tsaipei.com")
+# 寄信「做法二」（2026-09-26）：平台在上面這個帳號的 Gmail 建草稿、自動夾 PDF，要一組
+# Google OAuth 用戶端（Google Cloud 主控台建，同意畫面「內部」），見 salesdev/gmail_drafts.py。
+# 沒設定時畫面只有原本的「開啟 Gmail」（自己夾附件）。
+SALESDEV_GMAIL_OAUTH_CLIENT_ID = os.getenv("SALESDEV_GMAIL_OAUTH_CLIENT_ID", "")
+SALESDEV_GMAIL_OAUTH_CLIENT_SECRET = os.getenv("SALESDEV_GMAIL_OAUTH_CLIENT_SECRET", "")
 
 # ==========================================
 # 11. 我的專區（/me）：薪資補款紀錄

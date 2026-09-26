@@ -16,7 +16,8 @@
   立刻重抓職缺清單（管理員）
 - `/salesdev/taiwanjobs/companies/{id}`：台灣就業通一間公司的寄信＋手動編輯 Email/電話
   （2026-09-26，寄信是開 Gmail 撰寫畫面，見 salesdev/mail_templates.py）；
-  `/salesdev/templates`：信件範本專區（內文範本的新增、編輯、刪除）
+  `/salesdev/templates`：信件範本專區（內文範本的新增、編輯、刪除，每個範本可上傳 PDF）；
+  `/salesdev/gmail/*`：連結 gary@tsaipei.com 的 Gmail（OAuth），寄信頁可以直接建好含 PDF 的草稿
 - `/salesdev?tab=hiring`：104 產線徵才公司（2026-09-25 新增，每週自動抓，見
   `salesdev/hiring_pipeline.py`）；`/salesdev/hiring/settings` 改搜尋條件（管理員）
 
@@ -25,6 +26,7 @@
 2026-09-26 起**只有全平台管理員（胡少凱本人）能進來**，/accounts 不能再勾選開放
 給其他帳號（見 platform_accounts.PLATFORM_ADMIN_ONLY_MODULES）。
 """
+import hmac
 import re
 from urllib.parse import quote
 
@@ -34,7 +36,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 import platform_accounts
 from platform_templating import templates
 from config import SALESDEV_GMAIL_ACCOUNT
-from salesdev import mail_templates, repository
+from salesdev import gmail_drafts, mail_templates, repository
 from salesdev import taiwanjobs_repository as tj_repo
 from salesdev.excel_export import SOURCE_LABELS, build_workbook
 from salesdev.sheet_import import import_from_sheet
@@ -437,6 +439,7 @@ def salesdev_tj_company(request: Request, company_id: str, t: str = "", redirect
             "body": body,
             "rendered": rendered,
             "gmail_account": SALESDEV_GMAIL_ACCOUNT,
+            "gmail": gmail_drafts.connection_status(),
             "resend_days": tj_repo.RESEND_WARNING_DAYS,
             "send_log": list(reversed(company.get("send_log") or [])),
         }
@@ -489,6 +492,45 @@ async def salesdev_tj_company_sent(request: Request, company_id: str, redirect=D
     return JSONResponse({"ok": True, "date": entry["date"]})
 
 
+@router.post("/salesdev/taiwanjobs/companies/{company_id}/draft")
+async def salesdev_tj_company_draft(request: Request, company_id: str, redirect=Depends(_require_access)):
+    """做法二：在 gary@tsaipei.com 的 Gmail 建一封草稿（含範本的 PDF），回傳打開草稿的網址。
+    建好才記寄送紀錄。畫面上的主旨/內文（使用者可能小改過）由瀏覽器一起送來。"""
+    if redirect:
+        return JSONResponse({"ok": False, "error": "請重新登入。"}, status_code=403)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "資料格式不正確。"}, status_code=400)
+    company = tj_repo.get_company(company_id)
+    email = str(payload.get("email", "")).strip()
+    if not company or email.lower() not in [e.lower() for e in tj_repo.effective_emails(company)]:
+        return JSONResponse({"ok": False, "error": "找不到這間公司或這個信箱。"}, status_code=400)
+    body = mail_templates.get_template(str(payload.get("template_id", "")))
+    subject = str(payload.get("subject", "")).strip()
+    content = str(payload.get("content", ""))
+    if not body or not subject or not content.strip():
+        return JSONResponse({"ok": False, "error": "範本、主旨、內文都要有。"}, status_code=400)
+    attachment = None
+    if body.get("attachment_blob"):
+        try:
+            data = gmail_drafts.download_attachment(body["attachment_blob"])
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": f"讀不到範本的 PDF：{exc}"}, status_code=500)
+        if not data:
+            return JSONResponse({"ok": False, "error": "範本的 PDF 不見了，請到「信件範本」重新上傳。"}, status_code=400)
+        attachment = (body.get("attachment_name") or "材霈公司簡介.pdf", data)
+    try:
+        draft = gmail_drafts.create_draft(email, subject, content, attachment)
+    except gmail_drafts.GmailNotConnected as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "need_connect": True}, status_code=400)
+    except Exception as exc:
+        print(f"[業務開發寄信] 建立 Gmail 草稿失敗：{exc}")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+    entry = tj_repo.record_send(company_id, email, _username(request), f"{body.get('name', '')}（草稿）")
+    return JSONResponse({"ok": True, "date": entry["date"], "url": draft["url"]})
+
+
 # ---------------------------------------------------------------------------
 # 信件範本專區（2026-09-26）：內文範本的新增、編輯、刪除
 # ---------------------------------------------------------------------------
@@ -504,6 +546,10 @@ def salesdev_templates(request: Request, edit: str = "", redirect=Depends(_requi
             "bodies": mail_templates.list_templates(),
             "editing": mail_templates.get_template(edit),
             "placeholders": mail_templates.PLACEHOLDERS,
+            "gmail": gmail_drafts.connection_status(),
+            "gmail_account": SALESDEV_GMAIL_ACCOUNT,
+            "gmail_redirect_uri": _gmail_redirect_uri(request),
+            "max_attachment_mb": gmail_drafts.MAX_ATTACHMENT_BYTES // (1024 * 1024),
         }
     )
     return templates.TemplateResponse(request, "salesdev_templates.html", context)
@@ -515,19 +561,55 @@ async def salesdev_templates_save(request: Request, redirect=Depends(_require_ac
         return redirect
     form = await request.form()
     template_id = str(form.get("id", ""))
+    back = f"/salesdev/templates?edit={quote(template_id)}#form" if template_id else "/salesdev/templates#form"
+    upload = form.get("attachment_file")
+    pdf = b""
+    filename = ""
+    if upload is not None and not isinstance(upload, str) and getattr(upload, "filename", ""):
+        pdf = await upload.read()
+        filename = upload.filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if not gmail_drafts.looks_like_pdf(pdf):
+            return _redirect(back, err="附件只能上傳 PDF 檔。")
+        if len(pdf) > gmail_drafts.MAX_ATTACHMENT_BYTES:
+            return _redirect(back, err=f"PDF 太大了，最多 {gmail_drafts.MAX_ATTACHMENT_BYTES // (1024 * 1024)}MB。")
     try:
-        mail_templates.save_template(
+        saved_id = mail_templates.save_template(
             template_id,
             str(form.get("name", "")),
             str(form.get("subject", "")),
             str(form.get("content", "")),
-            str(form.get("attachment_name", "")),
+            filename or str(form.get("attachment_name", "")),
             _username(request),
         )
     except ValueError as exc:
-        back = f"/salesdev/templates?edit={quote(template_id)}#form" if template_id else "/salesdev/templates#form"
         return _redirect(back, err=str(exc))
+    try:
+        if pdf:
+            blob = gmail_drafts.upload_attachment(saved_id, pdf)
+            mail_templates.set_attachment(saved_id, blob, filename, len(pdf), _username(request))
+        elif str(form.get("remove_attachment", "")) == "1":
+            mail_templates.set_attachment(saved_id, "", "", 0, _username(request))
+    except Exception as exc:
+        print(f"[業務開發寄信] 上傳範本附件失敗：{exc}")
+        return _redirect(f"/salesdev/templates?edit={quote(saved_id)}#form", err=f"範本已儲存，但 PDF 上傳失敗：{exc}")
     return _redirect("/salesdev/templates", msg="已儲存範本。")
+
+
+@router.get("/salesdev/templates/{template_id}/attachment")
+def salesdev_templates_attachment(request: Request, template_id: str, redirect=Depends(_require_access)):
+    """下載範本的 PDF，讓使用者確認傳的是哪一份。"""
+    if redirect:
+        return redirect
+    template = mail_templates.get_template(template_id)
+    data = gmail_drafts.download_attachment((template or {}).get("attachment_blob", ""))
+    if not data:
+        return _redirect("/salesdev/templates", err="這個範本沒有 PDF，或檔案不見了。")
+    filename = template.get("attachment_name") or "attachment.pdf"
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}"},
+    )
 
 
 @router.post("/salesdev/templates/{template_id}/delete")
@@ -537,3 +619,51 @@ def salesdev_templates_delete(request: Request, template_id: str, redirect=Depen
     if not mail_templates.delete_template(template_id):
         return _redirect("/salesdev/templates", err="找不到這個範本，可能已經被刪掉了。")
     return _redirect("/salesdev/templates", msg="已刪除範本（以前用它寄過的紀錄還在）。")
+
+
+# ---------------------------------------------------------------------------
+# 連結 Gmail（做法二：建草稿、自動夾 PDF；2026-09-26）
+# ---------------------------------------------------------------------------
+
+def _gmail_redirect_uri(request: Request) -> str:
+    """OAuth 授權完回到平台的網址。用使用者現在開的網域（授權前把 state 存在登入 session，
+    回來要是同一個網域才讀得到）。這個網址要原封不動貼到 Google Cloud 主控台 OAuth 用戶端的
+    「已授權的重新導向 URI」，信件範本頁上會顯示。"""
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"https://{host}/salesdev/gmail/callback"
+
+
+@router.get("/salesdev/gmail/connect")
+def salesdev_gmail_connect(request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    if not gmail_drafts.is_configured():
+        return _redirect("/salesdev/templates", err="還沒設定 Google OAuth 用戶端（見信件範本頁的說明）。")
+    state = gmail_drafts.new_state()
+    request.session["salesdev_gmail_oauth_state"] = state
+    return RedirectResponse(url=gmail_drafts.authorization_url(_gmail_redirect_uri(request), state), status_code=303)
+
+
+@router.get("/salesdev/gmail/callback")
+def salesdev_gmail_callback(request: Request, code: str = "", state: str = "", error: str = "", redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    expected = request.session.pop("salesdev_gmail_oauth_state", "")
+    if error:
+        return _redirect("/salesdev/templates", err=f"沒有完成 Gmail 授權（{error}）。")
+    if not expected or not state or not hmac.compare_digest(state.encode(), expected.encode()):
+        return _redirect("/salesdev/templates", err="授權驗證碼對不上，請再按一次「連結 Gmail」。")
+    try:
+        email = gmail_drafts.complete_authorization(code, _gmail_redirect_uri(request), _username(request))
+    except Exception as exc:
+        print(f"[業務開發寄信] Gmail 授權失敗：{exc}")
+        return _redirect("/salesdev/templates", err=f"Gmail 授權失敗：{exc}")
+    return _redirect("/salesdev/templates", msg=f"已連結 {email} 的 Gmail，寄信頁可以直接建立含附件的草稿了。")
+
+
+@router.post("/salesdev/gmail/disconnect")
+def salesdev_gmail_disconnect(request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    gmail_drafts.disconnect()
+    return _redirect("/salesdev/templates", msg="已中斷 Gmail 連結。")
