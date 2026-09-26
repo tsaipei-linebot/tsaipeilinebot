@@ -9,6 +9,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from salesdev.repository import is_internal
+from salesdev.taiwanjobs_repository import effective_emails, effective_phones
 
 # 防 Excel 公式注入：自由文字欄位（備註、聯絡紀錄、職缺標題）如果剛好以這些
 # 字元開頭，Excel 打開時會被當成公式執行，前面補單引號變成純文字（跟
@@ -31,7 +32,7 @@ HIRING_HEADER = [
 ]
 TJ_HEADER = [
     "公司名稱", "Email", "聯絡人", "電話", "地址", "職缺數", "職缺例子", "地區", "派遣公司",
-    "第一次出現", "最近出現",
+    "第一次出現", "最近出現", "最近寄信日期", "寄信次數",
 ]
 FACTORY_HEADER = ["發現日期", "工廠名稱", "統一編號", "工廠地址", "行業別", "主要產品", "登記核准日期", "工廠登記編號"]
 
@@ -116,9 +117,9 @@ def hiring_row(company: dict) -> list:
 def tj_row(company: dict) -> list:
     return [
         company.get("company_name", ""),
-        "、".join(company.get("emails") or []),
+        "、".join(effective_emails(company)),
         "、".join(company.get("contact_names") or []),
-        "、".join(company.get("contact_phones") or []),
+        "、".join(effective_phones(company)),
         "、".join(company.get("addresses") or []),
         company.get("job_count", 0),
         "、".join(company.get("latest_job_titles") or []),
@@ -126,6 +127,8 @@ def tj_row(company: dict) -> list:
         "是" if company.get("is_dispatch") else "",
         company.get("first_seen", ""),
         company.get("last_seen", ""),
+        company.get("last_sent_date", ""),
+        len(company.get("send_log") or []),
     ]
 
 

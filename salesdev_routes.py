@@ -14,6 +14,9 @@
   `salesdev/taiwanjobs_pipeline.py`；使用者要求跟其他來源分開，不合併）；
   `/salesdev/taiwanjobs/settings` 改關鍵字/郵遞區號、`/salesdev/taiwanjobs/refresh`
   立刻重抓職缺清單（管理員）
+- `/salesdev/taiwanjobs/companies/{id}`：台灣就業通一間公司的寄信＋手動編輯 Email/電話
+  （2026-09-26，寄信是開 Gmail 撰寫畫面，見 salesdev/mail_templates.py）；
+  `/salesdev/templates`：信件範本專區（內文範本的新增、編輯、刪除）
 - `/salesdev?tab=hiring`：104 產線徵才公司（2026-09-25 新增，每週自動抓，見
   `salesdev/hiring_pipeline.py`）；`/salesdev/hiring/settings` 改搜尋條件（管理員）
 
@@ -26,11 +29,12 @@ import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 import platform_accounts
 from platform_templating import templates
-from salesdev import repository
+from config import SALESDEV_GMAIL_ACCOUNT
+from salesdev import mail_templates, repository
 from salesdev import taiwanjobs_repository as tj_repo
 from salesdev.excel_export import SOURCE_LABELS, build_workbook
 from salesdev.sheet_import import import_from_sheet
@@ -40,6 +44,7 @@ router = APIRouter()
 MODULE_CODE = "salesdev"
 TABS = ("leads", "internal", "hiring", "taiwanjobs", "factories")
 TJ_EMAIL_FILTERS = ("yes", "no", "all")
+TJ_SENT_FILTERS = ("all", "unsent", "sent")
 HIRING_SIZE_FILTERS = ("big", "unknown", "small", "all")
 
 STATUS_BADGES = {
@@ -97,6 +102,7 @@ def salesdev_home(
     size: str = "big",
     email: str = "yes",
     dispatch: str = "show",
+    sent: str = "all",
     redirect=Depends(_require_access),
 ):
     if redirect:
@@ -126,6 +132,9 @@ def salesdev_home(
             "tj_run": None,
             "tj_job_counts": {},
             "tj_email_source": tj_repo.email_source,
+            "tj_sent": sent if sent in TJ_SENT_FILTERS else "all",
+            "tj_emails_of": tj_repo.effective_emails,
+            "tj_phones_of": tj_repo.effective_phones,
             "load_error": "",
             "is_module_admin": _is_module_admin(request),
         }
@@ -158,12 +167,16 @@ def salesdev_home(
             companies = tj_repo.list_companies()
             if context["tj_hide_dispatch"]:
                 companies = [c for c in companies if not c.get("is_dispatch")]
-            with_email = [c for c in companies if c.get("emails")]
+            if context["tj_sent"] == "sent":
+                companies = [c for c in companies if c.get("last_sent_date")]
+            elif context["tj_sent"] == "unsent":
+                companies = [c for c in companies if not c.get("last_sent_date")]
+            with_email = [c for c in companies if tj_repo.effective_emails(c)]
             context["tj_counts"] = {"yes": len(with_email), "no": len(companies) - len(with_email), "all": len(companies)}
             if context["tj_email"] == "yes":
                 companies = with_email
             elif context["tj_email"] == "no":
-                companies = [c for c in companies if not c.get("emails")]
+                companies = [c for c in companies if not tj_repo.effective_emails(c)]
             context["tj_companies"] = companies
             context["tj_settings"] = tj_repo.get_settings()
             context["tj_run"] = tj_repo.latest_run()
@@ -375,3 +388,152 @@ def salesdev_taiwanjobs_refresh(request: Request, redirect=Depends(_require_acce
         return _redirect(back, err="只有這個專區的管理員可以重抓職缺清單。")
     tj_repo.request_listing_refresh()
     return _redirect(back, msg="好的，下一次每小時自動執行時會重抓職缺清單。")
+
+
+# ---------------------------------------------------------------------------
+# 台灣就業通：一間公司的寄信＋手動編輯（2026-09-26）
+# ---------------------------------------------------------------------------
+
+def _pick(templates_list: list, wanted_id: str):
+    for template in templates_list:
+        if template["id"] == wanted_id:
+            return template
+    return templates_list[0] if templates_list else None
+
+
+@router.get("/salesdev/taiwanjobs/companies/{company_id}")
+def salesdev_tj_company(request: Request, company_id: str, t: str = "", redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    company = tj_repo.get_company(company_id)
+    if not company:
+        return _redirect("/salesdev?tab=taiwanjobs", err="找不到這間公司。")
+    mail_templates.ensure_seeded(_username(request))
+    bodies = mail_templates.list_templates()
+    # 沒指定就用這個瀏覽器上次選的（存在 cookie），再沒有就用第一個
+    body = _pick(bodies, t or request.cookies.get("salesdev_tpl_body", ""))
+    rendered = mail_templates.render(body, company)
+    last_sent = tj_repo.last_sent_by_email(company)
+    emails = [
+        {
+            "email": email,
+            "last_sent": last_sent.get(email.lower(), ""),
+            "recent": tj_repo.sent_recently(last_sent.get(email.lower(), "")),
+            "source": tj_repo.email_source(company, email),
+            "manual": email.lower() in [m.lower() for m in company.get("manual_emails") or []],
+        }
+        for email in tj_repo.effective_emails(company)
+    ]
+    context = _common_context(request)
+    context.update(
+        {
+            "company": company,
+            "emails": emails,
+            "hidden_emails": company.get("hidden_emails") or [],
+            "phones": tj_repo.effective_phones(company),
+            "manual_phones": company.get("manual_phones") or [],
+            "hidden_phones": company.get("hidden_phones") or [],
+            "bodies": bodies,
+            "body": body,
+            "rendered": rendered,
+            "gmail_account": SALESDEV_GMAIL_ACCOUNT,
+            "resend_days": tj_repo.RESEND_WARNING_DAYS,
+            "send_log": list(reversed(company.get("send_log") or [])),
+        }
+    )
+    response = templates.TemplateResponse(request, "salesdev_tj_company.html", context)
+    if body:
+        response.set_cookie("salesdev_tpl_body", body["id"], max_age=180 * 86400, httponly=True, samesite="lax")
+    return response
+
+
+@router.post("/salesdev/taiwanjobs/companies/{company_id}/contacts")
+async def salesdev_tj_company_contacts(request: Request, company_id: str, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    form = await request.form()
+    kind, action = str(form.get("kind", "")), str(form.get("action", ""))
+    error = tj_repo.update_contact(company_id, kind, action, str(form.get("value", "")))
+    if str(form.get("back", "")) == "list":
+        # 從列表「沒有 Email」那一列直接填的（使用者要求：存好後自動跳到「有 Email」、停在這間公司）
+        dispatch = "&dispatch=hide" if str(form.get("dispatch", "")) == "hide" else ""
+        if error:
+            return RedirectResponse(
+                url=f"/salesdev?tab=taiwanjobs&email=no{dispatch}&err={quote(error)}#c-{company_id}", status_code=303
+            )
+        company = tj_repo.get_company(company_id) or {}
+        name = company.get("company_name", "")
+        return RedirectResponse(
+            url=f"/salesdev?tab=taiwanjobs&email=yes{dispatch}&msg={quote(f'已儲存，{name} 已經移到「有 Email」。')}#c-{company_id}",
+            status_code=303,
+        )
+    back = f"/salesdev/taiwanjobs/companies/{company_id}"
+    return _redirect(back, err=error) if error else _redirect(back, msg="已更新。")
+
+
+@router.post("/salesdev/taiwanjobs/companies/{company_id}/sent")
+async def salesdev_tj_company_sent(request: Request, company_id: str, redirect=Depends(_require_access)):
+    """寄信畫面按「開啟 Gmail」時，瀏覽器在背景呼叫這支記下寄送紀錄（JSON）。"""
+    if redirect:
+        return JSONResponse({"ok": False, "error": "請重新登入。"}, status_code=403)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "資料格式不正確。"}, status_code=400)
+    company = tj_repo.get_company(company_id)
+    email = str(payload.get("email", "")).strip()
+    if not company or email.lower() not in [e.lower() for e in tj_repo.effective_emails(company)]:
+        return JSONResponse({"ok": False, "error": "找不到這間公司或這個信箱。"}, status_code=400)
+    body = mail_templates.get_template(str(payload.get("template_id", "")))
+    entry = tj_repo.record_send(company_id, email, _username(request), (body or {}).get("name", ""))
+    return JSONResponse({"ok": True, "date": entry["date"]})
+
+
+# ---------------------------------------------------------------------------
+# 信件範本專區（2026-09-26）：內文範本的新增、編輯、刪除
+# ---------------------------------------------------------------------------
+
+@router.get("/salesdev/templates")
+def salesdev_templates(request: Request, edit: str = "", redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    mail_templates.ensure_seeded(_username(request))
+    context = _common_context(request)
+    context.update(
+        {
+            "bodies": mail_templates.list_templates(),
+            "editing": mail_templates.get_template(edit),
+            "placeholders": mail_templates.PLACEHOLDERS,
+        }
+    )
+    return templates.TemplateResponse(request, "salesdev_templates.html", context)
+
+
+@router.post("/salesdev/templates/save")
+async def salesdev_templates_save(request: Request, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    form = await request.form()
+    template_id = str(form.get("id", ""))
+    try:
+        mail_templates.save_template(
+            template_id,
+            str(form.get("name", "")),
+            str(form.get("subject", "")),
+            str(form.get("content", "")),
+            str(form.get("attachment_name", "")),
+            _username(request),
+        )
+    except ValueError as exc:
+        back = f"/salesdev/templates?edit={quote(template_id)}#form" if template_id else "/salesdev/templates#form"
+        return _redirect(back, err=str(exc))
+    return _redirect("/salesdev/templates", msg="已儲存範本。")
+
+
+@router.post("/salesdev/templates/{template_id}/delete")
+def salesdev_templates_delete(request: Request, template_id: str, redirect=Depends(_require_access)):
+    if redirect:
+        return redirect
+    if not mail_templates.delete_template(template_id):
+        return _redirect("/salesdev/templates", err="找不到這個範本，可能已經被刪掉了。")
+    return _redirect("/salesdev/templates", msg="已刪除範本（以前用它寄過的紀錄還在）。")

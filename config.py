@@ -187,6 +187,9 @@ SALESDEV_HIRING_TIME_BUDGET_SECONDS = _int_env("SALESDEV_HIRING_TIME_BUDGET_SECO
 # 2026-09-26 新增「台灣就業通」每小時抓取（/internal/salesdev/taiwanjobs/run，同一把
 # SALESDEV_SCRAPE_TRIGGER_SECRET）：每次執行的時間上限（秒），見 salesdev/taiwanjobs_pipeline.py
 SALESDEV_TJ_TIME_BUDGET_SECONDS = _int_env("SALESDEV_TJ_TIME_BUDGET_SECONDS", 240)
+# 業務開發「寄信」（2026-09-26）：按「開啟 Gmail」時用哪個 Google 帳號開撰寫畫面
+# （Gmail 網址的 authuser），使用者指定 gary@tsaipei.com，見 salesdev/mail_templates.py
+SALESDEV_GMAIL_ACCOUNT = os.getenv("SALESDEV_GMAIL_ACCOUNT", "gary@tsaipei.com")
 
 # ==========================================
 # 11. 我的專區（/me）：薪資補款紀錄
