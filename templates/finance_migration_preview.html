@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}核准信預覽 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">核准信預覽：{{ record.salary_id }}</h1>
+</div>
+<p class="hint">這是平台產生的內容，<strong>只是預覽，沒有寄出</strong>。請跟當初 GAS 寄出的核准信比對。</p>
+<table class="data-table">
+    <tr><th>主旨</th><td>{{ subject }}</td></tr>
+    <tr><th>收件人</th><td>{{ recipients | join("、") if recipients else "（找不到任何收件人）" }}</td></tr>
+    <tr><th>附件</th><td>{% if record.image_url %}補款佐證照片、{% endif %}<a href="/finance/migration/preview/{{ doc_id | urlencode }}/pdf" target="_blank" rel="noopener">薪資補款存查單_{{ record.salary_id }}.pdf</a></td></tr>
+</table>
+{% if not hr_configured %}
+<p class="warning">還沒設定財會收件信箱（Cloud Run 環境變數 SALARY_HR_ACCOUNTING_EMAILS），所以收件人裡沒有財會。正式切換前要設定好。</p>
+{% endif %}
+<p class="hint">跟 GAS 唯一刻意不同的地方：信件最下面的「核准主管」，GAS 會印出一串 LINE 帳號代碼，平台改成顯示主管姓名。</p>
+<iframe title="核准信內容" srcdoc="{{ email_html }}" style="width: 100%; height: 900px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff;"></iframe>
+<p class="back-link"><a href="/finance/migration">&larr; 回薪資補款資料搬家</a></p>
+{% endblock %}

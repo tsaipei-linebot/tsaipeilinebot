@@ -37,6 +37,7 @@ from platform_templating import templates
 from config import SALARY_PHOTO_GCS_BUCKET, TAIPEI_TZ
 from services import job_portal_line_relay as line_relay
 from services import salary_repayment_photos as photos
+from services import salary_repayment_report as report
 from services import salary_repayment_sheet_writer as sheet_writer
 from services import salary_repayment_store as store
 from services.salary_repayment_service import (
@@ -167,6 +168,7 @@ def _migration_page(request: Request, error: str = "", notice: str = "", status_
             "read_source_changed_at": _taipei_time(state.get("read_source_changed_at")),
             "result": state.get("last_result") or {},
             "photos": photos.summary() if state.get("last_synced_at") else None,
+            "preview_records": _preview_candidates() if state.get("last_synced_at") else [],
             "line_relay_configured": line_relay.is_configured(),
             "line_relay_logs": [{**e, "at_text": _taipei_time(e.get("at"))} for e in line_relay.recent()],
             "error": error,
@@ -267,3 +269,77 @@ def finance_migration_check_write(request: Request, redirect=Depends(_require_ad
     if ok:
         return _migration_page(request, notice=message)
     return _migration_page(request, error=message, status_code=400)
+
+
+# ---- 核准信＋PDF 存查單預覽（2026-09-26，見 services/salary_repayment_report.py）----
+
+def _preview_candidates(limit: int = 20) -> list:
+    """最新的已核准補款單（照試算表列號由大到小），給預覽清單用。"""
+    docs = [(snap.id, snap.to_dict() or {}) for snap in store.records_ref().stream()]
+    approved = [
+        (doc_id, doc) for doc_id, doc in docs
+        if ((doc.get("fields") or {}).get("審核狀態") or "").strip() == "已核准"
+    ]
+    approved.sort(key=lambda d: d[1].get("row_number") or 0, reverse=True)
+    return [
+        {
+            "doc_id": doc_id,
+            "salary_id": (doc.get("fields") or {}).get(store.ID_COLUMN, ""),
+            "name": (doc.get("fields") or {}).get("員工姓名", ""),
+            "vendor": (doc.get("fields") or {}).get("廠商/店家", ""),
+        }
+        for doc_id, doc in approved[:limit]
+    ]
+
+
+def _report_for(doc_id: str):
+    """回傳 (record, doc)；找不到回傳 (None, None)。"""
+    snapshot = store.records_ref().document(doc_id).get()
+    doc = snapshot.to_dict() if snapshot.exists else None
+    if not doc:
+        return None, None
+    state = store.get_state()
+    org_rows, _, _ = store.load_rows()
+    org = report.Org(org_rows, state.get("org_headers") or [])
+    return report.build_record(doc.get("fields") or {}, state.get("record_headers") or [], org), doc
+
+
+@router.get("/finance/migration/preview/{doc_id}")
+def finance_migration_preview(doc_id: str, request: Request, redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    record, doc = _report_for(doc_id)
+    if record is None:
+        return _migration_page(request, error="找不到這筆補款單，請先按「從試算表同步到平台」。", status_code=404)
+    has_photo = photos.photo_status(doc) == photos.STATUS_DONE
+    image_src = f"/finance/migration/photo/{quote(doc_id)}" if has_photo else ""
+    return templates.TemplateResponse(
+        request,
+        "finance_migration_preview.html",
+        {
+            "user": platform_accounts.current_account(request),
+            "doc_id": doc_id,
+            "record": record,
+            "subject": report.subject(record),
+            "recipients": report.recipients(record),
+            "hr_configured": bool(report.SALARY_HR_ACCOUNTING_EMAILS),
+            "email_html": report.email_html(record, image_src=image_src, image_link=photos.photo_url(doc.get("fields") or {})),
+        },
+    )
+
+
+@router.get("/finance/migration/preview/{doc_id}/pdf")
+def finance_migration_preview_pdf(doc_id: str, request: Request, redirect=Depends(_require_admin)):
+    if redirect:
+        return redirect
+    record, _ = _report_for(doc_id)
+    if record is None:
+        return Response(content="找不到這筆補款單。", status_code=404, media_type="text/plain; charset=utf-8")
+    pdf = report.build_pdf(record)
+    if not pdf:
+        return Response(content="產生 PDF 失敗，請稍後再試。", status_code=500, media_type="text/plain; charset=utf-8")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(report.pdf_filename(record))}"},
+    )
