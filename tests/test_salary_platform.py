@@ -216,6 +216,11 @@ class ReviewTests(PlatformTestCase):
         self.assertEqual(len(self.mails), 1)
         self.assertIn("無法重複簽核", self.replies()[-1])
 
+    def test_admin_email_used_when_applicant_has_no_supervisor(self):
+        sid = self.submit(applicant_name="沒主管", name="林小美")["salaryId"]
+        sp.handle_review(self.postback(sid, operator=ADMIN_LID))
+        self.assertEqual(self.mails[-1]["to"], ["fin@example.com", "admin@example.com"])
+
     def test_stranger_is_refused_admin_is_allowed(self):
         sp.handle_review(self.postback(self.sid, operator=STRANGER))
         self.assertIn("無權限執行簽核", self.replies()[0])

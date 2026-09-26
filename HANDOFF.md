@@ -10972,3 +10972,8 @@ GAS；員工主管組織表繼續由 GAS 維護、平台直接讀。分兩個 PR
   之後可以改成平台自己產，順便解決批次逾時（原本的第 6 步）。
 - 第 7 步：GAS 的 `Project_Salary.js` 停用、平台拿掉對 GAS 的呼叫（等平台跑順一段時間）。
 
+**補充（2026-09-26）**：使用者問 `SALARY_ADMIN_EMAILS` 是會計還是管理員——是**系統管理員**（對應 GAS ADMIN_EMAIL），
+會計是 `SALARY_HR_ACCOUNTING_EMAILS`。回答時發現核准信漏了 GAS 的一段：組織表沒幫申請人設主管、卡片改推給系統管理員時，
+GAS 的核准信「主管信箱」也會改用 ADMIN_EMAIL（`getSupervisorsByApplicantUserId()` 退回 `getDefaultSupervisors()`）。
+已補上：`send_approval_email()` 主管信箱是空的就用系統管理員信箱。
+
