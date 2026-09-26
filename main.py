@@ -23,6 +23,7 @@ import dispatch_routes
 import dispatch_webhook_routes
 import finance_routes
 import job_listing_routes
+import job_copy_preview_routes
 import job_portal_line_relay_routes
 import job_portal_mail_routes
 import project_contract_routes
@@ -134,6 +135,10 @@ app.include_router(job_portal_mail_routes.router)
 # /api/job-portal/line-webhook：職缺維護 LINE 官方帳號的「總機」（2026-09-25 新增，見
 # job_portal_line_relay_routes.py 開頭）。驗 LINE 簽章後把訊息原封不動轉給 GAS。
 app.include_router(job_portal_line_relay_routes.router)
+
+# /job-listings/migration：職缺 AI 文案預覽比對（2026-09-26，GAS 搬家階段 3，只有全平台管理員，見 job_copy_preview_routes.py）。
+# 要掛在 job_listing_routes 前面也沒關係，路徑不重疊。
+app.include_router(job_copy_preview_routes.router)
 
 # 配送部系統、管理部系統、人資專區：各自獨立子系統（自己的路由/資料表，
 # 共用同一顆登入 session cookie），掛在 /delivery、/management、/hr 底下，

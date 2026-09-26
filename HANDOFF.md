@@ -11072,3 +11072,24 @@ GAS 的核准信「主管信箱」也會改用 ADMIN_EMAIL（`getSupervisorsByAp
 4. 兩個排程改用 Cloud Scheduler。
 5. 收尾：Netlify 表單、PIN 登入、`job_portal_sso.py` 退場，GAS 的 `Project_Job.js`／`Project_BatchEnhance.js` 停用。
 
+## 階段 3 第 1 個 PR：職缺 AI 文案搬到平台＋預覽比對（2026-09-26，不影響現行流程）
+
+- **`services/job_copy.py`（新檔）**：
+  - 照搬：`format_smart_location()`、`enforce_compliance_rules()`（規則一字不改）、4 樣文案、保底文案。
+  - 新 prompt：親切語氣、稱呼「您」、表情符號位置同 GAS、不加報名結尾、統一排版（送出版 6 區塊＋「✨【應徵與配合條件】」
+    只從原文抓、沒有就不寫）、客戶去識別化、Notion 的「休假方式」也當原始資料。用 `ai_service.query_gemini_ai()`
+    結構化 JSON 輸出（跟 GAS 同樣 gemini-2.5-flash → flash-lite）。
+  - **`find_unsupported()` 防腦補程式檢查**：產出裡的數字要在原始資料找得到（國字「二、十五」會換成數字比、13～23 點
+    跟 1～11 點視為同時間、00 分不算）；`CLAIM_GROUPS` 福利／條件字眼（同義詞一組）產出有、原始資料沒有就算。
+    不過關帶著原因重寫一次，再不過就用保底文案（`is_fallback=True`＋`check_issues`）。版型固定的就業服務法聲明不檢查。
+  - **注意 GAS 原有行為**：過濾第 7 步會把 6 區塊標題（🎯【主要工作內容】…）改名成 4 區塊名稱（🎯【工作內容】…），
+    所以 Notion 上「排版工作說明」實際的區塊標題是 4 區塊的名字。照搬，保底文案也跑過濾讓標題一致。
+  - `list_jobs()`／`get_job()`：讀 Notion 職缺資料庫（`NOTION_JOBS_DB_ID`，沛沛同一個）非停招的職缺。
+- **`/job-listings/migration`（只有全平台管理員，`job_copy_preview_routes.py`）**：職缺清單 → 「預覽」左右對照
+  （Notion 現在 vs 平台新版＋檢查結果）；「自己填資料試寫」。**不寫 Notion**。舊職缺沒有原文，預覽拿「工作內容(對外)」當原文。
+  職缺維護頁面管理員看得到連結。
+- **發現 GAS 過濾規則的 bug（照搬、沒修，要問使用者）**：`enforceComplianceRules()` 3(B) 那條「限／須／需＋數字範圍」
+  的排除條件會被正規表示式回溯繞過——「需 8-17點」變成「7點」、「須 10-20公斤」變成「0公斤」（node 實測 GAS 同樣結果，
+  現在正式環境就是這樣）。`tests/test_job_copy.py::test_known_gas_bug_is_reproduced` 鎖住目前行為。
+- 測試 `tests/test_job_copy.py`（17 個）。
+

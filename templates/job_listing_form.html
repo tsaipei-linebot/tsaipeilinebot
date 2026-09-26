@@ -25,6 +25,9 @@
 {% block title %}職缺維護 - 材霈有限公司{% endblock %}
 {% block content %}
 <h1 class="page-title">職缺維護</h1>
+{% if user and user.is_platform_admin %}
+<p class="hint">管理員：<a href="/job-listings/migration">職缺 AI 文案預覽比對</a></p>
+{% endif %}
 <p class="hint">
     填好送出後，會直接轉給現有的核准流程處理：您的主管會收到 LINE 通知，系統也會自動幫忙潤飾對外文案。
     這裡不用等待、也不用重新整理查看——核准結果會反映在 Notion 職缺資料庫跟官網上。

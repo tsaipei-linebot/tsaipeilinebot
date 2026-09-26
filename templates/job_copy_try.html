@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}職缺文案試寫 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">職缺文案試寫</h1>
+</div>
+<p class="hint">自己填資料，看平台產生的文案。<strong>不會存到任何地方。</strong>多個縣市、行政區、班別用逗號分隔。</p>
+<form method="post" action="/job-listings/migration/try" class="form-stack">
+    <label>職缺名稱 <input type="text" name="title" required></label>
+    <label>縣市 <input type="text" name="city" placeholder="桃園市"></label>
+    <label>行政區 <input type="text" name="district" placeholder="蘆竹區,龜山區"></label>
+    <label>薪資 <input type="text" name="salary" placeholder="時薪 200 元"></label>
+    <label>班別 <input type="text" name="shift" placeholder="早班"></label>
+    <label>休假方式 <input type="text" name="leave_type" placeholder="週休二日"></label>
+    <label>工作內容（同仁寫的原文）<textarea name="original_desc" rows="8" required></textarea></label>
+    <button type="submit" class="btn btn-primary">產生文案</button>
+</form>
+<p class="back-link"><a href="/job-listings/migration">&larr; 回職缺文案預覽</a></p>
+{% endblock %}
