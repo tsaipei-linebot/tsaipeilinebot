@@ -325,6 +325,23 @@ class RouteTests(PlatformTestCase):
         self.assertEqual(gas.call_count, 1)
         self.assertRegex(resp.headers["location"], r"^/me\?submitted=SAL-\d{14}")
 
+    def test_finance_export_uses_platform_after_cutover(self):
+        sid = self.submit()["salaryId"]
+        sp.handle_review(self.postback(sid))
+        store.set_read_source("firestore", ADMIN)
+        with mock.patch.object(finance_routes, "export_approved_salary_pdfs_zip") as gas, \
+                mock.patch.object(sp, "export_pdfs_zip", return_value={"status": "success", "filename": "a.zip", "content": b"PK"}):
+            resp = self.client.post("/finance/export-pdf", data={"start_date": "2026-09-01", "end_date": "2026-09-30"})
+        gas.assert_not_called()
+        self.assertEqual((resp.status_code, resp.content), (200, b"PK"))
+
+    def test_delete_button(self):
+        sid = self.submit()["salaryId"]
+        self.assertIn(f"/finance/migration/delete/{sid}", self.client.get("/finance/migration").text)
+        resp = self.client.post(f"/finance/migration/delete/{sid}", follow_redirects=False)
+        self.assertEqual(resp.headers["location"], "/finance/migration?notice=deleted")
+        self.assertIsNone(sp.get_doc(sid))
+
     def test_photo_page_permissions(self):
         sid = sp.submit(info(), {"salary": 1}, {}, {"content": b"\xff\xd8\xffx", "content_type": "image/jpeg"})["salaryId"]
         with mock.patch.object(photos, "get_photo_for_doc", return_value=(b"\xff\xd8\xffx", "image/jpeg")):
@@ -347,6 +364,65 @@ class RouteTests(PlatformTestCase):
         gas.assert_not_called()
         self.assertEqual(resp.headers["location"], "/me?resend_ok=1")
         self.assertEqual(len(self.mails), 1)
+
+
+
+class ExportAndDeleteTests(PlatformTestCase):
+    def approved(self, apply_date, name):
+        sid = self.submit(apply_date=apply_date, name=name)["salaryId"]
+        sp.handle_review(self.postback(sid))
+        return sid
+
+    def test_export_only_approved_in_range(self):
+        import io
+        import zipfile
+
+        inside = self.approved("2026/9/10", "甲")
+        self.approved("2026-10-01", "乙")
+        pending = self.submit(apply_date="2026-09-11", name="丙")["salaryId"]
+        with mock.patch("services.docx_pdf_conversion.convert_many_docx_to_pdf",
+                        side_effect=lambda items, **kw: {name: b"%PDF-" + name.encode() for name, _ in items}) as conv:
+            result = sp.export_pdfs_zip("2026-09-01", "2026-09-30")
+        self.assertEqual([name for name, _ in conv.call_args.args[0]], [inside])
+        self.assertEqual(result["count"], 1)
+        names = zipfile.ZipFile(io.BytesIO(result["content"])).namelist()
+        self.assertEqual(names, [f"薪資補款存查單_{inside}.pdf"])
+        self.assertNotIn(pending, names[0])
+
+    def test_export_empty_range(self):
+        self.assertEqual(sp.export_pdfs_zip("2020-01-01", "2020-01-31")["status"], "error")
+
+    def test_delete_test_record(self):
+        sid = self.approved("2026-09-10", "測試")
+        self.sheet["review"].clear()
+        ok, _ = sp.delete_record(sid, ADMIN)
+        self.assertTrue(ok)
+        self.assertNotIn(sid, self.db.docs(store.RECORDS_COLLECTION))
+        self.assertEqual(self.sheet["review"][0][:2], (sid, "已退回"))  # 試算表那一列一起刪
+        self.assertEqual(store.get_state()["deleted_records"][0]["doc_id"], sid)
+        self.assertNotIn("身分證", json.dumps(store.get_state()["deleted_records"][0], ensure_ascii=False, default=str))
+
+    def test_cannot_delete_sheet_records(self):
+        old = dict(zip(HEADERS, ["SAL-OLD"] + [""] * 21))
+        store.sync_from_sheet(org_values(), [HEADERS, [old[h] for h in HEADERS]], ADMIN)
+        self.assertFalse(sp.delete_record("SAL-OLD", ADMIN)[0])
+
+
+class BatchConversionTests(unittest.TestCase):
+    def test_single_libreoffice_run_for_many_files(self):
+        from services import docx_pdf_conversion as conv
+
+        def fake_run(cmd, **kwargs):
+            outdir = cmd[cmd.index("--outdir") + 1]
+            for path in cmd[cmd.index(outdir) + 1:]:
+                if path.endswith("doc_1.docx"):
+                    continue  # 第二份轉失敗
+                with open(path[:-5] + ".pdf", "wb") as f:
+                    f.write(b"%PDF")
+        with mock.patch.object(conv.subprocess, "run", side_effect=fake_run) as run:
+            result = conv.convert_many_docx_to_pdf([("A", b"x"), ("B", b"y"), ("C", b"z")])
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(sorted(result), ["A", "C"])
 
 
 if __name__ == "__main__":

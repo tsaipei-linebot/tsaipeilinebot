@@ -107,7 +107,11 @@ def finance_export_pdf(
             status_code=400,
         )
 
-    result = export_approved_salary_pdfs_zip(start_date, end_date)
+    if store.read_source() == store.SOURCE_FIRESTORE:
+        # 補款改由平台處理後（2026-09-26）存查單也由平台產生，不再呼叫 GAS；一次啟動 LibreOffice 轉全部，不會逾時
+        result = salary_platform.export_pdfs_zip(start_date, end_date)
+    else:
+        result = export_approved_salary_pdfs_zip(start_date, end_date)
     if result.get("status") != "success":
         return templates.TemplateResponse(
             request,
@@ -116,7 +120,7 @@ def finance_export_pdf(
             status_code=400,
         )
 
-    zip_bytes = base64.b64decode(result["base64"])
+    zip_bytes = result["content"] if "content" in result else base64.b64decode(result["base64"])
     filename = result.get("filename") or f"薪資補款存查單_{start_date}_{end_date}.zip"
 
     # 只有明確選「圖片」才轉檔，其他值（含沒帶這個欄位的舊表單）一律照舊
@@ -174,6 +178,7 @@ def _migration_page(request: Request, error: str = "", notice: str = "", status_
             "platform_missing": salary_platform.missing_requirements(),
             "platform_mode_changed_at": _taipei_time(state.get("platform_mode_changed_at")),
             "sheet_failures": salary_platform.sheet_failures() if state.get("last_synced_at") else [],
+            "platform_docs": salary_platform.recent_platform_docs() if state.get("last_synced_at") else [],
             "line_relay_configured": line_relay.is_configured(),
             "line_relay_logs": [{**e, "at_text": _taipei_time(e.get("at"))} for e in line_relay.recent()],
             "error": error,
@@ -200,6 +205,7 @@ def finance_migration(
         "platform_on": "補款已改由平台處理：已先同步一次試算表，我的專區、財務部專區也改讀平台資料。",
         "platform_off": "補款已改回由 GAS 處理，讀取來源也改回 Google 試算表。平台已經建立、還沒審的單，主管按卡片照樣由平台處理。",
         "sheet_retry": "已補寫進試算表。",
+        "deleted": "已刪除這筆補款單（試算表那一列也一起刪掉了）。",
         "photos": f"這一批搬好 {copied} 張、失敗 {failed} 張，還有 {remaining} 張待搬。"
         + ("請再按一次「搬下一批照片」。" if remaining else ""),
     }
@@ -385,3 +391,14 @@ def finance_migration_sheet_retry(doc_id: str, request: Request, redirect=Depend
     if not ok:
         return _migration_page(request, error=message, status_code=400)
     return RedirectResponse(url="/finance/migration?notice=sheet_retry", status_code=303)
+
+
+@router.post("/finance/migration/delete/{doc_id}")
+def finance_migration_delete(doc_id: str, request: Request, redirect=Depends(_require_admin)):
+    """刪除平台建立的補款單（2026-09-26，給測試單用）。"""
+    if redirect:
+        return redirect
+    ok, message = salary_platform.delete_record(doc_id, platform_accounts.current_account(request))
+    if not ok:
+        return _migration_page(request, error=message, status_code=400)
+    return RedirectResponse(url="/finance/migration?notice=deleted", status_code=303)

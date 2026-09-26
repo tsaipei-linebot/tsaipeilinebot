@@ -47,3 +47,39 @@ def convert_docx_to_pdf(docx_bytes: bytes, *, log_prefix: str = "[Word轉PDF失�
             return None
         with open(pdf_path, "rb") as f:
             return f.read()
+
+
+def convert_many_docx_to_pdf(items: list, *, log_prefix: str = "[Word轉PDF失敗]") -> dict:
+    """一次轉很多份（2026-09-26 新增，財務部批次下載存查單用）：只啟動一次 LibreOffice，比一份一份轉快很多。
+    items 是 [(檔名不含副檔名, docx bytes)]，回傳 {檔名: pdf bytes}；轉失敗的那份不會出現在結果裡。"""
+    if not items:
+        return {}
+    with tempfile.TemporaryDirectory(prefix="docx_pdf_many_") as tmpdir:
+        paths = []
+        for index, (_name, content) in enumerate(items):
+            path = os.path.join(tmpdir, f"doc_{index}.docx")
+            with open(path, "wb") as f:
+                f.write(content)
+            paths.append(path)
+        profile_dir = os.path.join(tmpdir, f"lo_profile_{uuid.uuid4().hex}")
+        try:
+            subprocess.run(
+                [
+                    "soffice", "--headless", "--norestore",
+                    f"-env:UserInstallation=file://{profile_dir}",
+                    "--convert-to", "pdf", "--outdir", tmpdir, *paths,
+                ],
+                check=True,
+                capture_output=True,
+                timeout=60 + 5 * len(items),
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError) as err:
+            print(f"{log_prefix} {err}")
+            return {}
+        result = {}
+        for index, (name, _content) in enumerate(items):
+            pdf_path = os.path.join(tmpdir, f"doc_{index}.pdf")
+            if os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    result[name] = f.read()
+        return result

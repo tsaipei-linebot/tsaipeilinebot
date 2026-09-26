@@ -10977,3 +10977,22 @@ GAS；員工主管組織表繼續由 GAS 維護、平台直接讀。分兩個 PR
 GAS 的核准信「主管信箱」也會改用 ADMIN_EMAIL（`getSupervisorsByApplicantUserId()` 退回 `getDefaultSupervisors()`）。
 已補上：`send_approval_email()` 主管信箱是空的就用系統管理員信箱。
 
+**切換結果（2026-09-26）**：使用者設好三個環境變數、打開開關，測了一張「退回」、一張「核准」都成功（卡片、回覆、通知、
+核准信含 PDF、試算表那一列）。薪資補款正式改由平台處理。
+
+## 財務部批次下載改由平台產生＋刪除測試單（2026-09-26，原本的第 6 步）
+
+- **`salary_platform.export_pdfs_zip()`**＝GAS `exportApprovedSalaryPdfs()`＋`listApprovedRecordsInRange()`：已核准、
+  「申請日」（先正規化成 yyyy-MM-dd，同 GAS `normalizeDateValue()`）在區間內的單，一筆一份存查單打包 ZIP，檔名跟 GAS 一樣。
+  `/finance/export-pdf` 在讀取來源是平台資料時改用這支（不再呼叫 GAS 的 EXPORT_SALARY_PDFS）；選圖片格式照舊轉 PNG。
+- **`docx_pdf_conversion.convert_many_docx_to_pdf()`**：一次啟動 LibreOffice 轉全部（本機實測 5 份 12 秒，大部分是啟動時間，
+  之後每份約 1 秒；逾時上限 60＋5×份數 秒）。以前 GAS 批次下載會逾時的問題就此解決。
+- **刪除測試單**：`/finance/migration` 第 6 區列出平台建立的最新 20 筆，每筆有「刪除」（只能刪平台建立的單）。會刪平台資料、
+  審核佔位、試算表那一列（用「退回」的刪列），刪除紀錄只留單號／申請人／員工姓名／金額（不留身分證）在
+  `salary_repayment_meta/state.deleted_records`（最近 50 筆）。
+- 測試：`tests/test_salary_platform.py` 加 `ExportAndDeleteTests`、`BatchConversionTests`、兩個路由測試。
+
+### 下一步
+
+第 7 步（停用 GAS 的 `Project_Salary.js`、拿掉平台對 GAS 補款端點的呼叫）等平台順跑 1～2 週再做。
+
