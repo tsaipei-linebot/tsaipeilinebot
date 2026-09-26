@@ -552,6 +552,9 @@ def send_approval_email(doc_id: str) -> tuple:
     hdrs = headers()
     org = load_org()
     record = report.build_record(doc.get("fields") or {}, hdrs, org)
+    if not record["supervisor_email"]:
+        # 跟 GAS 一樣：組織表沒幫申請人設主管時，主管信箱改用系統管理員的（SALARY_ADMIN_EMAILS）
+        record["supervisor_email"] = ",".join(s["email"] for s in default_supervisors() if s["email"])
     if record["review_status"] != STATUS_APPROVED:
         return False, "這筆補款單還沒核准，不能寄核准信。"
     to = report.recipients(record)
