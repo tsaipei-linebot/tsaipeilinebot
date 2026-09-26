@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}職缺文案預覽 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">職缺 AI 文案預覽比對</h1>
+</div>
+<p class="hint">只有全平台管理員看得到這頁。挑一個職缺按「預覽」，會用平台的新規則（更親切、稱呼「您」、統一排版、應徵條件只從原文抓、防腦補檢查）重新產生文案，跟 Notion 上現在的內容並排比對。<strong>只是預覽，不會改 Notion。</strong>每按一次會呼叫一次 AI，要等 10～20 秒。</p>
+<p><a class="btn" href="/job-listings/migration/try">自己填資料試寫</a></p>
+{% if error %}<p class="error js-flash">{{ error }}</p>{% endif %}
+{% if jobs %}
+<input type="text" class="sheet-search" data-search-for="job-copy-table" placeholder="搜尋職缺...">
+<div class="table-scroll">
+    <table class="data-table" id="job-copy-table">
+        <thead><tr><th>職缺名稱</th><th>對外名稱</th><th>狀態</th><th>刊登人</th><th></th></tr></thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr>
+                <td>{{ job.title }}</td><td>{{ job.external_title }}</td><td>{{ job.status }}</td><td>{{ job.publisher }}</td>
+                <td><a href="/job-listings/migration/preview/{{ job.id }}">預覽</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<script>
+document.querySelectorAll('.sheet-search').forEach(function (input) {
+    input.addEventListener('input', function () {
+        var table = document.getElementById(input.dataset.searchFor);
+        var keyword = input.value.trim().toLowerCase();
+        table.querySelectorAll('tbody tr').forEach(function (tr) {
+            tr.hidden = keyword.length > 0 && tr.textContent.toLowerCase().indexOf(keyword) === -1;
+        });
+    });
+});
+</script>
+{% elif not error %}
+<p class="empty">Notion 裡沒有非停招的職缺。</p>
+{% endif %}
+<p class="back-link"><a href="/job-listings">&larr; 回職缺維護</a></p>
+{% endblock %}

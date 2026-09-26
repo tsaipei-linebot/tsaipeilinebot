@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}職缺文案預覽 - 材霈有限公司{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h1 class="page-title">文案預覽：{{ job.title }}</h1>
+</div>
+<p class="hint">只是預覽，不會改 Notion。</p>
+{% if result.is_fallback %}
+<p class="warning">AI 文案兩次都沒通過防腦補檢查（或 AI 沒回應），改用只寫事實的保底文案。沒通過的原因：{{ result.check_issues | join("；") }}</p>
+{% else %}
+<p class="success">✅ 通過防腦補檢查（第 {{ result.attempts }} 次產生就過關）。</p>
+{% endif %}
+<table class="data-table">
+    <tr><th>交給 AI 的原始資料</th><td>
+        職缺名稱：{{ job.external_title or job.title }}<br>
+        地點：{{ location }}<br>
+        薪資：{{ job.salary or "依公司規定" }}　班別：{{ job.shift or "依排班規定" }}{% if job.leave_type %}　休假：{{ job.leave_type }}{% endif %}<br>
+        <div style="white-space: pre-wrap; margin-top: 6px;">{{ job.original_desc or job.external_desc }}</div>
+        {% if current %}<p class="hint">舊職缺沒有保留同仁原文，這裡拿 Notion 的「工作內容(對外)」（GAS 已經改寫過的版本）當原文。</p>{% endif %}
+    </td></tr>
+</table>
+<div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>欄位</th>{% if current %}<th>Notion 現在（GAS 產的）</th>{% endif %}<th>平台新版</th></tr></thead>
+        <tbody>
+            {% for key, label in fields %}
+            <tr>
+                <th>{{ label }}</th>
+                {% if current %}<td style="white-space: pre-wrap; vertical-align: top;">{{ current[key] }}</td>{% endif %}
+                <td style="white-space: pre-wrap; vertical-align: top;">{{ result[key] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="back-link"><a href="/job-listings/migration">&larr; 回職缺文案預覽</a></p>
+{% endblock %}
