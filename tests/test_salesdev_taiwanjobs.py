@@ -226,6 +226,24 @@ class PipelineTests(_FakeDbMixin, unittest.TestCase):
         self.assertEqual((summary["pages_read"], summary["pages_failed"]), (2, 1))
         self.assertEqual(len(tj_repo.pending_detail_jobs()), 1)
 
+    def test_consecutive_failures_stop_without_counting(self):
+        """被擋的情形：每一頁都失敗。連續 5 頁就停，而且不扣失敗次數。"""
+        api = {"330": _xml(*[_record("德勝科技股份有限公司", "作業員", "111", str(n)) for n in range(1, 9)])}
+        summary = taiwanjobs_pipeline.run_taiwanjobs(client=FakeClient(api=api))
+        self.assertTrue(summary["blocked_suspected"])
+        self.assertEqual(summary["pages_failed"], 0)
+        self.assertEqual(summary["pages_pending"], 8)
+        self.assertTrue(any("可能被台灣就業通暫時擋下" in e for e in summary["errors"]))
+        self.assertEqual(len(tj_repo.pending_detail_jobs()), 8)
+        self.assertTrue(all(not j.get("detail_fail_count") for j in tj_repo.pending_detail_jobs()))
+
+    def test_isolated_failures_still_count(self):
+        pages = {"1": _detail(), "2": RuntimeError("HTTP 500"), "3": RuntimeError("HTTP 500"), "4": _detail()}
+        api = {"330": _xml(*[_record("德勝科技股份有限公司", "作業員", "111", str(n)) for n in range(1, 5)])}
+        summary = taiwanjobs_pipeline.run_taiwanjobs(client=FakeClient(api=api, pages=pages))
+        self.assertFalse(summary["blocked_suspected"])
+        self.assertEqual((summary["pages_read"], summary["pages_failed"]), (2, 2))
+
     def test_empty_api_is_reported(self):
         summary = taiwanjobs_pipeline.run_taiwanjobs(client=FakeClient())
         self.assertTrue(any("職缺 API 沒有回傳任何職缺" in e for e in summary["errors"]))
