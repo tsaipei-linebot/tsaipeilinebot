@@ -33,6 +33,7 @@
     <a class="sheet-tab-btn{{ ' active' if tab == 'leads' else '' }}" href="/salesdev">開發名單（依地點）</a>
     <a class="sheet-tab-btn{{ ' active' if tab == 'internal' else '' }}" href="/salesdev?tab=internal">非客戶線索</a>
     <a class="sheet-tab-btn{{ ' active' if tab == 'hiring' else '' }}" href="/salesdev?tab=hiring">104 產線徵才公司</a>
+    <a class="sheet-tab-btn{{ ' active' if tab == 'taiwanjobs' else '' }}" href="/salesdev?tab=taiwanjobs">台灣就業通</a>
     <a class="sheet-tab-btn{{ ' active' if tab == 'factories' else '' }}" href="/salesdev?tab=factories">新登記工廠</a>
 </div>
 
@@ -189,6 +190,83 @@
         <label>員工人數門檻（人以上）<input type="number" name="min_employees" value="{{ hiring_settings.min_employees }}" min="1"></label>
         <label>每個關鍵字抓幾頁（1～10，每頁約 20 筆，依更新日期由新到舊）<input type="number" name="max_pages" value="{{ hiring_settings.max_pages }}" min="1" max="10"></label>
         <button type="submit" class="btn">儲存搜尋條件</button>
+    </form>
+</section>
+{% endif %}
+
+{% elif tab == 'taiwanjobs' %}
+<p class="hint">每小時自動到<strong>台灣就業通</strong>（勞動部）找產線職缺，打開每一筆職缺頁，把公司留的 Email、聯絡人、電話記下來，一間公司一列。跟其他分頁的資料<strong>分開</strong>，不合併。關鍵字「{{ tj_settings.keywords|join('、') }}」比對職缺名稱，地區是 {{ tj_settings.zipcodes|length }} 個工業區的郵遞區號。職缺清單大約每天重抓一次，職缺頁每小時讀一段，新公司很多時要幾個小時才讀得完。</p>
+
+<div class="salesdev-run">
+    {% if tj_run %}
+    <strong>最近一次執行：</strong>{{ tj_run.started_at }}
+    {% if tj_run.listing_refreshed %}（抓職缺清單：API 回傳 {{ tj_run.api_jobs }} 筆、符合關鍵字 {{ tj_run.matched_jobs }} 筆、新職缺 {{ tj_run.new_jobs }} 筆、新公司 {{ tj_run.new_companies }} 間{% if not tj_run.listing_done %}，還沒抓完，下次接著抓{% endif %}）{% endif %}
+    ；讀了 {{ tj_run.pages_read }} 個職缺頁，其中 {{ tj_run.pages_with_email }} 個有 Email{% if tj_run.pages_failed %}、失敗 {{ tj_run.pages_failed }} 個{% endif %}
+    {% if tj_run.deadline_hit %}<span class="badge badge-pending">時間到，下次接著讀</span>{% endif %}
+    {% if tj_run.errors %}
+    <ul class="salesdev-run-errors">
+        {% for e in tj_run.errors %}<li>{{ e }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    <div class="meta">職缺頁：已讀 {{ tj_job_counts.get('done', 0) }} 筆、還沒讀 {{ tj_job_counts.get('pending', 0) }} 筆{% if tj_job_counts.get('failed', 0) %}、讀不到 {{ tj_job_counts.get('failed', 0) }} 筆{% endif %}</div>
+    {% else %}
+    <strong>還沒有執行紀錄。</strong>每小時排程設定好之後，這裡會顯示每次執行的結果。
+    {% endif %}
+</div>
+
+<div class="filter-bar">
+    <span>Email：</span>
+    {% set dq = '&dispatch=hide' if tj_hide_dispatch else '' %}
+    <a class="btn btn-small{{ ' btn-primary' if tj_email == 'yes' else '' }}" href="/salesdev?tab=taiwanjobs&email=yes{{ dq }}">有 Email（{{ tj_counts.get('yes', 0) }}）</a>
+    <a class="btn btn-small{{ ' btn-primary' if tj_email == 'no' else '' }}" href="/salesdev?tab=taiwanjobs&email=no{{ dq }}">沒有 Email（{{ tj_counts.get('no', 0) }}）</a>
+    <a class="btn btn-small{{ ' btn-primary' if tj_email == 'all' else '' }}" href="/salesdev?tab=taiwanjobs&email=all{{ dq }}">全部（{{ tj_counts.get('all', 0) }}）</a>
+    {% if tj_hide_dispatch %}
+    <a class="btn btn-small" href="/salesdev?tab=taiwanjobs&email={{ tj_email }}">顯示派遣公司</a>
+    {% else %}
+    <a class="btn btn-small" href="/salesdev?tab=taiwanjobs&email={{ tj_email }}&dispatch=hide">隱藏派遣公司</a>
+    {% endif %}
+</div>
+
+{% if not tj_companies %}
+<div class="empty-state">
+    <p class="empty-state-title">{% if tj_counts.get('all', 0) %}這個條件下沒有公司{% else %}目前還沒有資料{% endif %}</p>
+    <p class="empty-state-text">{% if tj_counts.get('all', 0) %}換一個條件看看；職缺頁還沒讀完的公司會先出現在「沒有 Email」。{% else %}每小時排程開始之後，公司會出現在這裡。{% endif %}</p>
+</div>
+{% else %}
+<input type="text" class="sheet-search" data-search-for="salesdev-tj" placeholder="搜尋公司名稱、Email、職缺、地區...">
+<div class="table-scroll">
+    <table class="data-table sticky-head salesdev-table" id="salesdev-tj">
+        <thead><tr><th>公司名稱</th><th>Email</th><th>聯絡人</th><th>電話</th><th>職缺數</th><th>職缺例子</th><th>地區</th><th>最近出現</th></tr></thead>
+        <tbody>
+            {% for c in tj_companies %}
+            <tr>
+                <td>{{ c.company_name }}{% if c.is_dispatch %}<div class="meta">派遣公司</div>{% endif %}</td>
+                <td>{% for e in c.emails or [] %}<div>{% set src = tj_email_source(c, e) %}{% if src %}<a href="{{ src }}" target="_blank" rel="noopener" title="開啟找到這個 Email 的職缺頁">{{ e }}</a>{% else %}{{ e }}{% endif %}</div>{% endfor %}</td>
+                <td>{{ (c.contact_names or [])|join('、') }}</td>
+                <td>{{ (c.contact_phones or [])|join('、') }}</td>
+                <td>{{ c.job_count }}</td>
+                <td>{{ (c.latest_job_titles or [])|join('、') }}</td>
+                <td>{{ (c.areas or [])|join('、') }}</td>
+                <td>{{ c.last_seen }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="hint">點 Email 會開啟找到這個 Email 的職缺頁，可以確認內容。「派遣公司」是依公司名稱自動判斷的，可以用上方按鈕隱藏。</p>
+{% endif %}
+
+{% if is_module_admin %}
+<section class="salesdev-admin">
+    <h2 class="section-title">搜尋條件（管理員）</h2>
+    <p class="hint">改完之後，下一次抓職缺清單（約每天一次）才會照新的條件。{% if tj_settings.last_listing_at %}上次抓職缺清單：{{ tj_settings.last_listing_at }}。{% endif %}{% if tj_settings.updated_at %}上次由 {{ tj_settings.updated_by }} 在 {{ tj_settings.updated_at }} 修改條件。{% endif %}</p>
+    <form method="post" action="/salesdev/taiwanjobs/settings" class="form-stack form-narrow">
+        <label>關鍵字（比對職缺名稱，用「、」或逗號分開）<input type="text" name="keywords" value="{{ tj_settings.keywords|join('、') }}"></label>
+        <label>郵遞區號（3 碼，用逗號或空白分開，最多 150 個）<textarea name="zipcodes" rows="4">{{ tj_settings.zipcodes|join(', ') }}</textarea></label>
+        <button type="submit" class="btn">儲存搜尋條件</button>
+    </form>
+    <form method="post" action="/salesdev/taiwanjobs/refresh">
+        <p><button type="submit" class="btn btn-small">下一次執行就重抓職缺清單</button></p>
     </form>
 </section>
 {% endif %}

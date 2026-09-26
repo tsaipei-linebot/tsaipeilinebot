@@ -46,6 +46,7 @@ from hr.app import hr_app
 from services.factory_watch_service import run_weekly_scan
 from salesdev.pipeline import run_daily_scrape as run_salesdev_daily_scrape
 from salesdev.hiring_pipeline import run_weekly_hiring_scan as run_salesdev_hiring_scan
+from salesdev.taiwanjobs_pipeline import run_taiwanjobs as run_salesdev_taiwanjobs
 from services.daily_report_service import run_daily_report
 from services.session_service import db as _firestore_db, SESSIONS_COLLECTION as _SESSIONS_COLLECTION
 from services.notion_service import fetch_jobs_data, fetch_faqs_data, sanitize_uri, record_resume_click
@@ -464,6 +465,19 @@ async def trigger_salesdev_hiring_scan(x_salesdev_scrape_secret: str = Header(No
         raise HTTPException(status_code=403, detail="Forbidden")
 
     summary = await run_in_threadpool(run_salesdev_hiring_scan)
+    return summary
+
+
+# 業務開發「台灣就業通」（2026-09-26 新增，見 salesdev/taiwanjobs_pipeline.py）：由
+# Cloud Scheduler 每小時呼叫，每次讀一段職缺頁；共用同一把密鑰。
+@app.post("/internal/salesdev/taiwanjobs/run")
+async def trigger_salesdev_taiwanjobs(x_salesdev_scrape_secret: str = Header(None)):
+    if not SALESDEV_SCRAPE_TRIGGER_SECRET or not x_salesdev_scrape_secret or not hmac.compare_digest(
+        x_salesdev_scrape_secret, SALESDEV_SCRAPE_TRIGGER_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    summary = await run_in_threadpool(run_salesdev_taiwanjobs)
     return summary
 
 

@@ -10596,6 +10596,56 @@ LinkedIn，台灣中小型工廠的人資大多不在上面。**結論：不接 
    約 5 分鐘後開 `/salesdev?tab=hiring`，上方要出現「最近一次每週抓取」。如果寫「還有 N 間下次再查」，
    隔 5 分鐘再跑一次同一行指令，直到 N 變 0。
 
+## 業務開發：「台灣就業通」獨立分頁，自動抓職缺頁上的 Email（2026-09-26）
+
+使用者對 Cowork 查官網信箱的結果不滿意，要求研究台灣就業通。**官方職缺 API（data.gov.tw dataset 44062，
+`free.taiwanjobs.gov.tw/webservice_taipei/Webservice.ashx`，一次最多 1000 筆，可帶郵遞區號 `zipno`）本身沒有
+聯絡人/Email 欄位**，但使用者自己寫的 Python 腳本（API 拿職缺網址 → 打開職缺頁抓 Email）實跑成功：
+176 間有 111 間有 Email（70 個公司網域、41 個 Gmail/Yahoo/HiNet），只是名單多是飯店、餐廳、門市
+（腳本連工作內容一起比對關鍵字，地區又是內湖、南港）。
+
+**使用者決定（2026-09-26）**：「先不考慮這些，都先抓出來」——職缺頁上的信箱**全部列出、不分類型、不過濾**
+（先不管 9/24「職缺頁上的招募人聯絡方式不拿來寄推銷信」那條規則，之後寄信前要再跟使用者確認）；
+**獨立成一個分頁，不跟 104 等其他來源合併**。
+
+**做了什麼**
+- `salesdev/scrapers/taiwanjobs.py`：解析 API 的 XML（標籤是 `<COMPNAME（公司名稱）>` 這種前綴＋全形說明、
+  內容包 CDATA，照使用者腳本用前綴比對）、職缺名稱比對關鍵字、解析職缺頁（Email 全部記、最多 5 個，排除
+  圖片檔名跟 taiwanjobs/mol/wda.gov.tw 自己的信箱；聯絡人員、電話、應徵地址）。跟腳本不同：只比對**職缺名稱**；
+  地區預設 92 個全台工業區郵遞區號（含腳本原本的 114、115）；同一間公司每一筆職缺都看；每次請求間隔 1.5 秒
+  （腳本 0.3～0.6 秒）；**不關 HTTPS 憑證檢查**（腳本用 `verify=False`）；修了「聯絡人員：無」被抓成「：無」。
+- `salesdev/taiwanjobs_repository.py`：`salesdev_tj_jobs`（每筆職缺，`detail_status` pending/done/failed，
+  失敗 3 次不再試）、`salesdev_tj_companies`（一間一筆，文件 ID 用職缺網址的 `EMPLOYER_ID`，Email/聯絡人/電話
+  合併每一筆職缺頁；Email 當 key 記來源職缺網址，「.」換成「·」）、`salesdev_tj_runs`、`salesdev_settings/taiwanjobs`
+  （關鍵字、郵遞區號、上次抓清單時間、抓到第幾個郵遞區號）。公司名稱像派遣公司的標 `is_dispatch`，不排除。
+- `salesdev/taiwanjobs_pipeline.py`：Cloud Scheduler **每小時**呼叫 `POST /internal/salesdev/taiwanjobs/run`
+  （共用 `SALESDEV_SCRAPE_TRIGGER_SECRET`）。距離上次抓清單超過 20 小時才重抓清單（每個郵遞區號抓完就存，
+  時間到記下抓到第幾個，下次接著抓）；剩下的時間讀「待讀」的職缺頁，新的先讀。時間上限
+  `SALESDEV_TJ_TIME_BUDGET_SECONDS`（預設 240 秒）。一次大約讀 100 多頁，第一次上千筆要跑好幾個小時。
+- 畫面 `/salesdev?tab=taiwanjobs`：一間一列（公司、Email〔點了開找到它的職缺頁〕、聯絡人、電話、職缺數、職缺例子、
+  地區、最近出現），篩選「有 Email（預設）／沒有 Email／全部」＋「隱藏派遣公司」；上方顯示最近一次執行與職缺頁
+  已讀/待讀筆數；管理員可改關鍵字、郵遞區號（`POST /salesdev/taiwanjobs/settings`，改了會從頭抓清單），
+  也可按「下一次執行就重抓職缺清單」（`POST /salesdev/taiwanjobs/refresh`）。「下載 Excel」多一個「台灣就業通」
+  工作表，使用說明加一節。
+- 測試 `tests/test_salesdev_taiwanjobs.py`（23 個）；Excel 匯出測試改成五個工作表。全部 2509 個測試通過。
+
+**還沒驗證（開發環境連不到台灣就業通）**：Cloud Run 連不連得到、HTTPS 憑證驗不驗得過（使用者腳本關掉了
+驗證，可能就是因為驗證不過；如果畫面出現 SSL／certificate 錯誤，要另外處理，不要直接改成 verify=False）、
+職缺頁實際格式（照使用者腳本的正規表示式，腳本實跑有效）。
+
+**上線步驟（合併部署完成之後，Cloud Shell）**
+1. 取出密鑰（同一個視窗接著跑第 2、3 步）：
+   ```
+   SECRET=$(gcloud run services describe recruitment-bot --region=asia-east1 --project=tsaipei-505807 --format=json | python3 -c "import json,sys; env=json.load(sys.stdin)['spec']['template']['spec']['containers'][0].get('env',[]); print(next((e.get('value','') for e in env if e['name']=='SALESDEV_SCRAPE_TRIGGER_SECRET'),''))"); echo "${#SECRET}"
+   ```
+   印出 48 才繼續。
+2. 建立每小時第 20 分的排程：
+   ```
+   gcloud scheduler jobs create http salesdev-hourly-taiwanjobs --project=tsaipei-505807 --location=asia-east1 --schedule="20 * * * *" --time-zone="Asia/Taipei" --uri="https://recruitment-bot-412901869672.asia-east1.run.app/internal/salesdev/taiwanjobs/run" --http-method=POST --headers="X-Salesdev-Scrape-Secret=$SECRET" --attempt-deadline=600s
+   ```
+3. 馬上跑一次：`gcloud scheduler jobs run salesdev-hourly-taiwanjobs --project=tsaipei-505807 --location=asia-east1`，
+   約 5 分鐘後看 `/salesdev?tab=taiwanjobs` 上方的結果。
+
 ## 台北所(派遣組)／台北所(國際組)專區：待進人員＋每日加退保自動帶入（2026-09-25 確認規格，分兩個 PR 實作）
 
 PR1（專區分頁、廠商/班別維護、待進人員，PR #238）、PR2（每日加退保依日期自動帶入）都已完成。

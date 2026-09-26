@@ -184,6 +184,9 @@ SALESDEV_LINE_TARGET_ID = os.getenv("SALESDEV_LINE_TARGET_ID", "")
 # 跟每日抓職缺共用 SALESDEV_SCRAPE_TRIGGER_SECRET）：打 104 的時間上限（秒），
 # 之後還要對統一編號，所以比每日抓職缺的 240 秒短，見 salesdev/hiring_pipeline.py
 SALESDEV_HIRING_TIME_BUDGET_SECONDS = _int_env("SALESDEV_HIRING_TIME_BUDGET_SECONDS", 180)
+# 2026-09-26 新增「台灣就業通」每小時抓取（/internal/salesdev/taiwanjobs/run，同一把
+# SALESDEV_SCRAPE_TRIGGER_SECRET）：每次執行的時間上限（秒），見 salesdev/taiwanjobs_pipeline.py
+SALESDEV_TJ_TIME_BUDGET_SECONDS = _int_env("SALESDEV_TJ_TIME_BUDGET_SECONDS", 240)
 
 # ==========================================
 # 11. 我的專區（/me）：薪資補款紀錄

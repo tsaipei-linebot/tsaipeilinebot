@@ -10,6 +10,10 @@
   備註、聯絡紀錄
 - `/salesdev/export.xlsx`：下載 Excel
 - `/salesdev/import-sheet`：一次性匯入舊試算表（模組管理員限定）
+- `/salesdev?tab=taiwanjobs`：台灣就業通（2026-09-26 新增，每小時自動抓，見
+  `salesdev/taiwanjobs_pipeline.py`；使用者要求跟其他來源分開，不合併）；
+  `/salesdev/taiwanjobs/settings` 改關鍵字/郵遞區號、`/salesdev/taiwanjobs/refresh`
+  立刻重抓職缺清單（管理員）
 - `/salesdev?tab=hiring`：104 產線徵才公司（2026-09-25 新增，每週自動抓，見
   `salesdev/hiring_pipeline.py`）；`/salesdev/hiring/settings` 改搜尋條件（管理員）
 
@@ -26,13 +30,15 @@ from fastapi.responses import RedirectResponse, Response
 import platform_accounts
 from platform_templating import templates
 from salesdev import repository
+from salesdev import taiwanjobs_repository as tj_repo
 from salesdev.excel_export import SOURCE_LABELS, build_workbook
 from salesdev.sheet_import import import_from_sheet
 
 router = APIRouter()
 
 MODULE_CODE = "salesdev"
-TABS = ("leads", "internal", "hiring", "factories")
+TABS = ("leads", "internal", "hiring", "taiwanjobs", "factories")
+TJ_EMAIL_FILTERS = ("yes", "no", "all")
 HIRING_SIZE_FILTERS = ("big", "unknown", "small", "all")
 
 STATUS_BADGES = {
@@ -84,7 +90,13 @@ def _common_context(request: Request) -> dict:
 
 @router.get("/salesdev")
 def salesdev_home(
-    request: Request, tab: str = "leads", status: str = "", size: str = "big", redirect=Depends(_require_access)
+    request: Request,
+    tab: str = "leads",
+    status: str = "",
+    size: str = "big",
+    email: str = "yes",
+    dispatch: str = "show",
+    redirect=Depends(_require_access),
 ):
     if redirect:
         return redirect
@@ -105,6 +117,14 @@ def salesdev_home(
             "hiring_size": size if size in HIRING_SIZE_FILTERS else "big",
             "hiring_settings": repository.default_hiring_settings(),
             "latest_hiring_run": None,
+            "tj_companies": [],
+            "tj_counts": {},
+            "tj_email": email if email in TJ_EMAIL_FILTERS else "yes",
+            "tj_hide_dispatch": dispatch == "hide",
+            "tj_settings": tj_repo.default_settings(),
+            "tj_run": None,
+            "tj_job_counts": {},
+            "tj_email_source": tj_repo.email_source,
             "load_error": "",
             "is_module_admin": _is_module_admin(request),
         }
@@ -133,6 +153,20 @@ def salesdev_home(
             context["hiring_companies"] = [c for c, b in buckets if size_filter == "all" or b == size_filter]
             context["hiring_settings"] = settings
             context["latest_hiring_run"] = repository.latest_hiring_run()
+        elif tab == "taiwanjobs":
+            companies = tj_repo.list_companies()
+            if context["tj_hide_dispatch"]:
+                companies = [c for c in companies if not c.get("is_dispatch")]
+            with_email = [c for c in companies if c.get("emails")]
+            context["tj_counts"] = {"yes": len(with_email), "no": len(companies) - len(with_email), "all": len(companies)}
+            if context["tj_email"] == "yes":
+                companies = with_email
+            elif context["tj_email"] == "no":
+                companies = [c for c in companies if not c.get("emails")]
+            context["tj_companies"] = companies
+            context["tj_settings"] = tj_repo.get_settings()
+            context["tj_run"] = tj_repo.latest_run()
+            context["tj_job_counts"] = tj_repo.count_jobs_by_status()
         else:
             context["factories"] = repository.list_factories()
     except Exception as exc:
@@ -240,6 +274,7 @@ def salesdev_export(request: Request, redirect=Depends(_require_access)):
         repository.list_all_jobs(),
         repository.list_factories(),
         repository.list_hiring_companies(),
+        tj_repo.list_companies(),
     )
     filename = f"業務開發名單_{repository.today_str()}.xlsx"
     return Response(
@@ -297,3 +332,45 @@ async def salesdev_hiring_settings(request: Request, redirect=Depends(_require_a
         return _redirect(back, err="員工人數門檻要大於 0；每個關鍵字抓幾頁要在 1～10 之間。")
     repository.save_hiring_settings(keywords, min_employees, max_pages, _username(request))
     return _redirect(back, msg="已儲存搜尋條件，下一次每週自動抓取會照新的條件搜尋。")
+
+
+_ZIP_SPLIT_RE = re.compile(r"[^0-9]+")
+
+
+@router.post("/salesdev/taiwanjobs/settings")
+async def salesdev_taiwanjobs_settings(request: Request, redirect=Depends(_require_access)):
+    """台灣就業通的關鍵字、郵遞區號（管理員限定）。下一次抓職缺清單才會套用。"""
+    if redirect:
+        return redirect
+    back = "/salesdev?tab=taiwanjobs"
+    if not _is_module_admin(request):
+        return _redirect(back, err="只有這個專區的管理員可以修改搜尋條件。")
+    form = await request.form()
+    keywords = []
+    for keyword in _KEYWORD_SPLIT_RE.split(str(form.get("keywords", ""))):
+        if keyword and keyword not in keywords:
+            keywords.append(keyword)
+    zipcodes = []
+    for zipno in _ZIP_SPLIT_RE.split(str(form.get("zipcodes", ""))):
+        if len(zipno) == 3 and zipno not in zipcodes:
+            zipcodes.append(zipno)
+    if not keywords:
+        return _redirect(back, err="請至少填一個關鍵字。")
+    if not zipcodes:
+        return _redirect(back, err="請至少填一個 3 碼郵遞區號。")
+    if len(zipcodes) > 150:
+        return _redirect(back, err="郵遞區號最多 150 個。")
+    tj_repo.save_settings(keywords, zipcodes, _username(request))
+    return _redirect(back, msg="已儲存搜尋條件，下一次抓職缺清單（約每天一次）會照新的條件。")
+
+
+@router.post("/salesdev/taiwanjobs/refresh")
+def salesdev_taiwanjobs_refresh(request: Request, redirect=Depends(_require_access)):
+    """管理員：下一次每小時執行就重抓職缺清單，不用等一天。"""
+    if redirect:
+        return redirect
+    back = "/salesdev?tab=taiwanjobs"
+    if not _is_module_admin(request):
+        return _redirect(back, err="只有這個專區的管理員可以重抓職缺清單。")
+    tj_repo.request_listing_refresh()
+    return _redirect(back, msg="好的，下一次每小時自動執行時會重抓職缺清單。")
