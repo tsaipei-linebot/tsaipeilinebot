@@ -10887,3 +10887,37 @@ Webhook 切換只做一次、現在就做，之後每搬一個功能就是平台
 攔下 `review_salary` 的 postback 自己處理——**只攔平台建立的單（Firestore `source="platform"`）**，切換前
 GAS 發出去、還沒按的舊卡片照樣轉給 GAS，這樣就不用要求主管切換前把待審核的單審完。需要 Channel access token。
 
+**切換結果（2026-09-26）**：使用者設好兩個環境變數、把 LINE 後台 Webhook 改成平台，`/finance/migration`
+第 4 區看到「（LINE 後台驗證）✅」「message ✅ GAS 已處理」，總機上線。使用者提醒：**平常操作都是網頁驅動**
+（網頁表單直接打 GAS Web App，不經過總機），經過總機的主要是主管在 LINE 按核准卡片（postback）；GAS 另外
+只有「綁定＋姓名＋PIN」「綁定群組」兩個很少用的打字指令，一般打字 GAS 不回覆。
+
+## 薪資補款核准信＋PDF 存查單改由平台產生（2026-09-26，第二段 PR 1）
+
+第二段（補款送出＋核准改由平台處理）的流程使用者 2026-09-26 回「好」確認：同仁／主管看到的都跟現在一樣；
+核准信要附 PDF，所以原本第 6 步（平台產 PDF）提前一起做；做「補款改由平台處理」開關；切換前的舊卡片照樣轉
+GAS；員工主管組織表繼續由 GAS 維護、平台直接讀。分兩個 PR：PR 1 產生內容＋預覽、PR 2 收單＋卡片＋核准＋開關。
+
+### PR 1 做了什麼（不寄信、不改資料）
+
+- **`services/salary_repayment_report.py`（新檔）**，逐項照抄 `Project_Salary.js`：
+  - `build_record()`：**照 GAS 的欄位位置取值**（`data[i][4]` 那種），順序用第 1 步存的 `record_headers`，不靠表頭文字。
+  - `Org`：員工主管組織表照 GAS 欄位位置（0 姓名、1 LINE ID、2 主管姓名、3 主管 LINE ID、4 主管 Email、
+    9 員工 Email）；`supervisors()`＝`getSupervisorsByApplicantUserId()`（不含組織表沒設就退回系統管理員那段，
+    PR 2 要補 ADMIN_LINE_USER_ID／ADMIN_EMAIL）；`applicant_email()`＝`findApplicantEmail()` 三段順序。
+  - `recipients()`：財會（新環境變數 **`SALARY_HR_ACCOUNTING_EMAILS`**，對應 GAS 指令碼屬性 HR_ACCOUNTING_EMAILS）
+    ＋主管＋申請人，去重複；`subject()`、`email_html()` 同 GAS 的 HTML／CSS。
+  - `build_docx()`＋`build_pdf()`：python-docx 排出跟 GAS Google Docs 一樣的存查單（標題、一基本資料 4 欄表＋備註、
+    二金額三色格、三簽核紀錄、頁尾說明），LibreOffice 轉 PDF（容器已有 libreoffice-writer＋fonts-noto-cjk）。
+    字型全部指定 Noto Sans CJK TC（不指定的話英數字會變成襯線字）。
+  - **唯一刻意跟 GAS 不同**：信件／PDF 的「核准主管」GAS 印 S 欄 LINE User ID，這裡換成姓名（換不到才印原值）。
+- **`/finance/migration` 第 5 區「預覽」**：列最新 20 筆已核准舊單 → `/finance/migration/preview/{id}`（主旨、收件人、
+  附件、信件內容 iframe，照片用平台搬好的那張）、`/finance/migration/preview/{id}/pdf`。讀取來源改成第 6 區。
+- 測試 `tests/test_salary_repayment_report.py`：民國年、千分位、欄位依位置、主管／申請人 Email 查找、HTML 跳脫、
+  docx 內容、預覽只列已核准、只有管理員。
+
+### 使用者要做的
+
+1. 設定財會收件信箱（值在 GAS 編輯器 → 專案設定 → 指令碼屬性 → HR_ACCOUNTING_EMAILS）。
+2. `/finance/migration` 第 5 區挑幾筆舊單「預覽信件」「看 PDF」，跟當初 GAS 寄出的核准信比對。
+

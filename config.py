@@ -202,6 +202,9 @@ SALARY_REPAYMENT_RECORDS_SHEET_NAME = os.getenv("SALARY_REPAYMENT_RECORDS_SHEET_
 # 薪資補款佐證照片搬到 Cloud Storage（2026-09-25，搬離 GAS 階段 2 第 2 步）：跟 delivery/hr 共用同一個
 # 私有 bucket，路徑前綴 salary/，一律透過需要登入的路由讀取。
 SALARY_PHOTO_GCS_BUCKET = os.getenv("DELIVERY_GCS_BUCKET", "")
+# 薪資補款核准信的財會收件人（2026-09-26，GAS 搬家階段 2），對應 GAS 指令碼屬性 HR_ACCOUNTING_EMAILS，
+# 多個信箱用逗號分隔。見 services/salary_repayment_report.py。
+SALARY_HR_ACCOUNTING_EMAILS = os.getenv("SALARY_HR_ACCOUNTING_EMAILS", "")
 
 # 薪資補款「送出」表單（/me/salary-repayment/new，2026-09 新增，見 HANDOFF.md
 # 「方案 A」）：材霈平台這邊只收表單，送出時原封不動轉手給職缺維護表單背後
