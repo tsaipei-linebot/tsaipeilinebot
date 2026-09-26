@@ -74,25 +74,49 @@ def _refresh_listing(client: HttpClient, settings: dict, summary: dict):
         summary["errors"].append("職缺 API 沒有回傳任何職缺（可能被擋，或 API 格式改了），請通知系統管理窗口")
 
 
+# 連續這麼多頁讀取失敗，就當成可能被台灣就業通暫時擋下：這次先停，而且這幾頁不算
+# 失敗次數（不然被擋一陣子，一大批職缺會失敗 3 次、被標成「讀不到」再也不讀）
+BLOCK_STREAK = 5
+
+
 def _read_job_pages(client: HttpClient, summary: dict):
     pending = tj_repo.pending_detail_jobs()
+    streak = []  # 目前連續失敗、還沒算失敗次數的 (職缺, 錯誤)
+
+    def flush_streak():
+        # 中間有成功讀到的頁面＝不是被擋，是這幾頁本身有問題，照常算失敗次數
+        for failed_job, error in streak:
+            tj_repo.mark_job_failed(failed_job, error)
+            summary["pages_failed"] += 1
+            if summary["pages_failed"] == 1:
+                summary["errors"].append(f"職缺頁讀取失敗（{failed_job.get('company_name', '')}）：{error}")
+        streak.clear()
+
     for index, job in enumerate(pending):
         try:
             contact = taiwanjobs.fetch_contact(client, job.get("job_url", ""))
         except DeadlineReached:
+            flush_streak()
             summary["deadline_hit"] = True
             summary["pages_pending"] = len(pending) - index
             return
         except Exception as exc:
-            tj_repo.mark_job_failed(job, exc)
-            summary["pages_failed"] += 1
-            if summary["pages_failed"] == 1:
-                summary["errors"].append(f"職缺頁讀取失敗（{job.get('company_name', '')}）：{exc}")
+            streak.append((job, exc))
+            if len(streak) >= BLOCK_STREAK:
+                summary["blocked_suspected"] = True
+                summary["errors"].append(
+                    f"連續 {BLOCK_STREAK} 個職缺頁讀取失敗（最後一次：{exc}），可能被台灣就業通暫時擋下，"
+                    "這次先停止，下一次排程再試；這幾頁不算失敗次數。如果一直出現，請通知系統管理窗口"
+                )
+                summary["pages_pending"] = len(pending) - index + len(streak) - 1
+                return
             continue
+        flush_streak()
         tj_repo.save_job_contact(job, contact)
         summary["pages_read"] += 1
         if contact.get("emails"):
             summary["pages_with_email"] += 1
+    flush_streak()
     summary["pages_pending"] = 0
 
 
@@ -115,6 +139,7 @@ def run_taiwanjobs(time_budget_seconds: int = None, client: HttpClient = None) -
         "pages_failed": 0,
         "pages_pending": 0,
         "deadline_hit": False,
+        "blocked_suspected": False,
         "errors": [],
     }
     try:
