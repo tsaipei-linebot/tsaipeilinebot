@@ -45,24 +45,54 @@ class LocationTests(unittest.TestCase):
 
 
 class ComplianceTests(unittest.TestCase):
-    """規則一個字都沒改（使用者決定），這裡鎖住 GAS 原本的行為。"""
+    """違反就業服務法的字一定要刪（使用者 2026-09-26 要求），正常的時間、重量、天數不能被誤刪。"""
+
+    f = staticmethod(job_copy.enforce_compliance_rules)
 
     def test_age_gender_military(self):
-        text = job_copy.enforce_compliance_rules("限男 20-35歲 需役畢，年輕有活力，五官端正")
+        text = self.f("限男 20-35歲 需役畢，年輕有活力，五官端正")
         for banned in ("限男", "35歲", "役畢", "年輕", "五官端正"):
             self.assertNotIn(banned, text)
-        self.assertIn("具備熱忱", text)
+        self.assertIn("充滿活力", text)
 
-    def test_ranges_without_prefix_are_kept(self):
-        self.assertIn("8-17點", job_copy.enforce_compliance_rules("上班 8-17點"))
-        self.assertIn("10-20公斤", job_copy.enforce_compliance_rules("搬運 10-20公斤"))
+    def test_banned_wording_is_removed_completely(self):
+        """每一條都要整句刪乾淨，不留「需」「性」「生」這類殘字。"""
+        for banned in (
+            # 年齡
+            "限 18-35", "需18-35歲", "年齡 20-45", "限二十至三十五", "需 18-35歲之間", "需 18 歲以上",
+            "須年滿18歲", "限 45 以下", "年齡 45 以下", "18歲以下", "限 7年級生", "年紀輕",
+            # 性別
+            "限男", "限女", "限男性", "限女生", "僅限女性", "女生佳", "男性優先錄取", "女士尤佳",
+            # 兵役、容貌身家、身心
+            "需役畢", "（限免役）", "五官端正", "容貌端莊", "身家清白", "無前科", "身心健全", "四肢健全",
+            # 婚姻、籍貫／出生地、星座、血型
+            "限未婚", "已婚者優先", "限台北人", "桃園人優先", "限本地人", "限處女座", "不收 B 型", "限O型者",
+        ):
+            self.assertEqual(self.f(banned), "", banned)
 
-    def test_known_gas_bug_is_reproduced(self):
-        """GAS 原本就有的問題（2026-09-26 發現，node 實測 GAS 同一條正規表示式結果一樣）：「需／須＋數字範圍」後面接
-        點、公斤時，正規表示式會往回退一位數字繞過排除條件，把時間、重量砍掉一半。使用者決定過濾規則先不改，
-        照搬；要修的話請先問使用者，再改這個測試。"""
-        self.assertEqual(job_copy.enforce_compliance_rules("需 8-17點 出勤"), "7點 出勤")
-        self.assertEqual(job_copy.enforce_compliance_rules("須 10-20公斤"), "0公斤")
+    def test_replacements(self):
+        self.assertEqual(self.f("限男生搬重"), "需配合搬重貨物")
+        self.assertEqual(self.f("限女性細心"), "需具備細心度")
+        self.assertEqual(self.f("男女不拘"), "歡迎各界人才")
+        self.assertEqual(self.f("適合女生"), "歡迎各界人才")
+        self.assertEqual(self.f("年輕化團隊"), "充滿活力的團隊")
+        self.assertEqual(self.f("女作業員"), "作業員")
+
+    def test_banned_wording_inside_sentence(self):
+        self.assertEqual(self.f("限18~40，歡迎您加入"), "歡迎您加入")
+        self.assertEqual(self.f("倉儲理貨，男性優先，時薪200元"), "倉儲理貨、時薪200元")
+
+    def test_normal_ranges_are_kept(self):
+        """GAS 原本「需 8-17點」會被砍成「7點」、「須 10-20公斤」變「0公斤」（正規表示式往回退一位數字繞過單位
+        判斷），2026-09-26 使用者同意修掉。"""
+        for keep in ("需 8-17點 出勤", "須 10-20公斤", "需 20-30 分鐘", "需 2-3 年相關經驗", "需 1-2 個月培訓",
+                     "需要 5-6 天", "適合 2-3 人", "需 8-17 出勤", "需 30-40K", "上班 8-17點", "搬運 10-20公斤",
+                     "時薪 190-200 元", "需 3 個月以上", "需1年以上經驗", "限高中以上", "需 8.5-9 小時"):
+            self.assertEqual(self.f(keep), keep)
+
+    def test_not_over_filtered(self):
+        for keep in ("福利制度健全", "限本人親自領取", "限本國籍"):
+            self.assertEqual(self.f(keep), keep)
 
     def test_gas_quirk_block_titles_are_renamed(self):
         text = job_copy.enforce_compliance_rules("🎯【主要工作內容】\n・揀貨\n📍【工作地點與交通】\n・桃園")
