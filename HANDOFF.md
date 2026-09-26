@@ -10921,3 +10921,54 @@ GAS；員工主管組織表繼續由 GAS 維護、平台直接讀。分兩個 PR
 1. 設定財會收件信箱（值在 GAS 編輯器 → 專案設定 → 指令碼屬性 → HR_ACCOUNTING_EMAILS）。
 2. `/finance/migration` 第 5 區挑幾筆舊單「預覽信件」「看 PDF」，跟當初 GAS 寄出的核准信比對。
 
+**PR 1 上線後（2026-09-26）**：使用者設好 `SALARY_HR_ACCOUNTING_EMAILS`，預覽比對「一樣」。踩雷：設定指令第一版叫使用者
+用 `^@^` 當 gcloud 的分隔字元，但 Email 本身有 `@`，被切開報「Bad syntax for dict arg」——**值裡有逗號的環境變數
+要用 `^;^`**（值裡沒有分號）。另外 Cloud Shell 閒置太久會登出，要先 `gcloud auth login`＋`gcloud config set project tsaipei-505807`。
+
+## 補款改由平台處理：收單＋核准卡片＋核准／退回＋切換開關（2026-09-26，第二段 PR 2）
+
+### 做了什麼
+
+- **`services/salary_platform.py`（新檔）**，逐項照 `Project_Salary.js`／`程式碼.js`：
+  - `submit()`＝`processSalarySubmission()`：必填 → 重複申請（員工姓名＋身分證大寫＋補請款月份，月份先正規化成
+    yyyy-MM，退回的不算）→ 綁定（組織表同名第一列的 LINE ID）→ 主管（`Org.supervisors()`，找不到退回系統管理員
+    `SALARY_ADMIN_LINE_USER_IDS`／`SALARY_ADMIN_EMAILS`，都沒有就推「送審作業未成功」卡片）→ 後端重算金額 →
+    `SAL-yyyyMMddHHmmss`（同一秒第二張加 `-2`，GAS 沒處理）→ 照片直接存 GCS → Firestore（`source="platform"`，
+    `fields` 照試算表表頭、值照 GAS appendRow 的內容）→ `append_record()` 寫試算表（失敗標 `sheet_status=failed`）→
+    推核准卡片給每位主管（一位都推不到就提醒申請人）。
+  - `approval_card()`＝`buildSalaryApprovalCard()`，postback 一模一樣；身分證遮罩同 `maskIdCard()`。**照片不放縮圖**，
+    改放「查看佐證照片（需登入）」按鈕 → `/me/salary-repayment/{單號}/photo`（管理員、財務、申請人本人或其主管、
+    組織表上的審核主管才看得到）。
+  - `handle_review()`＝`processPostback()`＋`handleSalaryPostback()`：只有該申請人的主管或系統管理員能按；
+    **`salary_repayment_reviews/{單號}` 用 `create()` 佔位，同一張單只能審一次**（取代 GAS 的 LockService）；
+    核准改三格＋寄信（附照片＋PDF）；退回標 `rejected`、試算表整列刪除、我的專區不顯示；回覆主管（replyToken，
+    失敗改 push）、通知申請人、通知其他主管，文字照 GAS（寄信失敗也照實講）。
+  - `send_approval_email()`：核准信（也給「補寄信」用，平台建立的單不再轉給 GAS 補寄）。
+  - 開關 `is_enabled()`／`set_enabled()`（`salary_repayment_meta/state.platform_mode`）、`missing_requirements()`。
+- **總機**（`job_portal_line_relay.split_events()`）：`review_salary` 的單號是平台建立的 → 平台處理、不轉；其他照轉
+  （全部都要轉時 body 原封不動）。**不管開關開不開，平台建立的單都由平台處理**；舊單照轉 GAS，轉完如果開關是開的，
+  馬上同步一次試算表。
+- **同步**（`salary_repayment_store._sync_collection`）：看到 `source="platform"` 的同單號一律跳過（計在 `platform`），
+  正本在平台，試算表顯示格式不同（例如 1,170）也不會蓋掉。`load_rows()` 不回傳 `rejected` 的單。
+- **自動同步**（`salary_repayment_service._maybe_background_sync`）：開關開著、讀平台資料時，距離上次同步超過 10 分鐘
+  就在背景同步一次（接住切換前的舊卡片被 GAS 核准、或有人還用舊表單直接送 GAS）。
+- **`/me/salary-repayment/new`**：開關開著 → `salary_platform.submit()`，否則照舊轉 GAS。
+- **`/finance/migration` 第 6 區「補款改由平台處理」**：還缺什麼設定、打開（先同步一次＋讀取來源改平台資料）／關閉
+  （讀取來源改回試算表）、試算表寫失敗的單可以「補寫」。讀取來源改成第 7 區。
+- 新環境變數：`JOB_PORTAL_LINE_CHANNEL_ACCESS_TOKEN`、`SALARY_ADMIN_LINE_USER_IDS`（對應 GAS ADMIN_LINE_USER_ID）、
+  `SALARY_ADMIN_EMAILS`（對應 GAS ADMIN_EMAIL）。
+- 測試 `tests/test_salary_platform.py`（25 個）；`tests/_fake_firestore.py` 加 `create()`（已存在就失敗）。
+
+### 使用者要做的（切換步驟）
+
+1. 設三個環境變數（token 在 LINE Developers → Messaging API 分頁最下面；另外兩個在 GAS 指令碼屬性，有逗號，用 `^;^`）。
+2. `/finance/migration` 第 6 區確認「還缺」清單消失 → 按「改由平台處理」。
+3. 用自己的帳號送一張測試補款單 → 主管 LINE 收到卡片 → 按核准 → 確認回覆、通知、核准信、試算表那一列都正確。
+4. 出問題按「改回由 GAS 處理」。
+
+### 還沒做（之後）
+
+- 財務部「批次下載 PDF」還是呼叫 GAS 的 EXPORT_SALARY_PDFS（GAS 讀試算表，平台建立的單也在試算表裡，所以照樣能下載）；
+  之後可以改成平台自己產，順便解決批次逾時（原本的第 6 步）。
+- 第 7 步：GAS 的 `Project_Salary.js` 停用、平台拿掉對 GAS 的呼叫（等平台跑順一段時間）。
+

@@ -122,6 +122,15 @@ class Org:
                 return result
         return []
 
+    def binding(self, applicant_name: str) -> str:
+        """GAS `getEmployeeBindingByName()`：組織表第一列同名的人，LINE ID 格式正確才算已綁定。回傳 LINE ID 或空字串。"""
+        name = (applicant_name or "").strip()
+        for row in self.rows:
+            if name and _cell(row, ORG_NAME) == name:
+                line_id = _cell(row, ORG_LINE_ID)
+                return line_id if _LINE_ID.match(line_id) else ""
+        return ""
+
     def applicant_email(self, applicant_name: str, applicant_line_id: str) -> str:
         """GAS `findApplicantEmail()` 的三段順序：員工 Email 欄 → 申請人當主管時的主管 Email → 同列任何 Email。"""
         uname, uid = (applicant_name or "").strip(), (applicant_line_id or "").strip().upper()

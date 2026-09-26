@@ -104,9 +104,37 @@ def recent() -> list:
         return []
 
 
+def split_events(body: bytes, owns) -> tuple:
+    """把事件分成 (平台自己處理的事件, 要轉給 GAS 的 body)。owns(event)→True 的留在平台。
+    全部都要轉的話回傳原本的 body（一個 byte 都不改）；沒有要轉的回傳 None。"""
+    try:
+        payload = json.loads(body.decode("utf-8"))
+        events = payload.get("events") or []
+    except Exception:
+        return [], body
+    mine = [e for e in events if owns(e)]
+    if not mine:
+        return [], body
+    rest = [e for e in events if e not in mine]
+    if not rest:
+        return mine, None
+    return mine, json.dumps({**payload, "events": rest}, ensure_ascii=False).encode("utf-8")
+
+
 def relay(body: bytes) -> None:
-    """背景工作：轉發＋記錄。"""
-    kinds = describe_events(body)
-    ok, note = forward_to_gas(body)
+    """背景工作：平台建立的補款單核准按鈕由平台處理（2026-09-26），其餘轉發給 GAS＋記錄。"""
+    from services import salary_platform
+
+    mine, rest = split_events(body, salary_platform.owns_event)
+    for event in mine:
+        salary_platform.handle_review(event)
+        record(describe_events(json.dumps({"events": [event]}).encode("utf-8")), True, "平台處理")
+    if rest is None:
+        return
+    kinds = describe_events(rest)
+    ok, note = forward_to_gas(rest)
     print(f"[LINE_RELAY] events={kinds} ok={ok} note={note}")
     record(kinds, ok, note)
+    if ok and "postback:review_salary" in kinds and salary_platform.is_enabled():
+        # 切換前 GAS 發出的舊卡片由 GAS 核准（改的是試算表），馬上同步回平台，我的專區才看得到新狀態
+        salary_platform.sync_from_sheet_quietly()

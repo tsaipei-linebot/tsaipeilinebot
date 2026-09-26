@@ -29,6 +29,7 @@ META_COLLECTION = "salary_repayment_meta"
 META_DOC = "state"
 
 SOURCE_SHEET = "sheet"
+SOURCE_PLATFORM = "platform"  # 平台自己收的補款單（2026-09-26，見 services/salary_platform.py），同步永遠不會動它
 SOURCE_FIRESTORE = "firestore"
 SOURCE_NAMES = {SOURCE_SHEET: "Google 試算表", SOURCE_FIRESTORE: "平台資料"}
 
@@ -142,6 +143,10 @@ def _sync_collection(collection, assigned: list, now) -> dict:
     sets, counts = {}, {"added": 0, "updated": 0, "unchanged": 0, "deleted": 0}
     for doc_id, row_number, fields in assigned:
         old = existing.get(doc_id)
+        if old and old.get("source") == SOURCE_PLATFORM:
+            # 平台建立的單也會寫一列到試算表，同步時看到同單號就跳過，正本在平台
+            counts["platform"] = counts.get("platform", 0) + 1
+            continue
         if old and old.get("fields") == fields and old.get("row_number") == row_number:
             counts["unchanged"] += 1
             continue
@@ -182,7 +187,9 @@ def sync_from_sheet(org_values: list, record_values: list, actor: dict) -> dict:
 
 
 def _load(collection) -> list:
-    docs = sorted((snap.to_dict() or {} for snap in collection.stream()), key=lambda d: d.get("row_number") or 0)
+    # 平台退回的單保留在資料庫但不顯示（跟 GAS 一樣退回就從紀錄消失）
+    docs = sorted((d for d in (snap.to_dict() or {} for snap in collection.stream()) if not d.get("rejected")),
+                  key=lambda d: d.get("row_number") or 0)
     return [dict(d.get("fields") or {}) for d in docs]
 
 
