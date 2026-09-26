@@ -10741,8 +10741,9 @@ Gmail 網頁版、帳號 `gary@tsaipei.com`（`config.SALESDEV_GMAIL_ACCOUNT`，
 **上線步驟（使用者做，合併部署之後）**
 1. Cloud Shell 開 Gmail API：`gcloud services enable gmail.googleapis.com --project=tsaipei-505807`
 2. Google Cloud 主控台 → Google Auth Platform（`https://console.cloud.google.com/auth/overview?project=tsaipei-505807`）：
-   還沒設定過就按「開始」：應用程式名稱「材霈平台」、支援電子郵件 gary@tsaipei.com、**目標對象選「內部」**、
-   聯絡資訊 gary@tsaipei.com → 建立。
+   還沒設定過就按「開始」：應用程式名稱「材霈平台」、支援電子郵件（只能選目前登入主控台的帳號，選哪個都行）、
+   **目標對象：專案在 Workspace 組織下才選得到「內部」，否則選「外部」並把 gary@tsaipei.com 加成測試使用者**（見下方實際設定結果）、
+   聯絡資訊 → 建立。
 3. 同一區「用戶端」→「建立用戶端」→ 類型「網頁應用程式」、名稱「業務開發 Gmail 草稿」→「已授權的重新導向 URI」
    貼上信件範本頁顯示的網址（一般是 `https://recruitment-bot-412901869672.asia-east1.run.app/salesdev/gmail/callback`）
    → 建立 → 複製「用戶端 ID」「用戶端密鑰」。
@@ -10750,6 +10751,20 @@ Gmail 網頁版、帳號 `gary@tsaipei.com`（`config.SALESDEV_GMAIL_ACCOUNT`，
    `gcloud run services update recruitment-bot --region=asia-east1 --project=tsaipei-505807 --update-env-vars=SALESDEV_GMAIL_OAUTH_CLIENT_ID=用戶端ID,SALESDEV_GMAIL_OAUTH_CLIENT_SECRET=用戶端密鑰`
 5. 平台 `/salesdev/templates` →「連結 Gmail」→ 用 gary@tsaipei.com 登入 →「允許」。範本「編輯」上傳 PDF。
 6. 寄信頁按「建立草稿（含附件）」，確認 Gmail 草稿匣有信、PDF 有夾上。
+
+**實際設定結果（2026-09-26，連結成功）**
+- GCP 專案 `tsaipei-505807` 是用個人 Gmail（CENTURYPROE@gmail.com）建的、不在 tsaipei.com 的 Workspace 組織底下，
+  所以同意畫面**選不了「內部」，實際是「外部」＋「測試中」**，`gary@tsaipei.com` 要加進「目標對象 → 測試使用者」
+  （`https://console.cloud.google.com/auth/audience?project=tsaipei-505807`），沒加會出現「403 access_denied：尚未完成
+  Google 驗證程序」。登入時會出現「Google 尚未驗證這個應用程式」，按「繼續」即可。
+- **測試中狀態的 refresh token 約 7 天失效**：失效後 `_access_token()` 收到 `invalid_grant` → `GmailNotConnected`，
+  寄信頁提示重新連結，到信件範本頁再按一次「連結 Gmail」就好。使用者嫌每週重連麻煩時，再帶他在同一頁「發布應用程式」
+  改成正式版（未驗證的應用程式仍會顯示警告畫面，但 token 不會 7 天過期）。
+- 踩到的雷：「401 invalid_client：The OAuth client was not found」＝ Cloud Run 上的 `SALESDEV_GMAIL_OAUTH_CLIENT_ID`
+  值不對。這次是把指令裡「這裡換成用戶端ID」替換時留下了「這」字（值變成 `這412901869672-…`）。檢查指令：
+  `gcloud run services describe recruitment-bot --region=asia-east1 --project=tsaipei-505807 --format=json | grep -A1 SALESDEV_GMAIL_OAUTH_CLIENT_ID`
+  ——以後給使用者含佔位字的指令，佔位字盡量用英文大寫（例如 `CLIENT_ID_HERE`），比較不會刪不乾淨。
+- 用戶端 ID：`412901869672-hnptm08e85f15ssgtcc8c8c2rq6488ov.apps.googleusercontent.com`（不是機密）。
 
 ## 台北所(派遣組)／台北所(國際組)專區：待進人員＋每日加退保自動帶入（2026-09-25 確認規格，分兩個 PR 實作）
 
