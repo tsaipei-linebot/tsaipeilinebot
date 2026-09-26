@@ -12,60 +12,39 @@
 {% if err %}<p class="warning js-flash">{{ err }}</p>{% endif %}
 
 <p class="hint">
-    寄信時先選一個「內文範本」、再選一個「簡介版本」。內文裡寫 <code>{簡介}</code> 的地方會換成選的簡介。
-    其他可以用的變數：{% for p in placeholders if p != '{簡介}' %}<code>{{ p }}</code>{% if not loop.last %}、{% endif %}{% endfor %}，
+    寄信時從這裡的內文範本挑一個，可以放好幾個不同版本，隨時新增、編輯、刪除。
+    主旨和內文裡可以寫 {% for p in placeholders %}<code>{{ p }}</code>{% if not loop.last %}、{% endif %}{% endfor %}，
     寄信時會自動換成那間公司的資料（沒有聯絡人時寫「人資負責人」、沒有職缺名稱時寫「產線人員」）。
-    只能是純文字（Gmail 的撰寫畫面帶不進粗體、圖片），附件請在 Gmail 自己夾。停用的範本不會出現在寄信選單，但以前寄過的紀錄還在。
+    只能是純文字（Gmail 的撰寫畫面帶不進粗體、圖片）。公司簡介 PDF 請在 Gmail 自己夾，「要夾的附件」填了檔名，寄信時會提醒你。
+    刪掉的範本，以前用它寄過的紀錄還在。
 </p>
 
-{% for kind, title, items in [('body', '內文範本', bodies), ('intro', '簡介版本', intros)] %}
-<h2 class="section-title">{{ title }}</h2>
-{% if not items %}<p class="hint">還沒有{{ title }}。</p>{% endif %}
-{% for t in items %}
+<p><a class="btn btn-primary" href="/salesdev/templates#form">＋ 新增範本</a></p>
+
+{% if not bodies %}<p class="hint">還沒有任何範本。</p>{% endif %}
+{% for t in bodies %}
 <div class="salesdev-run">
-    <strong>{{ t.name }}</strong>{% if not t.active %} <span class="badge badge-resigned">已停用</span>{% endif %}
-    {% if t.kind == 'body' %}<div class="meta">主旨：{{ t.subject }}</div>{% endif %}
-    {% if t.kind == 'intro' and t.attachment_name %}<div class="meta">📎 附件：{{ t.attachment_name }}</div>{% endif %}
+    <strong>{{ t.name }}</strong>
+    <div class="meta">主旨：{{ t.subject }}</div>
+    {% if t.attachment_name %}<div class="meta">📎 要夾的附件：{{ t.attachment_name }}</div>{% endif %}
     <div style="white-space: pre-wrap; margin: 8px 0;">{{ t.content }}</div>
     <div class="meta">上次由 {{ t.updated_by }} 在 {{ t.updated_at }} 修改</div>
     <div class="btn-list">
-        <a class="btn btn-small" href="/salesdev/templates?edit={{ t.id }}#form">修改</a>
-        <form method="post" action="/salesdev/templates/{{ t.id }}/active">
-            <input type="hidden" name="value" value="{{ '0' if t.active else '1' }}">
-            <button type="submit" class="btn btn-small">{{ '停用' if t.active else '啟用' }}</button>
+        <a class="btn btn-small" href="/salesdev/templates?edit={{ t.id }}#form">編輯</a>
+        <form method="post" action="/salesdev/templates/{{ t.id }}/delete" onsubmit="return window.confirm('確定要刪除「{{ t.name|e }}」嗎？刪掉就不能復原（以前寄過的紀錄還在）。');">
+            <button type="submit" class="btn btn-small">刪除</button>
         </form>
     </div>
 </div>
 {% endfor %}
-{% endfor %}
 
-<h2 class="section-title" id="form">{% if editing %}修改「{{ editing.name }}」{% else %}新增範本{% endif %}</h2>
+<h2 class="section-title" id="form">{% if editing %}編輯「{{ editing.name }}」{% else %}新增範本{% endif %}</h2>
 <form method="post" action="/salesdev/templates/save" class="form-stack">
     <input type="hidden" name="id" value="{{ editing.id if editing else '' }}">
-    <label>種類
-        <select name="kind" id="tpl-kind"{% if editing %} disabled{% endif %}>
-            <option value="body"{{ ' selected' if not editing or editing.kind == 'body' else '' }}>內文範本</option>
-            <option value="intro"{{ ' selected' if editing and editing.kind == 'intro' else '' }}>簡介版本</option>
-        </select>
-    </label>
-    {% if editing %}<input type="hidden" name="kind" value="{{ editing.kind }}">{% endif %}
-    <label>名稱（自己看的，例如「產線缺工支援」「簡短版」）<input type="text" name="name" value="{{ editing.name if editing else '' }}" required></label>
-    <label class="js-body-only">主旨（內文範本才要填）<input type="text" name="subject" value="{{ editing.subject if editing and editing.subject else '' }}"></label>
-    <label class="js-intro-only">要附加的檔案名稱（簡介版本才要填，寄信時會提醒記得夾，例如「材霈公司簡介.pdf」）<input type="text" name="attachment_name" value="{{ editing.attachment_name if editing and editing.attachment_name else '' }}"></label>
-    <label>內容<textarea name="content" rows="14" required>{{ editing.content if editing else '' }}</textarea></label>
+    <label>名稱（自己看的，例如「產線缺工支援」「新廠人力規劃」）<input type="text" name="name" value="{{ editing.name if editing else '' }}" required></label>
+    <label>主旨<input type="text" name="subject" value="{{ editing.subject if editing else '' }}" required></label>
+    <label>內文<textarea name="content" rows="16" required>{{ editing.content if editing else '' }}</textarea></label>
+    <label>要夾的附件（選填，例如「材霈公司簡介.pdf」，寄信時會提醒你記得夾）<input type="text" name="attachment_name" value="{{ editing.attachment_name if editing and editing.attachment_name else '' }}"></label>
     <p><button type="submit" class="btn btn-primary">儲存</button>{% if editing %} <a class="btn" href="/salesdev/templates">取消</a>{% endif %}</p>
 </form>
-
-<script>
-(function () {
-    var kind = document.getElementById('tpl-kind');
-    function sync() {
-        var isBody = kind.value === 'body';
-        document.querySelectorAll('.js-body-only').forEach(function (el) { el.hidden = !isBody; });
-        document.querySelectorAll('.js-intro-only').forEach(function (el) { el.hidden = isBody; });
-    }
-    kind.addEventListener('change', sync);
-    sync();
-})();
-</script>
 {% endblock %}

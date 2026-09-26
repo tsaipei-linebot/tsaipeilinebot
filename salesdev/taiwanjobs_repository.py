@@ -12,7 +12,7 @@
 - 公司上多了 `manual_emails`／`manual_phones`（手動新增，自動抓取**不會**動到）、
   `hidden_emails`／`hidden_phones`（自動抓到但不想用的，隱藏不刪除，之後重抓也不會
   再冒出來）。畫面上顯示的是 `effective_emails()`／`effective_phones()`。
-- `send_log`：每按一次「開啟 Gmail」記一筆（寄給哪個信箱、日期、誰、內文/簡介版本）。
+- `send_log`：每按一次「開啟 Gmail」記一筆（寄給哪個信箱、日期、誰、用哪個內文範本）。
   記的是「按下按鈕」，不保證使用者最後真的有按寄出（方案 A 的限制，使用者已知道）。
 
 用 `repository.get_db()` 取連線，測試裡 patch 那一支就好。
@@ -320,7 +320,7 @@ RESEND_WARNING_DAYS = 60  # 使用者 2026-09-26 決定：兩個月內不重複�
 MAX_SEND_LOG = 200
 
 
-def record_send(company_id: str, email: str, username: str, template_name: str, intro_name: str) -> dict:
+def record_send(company_id: str, email: str, username: str, template_name: str) -> dict:
     """按下「開啟 Gmail」時記一筆。回傳這一筆紀錄；找不到公司回傳 None。"""
     company = get_company(company_id)
     if not company:
@@ -331,7 +331,6 @@ def record_send(company_id: str, email: str, username: str, template_name: str, 
         "at": repository.now_str(),
         "by": username,
         "template": template_name or "",
-        "intro": intro_name or "",
     }
     log = (list(company.get("send_log") or []) + [entry])[-MAX_SEND_LOG:]
     companies_ref().document(company_id).set({"send_log": log, "last_sent_date": entry["date"]}, merge=True)

@@ -1,5 +1,5 @@
 """台灣就業通寄信（2026-09-26 新增，方案 A：開 Gmail 撰寫畫面）：手動 Email/電話、
-信件範本、寄送紀錄、公司頁與範本頁。"""
+信件範本（只有內文，公司簡介 PDF 使用者自己夾）、寄送紀錄、公司頁與範本頁。"""
 import os
 import sys
 import unittest
@@ -58,7 +58,7 @@ class ContactTests(_FakeDbMixin, unittest.TestCase):
 
     def test_send_log_and_recent_check(self):
         with mock.patch.object(repository, "today_str", return_value="2026-09-26"):
-            tj_repo.record_send("1", "hr@st.com.tw", "胡少凱", "產線缺工", "簡短版")
+            tj_repo.record_send("1", "hr@st.com.tw", "胡少凱", "產線缺工")
         company = tj_repo.get_company("1")
         self.assertEqual(company["last_sent_date"], "2026-09-26")
         self.assertEqual(tj_repo.last_sent_by_email(company), {"hr@st.com.tw": "2026-09-26"})
@@ -71,29 +71,32 @@ class TemplateTests(_FakeDbMixin, unittest.TestCase):
     def test_seed_once(self):
         self.assertTrue(mail_templates.ensure_seeded("胡少凱"))
         self.assertFalse(mail_templates.ensure_seeded("胡少凱"))
-        self.assertEqual(len(mail_templates.list_templates(mail_templates.KIND_BODY)), 1)
-        self.assertEqual(len(mail_templates.list_templates(mail_templates.KIND_INTRO)), 1)
+        templates = mail_templates.list_templates()
+        self.assertEqual(len(templates), 1)
+        self.assertEqual(templates[0]["attachment_name"], "材霈公司簡介.pdf")
 
-    def test_render_fills_company_and_intro(self):
-        body = {"subject": "{公司名稱} 人力支援", "content": "{聯絡人} 您好，看到「{職缺名稱}」（{地區}）。\n{簡介}\n{不認得}"}
-        intro = {"content": "我們可以支援 {公司名稱}。"}
-        result = mail_templates.render(body, intro, tj_repo.get_company("1"))
+    def test_render_fills_company(self):
+        body = {"subject": "{公司名稱} 人力支援", "content": "{聯絡人} 您好，看到「{職缺名稱}」（{地區}）。\n{不認得}"}
+        result = mail_templates.render(body, tj_repo.get_company("1"))
         self.assertEqual(result["subject"], "宣德科技股份有限公司 人力支援")
-        self.assertEqual(
-            result["content"], "林小姐 您好，看到「SMT技術員」（桃園市龜山區）。\n我們可以支援 宣德科技股份有限公司。\n{不認得}"
-        )
+        self.assertEqual(result["content"], "林小姐 您好，看到「SMT技術員」（桃園市龜山區）。\n{不認得}")
 
     def test_render_fallbacks(self):
-        result = mail_templates.render({"subject": "", "content": "{聯絡人}/{職缺名稱}"}, None, {"company_name": "X"})
+        result = mail_templates.render({"subject": "", "content": "{聯絡人}/{職缺名稱}"}, {"company_name": "X"})
         self.assertEqual(result["content"], "人資負責人/產線人員")
 
-    def test_save_validation_and_toggle(self):
+    def test_save_edit_delete(self):
         with self.assertRaises(ValueError):
-            mail_templates.save_template("", "body", "名稱", "", "內容", "", "boss")
-        template_id = mail_templates.save_template("", "intro", "簡短版", "", "內容", "簡介.pdf", "boss")
-        self.assertEqual(mail_templates.get_template(template_id)["attachment_name"], "簡介.pdf")
-        mail_templates.set_active(template_id, False, "boss")
-        self.assertEqual(mail_templates.list_templates(mail_templates.KIND_INTRO, active_only=True), [])
+            mail_templates.save_template("", "名稱", "", "內容", "", "boss")
+        template_id = mail_templates.save_template("", "產線缺工", "主旨", "內容", "簡介.pdf", "boss")
+        mail_templates.save_template(template_id, "產線缺工 v2", "主旨2", "內容2", "", "boss")
+        template = mail_templates.get_template(template_id)
+        self.assertEqual((template["name"], template["subject"], template["attachment_name"]), ("產線缺工 v2", "主旨2", ""))
+        self.assertTrue(mail_templates.delete_template(template_id))
+        self.assertIsNone(mail_templates.get_template(template_id))
+        self.assertFalse(mail_templates.delete_template(template_id))
+        with self.assertRaises(ValueError):
+            mail_templates.save_template(template_id, "x", "y", "z", "", "boss")
 
     def test_gmail_url(self):
         url = mail_templates.gmail_compose_url("gary@tsaipei.com", "hr@st.com.tw", "主旨 & 測試", "第一行\n第二行")
@@ -133,7 +136,7 @@ class PagesTests(_FakeDbMixin, unittest.TestCase):
 
     def test_record_send_via_json(self):
         page = self.client.get("/salesdev/taiwanjobs/companies/1")
-        body_id = mail_templates.list_templates(mail_templates.KIND_BODY)[0]["id"]
+        body_id = mail_templates.list_templates()[0]["id"]
         resp = self.client.post("/salesdev/taiwanjobs/companies/1/sent", json={"email": "hr@st.com.tw", "template_id": body_id})
         self.assertTrue(resp.json()["ok"])
         company = tj_repo.get_company("1")
@@ -157,19 +160,46 @@ class PagesTests(_FakeDbMixin, unittest.TestCase):
         self.assertIn("msg=", resp.headers["location"])
         self.assertIn("boss@st.com.tw", self.client.get("/salesdev?tab=taiwanjobs").text)
 
-    def test_templates_page_create_edit(self):
+    def test_inline_email_on_list_moves_company_to_with_email(self):
+        tj_repo.update_contact("1", "email", "hide", "hr@st.com.tw")
+        tj_repo.update_contact("1", "email", "hide", "old@st.com.tw")
+        page = self.client.get("/salesdev?tab=taiwanjobs&email=no").text
+        self.assertIn('class="tj-inline-email"', page)
+        resp = self.client.post(
+            "/salesdev/taiwanjobs/companies/1/contacts",
+            data={"kind": "email", "action": "add", "value": "found@st.com.tw", "back": "list", "dispatch": "hide"},
+            follow_redirects=False,
+        )
+        location = resp.headers["location"]
+        self.assertTrue(location.startswith("/salesdev?tab=taiwanjobs&email=yes&dispatch=hide&msg="))
+        self.assertTrue(location.endswith("#c-1"))
+        self.assertIn('id="c-1"', self.client.get("/salesdev?tab=taiwanjobs&email=yes").text)
+        resp = self.client.post(
+            "/salesdev/taiwanjobs/companies/1/contacts",
+            data={"kind": "email", "action": "add", "value": "壞掉的", "back": "list"},
+            follow_redirects=False,
+        )
+        self.assertIn("email=no", resp.headers["location"])
+        self.assertIn("err=", resp.headers["location"])
+
+    def test_templates_page_create_edit_delete(self):
         self.assertIn("暫用範本", self.client.get("/salesdev/templates").text)
         resp = self.client.post(
             "/salesdev/templates/save",
-            data={"kind": "body", "name": "產線缺工支援", "subject": "{公司名稱} 缺工", "content": "您好\n{簡介}"},
+            data={"name": "產線缺工支援", "subject": "{公司名稱} 缺工", "content": "您好", "attachment_name": "DM.pdf"},
             follow_redirects=False,
         )
         self.assertIn("msg=", resp.headers["location"])
         new = [t for t in mail_templates.list_templates() if t["name"] == "產線缺工支援"][0]
         page = self.client.get(f"/salesdev/taiwanjobs/companies/1?t={new['id']}").text
         self.assertIn("宣德科技股份有限公司 缺工", page)
-        resp = self.client.post("/salesdev/templates/save", data={"kind": "body", "name": "", "content": ""}, follow_redirects=False)
+        self.assertIn("DM.pdf", page)
+        resp = self.client.post("/salesdev/templates/save", data={"name": "", "content": ""}, follow_redirects=False)
         self.assertIn("err=", resp.headers["location"])
+        resp = self.client.post(f"/salesdev/templates/{new['id']}/delete", follow_redirects=False)
+        self.assertIn("msg=", resp.headers["location"])
+        self.assertIsNone(mail_templates.get_template(new["id"]))
+        self.assertNotIn(f"/salesdev/templates/{new['id']}/delete", self.client.get("/salesdev/templates").text)
 
     def test_other_accounts_blocked(self):
         other = {"username": "amy", "name": "Amy", "modules": ["salesdev"], "rank": "manager", "is_platform_admin": False}
