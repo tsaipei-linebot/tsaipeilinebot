@@ -10706,6 +10706,51 @@ Gmail 網頁版、帳號 `gary@tsaipei.com`（`config.SALESDEV_GMAIL_ACCOUNT`，
 **已知限制**：記的是「按下開啟 Gmail」，不是「真的寄出」；Gmail 撰寫網址只能帶純文字、不能帶附件；瀏覽器
 沒登入 gary@tsaipei.com 時 Gmail 會要求登入或開到別的帳號。**使用者不需要做任何設定。**
 
+## 業務開發寄信「做法二」：Gmail 草稿自動夾 PDF（2026-09-26）
+
+使用者覺得夾附件比放連結好，要「做法二」：平台在 gary@tsaipei.com 的 Gmail **建好草稿**（收件人、主旨、內文、
+公司簡介 PDF 都放好），使用者打開草稿按寄出。gary@tsaipei.com 是 **Google Workspace** 帳號。原本的「開啟 Gmail」
+（撰寫網址帶不了附件）保留，沒連結 Gmail 或出問題時還能用。
+
+**做了什麼**
+- `salesdev/gmail_drafts.py`：OAuth 授權（`gmail.compose`，**只能建草稿/寄信、不能讀信**；平台程式只建草稿、
+  不寄）。`authorization_url()`（`access_type=offline`、`prompt=consent`、`login_hint`＝gary、`hd`＝tsaipei.com）、
+  `complete_authorization()`（授權碼換 refresh token，再用 Gmail profile 確認登入的真的是
+  `SALESDEV_GMAIL_ACCOUNT`，不是就撤銷並報錯）、`create_draft()`（refresh token 換 access token，整封 MIME 用
+  `upload/gmail/v1/users/me/drafts?uploadType=media` 上傳，附件上限約 35MB；程式限制 PDF 20MB）、
+  `draft_open_url()`（`https://mail.google.com/mail/u/?authuser=…#drafts?compose={message id}`）。
+  refresh token 存 Firestore `salesdev_settings/gmail_oauth`（沒另外加密，靠 GCP 專案權限保護；只有 compose 權限、
+  可以隨時撤銷）。不裝 google-auth-oauthlib，直接用 requests 打標準 OAuth 端點。
+- 範本 PDF 存 GCS（跟配送部/人資共用 `DELIVERY_GCS_BUCKET`，前綴 `salesdev/mail_templates/`），範本多
+  `attachment_blob`／`attachment_size`；上傳只收開頭是 `%PDF-` 的檔案；換檔或刪範本會刪掉舊檔。
+- 路由：`GET /salesdev/gmail/connect`（state 存登入 session）→ Google →`GET /salesdev/gmail/callback`
+  （比對 state，用過就作廢）、`POST /salesdev/gmail/disconnect`（撤銷＋清掉）、`POST /salesdev/templates/save`
+  改成可以帶 `attachment_file`、`GET /salesdev/templates/{id}/attachment`（下載確認）、
+  `POST /salesdev/taiwanjobs/companies/{id}/draft`（JSON：信箱、範本、畫面上的主旨/內文 → 建草稿、**建好才記**
+  寄送紀錄，範本名稱後面加「（草稿）」）。OAuth 回呼網址用使用者當下開的網域（`_gmail_redirect_uri()`），
+  信件範本頁在還沒設定時會把要貼到 Google Cloud 的網址顯示出來。
+- 畫面：信件範本頁最上方「Gmail 連結」區（未設定／未連結＝「連結 Gmail」／已連結＝帳號＋中斷/重新連結），
+  範本表單可以上傳 PDF、移除附件；寄信頁已連結時每個信箱多一顆「建立草稿（含附件）」（先開空白分頁再換成草稿
+  網址，避免被當彈出視窗擋）。
+- 設定：`config.SALESDEV_GMAIL_OAUTH_CLIENT_ID`／`SALESDEV_GMAIL_OAUTH_CLIENT_SECRET`（沒設定就只有「開啟 Gmail」）。
+- 測試 `tests/test_salesdev_gmail_drafts.py`（16 個），全部 2565 個通過。
+
+**還沒驗證（開發環境連不到 Google）**：`#drafts?compose={message id}` 能不能直接打開那封草稿（打不開的話會停在
+草稿匣，草稿還是建好了）；Workspace 管理員有沒有限制第三方應用程式（內部應用程式通常不會被擋）。
+
+**上線步驟（使用者做，合併部署之後）**
+1. Cloud Shell 開 Gmail API：`gcloud services enable gmail.googleapis.com --project=tsaipei-505807`
+2. Google Cloud 主控台 → Google Auth Platform（`https://console.cloud.google.com/auth/overview?project=tsaipei-505807`）：
+   還沒設定過就按「開始」：應用程式名稱「材霈平台」、支援電子郵件 gary@tsaipei.com、**目標對象選「內部」**、
+   聯絡資訊 gary@tsaipei.com → 建立。
+3. 同一區「用戶端」→「建立用戶端」→ 類型「網頁應用程式」、名稱「業務開發 Gmail 草稿」→「已授權的重新導向 URI」
+   貼上信件範本頁顯示的網址（一般是 `https://recruitment-bot-412901869672.asia-east1.run.app/salesdev/gmail/callback`）
+   → 建立 → 複製「用戶端 ID」「用戶端密鑰」。
+4. Cloud Shell：
+   `gcloud run services update recruitment-bot --region=asia-east1 --project=tsaipei-505807 --update-env-vars=SALESDEV_GMAIL_OAUTH_CLIENT_ID=用戶端ID,SALESDEV_GMAIL_OAUTH_CLIENT_SECRET=用戶端密鑰`
+5. 平台 `/salesdev/templates` →「連結 Gmail」→ 用 gary@tsaipei.com 登入 →「允許」。範本「編輯」上傳 PDF。
+6. 寄信頁按「建立草稿（含附件）」，確認 Gmail 草稿匣有信、PDF 有夾上。
+
 ## 台北所(派遣組)／台北所(國際組)專區：待進人員＋每日加退保自動帶入（2026-09-25 確認規格，分兩個 PR 實作）
 
 PR1（專區分頁、廠商/班別維護、待進人員，PR #238）、PR2（每日加退保依日期自動帶入）都已完成。

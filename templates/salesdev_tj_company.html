@@ -37,8 +37,11 @@
     <label>主旨<input type="text" id="mail-subject" value="{{ rendered.subject }}"></label>
     <label>內文（開啟 Gmail 之前可以直接在這裡小改，只影響這一次）<textarea id="mail-body" rows="14">{{ rendered.content }}</textarea></label>
 </div>
-{% if body and body.attachment_name %}
-<p class="warning">📎 記得在 Gmail 夾上附件：<strong>{{ body.attachment_name }}</strong></p>
+{% set can_draft = gmail.connected %}
+{% if body and body.attachment_blob and can_draft %}
+<p class="success">📎 按「建立草稿（含附件）」會自動夾上 <strong>{{ body.attachment_name }}</strong>。用「開啟 Gmail」的話要自己夾。</p>
+{% elif body and body.attachment_name %}
+<p class="warning">📎 記得在 Gmail 夾上附件：<strong>{{ body.attachment_name }}</strong>{% if not can_draft %}（到「信件範本」連結 Gmail 並上傳 PDF 後，就可以自動夾）{% endif %}</p>
 {% endif %}
 
 <div class="table-scroll">
@@ -49,12 +52,16 @@
             <tr>
                 <td>{{ e.email }}{% if e.manual %} <span class="meta">✏️手動</span>{% endif %}{% if e.source %}<div class="meta"><a href="{{ e.source }}" target="_blank" rel="noopener">找到這個 Email 的職缺頁</a></div>{% endif %}</td>
                 <td class="js-last-sent">{% if e.last_sent %}{{ e.last_sent }}{% if e.recent %} <span class="badge badge-pending">{{ resend_days }} 天內寄過</span>{% endif %}{% else %}<span class="meta">尚未寄送</span>{% endif %}</td>
-                <td><button type="button" class="btn btn-small btn-primary js-open-gmail" data-email="{{ e.email }}" data-last-sent="{{ e.last_sent }}" data-recent="{{ '1' if e.recent else '' }}">開啟 Gmail</button></td>
+                <td class="btn-list">
+                    {% if can_draft %}<button type="button" class="btn btn-small btn-primary js-draft" data-email="{{ e.email }}" data-last-sent="{{ e.last_sent }}" data-recent="{{ '1' if e.recent else '' }}">建立草稿（含附件）</button>{% endif %}
+                    <button type="button" class="btn btn-small{{ '' if can_draft else ' btn-primary' }} js-open-gmail" data-email="{{ e.email }}" data-last-sent="{{ e.last_sent }}" data-recent="{{ '1' if e.recent else '' }}">開啟 Gmail</button>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+{% if can_draft %}<p class="hint">按「建立草稿（含附件）」會在 <strong>{{ gmail_account }}</strong> 的 Gmail 草稿匣建好一封信（收件人、主旨、內文、附件都放好），並打開那封草稿，你看過再按寄出；平台不會自己寄出。建好草稿才記寄送日期。</p>{% endif %}
 <p class="hint">按「開啟 Gmail」會用 <strong>{{ gmail_account }}</strong> 開一封新信（每封信只有一個收件人），收件人、主旨、內文都已經填好，請看過、夾好附件再按寄出。平台會在按下按鈕時記下寄送日期（沒辦法知道你最後有沒有真的按寄出）。如果 Gmail 開的是別的帳號，請先在瀏覽器登入 {{ gmail_account }}。</p>
 {% endif %}
 
@@ -150,13 +157,57 @@
     var sentUrl = {{ ('/salesdev/taiwanjobs/companies/' ~ company.id ~ '/sent')|tojson }};
     var templateId = {{ (body.id if body else '')|tojson }};
     var resendDays = {{ resend_days|tojson }};
+    var draftUrl = {{ ('/salesdev/taiwanjobs/companies/' ~ company.id ~ '/draft')|tojson }};
+    function confirmResend(button) {
+        return !button.dataset.recent || window.confirm(
+            '這個信箱 ' + button.dataset.lastSent + ' 寄過（' + resendDays + ' 天內），確定要再寄嗎？');
+    }
+    document.querySelectorAll('.js-draft').forEach(function (button) {
+        button.addEventListener('click', function () {
+            if (!confirmResend(button)) { return; }
+            var cell = button.closest('tr').querySelector('.js-last-sent');
+            // 先在按下的當下開一個空白分頁（不然瀏覽器會擋），草稿建好再把網址換過去
+            var tab = window.open('about:blank', '_blank');
+            button.disabled = true;
+            var original = button.textContent;
+            button.textContent = '建立中…';
+            fetch(draftUrl, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    email: button.dataset.email,
+                    template_id: templateId,
+                    subject: document.getElementById('mail-subject').value,
+                    content: document.getElementById('mail-body').value
+                })
+            }).then(function (resp) { return resp.json(); }).then(function (data) {
+                button.disabled = false;
+                button.textContent = original;
+                if (data.ok) {
+                    if (tab) { tab.location = data.url; } else { window.open(data.url, '_blank'); }
+                    cell.textContent = data.date + '（剛剛建立草稿）';
+                    button.dataset.recent = '1';
+                    button.dataset.lastSent = data.date;
+                    button.closest('tr').querySelectorAll('button').forEach(function (b) {
+                        b.dataset.recent = '1'; b.dataset.lastSent = data.date;
+                    });
+                } else {
+                    if (tab) { tab.close(); }
+                    window.alert('建立草稿失敗：' + (data.error || '不明原因'));
+                }
+            }).catch(function () {
+                if (tab) { tab.close(); }
+                button.disabled = false;
+                button.textContent = original;
+                window.alert('建立草稿失敗（網路問題），請再試一次。');
+            });
+        });
+    });
     document.querySelectorAll('.js-open-gmail').forEach(function (button) {
         button.addEventListener('click', function () {
             var email = button.dataset.email;
-            if (button.dataset.recent && !window.confirm(
-                '這個信箱 ' + button.dataset.lastSent + ' 寄過（' + resendDays + ' 天內），確定要再寄嗎？')) {
-                return;
-            }
+            if (!confirmResend(button)) { return; }
             var params = [
                 ['view', 'cm'], ['fs', '1'], ['authuser', account], ['to', email],
                 ['su', document.getElementById('mail-subject').value],
