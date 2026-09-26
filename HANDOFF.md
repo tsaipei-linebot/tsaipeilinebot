@@ -10996,3 +10996,44 @@ GAS 的核准信「主管信箱」也會改用 ADMIN_EMAIL（`getSupervisorsByAp
 
 第 7 步（停用 GAS 的 `Project_Salary.js`、拿掉平台對 GAS 補款端點的呼叫）等平台順跑 1～2 週再做。
 
+## 【決定】配送部那支 GAS（delivery-gas-project）暫時不搬家（2026-09-26）
+
+使用者確認：配送部（車輛回報、意外事件回報、群組推播等，`tsaipei-linebot/delivery-gas-project`）**有大量原始資料來源是
+客戶端提供的 Google 試算表**，評估過**暫時不搬**，不在「職缺維護系統整個搬離 GAS」這個計畫（階段 1～4）的範圍內。
+未來使用者有需要會再提出討論，在那之前不要主動規劃或動工。
+
+## 【待確認】GAS 搬家階段 3：職缺維護（2026-09-26 列流程給使用者看，還沒動工）
+
+### GAS 現在怎麼做（`Project_Job.js`、`Project_BatchEnhance.js`、`程式碼.js`）
+
+1. **送出**（平台 `/job-listings` 已經有表單，但只是轉給 GAS 的 SUBMIT_JOB；另外還有 Netlify 舊表單＋PIN 登入）：
+   綁定檢查 → 新增模式先用職缺名稱查 Notion，**同名自動轉成更新** → 更新時只有原刊登人本人或其直屬主管能改（無主職缺
+   只有系統管理員）→ **Gemini（GAS 自己的 API key，gemini-2.5-flash）一次產 4 樣文案**：對外名稱、對外內容、精華亮點、
+   排版說明（先做就業服務法禁語過濾 `enforceComplianceRules()`，相同輸入有快取）→ 更新時算出改了哪些欄位 → 找主管 →
+   寫 Notion（待審核）→ 推核准卡片給主管（標出異動欄位）＋推收據卡片給申請人。
+2. **核准**（`review_job` postback）：Notion 改審核狀態＋職缺狀態（核准＝「一週內有更新」，停招申請＝「停招」）；Notion
+   沒寫成功就不宣布核准；通知申請人、其他主管；**核准後把職缺純文字文案（有圖就附圖）推到綁定的 LINE 群組**
+   （群組 ID 在指令碼屬性 TARGET_LINE_GROUP_ID，預設值寫在 CONFIG.DEFAULT_LINE_GROUP_ID）。
+3. **排程**：`updateJobsToRecruitingAfterOneWeek()`（「一週內有更新」滿 7 天改「招募中」）、`runBatchEnhancement()`
+   （招募中職缺批次用 AI 優化文案，完成後 LINE 通知管理員）。觸發時間設在 GAS 編輯器的「觸發條件」，程式碼裡看不到。
+4. **身分**：「綁定＋姓名＋PIN」把 LINE User ID 和 PIN 寫進員工主管組織表；「綁定群組」設定推播群組；
+   VERIFY_LOGIN（Netlify 表單的 PIN 登入，平台 `job_portal_sso.py` 銜接）；REGISTER_EMPLOYEE。
+   **補款（已搬到平台）現在也還是讀這張員工主管組織表找主管和 LINE ID。**
+
+### 要先請使用者決定的事
+
+1. 員工主管組織表要（a）繼續用試算表、平台讀寫，還是（b）搬進平台帳號（主管用 /accounts 現有的 `manager_usernames`，
+   LINE ID 一次匯入）——（b）的話補款也要一起改讀平台帳號。
+2. 綁定方式：（a）照舊「綁定＋姓名＋PIN」，還是（b）改成「我的專區」按「綁定 LINE」拿一組驗證碼、傳給官方帳號（PIN 廢掉）。
+3. Netlify 舊表單還有沒有人在用、能不能直接關掉。
+4. AI 改用平台的 Vertex AI（跟招募機器人同一個），文案會跟現在 Gemini API 產的略有不同，可不可以接受（先做預覽比對）。
+5. 請使用者到 GAS 編輯器「觸發條件」看兩個排程實際幾點跑，搬到 Cloud Scheduler 要照同樣時間。
+
+### 預計拆的 PR（每個都可以單獨上線、單獨退回）
+
+1. Notion 讀寫＋AI 產文案搬到平台，搬家頁面「預覽」跟 GAS 產的比對（不影響現行流程）。
+2. 身分／組織表（依決定 1、2）。
+3. 送出＋核准卡片＋核准／退回＋群組推播＋切換開關（總機攔 `review_job`，跟補款同一套做法）。
+4. 兩個排程改用 Cloud Scheduler。
+5. 收尾：Netlify 表單、PIN 登入、`job_portal_sso.py` 退場，GAS 的 `Project_Job.js`／`Project_BatchEnhance.js` 停用。
+
